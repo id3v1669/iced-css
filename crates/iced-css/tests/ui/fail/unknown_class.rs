@@ -1,0 +1,14 @@
+use iced_css::StyleClasses;
+use iced::widget::{container, text};
+
+#[derive(Debug, Clone)]
+enum Msg {}
+
+#[iced_css::style("tests/ui/css/valid.css", policy = Compile)]
+fn view() -> iced::Element<'static, Msg> {
+    container(text("hello world")).style_classes(["no-such-class"])
+}
+
+fn main() {
+    let _ = view;
+}

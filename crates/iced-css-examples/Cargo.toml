@@ -1,0 +1,12 @@
+[package]
+name = "iced-css-examples"
+description = "App for manual verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+iced.workspace = true
+iced-css.workspace = true

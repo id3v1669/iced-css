@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/iced-css",
+    "crates/iced-css-macro",
+    "crates/iced-css-examples",
+]
+
+[workspace.package]
+authors = [ "id3v1669 <git@id3v1669.com>" ]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+repository = "https://github.com/id3v1669/iced-css"
+description = "CSS support for iced lib"
+keywords = ["iced", "css"]
+readme = "README.md"
+
+[workspace.dependencies]
+iced = "0.14.0"
+iced_test = "0.14.0"
+iced-css = { path = "crates/iced-css" }
+iced-css-macro = { path = "crates/iced-css-macro" }
+trybuild = "1"

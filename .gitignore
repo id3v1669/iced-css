@@ -1,0 +1,8 @@
+docs
+target
+
+result
+.direnv
+
+/*.md
+!README.md
