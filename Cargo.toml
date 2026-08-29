@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/iced-css",
+    "crates/iced-css-core",
     "crates/iced-css-macro",
     "crates/iced-css-examples",
 ]
@@ -17,8 +18,12 @@ keywords = ["iced", "css"]
 readme = "README.md"
 
 [workspace.dependencies]
-iced = "0.14.0"
+iced = { version = "0.14.0", features = ["advanced"] }
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full", "visit-mut"] }
 iced_test = "0.14.0"
 iced-css = { path = "crates/iced-css" }
+iced-css-core = { path = "crates/iced-css-core" }
 iced-css-macro = { path = "crates/iced-css-macro" }
-trybuild = "1"
+cssparser = "0.37"

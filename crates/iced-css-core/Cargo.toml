@@ -1,0 +1,10 @@
+[package]
+name = "iced-css-core"
+description = "CSS parsing and style resolution shared by iced-css and iced-css-macro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cssparser.workspace = true

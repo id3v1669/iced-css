@@ -1,4 +1,63 @@
+mod constrained;
+
+pub use constrained::Constrained;
+pub use iced_css_core::{Length, MarginValue, Margins, Resolved};
 pub use iced_css_macro::style;
+
+pub fn apply<'a, Message, Theme, Renderer>(
+    element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+    resolved: Resolved,
+) -> iced::Element<'a, Message, Theme, Renderer>
+where
+    Message: 'a,
+    Theme: iced::widget::container::Catalog + 'a,
+    Renderer: iced::advanced::Renderer + 'a,
+{
+    let mut element = element.into();
+
+    if resolved.width.is_some()
+        || resolved.height.is_some()
+        || resolved.min_width.is_some()
+        || resolved.max_width.is_some()
+    {
+        element = Constrained::new(
+            element,
+            resolved.width,
+            resolved.height,
+            resolved.min_width,
+            resolved.max_width,
+        )
+        .into();
+    }
+
+    if let Some(margin) = resolved.margin {
+        let px = |value: MarginValue| match value {
+            MarginValue::Px(v) => v,
+            MarginValue::Auto => 0.0,
+        };
+        let mut wrapper = iced::widget::container(element).padding(iced::Padding {
+            top: px(margin.top),
+            right: px(margin.right),
+            bottom: px(margin.bottom),
+            left: px(margin.left),
+        });
+
+        wrapper = match (margin.left, margin.right) {
+            (MarginValue::Auto, MarginValue::Auto) => wrapper.center_x(iced::Length::Fill),
+            (MarginValue::Auto, _) => wrapper
+                .width(iced::Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right),
+            (_, MarginValue::Auto) => wrapper
+                .width(iced::Length::Fill)
+                .align_x(iced::alignment::Horizontal::Left),
+            _ => wrapper,
+        };
+
+        element = wrapper.into();
+    }
+
+    element
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
