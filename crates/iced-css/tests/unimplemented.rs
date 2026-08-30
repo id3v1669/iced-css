@@ -28,7 +28,6 @@ css_todo_test!(specificity_and_important, "ordering, !important");
 css_todo_test!(inheritance, "inheritance");
 css_todo_test!(cascade_keywords, "inherit / initial / unset / revert");
 
-css_todo_test!(padding, "padding");
 css_todo_test!(box_sizing, "box-sizing");
 css_todo_test!(aspect_ratio, "aspect-ratio");
 css_todo_test!(margin_negative, "negative margins");
@@ -79,8 +78,8 @@ css_todo_test!(text_wrapping, "white-space / text-overflow / overflow-wrap");
 
 css_todo_test!(units_relative, "em / rem / vw / vh / vmin / vmax");
 css_todo_test!(percent_of_window, "% on a root widget");
-css_todo_test!(min_width_constraint_widget, "min-width / min-height");
-css_todo_test!(percent_of_dynamic_parent, "% of a dynamic parent");
+css_todo_test!(percent_height_against_auto_parent, "height: % against an auto-height parent computes to auto");
+css_todo_test!(percent_margin_padding, "% margin / padding");
 css_todo_test!(unimplemented_property_under_compile, "unimplemented property under Compile");
 css_todo_test!(calc_and_math_fns, "calc() / min() / max() / clamp()");
 css_todo_test!(custom_properties, "--x / var() / @property");

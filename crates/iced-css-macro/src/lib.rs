@@ -172,7 +172,13 @@ impl VisitMut for Rewriter {
         let resolved = resolved_tokens(&self.stylesheet.resolve(&names));
         let receiver = &call.receiver;
 
-        *expr = syn::parse_quote!(::iced_css::apply(#receiver, #resolved));
+        *expr = syn::parse_quote!({
+            use ::iced_css::dispatch::{TagButton as _, TagContainer as _, TagWrapped as _};
+            let __iced_css_widget = #receiver;
+            (&__iced_css_widget)
+                .__iced_css_tag()
+                .apply(__iced_css_widget, #resolved)
+        });
     }
 }
 
@@ -227,7 +233,7 @@ mod tests {
             view(),
         )
         .unwrap();
-        assert!(out.contains("iced_css :: apply"), "{out}");
+        assert!(out.contains("__iced_css_tag"), "{out}");
         assert!(out.contains("Px (50f32)"), "{out}");
         assert!(!out.contains("style_classes"), "{out}");
     }
@@ -246,7 +252,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(out.contains("iced_css :: apply"), "{out}");
+        assert!(out.contains("__iced_css_tag"), "{out}");
         assert!(!out.contains("style_classes"), "{out}");
     }
 
@@ -358,6 +364,20 @@ fn resolved_tokens(resolved: &Resolved) -> proc_macro2::TokenStream {
     let height = length(&resolved.height);
     let min_width = length(&resolved.min_width);
     let max_width = length(&resolved.max_width);
+    let min_height = length(&resolved.min_height);
+    let max_height = length(&resolved.max_height);
+    let padding = match &resolved.padding {
+        None => quote!(::core::option::Option::None),
+        Some(p) => {
+            let (top, right, bottom, left) = (p.top, p.right, p.bottom, p.left);
+            quote!(::core::option::Option::Some(::iced_css::Paddings {
+                top: #top,
+                right: #right,
+                bottom: #bottom,
+                left: #left,
+            }))
+        }
+    };
     let margin = match &resolved.margin {
         None => quote!(::core::option::Option::None),
         Some(margins) => {
@@ -379,6 +399,9 @@ fn resolved_tokens(resolved: &Resolved) -> proc_macro2::TokenStream {
         height: #height,
         min_width: #min_width,
         max_width: #max_width,
+        min_height: #min_height,
+        max_height: #max_height,
         margin: #margin,
+        padding: #padding,
     })
 }

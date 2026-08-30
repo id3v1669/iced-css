@@ -1,6 +1,5 @@
 //! Classes handling: matching by class, multiple classes, cascade order.
-//! (Unknown-class rejection under Compile is covered by the trybuild suite in
-//! macro_ui.rs.)
+//! (Unknown-class rejection is unit-tested in iced-css-macro.)
 
 #[macro_use]
 mod common;

@@ -1,6 +1,6 @@
 use cssparser::{Delimiter, Parser, ParserInput, Token};
 
-use crate::resolve::{Length, MarginValue, Margins};
+use crate::resolve::{Length, MarginValue, Margins, Paddings};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Property {
@@ -8,11 +8,18 @@ pub enum Property {
     Height(Length),
     MinWidth(Length),
     MaxWidth(Length),
+    MinHeight(Length),
+    MaxHeight(Length),
     Margin(Margins),
     MarginTop(MarginValue),
     MarginRight(MarginValue),
     MarginBottom(MarginValue),
     MarginLeft(MarginValue),
+    Padding(Paddings),
+    PaddingTop(f32),
+    PaddingRight(f32),
+    PaddingBottom(f32),
+    PaddingLeft(f32),
     Unsupported(String),
 }
 
@@ -97,7 +104,15 @@ fn parse_declarations<'i>(parser: &mut Parser<'i, '_>) -> Result<Vec<Property>, 
     let mut declarations = Vec::new();
 
     while !parser.is_exhausted() {
-        let name = parser.expect_ident_cloned().map_err(Error::from)?;
+        // Empty are valid, just skip them.
+        if parser.try_parse(|p| p.expect_semicolon()).is_ok() {
+            continue;
+        }
+        // Names are case-insensitive.
+        let name = parser
+            .expect_ident_cloned()
+            .map_err(Error::from)?
+            .to_ascii_lowercase();
         parser.expect_colon().map_err(Error::from)?;
 
         let declaration = parser
@@ -114,12 +129,19 @@ fn parse_value<'i>(name: &str, parser: &mut Parser<'i, '_>) -> Result<Property, 
         "width" => Property::Width(parse_length(parser)?),
         "height" => Property::Height(parse_length(parser)?),
         "min-width" => Property::MinWidth(parse_length(parser)?),
-        "max-width" => Property::MaxWidth(parse_length(parser)?),
+        "max-width" => Property::MaxWidth(parse_max_length(parser)?),
+        "min-height" => Property::MinHeight(parse_length(parser)?),
+        "max-height" => Property::MaxHeight(parse_max_length(parser)?),
         "margin" => Property::Margin(parse_margin_shorthand(parser)?),
         "margin-top" => Property::MarginTop(parse_margin_value(parser)?),
         "margin-right" => Property::MarginRight(parse_margin_value(parser)?),
         "margin-bottom" => Property::MarginBottom(parse_margin_value(parser)?),
         "margin-left" => Property::MarginLeft(parse_margin_value(parser)?),
+        "padding" => Property::Padding(parse_padding_shorthand(parser)?),
+        "padding-top" => Property::PaddingTop(parse_padding_value(parser)?),
+        "padding-right" => Property::PaddingRight(parse_padding_value(parser)?),
+        "padding-bottom" => Property::PaddingBottom(parse_padding_value(parser)?),
+        "padding-left" => Property::PaddingLeft(parse_padding_value(parser)?),
         _ => {
             // Consume (and thereby syntax-check) the rest of the value.
             while !parser.is_exhausted() {
@@ -137,6 +159,14 @@ fn parse_value<'i>(name: &str, parser: &mut Parser<'i, '_>) -> Result<Property, 
 }
 
 fn parse_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
+    match parse_signed_length(parser)? {
+        Length::Px(v) if v < 0.0 => error(parser, "negative length"),
+        Length::Percent(f) if f < 0.0 => error(parser, "negative percentage"),
+        length => Ok(length),
+    }
+}
+
+fn parse_signed_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
     match parser.next()?.clone() {
         Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("px") => {
             Ok(Length::Px(value))
@@ -152,12 +182,72 @@ fn parse_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
     }
 }
 
-fn parse_margin_value<'i>(parser: &mut Parser<'i, '_>) -> Result<MarginValue, Error<'i>> {
+fn parse_max_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
+    if parser
+        .try_parse(|p| p.expect_ident_matching("none"))
+        .is_ok()
+    {
+        return Ok(Length::Auto);
+    }
     match parse_length(parser)? {
+        Length::Auto => error(parser, "max-width/max-height take `none`, not `auto`"),
+        length => Ok(length),
+    }
+}
+
+fn parse_margin_value<'i>(parser: &mut Parser<'i, '_>) -> Result<MarginValue, Error<'i>> {
+    match parse_signed_length(parser)? {
         Length::Px(value) => Ok(MarginValue::Px(value)),
         Length::Auto => Ok(MarginValue::Auto),
         Length::Percent(_) => error(parser, "percentage margins are not supported yet"),
     }
+}
+
+fn parse_padding_value<'i>(parser: &mut Parser<'i, '_>) -> Result<f32, Error<'i>> {
+    match parse_length(parser)? {
+        Length::Px(value) => Ok(value),
+        Length::Auto => error(parser, "padding does not accept `auto`"),
+        Length::Percent(_) => error(parser, "percentage padding is not supported yet"),
+    }
+}
+
+fn parse_padding_shorthand<'i>(parser: &mut Parser<'i, '_>) -> Result<Paddings, Error<'i>> {
+    let mut values = Vec::new();
+    while !parser.is_exhausted() {
+        if values.len() == 4 {
+            return error(parser, "padding shorthand takes at most 4 values");
+        }
+        values.push(parse_padding_value(parser)?);
+    }
+
+    Ok(match values[..] {
+        [all] => Paddings {
+            top: all,
+            right: all,
+            bottom: all,
+            left: all,
+        },
+        [vertical, horizontal] => Paddings {
+            top: vertical,
+            right: horizontal,
+            bottom: vertical,
+            left: horizontal,
+        },
+        [top, horizontal, bottom] => Paddings {
+            top,
+            right: horizontal,
+            bottom,
+            left: horizontal,
+        },
+        [top, right, bottom, left] => Paddings {
+            top,
+            right,
+            bottom,
+            left,
+        },
+        [] => return error(parser, "padding needs at least 1 value"),
+        _ => unreachable!(),
+    })
 }
 
 fn parse_margin_shorthand<'i>(parser: &mut Parser<'i, '_>) -> Result<Margins, Error<'i>> {
@@ -276,6 +366,71 @@ mod tests {
     }
 
     #[test]
+    fn min_max_height() {
+        let sheet = parse(".a { min-height: 10px; max-height: 20px; }").unwrap();
+        assert_eq!(
+            sheet.rules[0].declarations,
+            vec![
+                Property::MinHeight(Length::Px(10.0)),
+                Property::MaxHeight(Length::Px(20.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn padding_shorthands() {
+        let sheet = parse(".a2 { padding: 10px 20px; } .a4 { padding: 10px 20px 30px 40px; }").unwrap();
+        assert_eq!(
+            sheet.rules[0].declarations,
+            vec![Property::Padding(Paddings { top: 10.0, right: 20.0, bottom: 10.0, left: 20.0 })]
+        );
+        assert_eq!(
+            sheet.rules[1].declarations,
+            vec![Property::Padding(Paddings { top: 10.0, right: 20.0, bottom: 30.0, left: 40.0 })]
+        );
+    }
+
+    #[test]
+    fn padding_longhand() {
+        let sheet = parse(".a { padding-left: 15px; }").unwrap();
+        assert_eq!(
+            sheet.rules[0].declarations,
+            vec![Property::PaddingLeft(15.0)]
+        );
+    }
+
+    #[test]
+    fn padding_auto_is_an_error() {
+        assert!(parse(".a { padding: auto; }").is_err());
+    }
+
+    #[test]
+    fn padding_five_values_is_an_error() {
+        assert!(parse(".a { padding: 1px 2px 3px 4px 5px; }").is_err());
+    }
+
+    #[test]
+    fn negative_lengths_are_invalid_except_margins() {
+        assert!(parse(".a { padding: -5px; }").is_err());
+        assert!(parse(".a { width: -5px; }").is_err());
+        assert!(parse(".a { min-height: -5%; }").is_err());
+        // negative margins are valid
+        assert_eq!(
+            parse(".a { margin-left: -5px; }").unwrap().rules[0].declarations,
+            vec![Property::MarginLeft(MarginValue::Px(-5.0))]
+        );
+    }
+
+    #[test]
+    fn unsupported_valid_css_errors_for_now() {
+        // valid CSS that is not implemented yet: pinned as errors so the
+        // behavior change is visible when they land (see unimplemented.rs)
+        assert!(parse(".a { margin: 10%; }").is_err());
+        assert!(parse(".a { padding: 10%; }").is_err());
+        assert!(parse(".a { width: 10px !important; }").is_err());
+    }
+
+    #[test]
     fn margin_five_values_is_an_error() {
         assert!(parse(".m { margin: 1px 2px 3px 4px 5px; }").is_err());
     }
@@ -312,8 +467,46 @@ mod tests {
     }
 
     #[test]
-    fn unterminated_block_is_an_error() {
+    fn empty_value_is_an_error() {
         assert!(parse(".btn { width: 50px; height:").is_err());
+        assert!(parse(".btn { width: 50px; height: }").is_err());
+    }
+
+    #[test]
+    fn unclosed_block_at_eof_is_valid() {
+        // css-syntax: an unclosed block is implicitly closed at end of input
+        let sheet = parse(".a { width: 10px;").unwrap();
+        assert_eq!(sheet.rules[0].declarations, vec![Property::Width(Length::Px(10.0))]);
+    }
+
+    #[test]
+    fn empty_declarations_are_skipped() {
+        for css in [".a { width: 10px;; }", ".a { ; width: 10px; }", ".a { ;; }"] {
+            let sheet = parse(css).unwrap();
+            assert_eq!(sheet.rules.len(), 1, "{css}");
+        }
+        assert_eq!(
+            parse(".a { width: 10px;; }").unwrap().rules[0].declarations,
+            vec![Property::Width(Length::Px(10.0))]
+        );
+    }
+
+    #[test]
+    fn property_names_are_case_insensitive() {
+        let sheet = parse(".a { WIDTH: 10px; Max-Width: none; }").unwrap();
+        assert_eq!(
+            sheet.rules[0].declarations,
+            vec![Property::Width(Length::Px(10.0)), Property::MaxWidth(Length::Auto)]
+        );
+    }
+
+    #[test]
+    fn max_none_is_no_constraint_and_auto_is_invalid() {
+        assert_eq!(
+            parse(".a { max-height: none; }").unwrap().rules[0].declarations,
+            vec![Property::MaxHeight(Length::Auto)]
+        );
+        assert!(parse(".a { max-width: auto; }").is_err());
     }
 
     #[test]

@@ -1,8 +1,171 @@
 mod constrained;
 
 pub use constrained::Constrained;
-pub use iced_css_core::{Length, MarginValue, Margins, Resolved};
+pub use iced_css_core::{Length, MarginValue, Margins, Paddings, Resolved};
 pub use iced_css_macro::style;
+
+pub mod dispatch {
+    use super::{Constrained, MarginValue, Paddings, Resolved};
+    use iced::widget::{button, container, Button, Container};
+
+    pub struct NativeContainer;
+    pub struct NativeButton;
+    pub struct Wrapped;
+
+    pub trait TagContainer {
+        fn __iced_css_tag(&self) -> NativeContainer {
+            NativeContainer
+        }
+    }
+    impl<'a, M, T, R> TagContainer for Container<'a, M, T, R>
+    where
+        T: container::Catalog,
+        R: iced::advanced::Renderer,
+    {
+    }
+
+    pub trait TagButton {
+        fn __iced_css_tag(&self) -> NativeButton {
+            NativeButton
+        }
+    }
+    impl<'a, M, T, R> TagButton for Button<'a, M, T, R>
+    where
+        T: button::Catalog,
+        R: iced::advanced::Renderer,
+    {
+    }
+
+    pub trait TagWrapped {
+        fn __iced_css_tag(&self) -> Wrapped {
+            Wrapped
+        }
+    }
+    impl<T> TagWrapped for &T {}
+
+    fn height_length(resolved: &Resolved) -> Option<iced::Length> {
+        match resolved.height {
+            Some(super::Length::Px(_) | super::Length::Percent(_)) => Some(iced::Length::Fill),
+            Some(super::Length::Auto) | None => None,
+        }
+    }
+
+    fn padding(p: Paddings) -> iced::Padding {
+        iced::Padding {
+            top: p.top,
+            right: p.right,
+            bottom: p.bottom,
+            left: p.left,
+        }
+    }
+
+    impl NativeContainer {
+        pub fn apply<'a, M, T, R>(
+            self,
+            mut widget: Container<'a, M, T, R>,
+            resolved: Resolved,
+        ) -> iced::Element<'a, M, T, R>
+        where
+            M: 'a,
+            T: container::Catalog + 'a,
+            R: iced::advanced::Renderer + 'a,
+        {
+            if let Some(p) = resolved.padding {
+                widget = widget.padding(padding(p));
+            }
+            widget = widget.width(iced::Length::Fill);
+            if let Some(height) = height_length(&resolved) {
+                widget = widget.height(height);
+            }
+            finish(widget, resolved)
+        }
+    }
+
+    impl NativeButton {
+        pub fn apply<'a, M, T, R>(
+            self,
+            mut widget: Button<'a, M, T, R>,
+            resolved: Resolved,
+        ) -> iced::Element<'a, M, T, R>
+        where
+            M: Clone + 'a,
+            T: button::Catalog + container::Catalog + 'a,
+            R: iced::advanced::Renderer + 'a,
+        {
+            if let Some(p) = resolved.padding {
+                widget = widget.padding(padding(p));
+            }
+            widget = widget.width(iced::Length::Fill);
+            if let Some(height) = height_length(&resolved) {
+                widget = widget.height(height);
+            }
+            finish(widget, resolved)
+        }
+    }
+
+    impl Wrapped {
+        pub fn apply<'a, M, T, R>(
+            self,
+            widget: impl Into<iced::Element<'a, M, T, R>>,
+            resolved: Resolved,
+        ) -> iced::Element<'a, M, T, R>
+        where
+            M: 'a,
+            T: container::Catalog + 'a,
+            R: iced::advanced::Renderer + 'a,
+        {
+            let mut element_box = iced::widget::container(widget).width(iced::Length::Fill);
+            if let Some(p) = resolved.padding {
+                element_box = element_box.padding(padding(p));
+            }
+            if let Some(height) = height_length(&resolved) {
+                element_box = element_box.height(height);
+            }
+            finish(element_box, resolved)
+        }
+    }
+
+    fn finish<'a, M, T, R>(
+        element_box: impl Into<iced::Element<'a, M, T, R>>,
+        resolved: Resolved,
+    ) -> iced::Element<'a, M, T, R>
+    where
+        M: 'a,
+        T: container::Catalog + 'a,
+        R: iced::advanced::Renderer + 'a,
+    {
+        let mut element: iced::Element<'a, M, T, R> =
+            Constrained::new(element_box, &resolved).into();
+
+        if let Some(margin) = resolved.margin {
+            let px = |value: MarginValue| match value {
+                MarginValue::Px(v) => v,
+                MarginValue::Auto => 0.0,
+            };
+            let mut wrapper = iced::widget::container(element).padding(iced::Padding {
+                top: px(margin.top),
+                right: px(margin.right),
+                bottom: px(margin.bottom),
+                left: px(margin.left),
+            });
+
+            wrapper = match (margin.left, margin.right) {
+                (MarginValue::Auto, MarginValue::Auto) => wrapper.center_x(iced::Length::Fill),
+                (MarginValue::Auto, _) => wrapper
+                    .width(iced::Length::Fill)
+                    .align_x(iced::alignment::Horizontal::Right),
+                (_, MarginValue::Auto) => wrapper
+                    .width(iced::Length::Fill)
+                    .align_x(iced::alignment::Horizontal::Left),
+                _ => wrapper,
+            };
+
+            element = wrapper.into();
+        }
+
+        element
+    }
+}
 
 pub fn apply<'a, Message, Theme, Renderer>(
     element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
@@ -13,50 +176,7 @@ where
     Theme: iced::widget::container::Catalog + 'a,
     Renderer: iced::advanced::Renderer + 'a,
 {
-    let mut element = element.into();
-
-    if resolved.width.is_some()
-        || resolved.height.is_some()
-        || resolved.min_width.is_some()
-        || resolved.max_width.is_some()
-    {
-        element = Constrained::new(
-            element,
-            resolved.width,
-            resolved.height,
-            resolved.min_width,
-            resolved.max_width,
-        )
-        .into();
-    }
-
-    if let Some(margin) = resolved.margin {
-        let px = |value: MarginValue| match value {
-            MarginValue::Px(v) => v,
-            MarginValue::Auto => 0.0,
-        };
-        let mut wrapper = iced::widget::container(element).padding(iced::Padding {
-            top: px(margin.top),
-            right: px(margin.right),
-            bottom: px(margin.bottom),
-            left: px(margin.left),
-        });
-
-        wrapper = match (margin.left, margin.right) {
-            (MarginValue::Auto, MarginValue::Auto) => wrapper.center_x(iced::Length::Fill),
-            (MarginValue::Auto, _) => wrapper
-                .width(iced::Length::Fill)
-                .align_x(iced::alignment::Horizontal::Right),
-            (_, MarginValue::Auto) => wrapper
-                .width(iced::Length::Fill)
-                .align_x(iced::alignment::Horizontal::Left),
-            _ => wrapper,
-        };
-
-        element = wrapper.into();
-    }
-
-    element
+    dispatch::Wrapped.apply(element, resolved)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +186,7 @@ pub enum Policy {
     Auto,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Reload,
     Reloaded(Result<(), Error>),

@@ -30,13 +30,25 @@ impl Default for Margins {
     }
 }
 
+/// Padding never accepts `auto`, so its sides are plain pixel values.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Paddings {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Resolved {
     pub width: Option<Length>,
     pub height: Option<Length>,
     pub min_width: Option<Length>,
     pub max_width: Option<Length>,
+    pub min_height: Option<Length>,
+    pub max_height: Option<Length>,
     pub margin: Option<Margins>,
+    pub padding: Option<Paddings>,
 }
 
 impl crate::Stylesheet {
@@ -55,7 +67,22 @@ impl crate::Stylesheet {
                     Property::Height(v) => resolved.height = Some(v),
                     Property::MinWidth(v) => resolved.min_width = Some(v),
                     Property::MaxWidth(v) => resolved.max_width = Some(v),
+                    Property::MinHeight(v) => resolved.min_height = Some(v),
+                    Property::MaxHeight(v) => resolved.max_height = Some(v),
                     Property::Margin(m) => resolved.margin = Some(m),
+                    Property::Padding(p) => resolved.padding = Some(p),
+                    Property::PaddingTop(v) => {
+                        resolved.padding.get_or_insert_with(Paddings::default).top = v;
+                    }
+                    Property::PaddingRight(v) => {
+                        resolved.padding.get_or_insert_with(Paddings::default).right = v;
+                    }
+                    Property::PaddingBottom(v) => {
+                        resolved.padding.get_or_insert_with(Paddings::default).bottom = v;
+                    }
+                    Property::PaddingLeft(v) => {
+                        resolved.padding.get_or_insert_with(Paddings::default).left = v;
+                    }
                     Property::MarginTop(v) => {
                         resolved.margin.get_or_insert_with(Margins::default).top = v;
                     }
@@ -135,6 +162,29 @@ mod tests {
         assert_eq!(m.right, MarginValue::Px(0.0));
         assert_eq!(m.bottom, MarginValue::Px(0.0));
         assert_eq!(m.left, MarginValue::Px(0.0));
+    }
+
+    #[test]
+    fn padding_longhand_over_shorthand() {
+        let sheet = parse(".p { padding: 10px; padding-left: 40px; }").unwrap();
+        let p = sheet.resolve(&["p"]).padding.unwrap();
+        assert_eq!(p.top, 10.0);
+        assert_eq!(p.left, 40.0);
+    }
+
+    #[test]
+    fn padding_longhand_alone_zeroes_rest() {
+        let sheet = parse(".p { padding-bottom: 5px; }").unwrap();
+        let p = sheet.resolve(&["p"]).padding.unwrap();
+        assert_eq!((p.top, p.right, p.bottom, p.left), (0.0, 0.0, 5.0, 0.0));
+    }
+
+    #[test]
+    fn min_max_height_resolve() {
+        let sheet = parse(".s { min-height: 10px; max-height: 20px; }").unwrap();
+        let resolved = sheet.resolve(&["s"]);
+        assert_eq!(resolved.min_height, Some(Length::Px(10.0)));
+        assert_eq!(resolved.max_height, Some(Length::Px(20.0)));
     }
 
     #[test]
