@@ -5,3 +5,5 @@ pub mod compatibility;
 pub mod leaf_slots;
 pub mod source_slots;
 pub mod stylesheet;
+
+pub mod pane_roles;
