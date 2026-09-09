@@ -37,3 +37,5 @@ pub mod bidi_n0;
 pub mod bidi_implicit;
 
 pub mod bidi_lines;
+
+pub mod bidi_stored;
