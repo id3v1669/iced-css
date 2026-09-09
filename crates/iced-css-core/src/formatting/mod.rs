@@ -25,3 +25,5 @@ pub mod clip;
 pub mod table_borders;
 
 pub mod line_geometry;
+
+pub mod table_placement;
