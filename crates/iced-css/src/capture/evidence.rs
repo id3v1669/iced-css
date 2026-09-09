@@ -31,6 +31,10 @@ impl std::error::Error for CaptureError {}
 #[derive(Debug)]
 enum Kind {
     Text(String),
+    RichText {
+        text: String,
+        runs: Vec<std::ops::Range<usize>>,
+    },
     Checkbox(Option<String>),
     Toggler(Option<String>),
     Radio(String),
@@ -102,6 +106,7 @@ impl ConstructionNode {
     pub fn canonical_type(&self) -> &'static str {
         match self.kind {
             Kind::Text(_) => "text",
+            Kind::RichText { .. } => "rich_text",
             Kind::Checkbox(_) => "checkbox",
             Kind::Toggler(_) => "toggler",
             Kind::Radio(_) => "radio",
@@ -135,7 +140,7 @@ impl ConstructionNode {
     }
     pub fn text(&self) -> Option<&str> {
         match &self.kind {
-            Kind::Text(text) | Kind::Radio(text) => Some(text),
+            Kind::Text(text) | Kind::Radio(text) | Kind::RichText { text, .. } => Some(text),
             Kind::Checkbox(label) | Kind::Toggler(label) => label.as_deref(),
             Kind::Container
             | Kind::Row
@@ -163,6 +168,14 @@ impl ConstructionNode {
             | Kind::PaneContent
             | Kind::Opaque
             | Kind::Space => None,
+        }
+    }
+    /// Authored RichText span boundaries as UTF-8 byte ranges in text(). Empty
+    /// spans retain empty ranges; runs are text content, not source elements.
+    pub fn text_runs(&self) -> Option<&[std::ops::Range<usize>]> {
+        match &self.kind {
+            Kind::RichText { runs, .. } => Some(runs),
+            _ => None,
         }
     }
     pub fn parent(&self) -> Option<usize> {
@@ -903,3 +916,5 @@ fn check_bytes(capacity: usize, text: usize, limits: CaptureLimits) -> Result<()
 }
 
 mod pane;
+
+mod rich_text;

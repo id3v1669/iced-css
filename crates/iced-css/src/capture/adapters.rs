@@ -461,3 +461,5 @@ pub use super::keyed_column::{
     keyed_column_from_vecs, keyed_column_new, keyed_column_with_capacity,
     keyed_column_with_children,
 };
+
+pub use super::rich_text::{rich_text_new, rich_text_slice, rich_text_vec};

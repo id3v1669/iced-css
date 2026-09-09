@@ -356,3 +356,43 @@ fn mandatory_control_labels_remain_charged_when_a_title_is_added() {
         ));
     }
 }
+
+#[test]
+fn pane_optional_replacement_charges_retained_rich_run_storage() {
+    fn content() -> iced_css::capture::CapturedPaneContent<'static, (), iced::Theme, ()> {
+        let spans: Vec<iced::widget::text::Span<'_, (), iced::Font>> =
+            (0..200).map(|_| iced::widget::span("")).collect();
+        let body = adapters::rich_text_vec::<_, (), iced::Theme, ()>(spans, limits()).unwrap();
+        adapters::pane_content(body, limits())
+            .unwrap()
+            .title_bar(
+                adapters::pane_title(text("old"), limits()).unwrap(),
+                limits(),
+            )
+            .unwrap()
+    }
+    let before = content();
+    let min = before.construction().retained_bytes();
+    let replaced = before
+        .title_bar(
+            adapters::pane_title(text("new"), limits()).unwrap(),
+            limits(),
+        )
+        .unwrap();
+    assert_eq!(replaced.construction().retained_bytes(), min);
+    let rich = replaced
+        .construction()
+        .nodes()
+        .iter()
+        .find(|n| n.canonical_type() == "rich_text")
+        .unwrap();
+    assert_eq!(rich.text_runs().unwrap().len(), 200);
+    let small = CaptureLimits {
+        retained_bytes: NonZeroUsize::new(min - 1).unwrap(),
+        ..limits()
+    };
+    assert!(matches!(
+        content().title_bar(adapters::pane_title(text("new"), limits()).unwrap(), small),
+        Err(CaptureError::Bytes)
+    ));
+}

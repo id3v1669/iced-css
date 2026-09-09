@@ -217,6 +217,11 @@ impl Construction {
 fn node_heap_bytes(node: &ConstructionNode) -> Result<usize, CaptureError> {
     let label = match &node.kind {
         Kind::Text(s) | Kind::Radio(s) => s.capacity(),
+        Kind::RichText { text, runs } => runs
+            .capacity()
+            .checked_mul(size_of::<std::ops::Range<usize>>())
+            .and_then(|n| n.checked_add(text.capacity()))
+            .ok_or(CaptureError::Bytes)?,
         Kind::Checkbox(s) | Kind::Toggler(s) => s.as_ref().map_or(0, String::capacity),
         Kind::PaneGrid
         | Kind::PickList

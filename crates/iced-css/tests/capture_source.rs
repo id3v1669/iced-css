@@ -1316,3 +1316,34 @@ fn keyed_column_children_keep_class_and_adjacent_sibling_selectors() {
     assert!(matches(&source, 0, "keyed_column > text.first:first-child"));
     assert!(matches(&source, 1, "keyed_column > .first + .second"));
 }
+
+#[test]
+fn rich_runs_remain_text_content_without_extra_selector_children() {
+    let spans: Vec<iced::widget::text::Span<'_, (), iced::Font>> = vec![
+        iced::widget::span("left"),
+        iced::widget::span(""),
+        iced::widget::span("right"),
+    ];
+    let rich = adapters::rich_text_vec::<_, (), iced::Theme, ()>(spans, limits())
+        .unwrap()
+        .style_classes(&["label"], attrs())
+        .unwrap()
+        .erase();
+    let row = adapters::row_from_vec(vec![rich, text()], limits()).unwrap();
+    let states = [ConstructionState::default(); 3];
+    let source = ConstructionSource::new(
+        row.construction(),
+        &states,
+        DocumentLanguage::Unknown,
+        source_limits(),
+    )
+    .unwrap();
+    assert!(matches(&source, 0, "row > rich_text.label:first-child"));
+    assert!(matches(&source, 1, "rich_text.label + text"));
+    assert_eq!(row.construction().nodes()[0].text(), Some("leftright"));
+    assert_eq!(
+        row.construction().nodes()[0].text_runs().unwrap(),
+        [0..4, 4..4, 4..9]
+    );
+    assert_eq!(row.construction().nodes().len(), 3);
+}
