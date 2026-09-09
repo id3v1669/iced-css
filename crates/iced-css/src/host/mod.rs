@@ -11,3 +11,6 @@ pub mod pane_roles;
 pub mod keyed_column_state;
 
 pub mod initialize;
+
+mod table_slots;
+pub use table_slots::{TableCellSlot, TableRow, TableSlotError, TableSlots};
