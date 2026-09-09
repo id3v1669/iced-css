@@ -29,3 +29,5 @@ pub mod line_geometry;
 pub mod table_placement;
 
 pub mod table_cell_borders;
+
+pub mod table_line_boundaries;
