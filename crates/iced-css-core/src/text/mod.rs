@@ -35,3 +35,5 @@ pub mod bidi_bracket_pairs;
 pub mod bidi_n0;
 
 pub mod bidi_implicit;
+
+pub mod bidi_lines;
