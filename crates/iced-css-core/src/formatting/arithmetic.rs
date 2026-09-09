@@ -5,8 +5,10 @@
 //! heights <= (4n+2)M, and final coordinates <= (8n+4)M < 2^35 M.
 //! Thus at most 314 magnitude bits are needed in this quantum (320 available).
 //! Original contributions are halved at most once; hierarchy assembly never halves.
+//! Fixed tables sum at most u32::MAX finite widths, below 2^32 M and 310 bits.
+//! Positive integer division retains the fractional quantum as a rounding sticky bit.
 use super::block::BlockWidthError;
-use std::cmp::Ordering;
+use std::{cmp::Ordering, num::NonZeroU32};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Exact {
     words: [u64; 5],
@@ -97,7 +99,7 @@ impl Exact {
         self.words[..word].iter().any(|w| *w != 0)
             || (!bit.is_multiple_of(64) && self.words[word] & ((1u64 << (bit % 64)) - 1) != 0)
     }
-    fn rounded_mantissa(self, shift: usize) -> u32 {
+    fn rounded_mantissa(self, shift: usize, sticky: bool) -> u32 {
         let word = shift / 64;
         let offset = shift % 64;
         let mut upper = self.words[word] >> offset;
@@ -105,21 +107,40 @@ impl Exact {
             upper |= self.words[word + 1] << (64 - offset);
         }
         let mut result = upper as u32;
-        if self.bit(shift - 1) && (self.below(shift - 1) || result & 1 != 0) {
+        if self.bit(shift - 1) && (self.below(shift - 1) || sticky || result & 1 != 0) {
             result += 1;
         }
         result
     }
     pub fn to_f32(self) -> Result<f32, BlockWidthError> {
+        self.round_with_sticky(false)
+    }
+    /// Divide before the sole binary32 rounding; no heap storage or float divisor.
+    pub fn divided_to_f32(self, divisor: NonZeroU32) -> Result<f32, BlockWidthError> {
+        let divisor = u128::from(divisor.get());
+        let mut quotient = self;
+        let mut remainder = 0u128;
+        for word in quotient.words.iter_mut().rev() {
+            // remainder < divisor <= u32::MAX: at most 96 concatenated bits.
+            // The quotient of this step fits one u64 because remainder < divisor.
+            let wide = (remainder << 64) | u128::from(*word);
+            *word = (wide / divisor) as u64;
+            remainder = wide % divisor;
+        }
+        quotient.round_with_sticky(remainder != 0)
+    }
+    fn round_with_sticky(self, sticky: bool) -> Result<f32, BlockWidthError> {
+        // A zero quotient plus its fractional quantum is below 2^-150, hence
+        // below the smallest positive binary32 midpoint, even when sticky is set.
         let Some(word) = self.words.iter().rposition(|word| *word != 0) else {
             return Ok(0.0);
         };
         let highest = word * 64 + 63 - self.words[word].leading_zeros() as usize;
         let payload = if highest < 24 {
-            self.rounded_mantissa(1)
+            self.rounded_mantissa(1, sticky)
         } else {
             let mut exponent = highest - 23;
-            let mut mantissa = self.rounded_mantissa(exponent);
+            let mut mantissa = self.rounded_mantissa(exponent, sticky);
             if mantissa == 1 << 24 {
                 mantissa >>= 1;
                 exponent += 1;
@@ -152,3 +173,7 @@ impl PartialOrd for Exact {
         Some(self.cmp(other))
     }
 }
+
+#[cfg(test)]
+#[path = "arithmetic_tests.rs"]
+mod tests;
