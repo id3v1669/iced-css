@@ -56,6 +56,26 @@ where
     pub fn native_children(&self) -> &[Element<'a, Message, Theme, Renderer>] {
         &self.children
     }
+    /// Borrow children mutably at the raw payload integration boundary.
+    /// This is not exposed on Captured; obtaining this recipe consumes its
+    /// managed wrapper through into_parts. An overlay borrow must end before
+    /// the recipe can be lowered or its child storage replaced. Host lifecycle
+    /// forwarding must preserve the declared content; authored payload changes
+    /// require fresh capture instead of reusing the old evidence.
+    ///
+    /// ```compile_fail,E0505
+    /// use iced_css::capture::ColumnRecipe;
+    /// use iced::{Rectangle, Vector, advanced::{Layout, widget::Tree}};
+    /// fn lower(mut recipe: ColumnRecipe<'_, (), iced::Theme, ()>, tree: &mut Tree, layout: Layout<'_>, viewport: &Rectangle) {
+    ///     let overlay = recipe.native_children_mut()[0].as_widget_mut()
+    ///         .overlay(tree, layout, &(), viewport, Vector::ZERO);
+    ///     let _ = recipe.into_native();
+    ///     drop(overlay);
+    /// }
+    /// ```
+    pub fn native_children_mut(&mut self) -> &mut [Element<'a, Message, Theme, Renderer>] {
+        &mut self.children
+    }
     /// Close through stock from_vec; no child filtering or user conversion replay.
     pub fn into_native(self) -> iced::widget::Column<'a, Message, Theme, Renderer> {
         let mut column = iced::widget::Column::from_vec(self.children)
