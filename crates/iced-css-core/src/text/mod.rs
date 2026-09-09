@@ -1,4 +1,5 @@
 //! Source-preserving text preprocessing. Shaping and line construction are separate.
+pub mod bidi_data;
 pub mod casing_contexts;
 pub mod casing_data;
 pub mod casing_output;
@@ -18,3 +19,5 @@ pub mod unicode;
 pub mod whitespace_preprocessing;
 pub mod word_boundaries;
 pub mod word_data;
+
+pub mod bidi_initial;
