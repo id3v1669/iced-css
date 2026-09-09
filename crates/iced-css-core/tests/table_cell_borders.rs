@@ -100,6 +100,30 @@ fn shared_edge_ties_follow_table_direction_instead_of_contender_input_order() {
     }
 }
 #[test]
+fn horizontal_shared_edge_ties_prefer_top_cell_in_either_input_order() {
+    let grid = place_table_cells(&[2, 2], 0, &[cell(0, 1, 1), cell(1, 1, 1)], limits()).unwrap();
+    for direction in [Direction::Ltr, Direction::Rtl] {
+        let upper =
+            placed_cell_borders(&grid, 0, all(BorderStyle::Solid, 2.), direction).unwrap()[2];
+        let lower =
+            placed_cell_borders(&grid, 1, all(BorderStyle::Solid, 2.), direction).unwrap()[0];
+        assert_eq!((upper.axis, upper.line), (BorderAxis::Horizontal, 1));
+        assert_eq!((lower.axis, lower.line), (upper.axis, upper.line));
+        for (edges, winner) in [([lower.edge, upper.edge], 1), ([upper.edge, lower.edge], 0)] {
+            let split = split_collapsed_borders(&edges, segments()).unwrap();
+            assert_eq!(split.len(), 1);
+            assert_eq!((split[0].start, split[0].end), (0, 1));
+            assert_eq!(
+                split[0].border,
+                CollapsedBorder::Winner {
+                    index: winner,
+                    paint_style: BorderStyle::Solid
+                }
+            );
+        }
+    }
+}
+#[test]
 fn rowspan_side_splits_against_neighbor_sides_and_hidden_suppresses_only_its_segment() {
     let grid = place_table_cells(
         &[2, 2],
