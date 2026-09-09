@@ -110,7 +110,7 @@ impl<M, T: Catalog, R: Renderer> Widget<M, T, R> for ContainerRecipe<'_, M, T, R
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let appearance = theme.style(&self.class);
+        let appearance = self.presentation.apply(theme.style(&self.class));
         if let Some(intersection) = bounds.intersection(viewport) {
             container::draw_background(renderer, &appearance, bounds);
             let inherited = renderer::Style {
