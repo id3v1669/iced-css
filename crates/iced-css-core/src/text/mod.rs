@@ -6,3 +6,4 @@ pub mod newlines;
 pub mod preserved_spaces;
 pub mod space_collapse;
 pub mod unicode;
+pub mod whitespace_preprocessing;
