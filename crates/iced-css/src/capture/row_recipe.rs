@@ -37,6 +37,23 @@ where
         // Q211: source membership and complete payload ownership survive void hints.
         self.children.push(child);
     }
+    /// Borrow retained native children in declared order before lowering.
+    /// No native methods or conversions run here. Prepared state initialization
+    /// may hold this borrow until commit/abandonment; source matching and adapter
+    /// compatibility must be established separately by the host.
+    ///
+    /// ```compile_fail,E0505
+    /// use iced_css::{capture::RowRecipe, host::{initialize::prepare_native_initialization, reconcile::SlotLimits}};
+    /// use iced::advanced::widget::Tree;
+    /// fn lower(recipe: RowRecipe<'_, (), iced::Theme, ()>, slots: &mut [Option<Tree>], limits: SlotLimits) {
+    ///     let pending = prepare_native_initialization(slots, recipe.native_children(), limits).unwrap();
+    ///     let _ = recipe.into_native();
+    ///     pending.commit();
+    /// }
+    /// ```
+    pub fn native_children(&self) -> &[Element<'a, Message, Theme, Renderer>] {
+        &self.children
+    }
     /// Close through stock from_vec; no child filtering or user conversion replay.
     pub fn into_native(self) -> iced::widget::Row<'a, Message, Theme, Renderer> {
         let mut row = iced::widget::Row::from_vec(self.children)
