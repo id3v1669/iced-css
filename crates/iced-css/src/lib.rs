@@ -1,3 +1,30 @@
+//! CSS integration primitives and the legacy Compile style annotation.
+//!
+//! The legacy annotation requires literal class names in active source:
+//! ```compile_fail
+//! #[iced_css::style(inline=".x {width:37px;}",policy=Compile)]
+//! fn view(class:&str)->iced::Element<'static,(),iced::Theme,()> {
+//!     iced::widget::container(iced::widget::Space::new()).style_classes([class]).into()
+//! }
+//! ```
+//! It also requires a literal array, rather than an array variable:
+//! ```compile_fail
+//! #[iced_css::style(inline=".x {width:37px;}",policy=Compile)]
+//! fn view(classes:[&str;1])->iced::Element<'static,(),iced::Theme,()> {
+//!     iced::widget::container(iced::widget::Space::new()).style_classes(classes).into()
+//! }
+//! ```
+//! Runtime conditions do not remove invalid source as compiler cfg guards do:
+//! ```compile_fail
+//! #[iced_css::style(inline=".x {width:37px;}",policy=Compile)]
+//! fn view(class:&str)->iced::Element<'static,(),iced::Theme,()> {
+//!     if cfg!(any()) {
+//!         return iced::widget::container(iced::widget::Space::new()).style_classes([class]).into();
+//!     }
+//!     iced::widget::Space::new().into()
+//! }
+//! ```
+
 pub mod capture;
 mod constrained;
 pub mod diagnostics;

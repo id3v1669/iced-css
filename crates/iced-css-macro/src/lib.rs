@@ -100,25 +100,15 @@ fn expand(args: &Args, function: &mut ItemFn) -> syn::Result<()> {
     let stylesheet =
         iced_css_core::parse(&css).map_err(|error| syn::Error::new(css_span, error.to_string()))?;
 
-    let mut rewriter = Rewriter {
-        stylesheet,
-        errors: Vec::new(),
-    };
+    let mut rewriter = Rewriter { stylesheet };
     // The annotation owns this body, not public signature expressions.
     rewriter.visit_block_mut(&mut function.block);
 
-    match rewriter.errors.into_iter().reduce(|mut all, next| {
-        all.combine(next);
-        all
-    }) {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    Ok(())
 }
 
 struct Rewriter {
     stylesheet: Stylesheet,
-    errors: Vec<syn::Error>,
 }
 
 impl VisitMut for Rewriter {
@@ -150,29 +140,30 @@ impl VisitMut for Rewriter {
             return;
         }
 
-        let classes = match literal_classes(&call.args[0]) {
-            Ok(classes) => classes,
+        // Keep diagnostics inside the expression's existing compiler guard ancestry.
+        // Move attributes to its replacement once; do not evaluate cfg here.
+        let attrs = std::mem::take(&mut call.attrs);
+        let receiver = &call.receiver;
+        let body = match literal_classes(&call.args[0]) {
+            Ok(classes) => {
+                let names: Vec<&str> = classes.iter().map(|(name, _)| name.as_str()).collect();
+                let resolved = resolved_tokens(&self.stylesheet.resolve(&names));
+                quote! {
+                    use ::iced_css::dispatch::{TagButton as _, TagContainer as _, TagWrapped as _};
+                    let __iced_css_widget = #receiver;
+                    (&__iced_css_widget)
+                        .__iced_css_tag()
+                        .apply(__iced_css_widget, #resolved)
+                }
+            }
             Err(error) => {
-                self.errors.push(error);
-                return;
+                let diagnostic = error.into_compile_error();
+                quote! { #diagnostic #receiver }
             }
         };
-
-        if !self.errors.is_empty() {
-            return;
-        }
-
-        let names: Vec<&str> = classes.iter().map(|(name, _)| name.as_str()).collect();
-        let resolved = resolved_tokens(&self.stylesheet.resolve(&names));
-        let receiver = &call.receiver;
-
-        *expr = syn::parse_quote!({
-            use ::iced_css::dispatch::{TagButton as _, TagContainer as _, TagWrapped as _};
-            let __iced_css_widget = #receiver;
-            (&__iced_css_widget)
-                .__iced_css_tag()
-                .apply(__iced_css_widget, #resolved)
-        });
+        let mut replacement: syn::ExprBlock = syn::parse_quote!({ #body });
+        replacement.attrs = attrs;
+        *expr = Expr::Block(replacement);
     }
 }
 
@@ -330,34 +321,6 @@ mod tests {
     fn missing_file_is_a_build_error() {
         let err = expand_str(quote!("does/not/exist.css", policy = Compile), view()).unwrap_err();
         assert!(err.contains("cannot read stylesheet"), "{err}");
-    }
-
-    #[test]
-    fn dynamic_classes_are_a_build_error() {
-        let err = expand_str(
-            quote!(inline = ".btn { width: 50px; }", policy = Compile),
-            quote! {
-                fn view(class: &'static str) -> Element {
-                    container(text("t")).style_classes([class])
-                }
-            },
-        )
-        .unwrap_err();
-        assert!(err.contains("string literals"), "{err}");
-    }
-
-    #[test]
-    fn non_array_class_list_is_a_build_error() {
-        let err = expand_str(
-            quote!(inline = ".btn { width: 50px; }", policy = Compile),
-            quote! {
-                fn view(classes: [&'static str; 1]) -> Element {
-                    container(text("t")).style_classes(classes)
-                }
-            },
-        )
-        .unwrap_err();
-        assert!(err.contains("array of string literals"), "{err}");
     }
 
     #[test]
