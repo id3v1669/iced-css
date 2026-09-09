@@ -201,3 +201,12 @@ pub use table::{CapturedTable, CapturedTableColumn, SafeTable};
 
 mod keyed_column_recipe;
 pub use keyed_column_recipe::KeyedColumnRecipe;
+
+#[cfg(feature = "image-without-codecs")]
+mod image;
+#[cfg(feature = "svg")]
+mod svg;
+#[cfg(feature = "image-without-codecs")]
+pub use evidence::{ImageHints, ImageSource, RgbaBufferStatus, RgbaDeclaration};
+#[cfg(feature = "svg")]
+pub use evidence::{SvgHints, SvgSource, SvgStyleSelection};

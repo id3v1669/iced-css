@@ -1,6 +1,8 @@
 use std::num::NonZeroUsize;
 
 /// Per-operation bounds for the resulting evidence, excluding native payloads.
+/// Image path capacity is included. Shared image byte backing and SVG `Arc`
+/// backing are excluded, although retained handles can keep that backing alive.
 #[derive(Debug, Clone, Copy)]
 pub struct CaptureLimits {
     pub nodes: NonZeroUsize,
@@ -30,6 +32,10 @@ impl std::error::Error for CaptureError {}
 
 #[derive(Debug)]
 enum Kind {
+    #[cfg(feature = "image-without-codecs")]
+    Image(ImageSource),
+    #[cfg(feature = "svg")]
+    Svg(SvgSource),
     Text(String),
     RichText {
         text: String,
@@ -111,6 +117,10 @@ impl ConstructionNode {
     }
     pub fn canonical_type(&self) -> &'static str {
         match self.kind {
+            #[cfg(feature = "image-without-codecs")]
+            Kind::Image(_) => "image",
+            #[cfg(feature = "svg")]
+            Kind::Svg(_) => "svg",
             Kind::Text(_) => "text",
             Kind::RichText { .. } => "rich_text",
             Kind::Checkbox(_) => "checkbox",
@@ -152,6 +162,10 @@ impl ConstructionNode {
     }
     pub fn text(&self) -> Option<&str> {
         match &self.kind {
+            #[cfg(feature = "image-without-codecs")]
+            Kind::Image(_) => None,
+            #[cfg(feature = "svg")]
+            Kind::Svg(_) => None,
             Kind::Text(text) | Kind::Radio(text) | Kind::RichText { text, .. } => Some(text),
             Kind::Checkbox(label) | Kind::Toggler(label) => label.as_deref(),
             Kind::Container
@@ -250,6 +264,9 @@ impl Construction {
     pub fn depth(&self) -> usize {
         self.depth
     }
+    /// Actual evidence vector and owned payload capacities, including image paths.
+    /// Excludes native payloads, shared image byte backing, and SVG `Arc` backing;
+    /// retained handles can nevertheless keep shared backing alive.
     pub fn retained_bytes(&self) -> usize {
         // Constructors check this exact sum before publishing the value.
         self.nodes.capacity() * std::mem::size_of::<ConstructionNode>() + self.owned_bytes
@@ -370,12 +387,20 @@ impl Construction {
     }
 
     fn leaf(kind: Kind, limits: CaptureLimits) -> Result<Self, CaptureError> {
-        check_bytes(1, 0, limits)?;
+        Self::leaf_with_owned(kind, 0, limits)
+    }
+
+    fn leaf_with_owned(
+        kind: Kind,
+        owned_bytes: usize,
+        limits: CaptureLimits,
+    ) -> Result<Self, CaptureError> {
+        check_bytes(1, owned_bytes, limits)?;
         let mut nodes = Vec::new();
         nodes
             .try_reserve_exact(1)
             .map_err(|_| CaptureError::Allocation)?;
-        check_bytes(nodes.capacity(), 0, limits)?;
+        check_bytes(nodes.capacity(), owned_bytes, limits)?;
         nodes.push(ConstructionNode {
             kind,
             parent: None,
@@ -385,7 +410,7 @@ impl Construction {
         });
         Ok(Self {
             nodes,
-            owned_bytes: 0,
+            owned_bytes,
             depth: 1,
         })
     }
@@ -938,3 +963,10 @@ mod pane;
 mod rich_text;
 
 mod table;
+
+#[cfg(any(feature = "image-without-codecs", feature = "svg"))]
+mod resource;
+#[cfg(feature = "image-without-codecs")]
+pub use resource::{ImageHints, ImageSource, RgbaBufferStatus, RgbaDeclaration};
+#[cfg(feature = "svg")]
+pub use resource::{SvgHints, SvgSource, SvgStyleSelection};

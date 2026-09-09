@@ -465,3 +465,8 @@ pub use super::rich_text::{rich_text, rich_text as rich_text_with_spans};
 pub use super::rich_text::rich_text_from_iter;
 
 pub use super::table::{table_column, table_from_vecs};
+
+#[cfg(feature = "image-without-codecs")]
+pub use super::image::image;
+#[cfg(feature = "svg")]
+pub use super::svg::{svg, svg_from_path};

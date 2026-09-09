@@ -216,6 +216,10 @@ impl Construction {
 
 fn node_heap_bytes(node: &ConstructionNode) -> Result<usize, CaptureError> {
     let label = match &node.kind {
+        #[cfg(feature = "image-without-codecs")]
+        Kind::Image(source) => source.owned_bytes(),
+        #[cfg(feature = "svg")]
+        Kind::Svg(_) => 0,
         Kind::Text(s) | Kind::Radio(s) => s.capacity(),
         Kind::RichText { text, runs } => runs
             .capacity()

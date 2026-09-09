@@ -27,3 +27,11 @@ flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"]
 
 [dev-dependencies]
 iced_test.workspace = true
+
+[features]
+default = ["wgpu", "tiny-skia"]
+wgpu = ["iced/wgpu"]
+tiny-skia = ["iced/tiny-skia"]
+image-without-codecs = ["iced/image-without-codecs"]
+image = ["image-without-codecs", "iced/image"]
+svg = ["iced/svg"]
