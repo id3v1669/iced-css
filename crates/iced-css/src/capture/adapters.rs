@@ -1,10 +1,6 @@
 //! The first explicitly typed built-in capture adapters.
-use super::{CaptureError, CaptureLimits, Captured, Construction};
-use iced::{
-    Element,
-    advanced::text::IntoFragment,
-    widget::{Container, Text},
-};
+use super::{CaptureError, CaptureLimits, Captured, Construction, ContainerRecipe as Container};
+use iced::{Element, advanced::text::IntoFragment, widget::Text};
 
 /// Capture an empty Space source; configuration remains on its native payload.
 pub fn space(limits: CaptureLimits) -> Result<Captured<iced::widget::Space>, CaptureError> {

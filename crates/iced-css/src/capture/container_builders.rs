@@ -1,8 +1,8 @@
 //! Native Container builder transport without changing captured source membership.
-use super::Captured;
+use super::{Captured, ContainerRecipe as Container};
 use iced::{
     Length, Padding, Pixels, alignment,
-    widget::container::{Catalog, Container, Style, StyleFn},
+    widget::container::{Catalog, Style, StyleFn},
 };
 impl<'a, Message, Theme, Renderer> Captured<Container<'a, Message, Theme, Renderer>>
 where

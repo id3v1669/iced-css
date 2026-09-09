@@ -146,6 +146,8 @@ mod wrapping_recipe;
 pub use wrapping_recipe::{ColumnWrappingRecipe, RowWrappingRecipe};
 
 mod container_builders;
+mod container_recipe;
+pub use container_recipe::ContainerRecipe;
 
 mod button_builders;
 

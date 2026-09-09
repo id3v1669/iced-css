@@ -11,7 +11,7 @@ fn limits() -> CaptureLimits {
         work: n,
     }
 }
-fn captured() -> Captured<Native> {
+fn captured() -> Captured<iced_css::capture::ContainerRecipe<'static, (), iced::Theme, ()>> {
     adapters::container(
         adapters::space(limits()).unwrap().width(7.0).height(5.0),
         limits(),
