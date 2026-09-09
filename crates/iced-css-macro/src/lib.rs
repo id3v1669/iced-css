@@ -158,14 +158,6 @@ impl VisitMut for Rewriter {
             }
         };
 
-        for (class, span) in &classes {
-            if !self.stylesheet.has_class(class) {
-                self.errors.push(syn::Error::new(
-                    *span,
-                    format!("unknown class `{class}`: undefined in css"),
-                ));
-            }
-        }
         if !self.errors.is_empty() {
             return;
         }
@@ -332,16 +324,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("CSS parse error"), "{err}");
-    }
-
-    #[test]
-    fn unknown_class_is_a_build_error() {
-        let err = expand_str(
-            quote!(inline = ".other { width: 50px; }", policy = Compile),
-            view(),
-        )
-        .unwrap_err();
-        assert!(err.contains("unknown class `btn`"), "{err}");
     }
 
     #[test]
