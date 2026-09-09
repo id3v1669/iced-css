@@ -37,3 +37,5 @@ pub mod table_border_intersection;
 pub mod table_region_borders;
 
 pub mod table_fixed_columns;
+
+pub mod table_repair_stage1;
