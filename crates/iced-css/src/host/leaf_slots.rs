@@ -149,3 +149,60 @@ pub fn prepare_leaf_slots<'engine, 'sources, 'native>(
     .map_err(LeafSlotError::Native)?;
     Ok(PreparedLeafSlots { sources, native })
 }
+
+/// Joint source/native transport with every fresh native state prepared before
+/// commit. Dropping it preserves active source identities, progress and Trees;
+/// only newly constructed pending Trees are retired.
+///
+/// ```compile_fail,E0505
+/// use iced::Element;
+/// use iced_css::host::{leaf_slots::PreparedLeafSlots,reconcile::SlotLimits};
+/// fn move_incoming(widgets:Vec<Element<'_,(),iced::Theme,()>>,prepared:PreparedLeafSlots<'_, '_, '_>,limits:SlotLimits) {
+///     let pending=prepared.with_initialization(&widgets,limits).unwrap();
+///     drop(widgets);
+///     pending.commit();
+/// }
+/// ```
+#[must_use = "commit the complete prepared source/native order, or abandon it"]
+pub struct PreparedInitializedLeafSlots<'engine, 'sources, 'native, 'incoming> {
+    sources: PreparedSourceSlots<'engine, 'sources>,
+    native: super::reconcile::PreparedInitializedNativeSlots<'native, 'static, 'incoming>,
+}
+impl PreparedInitializedLeafSlots<'_, '_, '_, '_> {
+    pub fn removed_instances(&self) -> &[InstanceId] {
+        self.sources.removed_instances()
+    }
+    /// Commit source/progress changes and move retained native Trees. All output
+    /// native slots are occupied. No native construction or diff runs here.
+    /// This does not publish an interaction/style/geometry generation, and the
+    /// existing dependency-panic fault handling requirement still applies.
+    pub fn commit(self) -> LeafSlots {
+        let sources = self.sources.commit();
+        let native = self.native.apply();
+        LeafSlots { sources, native }
+    }
+}
+impl<'engine, 'sources, 'native> PreparedLeafSlots<'engine, 'sources, 'native> {
+    /// Prepare missing native states against the compatibility-filtered mapping,
+    /// before source IDs/progress or retained Trees change. On typed failure the
+    /// consumed preparation is abandoned; active source/native owners remain intact.
+    /// Native callback panic propagates; external native effects cannot roll back.
+    /// Initialization's transient storage/work limits are separate from LeafSlotLimits.
+    pub fn with_initialization<'incoming, Message, Theme, R>(
+        self,
+        incoming: &'incoming [iced::Element<'_, Message, Theme, R>],
+        limits: SlotLimits,
+    ) -> Result<
+        PreparedInitializedLeafSlots<'engine, 'sources, 'native, 'incoming>,
+        super::initialize::InitializationError,
+    >
+    where
+        R: iced::advanced::Renderer,
+    {
+        let native = self.native.with_initialization(incoming, limits)?;
+        Ok(PreparedInitializedLeafSlots {
+            sources: self.sources,
+            native,
+        })
+    }
+}

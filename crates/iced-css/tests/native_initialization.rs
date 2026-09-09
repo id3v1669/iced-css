@@ -312,3 +312,128 @@ fn fresh_and_retained_input_states_work_with_native_keyed_parent_diff() {
     assert!(previous[0].is_some() && previous[1].is_none() && previous[2].is_some());
     drop((retired, previous));
 }
+
+#[test]
+fn prepared_transport_initializes_only_unmatched_slots_before_moving_active_state() {
+    use iced_css::host::reconcile::prepare_native_slots;
+    let trace = Trace::default();
+    let widgets = vec![
+        probe(0, &trace, false),
+        probe(1, &trace, false),
+        probe(2, &trace, false),
+    ];
+    let retained = Tree::new(&widgets[1]);
+    let before = pointer(&retained);
+    let mut previous = vec![Some(retained)];
+    trace.borrow_mut().clear();
+    drop(
+        prepare_native_slots(&mut previous, &[None, Some(0), None], limits())
+            .unwrap()
+            .with_initialization(&widgets, limits())
+            .unwrap(),
+    );
+    assert_eq!(pointer(previous[0].as_ref().unwrap()), before);
+    assert_eq!(
+        *trace.borrow(),
+        [
+            (0, "tag"),
+            (0, "state"),
+            (0, "children"),
+            (2, "tag"),
+            (2, "state"),
+            (2, "children"),
+            (0, "drop"),
+            (2, "drop")
+        ]
+    );
+    trace.borrow_mut().clear();
+    assert!(matches!(
+        prepare_native_slots(&mut previous, &[None, Some(0), None], limits())
+            .unwrap()
+            .with_initialization(
+                &widgets,
+                SlotLimits {
+                    retained_bytes: NonZeroUsize::new(1).unwrap(),
+                    ..limits()
+                }
+            ),
+        Err(InitializationError::Slots(SlotError::Bytes))
+    ));
+    assert!(trace.borrow().is_empty());
+    assert_eq!(pointer(previous[0].as_ref().unwrap()), before);
+    assert!(matches!(
+        prepare_native_slots(&mut previous, &[Some(0)], limits())
+            .unwrap()
+            .with_initialization(&widgets, limits()),
+        Err(InitializationError::Dimensions)
+    ));
+    assert!(trace.borrow().is_empty());
+    assert!(matches!(
+        prepare_native_slots(&mut previous, &[None, Some(0), None], limits())
+            .unwrap()
+            .with_initialization(
+                &widgets,
+                SlotLimits {
+                    work: NonZeroUsize::new(9).unwrap(),
+                    ..limits()
+                }
+            ),
+        Err(InitializationError::Slots(SlotError::Work))
+    ));
+    assert!(trace.borrow().is_empty());
+    let failing = vec![
+        probe(0, &trace, false),
+        probe(1, &trace, false),
+        probe(2, &trace, true),
+    ];
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = prepare_native_slots(&mut previous, &[None, Some(0), None], limits())
+            .unwrap()
+            .with_initialization(&failing, limits());
+    }))
+    .unwrap_err();
+    assert_eq!(
+        failure.downcast_ref::<&str>(),
+        Some(&"application native state failure")
+    );
+    assert_eq!(pointer(previous[0].as_ref().unwrap()), before);
+    assert_eq!(
+        *trace.borrow(),
+        [
+            (0, "tag"),
+            (0, "state"),
+            (0, "children"),
+            (2, "tag"),
+            (2, "state"),
+            (0, "drop")
+        ]
+    );
+    trace.borrow_mut().clear();
+    let pending = prepare_native_slots(&mut previous, &[None, Some(0), None], limits())
+        .unwrap()
+        .with_initialization(
+            &widgets,
+            SlotLimits {
+                work: NonZeroUsize::new(10).unwrap(),
+                ..limits()
+            },
+        )
+        .unwrap();
+    let calls = trace.borrow().clone();
+    assert_eq!(
+        calls,
+        [
+            (0, "tag"),
+            (0, "state"),
+            (0, "children"),
+            (2, "tag"),
+            (2, "state"),
+            (2, "children")
+        ]
+    );
+    let incoming = pending.apply();
+    assert_eq!(*trace.borrow(), calls);
+    assert!(previous[0].is_none());
+    assert!(incoming.iter().all(Option::is_some));
+    assert_eq!(pointer(incoming[1].as_ref().unwrap()), before);
+}

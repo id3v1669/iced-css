@@ -83,7 +83,21 @@ pub fn prepare_native_initialization<'state, 'incoming, Message, Theme, R>(
 where
     R: Renderer,
 {
-    if slots.len() != incoming.len() {
+    prepare_filtered_initialization(slots, incoming, None, limits)
+}
+
+// A mapping entry selects a retained Tree that will move only at transport commit.
+// Such a destination must not receive a speculative fresh Tree during preparation.
+pub(super) fn prepare_filtered_initialization<'state, 'incoming, Message, Theme, R>(
+    slots: &'state mut [Option<Tree>],
+    incoming: &'incoming [Element<'_, Message, Theme, R>],
+    mapping: Option<&[Option<usize>]>,
+    limits: SlotLimits,
+) -> Result<PreparedNativeInitialization<'state, 'incoming>, InitializationError>
+where
+    R: Renderer,
+{
+    if slots.len() != incoming.len() || mapping.is_some_and(|m| m.len() != slots.len()) {
         return Err(InitializationError::Dimensions);
     }
     if slots.len() > limits.entries.get() {
@@ -95,7 +109,14 @@ where
         .get()
         .checked_sub(scan_work)
         .ok_or(SlotError::Work)?;
-    let missing = slots.iter().filter(|slot| slot.is_none()).count();
+    let needs_state = |index: usize, slot: &Option<Tree>| {
+        slot.is_none() && mapping.is_none_or(|m| m[index].is_none())
+    };
+    let missing = slots
+        .iter()
+        .enumerate()
+        .filter(|(index, slot)| needs_state(*index, slot))
+        .count();
     if missing.checked_mul(2).ok_or(SlotError::Work)? > remaining {
         return Err(SlotError::Work.into());
     }
@@ -117,7 +138,7 @@ where
         return Err(SlotError::Bytes.into());
     }
     for (index, (slot, widget)) in slots.iter().zip(incoming).enumerate() {
-        if slot.is_none() {
+        if needs_state(index, slot) {
             pending.push((index, Tree::new(widget)));
         }
     }

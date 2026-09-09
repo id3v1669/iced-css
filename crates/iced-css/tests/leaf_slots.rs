@@ -301,3 +301,176 @@ fn exhausted_identity_reservation_keeps_native_focus_and_original_token() {
         1
     );
 }
+
+fn incoming_input() -> iced::Element<'static, (), iced::Theme, ()> {
+    iced::widget::text_input("", "value")
+        .on_input(|_| ())
+        .into()
+}
+#[test]
+fn initialized_leaf_commit_preserves_retained_focus_and_progress_alongside_new_state() {
+    let mut engine = engine(10);
+    let a = engine.register_source().unwrap();
+    let id = engine.instance(&a).unwrap();
+    let property = PropertyId::lookup("color").unwrap();
+    let selection = AnimationSelection::new(&[property], n(1000)).unwrap();
+    let now = Instant::now();
+    engine
+        .start_progress(
+            &a,
+            &selection,
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            now,
+        )
+        .unwrap();
+    engine.advance(now + Duration::from_millis(250));
+    let mut sources = vec![Some(a)];
+    let mut native = vec![Some(tree(true))];
+    let widgets = vec![incoming_input(), incoming_input()];
+    let prepared = prepare(
+        &mut engine,
+        &mut sources,
+        &mut native,
+        &[schema()],
+        &[schema(); 2],
+        &[None, Some(0)],
+        limits(),
+    )
+    .unwrap()
+    .with_initialization(&widgets, limits().native)
+    .unwrap();
+    assert!(prepared.removed_instances().is_empty());
+    let incoming = prepared.commit();
+    assert!(incoming.native.iter().all(Option::is_some));
+    assert!(!focused(&incoming.native[0]));
+    assert!(focused(&incoming.native[1]));
+    assert_eq!(engine.instance(&incoming.sources[1]).unwrap(), id);
+    assert_ne!(engine.instance(&incoming.sources[0]).unwrap(), id);
+    assert_eq!(
+        engine.sample(&incoming.sources[1], property).unwrap(),
+        Some(0.25)
+    );
+    assert_eq!(engine.sample(&incoming.sources[0], property).unwrap(), None);
+    assert!(native[0].is_none() && sources[0].is_none());
+}
+#[test]
+fn initialized_leaf_abandonment_and_budget_failure_do_not_consume_identity_or_focus() {
+    use iced_css::host::initialize::InitializationError;
+    use iced_css::host::reconcile::SlotError;
+    let mut engine = engine(2);
+    let a = engine.register_source().unwrap();
+    let id = engine.instance(&a).unwrap();
+    let property = PropertyId::lookup("color").unwrap();
+    let selection = AnimationSelection::new(&[property], n(1000)).unwrap();
+    let now = Instant::now();
+    engine
+        .start_progress(
+            &a,
+            &selection,
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            now,
+        )
+        .unwrap();
+    engine.advance(now + Duration::from_millis(250));
+    let mut sources = vec![Some(a)];
+    let mut native = vec![Some(tree(true))];
+    let widgets = vec![incoming_input()];
+    drop(
+        prepare(
+            &mut engine,
+            &mut sources,
+            &mut native,
+            &[schema()],
+            &[schema()],
+            &[None],
+            limits(),
+        )
+        .unwrap()
+        .with_initialization(&widgets, limits().native)
+        .unwrap(),
+    );
+    assert_eq!(engine.instance(sources[0].as_ref().unwrap()).unwrap(), id);
+    assert_eq!(
+        engine
+            .sample(sources[0].as_ref().unwrap(), property)
+            .unwrap(),
+        Some(0.25)
+    );
+    assert!(focused(&native[0]));
+    assert!(matches!(
+        prepare(
+            &mut engine,
+            &mut sources,
+            &mut native,
+            &[schema()],
+            &[schema()],
+            &[None],
+            limits()
+        )
+        .unwrap()
+        .with_initialization(
+            &widgets,
+            SlotLimits {
+                retained_bytes: n(1),
+                ..limits().native
+            }
+        ),
+        Err(InitializationError::Slots(SlotError::Bytes))
+    ));
+    assert_eq!(engine.instance(sources[0].as_ref().unwrap()).unwrap(), id);
+    assert_eq!(
+        engine
+            .sample(sources[0].as_ref().unwrap(), property)
+            .unwrap(),
+        Some(0.25)
+    );
+    assert!(focused(&native[0]));
+    let incoming = prepare(
+        &mut engine,
+        &mut sources,
+        &mut native,
+        &[schema()],
+        &[schema()],
+        &[None],
+        limits(),
+    )
+    .unwrap()
+    .with_initialization(&widgets, limits().native)
+    .unwrap()
+    .commit();
+    assert_eq!(engine.instance(&incoming.sources[0]).unwrap().get(), 2);
+    assert!(!focused(&incoming.native[0]));
+    assert!(focused(&native[0]));
+}
+#[test]
+fn incompatible_leaf_initializes_replacement_and_retires_old_binding_at_commit() {
+    let mut engine = engine(10);
+    let a = engine.register_source().unwrap();
+    let old = a.clone();
+    let id = engine.instance(&a).unwrap();
+    let mut sources = vec![Some(a)];
+    let mut native = vec![Some(tree(true))];
+    let widgets = vec![incoming_input()];
+    let changed = NativeCompatibility {
+        representation: "replacement",
+        ..schema()
+    };
+    let prepared = prepare(
+        &mut engine,
+        &mut sources,
+        &mut native,
+        &[schema()],
+        &[changed],
+        &[Some(0)],
+        limits(),
+    )
+    .unwrap()
+    .with_initialization(&widgets, limits().native)
+    .unwrap();
+    assert_eq!(prepared.removed_instances(), &[id]);
+    let incoming = prepared.commit();
+    assert!(engine.instance(&old).is_err());
+    assert_ne!(engine.instance(&incoming.sources[0]).unwrap(), id);
+    assert!(!focused(&incoming.native[0]));
+    assert!(focused(&native[0]));
+}

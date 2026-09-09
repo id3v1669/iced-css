@@ -144,3 +144,60 @@ fn prepare_slots<'state, 'mapping>(
         destination,
     })
 }
+
+/// Native transport whose unmatched destinations already own fresh state.
+/// Abandonment drops only pending fresh Trees, leaving previous Trees untouched.
+///
+/// ```compile_fail,E0505
+/// use iced::{Element,advanced::widget::Tree};
+/// use iced_css::host::reconcile::{prepare_native_slots,SlotLimits};
+/// fn move_incoming(widgets:Vec<Element<'_,(),iced::Theme,()>>,old:&mut [Option<Tree>],map:&[Option<usize>],limits:SlotLimits) {
+///     let pending=prepare_native_slots(old,map,limits).unwrap().with_initialization(&widgets,limits).unwrap();
+///     drop(widgets);
+///     pending.apply();
+/// }
+/// ```
+#[must_use = "apply the prepared complete native order, or abandon it"]
+pub struct PreparedInitializedNativeSlots<'state, 'mapping, 'incoming> {
+    prepared: PreparedNativeSlots<'state, 'mapping>,
+    _incoming: std::marker::PhantomData<&'incoming ()>,
+}
+impl PreparedInitializedNativeSlots<'_, '_, '_> {
+    /// Move retained Trees into the already prepared destination. All returned
+    /// slots are occupied. No native construction, diff or allocation occurs.
+    /// Unselected previous Trees remain caller-owned for controlled retirement.
+    pub fn apply(self) -> Vec<Option<Tree>> {
+        self.prepared.apply()
+    }
+}
+impl<'state, 'mapping> PreparedNativeSlots<'state, 'mapping> {
+    /// Initialize only unmatched incoming slots before any active Tree moves.
+    /// The mapping must already reflect semantic adapter compatibility. Widget
+    /// correspondence is a caller obligation; native effects are not rolled back.
+    /// Initialization limits independently bound the transient (index,Tree) vector
+    /// and scans, excluding this transport's destination/mapping reservations and
+    /// native recursive allocations. Keep the incoming view through native diff.
+    pub fn with_initialization<'incoming, Message, Theme, R>(
+        mut self,
+        incoming: &'incoming [iced::Element<'_, Message, Theme, R>],
+        limits: SlotLimits,
+    ) -> Result<
+        PreparedInitializedNativeSlots<'state, 'mapping, 'incoming>,
+        super::initialize::InitializationError,
+    >
+    where
+        R: iced::advanced::Renderer,
+    {
+        super::initialize::prepare_filtered_initialization(
+            &mut self.destination,
+            incoming,
+            Some(&self.mapping),
+            limits,
+        )?
+        .commit();
+        Ok(PreparedInitializedNativeSlots {
+            prepared: self,
+            _incoming: std::marker::PhantomData,
+        })
+    }
+}
