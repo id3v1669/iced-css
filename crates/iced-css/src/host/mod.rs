@@ -14,3 +14,5 @@ pub mod initialize;
 
 mod table_slots;
 pub use table_slots::{TableCellSlot, TableRow, TableSlotError, TableSlots};
+
+pub mod source_publication;

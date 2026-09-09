@@ -141,3 +141,19 @@ fn unordered_removals_keep_membership_valid_across_later_single_source_changes()
     assert_eq!(registry.validate(&last).unwrap().get(), 8);
     assert!(registry.validate(&new[1]).is_ok());
 }
+
+#[test]
+fn prepared_token_capacity_matches_committed_storage() {
+    for count in [0, 1, 7] {
+        let mut registry = registry(20);
+        let prepared = registry.prepare_changes(&[], count, limits()).unwrap();
+        let actual_bytes = prepared.token_retained_bytes();
+        let tokens = prepared.commit();
+        assert_eq!(
+            actual_bytes,
+            tokens.capacity() * std::mem::size_of::<iced_css_core::identity::SourceRef>()
+        );
+        assert_eq!(tokens.len(), count);
+        assert!(actual_bytes >= count * std::mem::size_of::<iced_css_core::identity::SourceRef>());
+    }
+}

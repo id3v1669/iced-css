@@ -79,6 +79,12 @@ pub struct PreparedSourceChanges<'a> {
     post_next: Option<NonZeroU64>,
 }
 impl PreparedSourceChanges<'_> {
+    /// Actual retained capacity of the token Vec returned by commit. This exposes
+    /// accounting evidence only, never prospective identities or live tokens.
+    pub fn token_retained_bytes(&self) -> usize {
+        self.tokens.capacity() * size_of::<SourceRef>()
+    }
+
     /// Already validated same-host live identities, for owner cleanup integration.
     pub fn removed_instances(&self) -> &[InstanceId] {
         &self.removed

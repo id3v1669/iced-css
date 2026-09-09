@@ -27,6 +27,12 @@ pub struct PreparedSourceBindings<'a> {
     runner_thread: PhantomData<Rc<()>>,
 }
 impl PreparedSourceBindings<'_> {
+    /// Exact token-vector capacity bytes, transferred to the caller by commit.
+    /// Other identity staging allocations remain under SourceChangeLimits.
+    pub fn token_retained_bytes(&self) -> usize {
+        self.sources.token_retained_bytes()
+    }
+
     /// Validated current identities, available for coordinated interaction cleanup.
     pub fn removed_instances(&self) -> &[InstanceId] {
         self.sources.removed_instances()
