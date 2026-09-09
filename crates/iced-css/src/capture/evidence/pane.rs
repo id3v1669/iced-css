@@ -226,6 +226,7 @@ fn node_heap_bytes(node: &ConstructionNode) -> Result<usize, CaptureError> {
         | Kind::Container
         | Kind::Row
         | Kind::Column
+        | Kind::KeyedColumn
         | Kind::Stack
         | Kind::Grid
         | Kind::Button

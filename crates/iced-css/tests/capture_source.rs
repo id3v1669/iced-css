@@ -1290,3 +1290,29 @@ fn implicit_string_children_keep_text_selectors_without_conversion_nodes() {
     assert!(matches(&source, 1, "text.label + text"));
     assert_eq!(row.construction().nodes()[0].text(), Some(label.as_str()));
 }
+
+#[test]
+fn keyed_column_children_keep_class_and_adjacent_sibling_selectors() {
+    let column = adapters::keyed_column_from_vecs(
+        vec![7u8],
+        vec![text().style_classes(&["first"], attrs()).unwrap()],
+        limits(),
+    )
+    .unwrap()
+    .push(
+        8,
+        text().style_classes(&["second"], attrs()).unwrap(),
+        limits(),
+    )
+    .unwrap();
+    let states = [ConstructionState::default(); 3];
+    let source = ConstructionSource::new(
+        column.construction(),
+        &states,
+        DocumentLanguage::Unknown,
+        source_limits(),
+    )
+    .unwrap();
+    assert!(matches(&source, 0, "keyed_column > text.first:first-child"));
+    assert!(matches(&source, 1, "keyed_column > .first + .second"));
+}

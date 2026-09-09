@@ -11,6 +11,8 @@ pub struct CaptureLimits {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureError {
+    /// Parallel native key and captured child vectors have different lengths.
+    Dimensions,
     Nodes,
     Depth,
     Bytes,
@@ -40,6 +42,7 @@ enum Kind {
     Container,
     Row,
     Column,
+    KeyedColumn,
     Stack,
     Grid,
     Button,
@@ -110,6 +113,7 @@ impl ConstructionNode {
             Kind::Container => "container",
             Kind::Row => "row",
             Kind::Column => "column",
+            Kind::KeyedColumn => "keyed_column",
             Kind::Stack => "stack",
             Kind::Grid => "grid",
             Kind::Button => "button",
@@ -136,6 +140,7 @@ impl ConstructionNode {
             Kind::Container
             | Kind::Row
             | Kind::Column
+            | Kind::KeyedColumn
             | Kind::Stack
             | Kind::Grid
             | Kind::Button
@@ -543,6 +548,13 @@ impl Construction {
         limits: CaptureLimits,
     ) -> Result<(Vec<W>, Self), CaptureError> {
         Self::ordered(children, Kind::Row, limits)
+    }
+
+    pub(super) fn keyed_column<W>(
+        children: Vec<super::Captured<W>>,
+        limits: CaptureLimits,
+    ) -> Result<(Vec<W>, Self), CaptureError> {
+        Self::ordered(children, Kind::KeyedColumn, limits)
     }
 
     pub(super) fn column<W>(

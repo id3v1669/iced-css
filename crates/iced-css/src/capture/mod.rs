@@ -187,3 +187,6 @@ pub use pane_descriptors::{CapturedPaneContent, CapturedPaneTitle};
 
 mod pane_grid;
 pub use pane_grid::CapturedPaneGrid;
+
+mod keyed_column;
+pub use keyed_column::CapturedKeyedColumn;

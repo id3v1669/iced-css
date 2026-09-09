@@ -456,3 +456,8 @@ pub use super::pane_controls::{pane_controls, pane_controls_dynamic};
 pub use super::pane_descriptors::{pane_content, pane_title};
 
 pub use super::pane_grid::pane_grid;
+
+pub use super::keyed_column::{
+    keyed_column_from_vecs, keyed_column_new, keyed_column_with_capacity,
+    keyed_column_with_children,
+};
