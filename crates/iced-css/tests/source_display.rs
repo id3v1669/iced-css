@@ -314,6 +314,9 @@ fn ua_table_defaults_and_original_source_association() {
             other => panic!("unexpected table source {other}"),
         };
         assert_eq!(result.resolution(index).unwrap().display, expected);
+        let text = result.text_keywords(index).unwrap();
+        assert_eq!(text.white_space().keyword().as_str(), "normal");
+        assert_eq!(text.text_transform().keyword().as_str(), "none");
         assert!(std::ptr::eq(
             result.token(index).unwrap(),
             snapshot.token(index).unwrap()
@@ -321,6 +324,7 @@ fn ua_table_defaults_and_original_source_association() {
     }
     for index in [result.node_count(), usize::MAX] {
         assert!(result.resolution(index).is_none());
+        assert!(result.text_keywords(index).is_none());
         assert!(result.token(index).is_none());
     }
     let leaf = host(text().into_parts().1, None, None);
@@ -562,12 +566,12 @@ fn exact_aggregate_and_capacity_admission_and_one_less_boundaries() {
             base.declaration_offers(),
             base.membership_work()
         ),
-        (14, 18, 18_000, 20, 200)
+        (16, 18, 18_000, 20, 200)
     );
     let mut exact = limits();
     exact.nodes = nz(2);
     exact.retained_bytes = nz(base.retained_bytes());
-    exact.work = nz(14);
+    exact.work = nz(16);
     exact.rule_visits = nz(18);
     exact.matching_work = nz(18_000);
     exact.declaration_offers = nz(20);
@@ -588,7 +592,7 @@ fn exact_aggregate_and_capacity_admission_and_one_less_boundaries() {
         Err(SourceDisplayError::Bytes)
     ));
     cap = exact;
-    cap.work = nz(13);
+    cap.work = nz(15);
     assert!(matches!(
         evaluate_source_display(snapshot, &bundle, cap),
         Err(SourceDisplayError::Work)
@@ -706,4 +710,167 @@ fn huge_byte_allowances_are_monotone_and_checked_work_overflow_rejects() {
         evaluate_source_display(owner.snapshot().unwrap(), &bundle, cap),
         Err(SourceDisplayError::MembershipWork)
     ));
+}
+
+#[test]
+fn text_keywords_follow_origins_importance_specificity_order_and_controls() {
+    let owner = host(
+        row(vec![named("normal"), named("important"), named("order")]),
+        None,
+        None,
+    );
+    let ua = catalog();
+    let user = graph(
+        "row{white-space:pre-wrap;text-transform:uppercase} #normal{white-space:pre} #important{white-space:nowrap!important;text-transform:lowercase!important}",
+        ua.next_context(),
+    );
+    let author = graph(
+        "#normal{white-space:pre-line} #important{white-space:normal!important;text-transform:capitalize!important} #order{white-space:pre} #order{white-space:nowrap} text{white-space:normal}",
+        user.next_context().unwrap(),
+    );
+    for enabled in [true, false] {
+        let sheets = controls(&[1], enabled, 100);
+        let bindings = [
+            binding(&user, GraphOrigin::User),
+            binding(&author, GraphOrigin::Author(sheet(1))),
+        ];
+        let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
+        let result = evaluate_source_display(owner.snapshot().unwrap(), &bundle, limits()).unwrap();
+        let expected = if enabled {
+            ["pre-line", "nowrap", "nowrap", "pre-wrap"]
+        } else {
+            ["pre", "nowrap", "pre-wrap", "pre-wrap"]
+        };
+        for (index, white) in expected.into_iter().enumerate() {
+            let pair = result.text_keywords(index).unwrap();
+            assert_eq!(pair.white_space().keyword().as_str(), white);
+            assert_eq!(
+                pair.text_transform().keyword().as_str(),
+                if index == 1 { "lowercase" } else { "uppercase" }
+            );
+        }
+    }
+}
+#[test]
+fn every_text_keyword_computes_through_real_stylesheet_graphs() {
+    let owner = host(row(vec![text()]), None, None);
+    let ua = catalog();
+    let sheets = controls(&[], true, 100);
+    for white in ["normal", "pre", "nowrap", "pre-wrap", "pre-line"] {
+        for transform in ["none", "capitalize", "uppercase", "lowercase"] {
+            let graph = graph(
+                &format!(
+                    "row{{white-space:{white};text-transform:{transform}}} text{{white-space:inherit;text-transform:inherit}}"
+                ),
+                ua.next_context(),
+            );
+            let bindings = [binding(&graph, GraphOrigin::User)];
+            let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
+            let result =
+                evaluate_source_display(owner.snapshot().unwrap(), &bundle, limits()).unwrap();
+            for index in 0..2 {
+                let pair = result.text_keywords(index).unwrap();
+                assert_eq!(
+                    pair.white_space().property(),
+                    iced_css_core::values::registry::PropertyId::lookup("white-space").unwrap()
+                );
+                assert_eq!(
+                    pair.text_transform().property(),
+                    iced_css_core::values::registry::PropertyId::lookup("text-transform").unwrap()
+                );
+                assert_eq!(pair.white_space().keyword().as_str(), white);
+                assert_eq!(pair.text_transform().keyword().as_str(), transform);
+            }
+        }
+    }
+}
+
+#[test]
+fn suppressed_sources_inherit_keywords_without_mutating_text_or_runs() {
+    let spans: Vec<iced::widget::text::Span<'static, (), iced::Font>> = vec![
+        iced::widget::text::Span::new(" MiXeD "),
+        iced::widget::text::Span::new("\ncase"),
+    ];
+    let rich = adapters::rich_text_vec::<_, (), iced::Theme, ()>(spans, capture_limits())
+        .unwrap()
+        .erase()
+        .style_id("rich", attrs())
+        .unwrap();
+    let nested = adapters::container(rich, capture_limits()).unwrap().erase();
+    let plain = adapters::text(" Mixed  \ntext ", capture_limits())
+        .unwrap()
+        .erase();
+    let owner = host(row(vec![plain, nested]), None, None);
+    let snapshot = owner.snapshot().unwrap();
+    let originals: Vec<_> = snapshot
+        .construction()
+        .nodes()
+        .iter()
+        .map(|node| (node.text(), node.text_runs()))
+        .collect();
+    let ua = catalog();
+    let graph = graph(
+        "row{display:none;white-space:pre-wrap;text-transform:uppercase} container{white-space:inherit;text-transform:inherit} #rich{display:block;white-space:pre-line;text-transform:lowercase}",
+        ua.next_context(),
+    );
+    let sheets = controls(&[], true, 100);
+    let bindings = [binding(&graph, GraphOrigin::User)];
+    let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
+    let result = evaluate_source_display(snapshot, &bundle, limits()).unwrap();
+    let eligibility = iced_css::evaluation::source_eligibility::evaluate_source_eligibility(
+        &result,
+        iced_css::evaluation::source_eligibility::SourceEligibilityLimits {
+            nodes: bound(),
+            retained_bytes: nz(20_000_000),
+            work: nz(20_000_000),
+        },
+    )
+    .unwrap();
+    assert!(eligibility.ordered().is_empty());
+    assert_eq!(result.resolution(3).unwrap().display, Display::None);
+    assert_eq!(result.resolution(1).unwrap().display, Display::Block);
+    for (index, original) in originals.iter().enumerate() {
+        let pair = result.text_keywords(index).unwrap();
+        assert_eq!(
+            pair.white_space().keyword().as_str(),
+            if index == 1 { "pre-line" } else { "pre-wrap" }
+        );
+        assert_eq!(
+            pair.text_transform().keyword().as_str(),
+            if index == 1 { "lowercase" } else { "uppercase" }
+        );
+        let node = &result.snapshot().construction().nodes()[index];
+        assert_eq!((node.text(), node.text_runs()), *original);
+        if let Some(text) = original.0 {
+            assert!(std::ptr::eq(node.text().unwrap(), text));
+        }
+        if let Some(runs) = original.1 {
+            assert!(std::ptr::eq(node.text_runs().unwrap(), runs));
+        }
+        assert!(std::ptr::eq(
+            result.token(index).unwrap(),
+            snapshot.token(index).unwrap()
+        ));
+    }
+    assert_eq!(originals[0].0, Some(" Mixed  \ntext "));
+    assert_eq!(originals[1].0, Some(" MiXeD \ncase"));
+    assert_eq!(originals[1].1.unwrap(), [0..7, 7..12]);
+}
+
+#[test]
+fn root_text_inherit_uses_initials_independently_of_display_transformation() {
+    let owner = host(text().into_parts().1, None, None);
+    let ua = catalog();
+    let graph = graph(
+        "text{display:inline;white-space:inherit;text-transform:inherit}",
+        ua.next_context(),
+    );
+    let sheets = controls(&[], true, 100);
+    let bindings = [binding(&graph, GraphOrigin::User)];
+    let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
+    let result = evaluate_source_display(owner.snapshot().unwrap(), &bundle, limits()).unwrap();
+    assert_eq!(result.resolution(0).unwrap().display, Display::Block);
+    let pair = result.text_keywords(0).unwrap();
+    assert_eq!(pair.white_space().keyword().as_str(), "normal");
+    assert_eq!(pair.text_transform().keyword().as_str(), "none");
 }

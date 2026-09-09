@@ -92,3 +92,5 @@ pub mod computed_cursor;
 
 pub mod computed_border_width;
 pub mod computed_color;
+
+pub mod text_keywords;

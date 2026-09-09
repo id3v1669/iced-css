@@ -11,7 +11,10 @@ use iced_css_core::{
     formatting::display::DisplayResolution,
     identity::SourceRef,
     source::selector_tree::SelectorTreeLimits,
-    values::display::{ComputedDisplayError, compute_display_style},
+    values::{
+        display::{ComputedDisplayError, compute_display_style},
+        text_keywords::{ComputedTextKeywords, ComputedTextKeywordsError, compute_text_keywords},
+    },
 };
 use std::{mem::size_of, num::NonZeroUsize};
 
@@ -20,8 +23,8 @@ pub struct SourceDisplayLimits {
     pub nodes: NonZeroUsize,
     /// Actual output-vector capacity, separate from borrowed owners and scratch.
     pub retained_bytes: NonZeroUsize,
-    /// Facade entries: admission + rule checks + slot initialization/evaluation.
-    /// Exactly 1+r+2*n for a successful evaluation.
+    /// Facade entries: admission + rule checks + slot initialization/display/text computation.
+    /// Exactly 1+r+3*n for a successful evaluation.
     pub work: NonZeroUsize,
     /// Conservative n*r reservation, including excluded and unmatched rules.
     pub rule_visits: NonZeroUsize,
@@ -55,6 +58,10 @@ pub enum SourceDisplayError {
         index: usize,
         error: RuleBatchError,
     },
+    ComputedText {
+        index: usize,
+        error: ComputedTextKeywordsError,
+    },
     Computed {
         index: usize,
         error: ComputedDisplayError,
@@ -71,12 +78,19 @@ impl std::error::Error for SourceDisplayError {
             Self::Source(error) => Some(error),
             Self::Cascade { error, .. } => Some(error),
             Self::Computed { error, .. } => Some(error),
+            Self::ComputedText { error, .. } => Some(error),
             _ => None,
         }
     }
 }
 
-/// Complete immutable display/position/float values in original source order.
+#[derive(Debug, Clone, Copy)]
+struct SourceComputed {
+    display: DisplayResolution,
+    text: ComputedTextKeywords,
+}
+
+/// Complete immutable display/position/float and text keywords in original source order.
 /// This is source computation, not formatting suppression or native publication.
 /// The exact snapshot and bundle remain borrowed, including all bundle owners.
 ///
@@ -95,7 +109,7 @@ impl std::error::Error for SourceDisplayError {
 /// fn outlive(snapshot: &InitialSourceSnapshot, bundle: DisplayRuleBundle<'_>, limits: SourceDisplayLimits) {
 ///     let result = evaluate_source_display(snapshot, &bundle, limits).unwrap();
 ///     drop(bundle);
-///     let _ = result.resolution(0);
+///     let _ = result.text_keywords(0);
 /// }
 /// ```
 /// ```compile_fail,E0502
@@ -108,14 +122,14 @@ impl std::error::Error for SourceDisplayError {
 ///     let bundle = DisplayRuleBundle::new(ua, &bindings, sheets, bundle_limits).unwrap();
 ///     let result = evaluate_source_display(snapshot, &bundle, limits).unwrap();
 ///     sheets.set_author_enabled(false).unwrap();
-///     let _ = result.resolution(0);
+///     let _ = result.text_keywords(0);
 /// }
 /// ```
 #[must_use]
 pub struct SourceDisplay<'snapshot, 'bundle, 'rules> {
     snapshot: &'snapshot InitialSourceSnapshot,
     bundle: &'bundle DisplayRuleBundle<'rules>,
-    resolutions: Vec<Option<DisplayResolution>>,
+    resolutions: Vec<Option<SourceComputed>>,
     retained_bytes: usize,
     work: usize,
     rule_visits: usize,
@@ -131,7 +145,17 @@ impl<'snapshot, 'bundle, 'rules> SourceDisplay<'snapshot, 'bundle, 'rules> {
         self.bundle
     }
     pub fn resolution(&self, index: usize) -> Option<&DisplayResolution> {
-        self.resolutions.get(index)?.as_ref()
+        self.resolutions
+            .get(index)?
+            .as_ref()
+            .map(|value| &value.display)
+    }
+    /// Computed keywords for this original source, including suppressed descendants.
+    pub fn text_keywords(&self, index: usize) -> Option<&ComputedTextKeywords> {
+        self.resolutions
+            .get(index)?
+            .as_ref()
+            .map(|value| &value.text)
     }
     /// Exact snapshot token at this original construction index; no token search.
     pub fn token(&self, index: usize) -> Option<&SourceRef> {
@@ -222,7 +246,7 @@ pub fn evaluate_source_display<'snapshot, 'bundle, 'rules>(
     )?;
     charge(
         &mut remaining,
-        n.checked_mul(2).ok_or(SourceDisplayError::Work)?,
+        n.checked_mul(3).ok_or(SourceDisplayError::Work)?,
     )?;
     let work = limits.work.get() - remaining;
     let (mut resolutions, retained_bytes) = output(n, limits.retained_bytes)?;
@@ -254,9 +278,11 @@ pub fn evaluate_source_display<'snapshot, 'bundle, 'rules>(
                 .as_ref()
                 .expect("private postorder source parent is already computed")
         });
-        let computed = compute_display_style(&winners, parent)
+        let display = compute_display_style(&winners, parent.map(|value| &value.display))
             .map_err(|error| SourceDisplayError::Computed { index, error })?;
-        resolutions[index] = Some(computed);
+        let text = compute_text_keywords(&winners, parent.map(|value| &value.text))
+            .map_err(|error| SourceDisplayError::ComputedText { index, error })?;
+        resolutions[index] = Some(SourceComputed { display, text });
     }
     Ok(SourceDisplay {
         snapshot,
@@ -291,7 +317,7 @@ fn product(
 fn output(
     count: usize,
     allowance: NonZeroUsize,
-) -> Result<(Vec<Option<DisplayResolution>>, usize), SourceDisplayError> {
+) -> Result<(Vec<Option<SourceComputed>>, usize), SourceDisplayError> {
     output_bytes(count, allowance)?;
     let mut resolutions = Vec::new();
     resolutions
@@ -303,7 +329,7 @@ fn output(
 }
 fn output_bytes(capacity: usize, allowance: NonZeroUsize) -> Result<usize, SourceDisplayError> {
     let bytes = capacity
-        .checked_mul(size_of::<Option<DisplayResolution>>())
+        .checked_mul(size_of::<Option<SourceComputed>>())
         .ok_or(SourceDisplayError::Bytes)?;
     if bytes > allowance.get() || bytes > isize::MAX as usize {
         return Err(SourceDisplayError::Bytes);
@@ -322,7 +348,7 @@ mod tests {
             assert_eq!(values.len(), count);
             assert_eq!(
                 bytes,
-                values.capacity() * size_of::<Option<DisplayResolution>>()
+                values.capacity() * size_of::<Option<SourceComputed>>()
             );
             assert!(values.iter().all(Option::is_none));
         }
@@ -330,7 +356,7 @@ mod tests {
             output_bytes(usize::MAX, ample),
             Err(SourceDisplayError::Bytes)
         );
-        let too_many = (isize::MAX as usize / size_of::<Option<DisplayResolution>>()) + 1;
+        let too_many = (isize::MAX as usize / size_of::<Option<SourceComputed>>()) + 1;
         assert_eq!(
             output_bytes(too_many, ample),
             Err(SourceDisplayError::Bytes)

@@ -55,6 +55,12 @@ impl Keyword {
         self.0
     }
 }
+/// Materialize a static initial only when the finite property grammar admits it.
+pub(super) fn initial_finite_keyword(property: PropertyId) -> Option<Keyword> {
+    let keyword = Keyword(property.descriptor().initial);
+    finite_keyword_allowed(property, keyword).then_some(keyword)
+}
+
 /// Validate a finite keyword against the retained, source-derived grammar.
 pub(super) fn finite_keyword_allowed(property: PropertyId, keyword: Keyword) -> bool {
     keyword_data::KEYWORDS.iter().any(|(name, values)| {
