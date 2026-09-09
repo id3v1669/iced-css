@@ -9,6 +9,68 @@ use iced::{
 pub type CapturedRichText<'a, Link, Message, Theme = iced::Theme, R = iced::Renderer> =
     Captured<Rich<'a, Link, Message, Theme, R>>;
 
+/// Known span storage whose slice access invokes no application provider code.
+/// This marker is sealed; custom AsRef providers need their own phase contract.
+///
+/// A valid native provider is not automatically an admitted capture provider:
+/// ```compile_fail,E0277
+/// use iced::widget::text::Span;
+/// use iced_css::capture::{adapters,CaptureLimits};
+/// struct Custom(Vec<Span<'static>>);
+/// impl AsRef<[Span<'static>]> for Custom {
+///     fn as_ref(&self)->&[Span<'static>] { &self.0 }
+/// }
+/// fn capture(limits:CaptureLimits) {
+///     let _=adapters::rich_text::<(),(),iced::Theme,()>(Custom(Vec::new()),limits);
+/// }
+/// ```
+///
+/// Application code cannot opt an unknown provider into this built-in marker:
+/// ```compile_fail,E0277
+/// use iced::widget::text::Span;
+/// use iced_css::capture::SpanStorage;
+/// struct Custom(Vec<Span<'static>>);
+/// impl AsRef<[Span<'static>]> for Custom {
+///     fn as_ref(&self)->&[Span<'static>] { &self.0 }
+/// }
+/// impl SpanStorage<'static,(),iced::Font> for Custom {}
+/// ```
+pub trait SpanStorage<'a, Link, Font>:
+    storage_sealed::Sealed + AsRef<[Span<'a, Link, Font>]>
+{
+}
+mod storage_sealed {
+    use super::Span;
+    pub trait Sealed {}
+    impl<Link, Font> Sealed for Vec<Span<'_, Link, Font>> {}
+    impl<Link, Font, const N: usize> Sealed for [Span<'_, Link, Font>; N] {}
+    impl<Link, Font> Sealed for &[Span<'_, Link, Font>] {}
+    impl<Link, Font> Sealed for &Vec<Span<'_, Link, Font>> {}
+}
+impl<'a, Link, Font> SpanStorage<'a, Link, Font> for Vec<Span<'a, Link, Font>> {}
+impl<'a, Link, Font, const N: usize> SpanStorage<'a, Link, Font> for [Span<'a, Link, Font>; N] {}
+impl<'a, Link, Font> SpanStorage<'a, Link, Font> for &[Span<'a, Link, Font>] {}
+impl<'a, Link, Font> SpanStorage<'a, Link, Font> for &Vec<Span<'a, Link, Font>> {}
+
+/// Capture known native span storage without changing its ownership representation.
+/// Unknown AsRef providers are intentionally not inspected at construction time.
+pub fn rich_text<'a, Link, Message, Theme, R>(
+    spans: impl SpanStorage<'a, Link, R::Font> + 'a,
+    limits: CaptureLimits,
+) -> Result<CapturedRichText<'a, Link, Message, Theme, R>, CaptureError>
+where
+    Link: Clone + 'static,
+    Theme: Catalog,
+    R: Renderer,
+    R::Font: 'a,
+{
+    let construction = Construction::rich_text(spans.as_ref(), limits)?;
+    Ok(Captured {
+        payload: Rich::with_spans(spans),
+        construction,
+    })
+}
+
 pub fn rich_text_new<'a, Link, Message, Theme, R>(
     limits: CaptureLimits,
 ) -> Result<CapturedRichText<'a, Link, Message, Theme, R>, CaptureError>
@@ -35,11 +97,7 @@ where
     R: Renderer,
     R::Font: 'a,
 {
-    let construction = Construction::rich_text(&spans, limits)?;
-    Ok(Captured {
-        payload: Rich::with_spans(spans),
-        construction,
-    })
+    rich_text(spans, limits)
 }
 /// Retain the borrowed span slice in native Rich while independently owning text.
 pub fn rich_text_slice<'a, Link, Message, Theme, R>(
@@ -52,11 +110,7 @@ where
     R: Renderer,
     R::Font: 'a,
 {
-    let construction = Construction::rich_text(spans, limits)?;
-    Ok(Captured {
-        payload: Rich::with_spans(spans),
-        construction,
-    })
+    rich_text(spans, limits)
 }
 impl<'a, Link, Message, Theme, R> Captured<Rich<'a, Link, Message, Theme, R>>
 where

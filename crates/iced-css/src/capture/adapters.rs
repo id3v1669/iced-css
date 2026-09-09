@@ -463,3 +463,5 @@ pub use super::keyed_column::{
 };
 
 pub use super::rich_text::{rich_text_new, rich_text_slice, rich_text_vec};
+
+pub use super::rich_text::{rich_text, rich_text as rich_text_with_spans};

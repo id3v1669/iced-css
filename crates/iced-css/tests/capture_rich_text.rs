@@ -251,3 +251,72 @@ fn scalar_conversions_follow_native_order_and_optional_none_skips_conversion() {
     );
     assert_eq!(*calls.borrow(), expected);
 }
+
+#[test]
+fn common_constructor_accepts_owned_and_borrowed_standard_storage_without_cloning_links() {
+    fn inputs(calls: &Rc<Cell<usize>>) -> [Span<'static, Link, iced::Font>; 2] {
+        [Span::new("a").link(Link(calls.clone())), Span::new("b")]
+    }
+    let calls = Rc::new(Cell::new(0));
+    let captured = adapters::rich_text::<_, (), Theme, ()>(inputs(&calls), limits()).unwrap();
+    assert_eq!(calls.get(), 0);
+    assert_eq!(captured.construction().nodes()[0].text(), Some("ab"));
+    let observed = observe(captured.width(80).height(30).erase().into_parts().0);
+    let clone_calls = calls.get();
+    calls.set(0);
+    let native: Rich<'_, Link, (), Theme, ()> = Rich::with_spans(inputs(&calls));
+    assert_eq!(observed, observe(native.width(80).height(30).into()));
+    assert_eq!(calls.get(), clone_calls);
+    calls.set(0);
+    let captured =
+        adapters::rich_text_with_spans::<_, (), Theme, ()>(Vec::from(inputs(&calls)), limits())
+            .unwrap();
+    assert_eq!(calls.get(), 0);
+    assert_eq!(
+        captured.construction().nodes()[0].text_runs().unwrap(),
+        [0..1, 1..2]
+    );
+    drop(captured);
+    let spans = Vec::from(inputs(&calls));
+    let by_vec = adapters::rich_text::<_, (), Theme, ()>(&spans, limits()).unwrap();
+    let by_slice = adapters::rich_text::<_, (), Theme, ()>(spans.as_slice(), limits()).unwrap();
+    assert_eq!(
+        by_vec.construction().nodes()[0].text(),
+        by_slice.construction().nodes()[0].text()
+    );
+    assert_eq!(calls.get(), 0);
+    let actual = observe(by_vec.width(80).height(30).erase().into_parts().0);
+    let native: Rich<'_, Link, (), Theme, ()> = Rich::with_spans(&spans);
+    assert_eq!(actual, observe(native.width(80).height(30).into()));
+    drop(by_slice);
+    let empty: [Span<'_, (), iced::Font>; 0] = [];
+    let captured = adapters::rich_text::<_, (), Theme, ()>(empty, limits()).unwrap();
+    assert!(
+        captured.construction().nodes()[0]
+            .text_runs()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn native_custom_provider_is_read_during_layout_and_draw_not_construction() {
+    struct Provider {
+        spans: Vec<Span<'static>>,
+        reads: Rc<Cell<usize>>,
+    }
+    impl AsRef<[Span<'static>]> for Provider {
+        fn as_ref(&self) -> &[Span<'static>] {
+            self.reads.set(self.reads.get() + 1);
+            &self.spans
+        }
+    }
+    let reads = Rc::new(Cell::new(0));
+    let native: Rich<'_, (), (), Theme, ()> = Rich::with_spans(Provider {
+        spans: vec![Span::new("native")],
+        reads: reads.clone(),
+    });
+    assert_eq!(reads.get(), 0);
+    observe(native.width(80).height(30).into());
+    assert!(reads.get() > 0);
+}
