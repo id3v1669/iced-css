@@ -2,11 +2,11 @@
 
 use iced_test::core::renderer::Headless;
 use iced_test::core::theme::Base;
-use iced_test::core::widget::operation::{Focusable, Operation, Scrollable, TextInput};
 use iced_test::core::widget::Id;
-use iced_test::core::{clipboard, mouse, time, window, Event, Point, Rectangle, Size, Vector};
-use iced_test::runtime::user_interface::Cache;
+use iced_test::core::widget::operation::{Focusable, Operation, Scrollable, TextInput};
+use iced_test::core::{Event, Point, Rectangle, Size, Vector, clipboard, mouse, time, window};
 use iced_test::runtime::UserInterface;
+use iced_test::runtime::user_interface::Cache;
 
 #[allow(unused_imports)]
 pub mod prelude {
@@ -62,14 +62,13 @@ pub fn mount(view: fn() -> El) -> Sim {
 pub fn mount_at(view: fn() -> El, width: f32, height: f32) -> Sim {
     let settings = iced_test::core::Settings::default();
     let backend = std::env::var("ICED_TEST_BACKEND").ok();
-    let mut renderer = iced_test::futures::futures::executor::block_on(
-        <iced::Renderer as Headless>::new(
+    let mut renderer =
+        iced_test::futures::futures::executor::block_on(<iced::Renderer as Headless>::new(
             iced::Font::with_name("Fira Sans"),
             settings.default_text_size,
             backend.as_deref(),
-        ),
-    )
-    .expect("create headless renderer");
+        ))
+        .expect("create headless renderer");
 
     let size = Size::new(width, height);
     let ui = UserInterface::build(view(), size, Cache::default(), &mut renderer);
@@ -146,7 +145,9 @@ pub fn assert_path(sim: &mut Sim, path: &[(&'static str, Rectangle)]) {
             .clone()
             .find(|&i| nodes[i].kind == *kind && bounds_match(nodes[i].bounds, *bounds));
         let Some(index) = found else {
-            panic!("no {kind} node with bounds {bounds:?} nested at this point of the path\n  tree: {nodes:#?}");
+            panic!(
+                "no {kind} node with bounds {bounds:?} nested at this point of the path\n  tree: {nodes:#?}"
+            );
         };
         range = (index + 1)..subtree_end(&nodes, index);
     }

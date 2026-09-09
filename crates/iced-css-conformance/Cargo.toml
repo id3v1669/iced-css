@@ -1,0 +1,15 @@
+[package]
+name = "iced-css-conformance"
+description = "Test-only fixture admission and conformance evidence for iced-css"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.10.9"
+iced-css-core.workspace = true
+iced-css.workspace = true
+iced.workspace = true

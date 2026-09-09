@@ -14,7 +14,9 @@ css_test!(
     // 10px vertical, 20px horizontal
     ".p { padding: 10px 20px; }",
     button(text("b")).style_classes(["p"]),
-    button(text("b")).padding([10.0, 20.0]).width(iced::Length::Fill),
+    button(text("b"))
+        .padding([10.0, 20.0])
+        .width(iced::Length::Fill),
 );
 
 css_test!(
@@ -23,7 +25,12 @@ css_test!(
     ".p { padding: 10px 20px 30px; }",
     button(text("b")).style_classes(["p"]),
     button(text("b"))
-        .padding(iced::Padding { top: 10.0, right: 20.0, bottom: 30.0, left: 20.0 })
+        .padding(iced::Padding {
+            top: 10.0,
+            right: 20.0,
+            bottom: 30.0,
+            left: 20.0
+        })
         .width(iced::Length::Fill),
 );
 
@@ -32,7 +39,12 @@ css_test!(
     ".p { padding: 10px 20px 30px 40px; }",
     button(text("b")).style_classes(["p"]),
     button(text("b"))
-        .padding(iced::Padding { top: 10.0, right: 20.0, bottom: 30.0, left: 40.0 })
+        .padding(iced::Padding {
+            top: 10.0,
+            right: 20.0,
+            bottom: 30.0,
+            left: 40.0
+        })
         .width(iced::Length::Fill),
 );
 
@@ -41,7 +53,12 @@ css_test!(
     ".p { padding-top: 5px; padding-right: 15px; padding-bottom: 25px; padding-left: 35px; }",
     button(text("b")).style_classes(["p"]),
     button(text("b"))
-        .padding(iced::Padding { top: 5.0, right: 15.0, bottom: 25.0, left: 35.0 })
+        .padding(iced::Padding {
+            top: 5.0,
+            right: 15.0,
+            bottom: 25.0,
+            left: 35.0
+        })
         .width(iced::Length::Fill),
 );
 
@@ -64,11 +81,19 @@ css_test!(
 fn padding_is_in_the_hit_area_margin_is_not() {
     #[iced_css::style(inline = ".p { padding: 20px; width: 100px; }", policy = Compile)]
     fn padded() -> El {
-        iced::Element::from(button(text("b")).on_press(Msg::Pressed).style_classes(["p"]))
+        iced::Element::from(
+            button(text("b"))
+                .on_press(Msg::Pressed)
+                .style_classes(["p"]),
+        )
     }
     #[iced_css::style(inline = ".m { margin: 20px; width: 100px; }", policy = Compile)]
     fn margined() -> El {
-        iced::Element::from(button(text("b")).on_press(Msg::Pressed).style_classes(["m"]))
+        iced::Element::from(
+            button(text("b"))
+                .on_press(Msg::Pressed)
+                .style_classes(["m"]),
+        )
     }
 
     assert_eq!(click_at(&mut mount(padded), 5.0, 5.0), vec![Msg::Pressed]);

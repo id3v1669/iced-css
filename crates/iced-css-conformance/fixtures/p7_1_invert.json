@@ -1,0 +1,21 @@
+{
+  "id": "P7.1-INVERT",
+  "runner": "p7_1",
+  "spec": "architecture-67-animation-registry.md",
+  "classification": "mixed",
+  "input": {
+    "scenario": "color_pair",
+    "property": "outline-color",
+    "start": "invert",
+    "end": "red",
+    "operation": {
+      "kind": "interpolate",
+      "progress_bits": 1048576000
+    }
+  },
+  "expected": {
+    "property": "outline-color",
+    "kind": "invert",
+    "fallback_discrete": true
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "P5.3-default-newlines",
+  "runner": "p5_3",
+  "spec": "architecture-53-inline-formatting.md",
+  "classification": "requirement",
+  "input": {
+    "scenario": "default_newlines",
+    "text": "\rA\r\nB\n\r\r\n\u4e2d\ud83e\udd80",
+    "input_bytes": 4096,
+    "retained_bytes": 65536,
+    "work": 8192
+  },
+  "expected": {
+    "normalized": "\nA\nB\n\n\n\u4e2d\ud83e\udd80"
+  }
+}

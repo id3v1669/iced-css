@@ -1,0 +1,75 @@
+[
+  {
+    "id": "P5.3-default-newlines",
+    "requirements": [
+      "CSS22-001442",
+      "CSS22-001443",
+      "CSS22-001444"
+    ],
+    "sources": [
+      "arch/normative-text-ledger.md",
+      "tmp/css22/spec/text.html"
+    ],
+    "source_hashes": {
+      "arch/normative-text-ledger.md": "c4203fe13a043868666c53d08d3ef0562f11299db8d25d7291cec902e377776a",
+      "tmp/css22/spec/text.html": "328512710cc0e8d8b718aec57ef0e0e4c948aff914f99210ce697bf6d712db46"
+    },
+    "oracle": {
+      "kind": "requirement",
+      "path": "tmp/implementation-default-newline-case/oracle.json",
+      "sha256": "7b460fd5e72b251086618b55d03b44c39e63e3e6987ae4f0004281060373512a"
+    },
+    "target": "x86_64-unknown-linux-gnu",
+    "backend": "core",
+    "mode": "mode-independent-core",
+    "execution": {
+      "command": [
+        "cargo",
+        "run",
+        "--offline",
+        "--locked",
+        "-p",
+        "iced-css-conformance",
+        "--example",
+        "record_case",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "--",
+        "/home/user/myrepos/iced-css/docs/tmp/implementation-default-newline-case",
+        "fixture.json",
+        "P5.3-default-newlines"
+      ],
+      "target": "x86_64-unknown-linux-gnu",
+      "backend": "core",
+      "mode": "mode-independent-core",
+      "tools": {
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (built from a source tarball)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 21.1.8",
+        "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
+        "python3": "Python 3.12.14"
+      },
+      "artifacts": {
+        "tmp/implementation-default-newline-case/source/Cargo.lock": "51a8ad648e3b0a802a48f680355c1bea36befb43655a905b7dc88b0793434a6c",
+        "tmp/implementation-default-newline-case/source/Cargo.toml": "37084235eb501c453bb048aefafee6937f0000e735727078fecff699903aff4c",
+        "tmp/implementation-default-newline-case/source/crates/iced-css-core/src/text/newlines.rs": "6bc72bdbd8f201df65145eabe431a072ae763e288f106a0ee61e7cc7e3b83cf2",
+        "tmp/implementation-default-newline-case/source/crates/iced-css-conformance/src/adapters/p5_3.rs": "caca2424fe71b3a8d37c9c4526ab01889ac70f10612bb2fb2ff2b66c33968334",
+        "tmp/implementation-default-newline-case/source/crates/iced-css-conformance/src/lib.rs": "14725f389f0133172413e3f710113a9dd79acb2232a0178b82d085e092832a50",
+        "tmp/implementation-default-newline-case/source/crates/iced-css-conformance/src/registry.rs": "378fc99a11ca9ce66600aa39af8c1ac71f8ac069da8b2d359bbd048407f11555",
+        "tmp/implementation-default-newline-case/source/crates/iced-css-conformance/src/fixture.rs": "74dacd61224a86bedb94946e359c4ffaef342dc7d6c0b8275b15ce420ac492da",
+        "tmp/implementation-default-newline-case/source/crates/iced-css-conformance/examples/record_case.rs": "57977db7103152f0190222ec92eccb470e6ae5c4791a19138115cef6b2dab3f8",
+        "tmp/implementation-default-newline-case/fixture.json": "01b40d00d2f552f6d2e12bd43b1fb9f6c9f2a836027f2f84d2533dee65143e48",
+        "tmp/implementation-default-newline-case/oracle.json": "7b460fd5e72b251086618b55d03b44c39e63e3e6987ae4f0004281060373512a",
+        "tmp/implementation-default-newline-case/generate-oracle.py": "ac2aee59d00b22cddafd06777d7f31b6fd431ad63924d0ebd925bef2da9e8e5b",
+        "tmp/implementation-default-newline-case/record.py": "8b8382e11bc5ff21608c437618bf9a055b0961ab3634d7dbc7d15373bc82929b",
+        "tmp/implementation-default-newline-case/actual.json": "29d8d9f6c7cf339e2f5e05043dd8279a3c46cd0afdd35ad50600eea3bd07c66b",
+        "tmp/implementation-default-newline-case/run.stderr": "3a2430669e6b4a7eff58dbb650c0c52e3e519dadb290ee2925544095e4677f65",
+        "tmp/implementation-default-newline-case/command.json": "c0c1fe0f5ad54cba10f9ec8b77e5e7350430d505729dcfba6ef94df5337d4b5f",
+        "tmp/implementation-default-newline-case/rustc-version.txt": "0e2743a063def1c1dc7455ea122c8478833bcc976a68fa0c0f8deb4181daffaa",
+        "tmp/implementation-default-newline-case/cargo-version.txt": "f4f564f8936fa8eb53bca8bbe50666489252bbcbeaae0cb0dd54682444697e52",
+        "tmp/implementation-default-newline-case/python3-version.txt": "4c3569f5da09975434dd9fd9a91fadbc4367a91d8f3c3fab59e9241ab9ee4bd8"
+      }
+    },
+    "status": {
+      "status": "pass"
+    }
+  }
+]

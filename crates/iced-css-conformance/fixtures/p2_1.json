@@ -1,0 +1,25 @@
+{
+  "id": "P2.1",
+  "runner": "p2_1",
+  "spec": "architecture-49-syntax-cascade.md",
+  "classification": "mixed",
+  "input": {
+    "scenario": "declaration_recovery",
+    "css": ".a { width: f(a;b); color: green; }",
+    "limits": {
+      "work": 1000000,
+      "digits": 4096,
+      "bytes": 65536,
+      "nesting": 128,
+      "selector_entries": 128
+    }
+  },
+  "expected": {
+    "accepted_properties": [
+      "color"
+    ],
+    "discarded_properties": [
+      "width"
+    ]
+  }
+}

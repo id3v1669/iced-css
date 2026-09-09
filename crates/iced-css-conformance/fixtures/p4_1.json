@@ -1,0 +1,31 @@
+{
+  "id": "P4.1",
+  "runner": "p4_1",
+  "spec": "architecture-62-resource-services.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "latest_failure",
+    "active_revision": 0,
+    "requests": [
+      "A",
+      "B"
+    ],
+    "completions": [
+      {
+        "request": "B",
+        "result": "error"
+      },
+      {
+        "request": "A",
+        "result": "success"
+      }
+    ],
+    "request_limit": 100,
+    "revision_limit": 100,
+    "work": 1000
+  },
+  "expected": {
+    "active_revision": 0,
+    "stale_status": true
+  }
+}

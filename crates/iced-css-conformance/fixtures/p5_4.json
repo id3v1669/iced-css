@@ -1,0 +1,17 @@
+{
+  "id": "P5.4",
+  "runner": "p5_4",
+  "spec": "architecture-56-generated-content.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "builtin_counter",
+    "style": "decimal-leading-zero",
+    "value": "-1",
+    "digits": 1000,
+    "work": 100000,
+    "retained_bytes": 10000
+  },
+  "expected": {
+    "text": "-01"
+  }
+}

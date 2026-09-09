@@ -1,0 +1,19 @@
+{
+  "id": "P7.2-CAPTURE",
+  "runner": "p7_2",
+  "spec": "architecture-68-animation-scheduler.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "capture_and_restart",
+    "outgoing_duration_ms": 1000,
+    "accept_after_ms": 500,
+    "incoming_duration_ms": 1000,
+    "incoming_delay_ms": 100,
+    "sample_after_ms": 600
+  },
+  "expected": {
+    "outgoing_progress": 0.5,
+    "incoming_at_acceptance": 0.0,
+    "incoming_at_sample": 0.5
+  }
+}

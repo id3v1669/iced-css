@@ -1,0 +1,19 @@
+{
+  "id": "P7.4-import-reload",
+  "runner": "p7_4",
+  "spec": "architecture-65-reload-publication.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "root_import_reload",
+    "root_before": "@import \"child\"; r{color:red}",
+    "import_before": "a{height:2px}",
+    "root_after": "@import \"child\"; r{color:blue}",
+    "import_after": null
+  },
+  "expected": {
+    "active_root": "@import \"child\"; r{color:red}",
+    "active_import": "a{height:2px}",
+    "active_revision": 1,
+    "completion": "failed"
+  }
+}

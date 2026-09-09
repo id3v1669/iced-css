@@ -1,0 +1,19 @@
+{
+  "id": "P7.4",
+  "runner": "p7_4",
+  "spec": "architecture-65-reload-publication.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "remote_refresh_triggers",
+    "asset_state": "already_loaded",
+    "events": [
+      "expiry",
+      "eviction",
+      "local_watch",
+      "view_rebuild"
+    ]
+  },
+  "expected": {
+    "http_refresh_requests": 0
+  }
+}

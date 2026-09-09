@@ -5,6 +5,7 @@ members = [
     "crates/iced-css-core",
     "crates/iced-css-macro",
     "crates/iced-css-examples",
+    "crates/iced-css-conformance",
 ]
 
 [workspace.package]

@@ -1,0 +1,14 @@
+{
+  "id": "P1.3",
+  "runner": "p1_3",
+  "spec": "architecture-66-diagnostic-api.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "cause_lifecycle",
+    "events": ["detect", "reevaluate_same", "resolve", "detect"],
+    "coefficient": "2",
+    "context_bits": 2139095039,
+    "limits": {"digits": 4096, "work": 1000000, "reports": 2, "report_bytes": 65536, "causes": 1, "cause_bytes": 4096}
+  },
+  "expected": {"admitted_reports": 2}
+}

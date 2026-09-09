@@ -1,0 +1,14 @@
+{
+  "id": "P7.2",
+  "runner": "p7_2",
+  "spec": "architecture-68-animation-scheduler.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "rebuild_without_request",
+    "rebuilds": 3,
+    "explicit_requests": 0
+  },
+  "expected": {
+    "new_animations": 0
+  }
+}

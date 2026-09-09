@@ -78,7 +78,10 @@ impl crate::Stylesheet {
                         resolved.padding.get_or_insert_with(Paddings::default).right = v;
                     }
                     Property::PaddingBottom(v) => {
-                        resolved.padding.get_or_insert_with(Paddings::default).bottom = v;
+                        resolved
+                            .padding
+                            .get_or_insert_with(Paddings::default)
+                            .bottom = v;
                     }
                     Property::PaddingLeft(v) => {
                         resolved.padding.get_or_insert_with(Paddings::default).left = v;

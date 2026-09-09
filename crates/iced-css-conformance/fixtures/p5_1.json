@@ -1,0 +1,13 @@
+{
+  "id": "P5.1",
+  "runner": "p5_1",
+  "spec": "architecture-52-block-formatting.md",
+  "classification": "requirement",
+  "input": {
+    "scenario": "collapse_group",
+    "adjoining_margins": [10, 20, -5],
+    "barriers": [],
+    "work": 100
+  },
+  "expected": {"collapsed_margin_bits": "41700000"}
+}

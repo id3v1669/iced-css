@@ -1,0 +1,22 @@
+{
+  "id": "P3.3",
+  "runner": "p3_3",
+  "spec": "architecture-48-host-lifecycle.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "keyed_reorder",
+    "before": [
+      "a",
+      "b"
+    ],
+    "after": [
+      "b",
+      "a"
+    ],
+    "focused": "a"
+  },
+  "expected": {
+    "focused": "a",
+    "recreated_sources": 0
+  }
+}

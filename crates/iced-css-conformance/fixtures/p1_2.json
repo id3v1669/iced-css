@@ -1,0 +1,20 @@
+{
+  "id": "P1.2",
+  "runner": "p1_2",
+  "spec": "architecture-50-typed-values.md",
+  "classification": "mixed",
+  "input": {
+    "scenario": "absolute_identity",
+    "left": "1in",
+    "right": "96px",
+    "relative": "100%",
+    "limits": {
+      "digits": 4096,
+      "work": 1000000
+    }
+  },
+  "expected": {
+    "absolute_equal": true,
+    "relative_is_absolute": false
+  }
+}

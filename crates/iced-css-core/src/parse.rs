@@ -115,8 +115,8 @@ fn parse_declarations<'i>(parser: &mut Parser<'i, '_>) -> Result<Vec<Property>, 
             .to_ascii_lowercase();
         parser.expect_colon().map_err(Error::from)?;
 
-        let declaration = parser
-            .parse_until_after(Delimiter::Semicolon, |value| parse_value(&name, value))?;
+        let declaration =
+            parser.parse_until_after(Delimiter::Semicolon, |value| parse_value(&name, value))?;
 
         declarations.push(declaration);
     }
@@ -171,9 +171,7 @@ fn parse_signed_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<
         Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("px") => {
             Ok(Length::Px(value))
         }
-        Token::Dimension { unit, .. } => {
-            error(parser, format!("unsupported length unit: {unit}"))
-        }
+        Token::Dimension { unit, .. } => error(parser, format!("unsupported length unit: {unit}")),
         Token::Percentage { unit_value, .. } => Ok(Length::Percent(unit_value)),
         Token::Number { value, .. } if value == 0.0 => Ok(Length::Px(0.0)),
         Token::Number { .. } => error(parser, "non-zero lengths require a unit"),
@@ -359,10 +357,42 @@ mod tests {
             .collect();
 
         let px = MarginValue::Px;
-        assert_eq!(margins[0], Margins { top: px(10.0), right: px(10.0), bottom: px(10.0), left: px(10.0) });
-        assert_eq!(margins[1], Margins { top: px(10.0), right: px(20.0), bottom: px(10.0), left: px(20.0) });
-        assert_eq!(margins[2], Margins { top: px(10.0), right: px(20.0), bottom: px(30.0), left: px(20.0) });
-        assert_eq!(margins[3], Margins { top: px(10.0), right: px(20.0), bottom: px(30.0), left: px(40.0) });
+        assert_eq!(
+            margins[0],
+            Margins {
+                top: px(10.0),
+                right: px(10.0),
+                bottom: px(10.0),
+                left: px(10.0)
+            }
+        );
+        assert_eq!(
+            margins[1],
+            Margins {
+                top: px(10.0),
+                right: px(20.0),
+                bottom: px(10.0),
+                left: px(20.0)
+            }
+        );
+        assert_eq!(
+            margins[2],
+            Margins {
+                top: px(10.0),
+                right: px(20.0),
+                bottom: px(30.0),
+                left: px(20.0)
+            }
+        );
+        assert_eq!(
+            margins[3],
+            Margins {
+                top: px(10.0),
+                right: px(20.0),
+                bottom: px(30.0),
+                left: px(40.0)
+            }
+        );
     }
 
     #[test]
@@ -379,14 +409,25 @@ mod tests {
 
     #[test]
     fn padding_shorthands() {
-        let sheet = parse(".a2 { padding: 10px 20px; } .a4 { padding: 10px 20px 30px 40px; }").unwrap();
+        let sheet =
+            parse(".a2 { padding: 10px 20px; } .a4 { padding: 10px 20px 30px 40px; }").unwrap();
         assert_eq!(
             sheet.rules[0].declarations,
-            vec![Property::Padding(Paddings { top: 10.0, right: 20.0, bottom: 10.0, left: 20.0 })]
+            vec![Property::Padding(Paddings {
+                top: 10.0,
+                right: 20.0,
+                bottom: 10.0,
+                left: 20.0
+            })]
         );
         assert_eq!(
             sheet.rules[1].declarations,
-            vec![Property::Padding(Paddings { top: 10.0, right: 20.0, bottom: 30.0, left: 40.0 })]
+            vec![Property::Padding(Paddings {
+                top: 10.0,
+                right: 20.0,
+                bottom: 30.0,
+                left: 40.0
+            })]
         );
     }
 
@@ -476,7 +517,10 @@ mod tests {
     fn unclosed_block_at_eof_is_valid() {
         // css-syntax: an unclosed block is implicitly closed at end of input
         let sheet = parse(".a { width: 10px;").unwrap();
-        assert_eq!(sheet.rules[0].declarations, vec![Property::Width(Length::Px(10.0))]);
+        assert_eq!(
+            sheet.rules[0].declarations,
+            vec![Property::Width(Length::Px(10.0))]
+        );
     }
 
     #[test]
@@ -496,7 +540,10 @@ mod tests {
         let sheet = parse(".a { WIDTH: 10px; Max-Width: none; }").unwrap();
         assert_eq!(
             sheet.rules[0].declarations,
-            vec![Property::Width(Length::Px(10.0)), Property::MaxWidth(Length::Auto)]
+            vec![
+                Property::Width(Length::Px(10.0)),
+                Property::MaxWidth(Length::Auto)
+            ]
         );
     }
 

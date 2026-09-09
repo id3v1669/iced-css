@@ -77,10 +77,29 @@ fn min_width_under_live_resize() {
     // overflow beyond the 300px outer: asserted directly (inexpressible as a
     // plain iced expected tree — iced clamps Fixed sizes to parent limits)
     resize(&mut actual, 300.0, 600.0);
-    assert_path(&mut actual, &[
-        ("container", iced::Rectangle { x: 0.0, y: 0.0, width: 300.0, height: 40.0 }),
-        ("container", iced::Rectangle { x: 0.0, y: 0.0, width: 400.0, height: 40.0 }),
-    ]);
+    assert_path(
+        &mut actual,
+        &[
+            (
+                "container",
+                iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 300.0,
+                    height: 40.0,
+                },
+            ),
+            (
+                "container",
+                iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 40.0,
+                },
+            ),
+        ],
+    );
 }
 
 #[test]
@@ -158,12 +177,30 @@ fn min_width_overflows_narrow_parent() {
     }
 
     let mut actual = mount(input);
-    assert_path(&mut actual, &[
-        ("container", iced::Rectangle { x: 0.0, y: 0.0, width: 150.0, height: 40.0 }),
-        ("container", iced::Rectangle { x: 0.0, y: 0.0, width: 200.0, height: 40.0 }),
-    ]);
+    assert_path(
+        &mut actual,
+        &[
+            (
+                "container",
+                iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 150.0,
+                    height: 40.0,
+                },
+            ),
+            (
+                "container",
+                iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 200.0,
+                    height: 40.0,
+                },
+            ),
+        ],
+    );
 }
-
 
 css_test!(
     min_height_stretches_above_content,
@@ -194,10 +231,29 @@ fn max_height_caps_content_height() {
     }
 
     let mut actual = mount(input);
-    assert_path(&mut actual, &[
-        ("container", iced::Rectangle { x: 0.0, y: 0.0, width: 50.0, height: 10.0 }),
-        ("container", iced::Rectangle { x: 0.0, y: 0.0, width: 50.0, height: 20.0 }),
-    ]);
+    assert_path(
+        &mut actual,
+        &[
+            (
+                "container",
+                iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 50.0,
+                    height: 10.0,
+                },
+            ),
+            (
+                "container",
+                iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 50.0,
+                    height: 20.0,
+                },
+            ),
+        ],
+    );
 }
 
 // % height against parent height
@@ -215,7 +271,10 @@ css_test!(
     max_height_clamps,
     ".s { width: 50px; height: 500px; max-height: 120px; }",
     container(text("t")).style_classes(["s"]),
-    container(text("t")).width(50.0).height(500.0).max_height(120.0),
+    container(text("t"))
+        .width(50.0)
+        .height(500.0)
+        .max_height(120.0),
 );
 
 // min height wins height
@@ -233,4 +292,3 @@ css_test!(
     container(text("t")).style_classes(["s"]),
     container(text("t")).width(50.0).height(80.0),
 );
-

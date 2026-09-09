@@ -6,8 +6,8 @@ use syn::spanned::Spanned;
 use syn::visit_mut::VisitMut;
 use syn::{Expr, ExprLit, ItemFn, Lit, LitStr, Token};
 
-use iced_css_core::resolve::{Length, MarginValue, Resolved};
 use iced_css_core::Stylesheet;
+use iced_css_core::resolve::{Length, MarginValue, Resolved};
 
 enum Source {
     Path(LitStr),
@@ -70,10 +70,7 @@ fn expand(args: &Args, function: &mut ItemFn) -> syn::Result<()> {
     match args.policy.to_string().as_str() {
         "Compile" => {}
         "OnDemand" | "Auto" => {
-            return Err(syn::Error::new(
-                args.policy.span(),
-                "not implemented yet",
-            ));
+            return Err(syn::Error::new(args.policy.span(), "not implemented yet"));
         }
         other => {
             return Err(syn::Error::new(
@@ -100,8 +97,8 @@ fn expand(args: &Args, function: &mut ItemFn) -> syn::Result<()> {
         }
     };
 
-    let stylesheet = iced_css_core::parse(&css)
-        .map_err(|error| syn::Error::new(css_span, error.to_string()))?;
+    let stylesheet =
+        iced_css_core::parse(&css).map_err(|error| syn::Error::new(css_span, error.to_string()))?;
 
     let mut rewriter = Rewriter {
         stylesheet,
@@ -210,7 +207,10 @@ mod tests {
     use super::*;
     use quote::ToTokens;
 
-    fn expand_str(args: proc_macro2::TokenStream, function: proc_macro2::TokenStream) -> Result<String, String> {
+    fn expand_str(
+        args: proc_macro2::TokenStream,
+        function: proc_macro2::TokenStream,
+    ) -> Result<String, String> {
         let args: Args = syn::parse2(args).map_err(|e| e.to_string())?;
         let mut function: ItemFn = syn::parse2(function).expect("test fn must parse");
         expand(&args, &mut function)
@@ -229,7 +229,10 @@ mod tests {
     #[test]
     fn valid_usage_rewrites_to_apply() {
         let out = expand_str(
-            quote!(inline = ".btn { width: 50px; height: 50px; }", policy = Compile),
+            quote!(
+                inline = ".btn { width: 50px; height: 50px; }",
+                policy = Compile
+            ),
             view(),
         )
         .unwrap();
@@ -278,11 +281,7 @@ mod tests {
 
     #[test]
     fn missing_file_is_a_build_error() {
-        let err = expand_str(
-            quote!("does/not/exist.css", policy = Compile),
-            view(),
-        )
-        .unwrap_err();
+        let err = expand_str(quote!("does/not/exist.css", policy = Compile), view()).unwrap_err();
         assert!(err.contains("cannot read stylesheet"), "{err}");
     }
 
@@ -341,7 +340,11 @@ mod tests {
         assert!(expand_str(quote!(inline = ".btn {}"), view()).is_err());
         assert!(expand_str(quote!(inlined = ".btn {}", policy = Compile), view()).is_err());
         assert!(
-            expand_str(quote!(inline = ".btn {}", policy = Compile, extra = 1), view()).is_err()
+            expand_str(
+                quote!(inline = ".btn {}", policy = Compile, extra = 1),
+                view()
+            )
+            .is_err()
         );
     }
 }

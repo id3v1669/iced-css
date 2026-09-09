@@ -1,6 +1,6 @@
 use iced::advanced::layout::{self, Layout};
-use iced::advanced::widget::{tree, Operation, Tree, Widget};
-use iced::advanced::{overlay, renderer, Clipboard, Shell};
+use iced::advanced::widget::{Operation, Tree, Widget, tree};
+use iced::advanced::{Clipboard, Shell, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
 use iced_css_core::Length as Css;
 

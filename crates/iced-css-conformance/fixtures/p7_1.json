@@ -1,0 +1,16 @@
+{
+  "id": "P7.1",
+  "runner": "p7_1",
+  "spec": "architecture-67-animation-registry.md",
+  "classification": "mixed",
+  "input": {
+    "scenario": "display_request",
+    "property": "display",
+    "start": "block",
+    "end": "none"
+  },
+  "expected": {
+    "eligible": false,
+    "fallback_discrete": false
+  }
+}

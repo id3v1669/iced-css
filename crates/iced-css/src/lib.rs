@@ -1,4 +1,6 @@
+pub mod capture;
 mod constrained;
+pub mod diagnostics;
 
 pub use constrained::Constrained;
 pub use iced_css_core::{Length, MarginValue, Margins, Paddings, Resolved};
@@ -6,7 +8,7 @@ pub use iced_css_macro::style;
 
 pub mod dispatch {
     use super::{Constrained, MarginValue, Paddings, Resolved};
-    use iced::widget::{button, container, Button, Container};
+    use iced::widget::{Button, Container, button, container};
 
     pub struct NativeContainer;
     pub struct NativeButton;
@@ -243,3 +245,11 @@ where
         self.into()
     }
 }
+
+pub mod animation;
+pub mod host;
+pub mod paint;
+
+pub mod resources;
+
+pub mod fonts;

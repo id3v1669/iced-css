@@ -1,0 +1,33 @@
+{
+  "id": "P7.1-COLOR",
+  "runner": "p7_1",
+  "spec": "architecture-67-animation-registry.md",
+  "classification": "mixed",
+  "input": {
+    "scenario": "color_pair",
+    "property": "background-color",
+    "start": "red",
+    "end": "transparent",
+    "operation": {
+      "kind": "interpolate",
+      "progress_bits": 1056964608
+    }
+  },
+  "expected": {
+    "property": "background-color",
+    "kind": "numeric",
+    "rgba": [
+      1.0,
+      0.0,
+      0.0,
+      0.5
+    ],
+    "rounded_to_zero": [
+      false,
+      false,
+      false,
+      false
+    ],
+    "fallback_discrete": false
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "P2.2",
+  "runner": "p2_2",
+  "spec": "architecture-49-syntax-cascade.md",
+  "classification": "requirement",
+  "input": {
+    "scenario": "important_origins",
+    "author": "color: red !important",
+    "user": "color: blue !important",
+    "limits": {"work": 1000000, "digits": 4096, "bytes": 65536, "nesting": 128}
+  },
+  "expected": {"winner_origin": "user", "color": "blue"}
+}

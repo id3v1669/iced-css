@@ -1,0 +1,22 @@
+{
+  "id": "P2.3",
+  "runner": "p2_3",
+  "spec": "architecture-64-compile-artifacts.md",
+  "classification": "mixed",
+  "input": {
+    "scenario": "duplicate_import_occurrence",
+    "root": "@import \"a.css\"; @import \"a.css\";",
+    "a": "text { color: red; }",
+    "limits": {
+      "work": 100000,
+      "retained_bytes": 16384,
+      "entries": 100,
+      "nesting": 100,
+      "occurrences": 100
+    }
+  },
+  "expected": {
+    "import_occurrences": 2,
+    "unique_acquisition_identities": 1
+  }
+}

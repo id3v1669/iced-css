@@ -1,0 +1,16 @@
+{
+  "id": "P1.1",
+  "runner": "p1_1",
+  "spec": "architecture-47-source-selectors.md",
+  "classification": "policy",
+  "input": {
+    "scenario": "language_inheritance",
+    "ancestor_lang": "en",
+    "child_lang": "",
+    "document_lang": "fr"
+  },
+  "expected": {
+    "child_language": null,
+    "inherits_document_language": false
+  }
+}

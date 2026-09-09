@@ -1,0 +1,167 @@
+[
+  {
+    "id": "arch/normative-box-ledger.md",
+    "path": "arch/normative-box-ledger.md",
+    "sha256": "991e3c9822173cd883ac2cc433180f5bafe19ba164346cef37acf51dce0ba3d7"
+  },
+  {
+    "id": "arch/normative-conventions-page-ledger.md",
+    "path": "arch/normative-conventions-page-ledger.md",
+    "sha256": "12ca16aee6b442d0b2962af238a304de2b8c4f0a28468f14295f90f54a961d5d"
+  },
+  {
+    "id": "arch/normative-definitions-ledger.md",
+    "path": "arch/normative-definitions-ledger.md",
+    "sha256": "bc0cc2050252de5de715366f3c749d2f74a5f8ebffc55d6222a10775f6e4ee6f"
+  },
+  {
+    "id": "arch/normative-dimensions-ledger.md",
+    "path": "arch/normative-dimensions-ledger.md",
+    "sha256": "1fdfa4cb0b4bf95ec97888cc8f383b8a2ea996e425ccaa25510c7a7b4a40ceeb"
+  },
+  {
+    "id": "arch/normative-encoding-ledger.md",
+    "path": "arch/normative-encoding-ledger.md",
+    "sha256": "68f58512abf30f6f87a55e53e95a1e64f211a25c28580d9b74568d933850c39d"
+  },
+  {
+    "id": "arch/normative-font-ledger.md",
+    "path": "arch/normative-font-ledger.md",
+    "sha256": "cc1d75f208bc698237ed23646520fc4f5ff1234a5c6c762a84cf7681ef79e5eb"
+  },
+  {
+    "id": "arch/normative-generated-ledger.md",
+    "path": "arch/normative-generated-ledger.md",
+    "sha256": "1123de8a603139026424aacd7894254747ba3d7640f63a3508aac430c66d2de5"
+  },
+  {
+    "id": "arch/normative-ledger.md",
+    "path": "arch/normative-ledger.md",
+    "sha256": "347e7aed99db2aeaf5299e1459ffe14a7b87e7a83bec2f7b86351171ef7e75d0"
+  },
+  {
+    "id": "arch/normative-paint-ui-media-ledger.md",
+    "path": "arch/normative-paint-ui-media-ledger.md",
+    "sha256": "479d70fce914b2541131bb4fea6ae948a5490f47c705fc0317246418bbcd4b85"
+  },
+  {
+    "id": "arch/normative-selector-cascade-ledger.md",
+    "path": "arch/normative-selector-cascade-ledger.md",
+    "sha256": "81d60be8b717e987868d5a93966621d68eab1117a854d95f2258486f65267a33"
+  },
+  {
+    "id": "arch/normative-syntax-ledger.md",
+    "path": "arch/normative-syntax-ledger.md",
+    "sha256": "1f6b8dd20b15dc78fea897c6e15498ab2b604fa0a40962ec60189d787b7c59bf"
+  },
+  {
+    "id": "arch/normative-table-ledger.md",
+    "path": "arch/normative-table-ledger.md",
+    "sha256": "fef88f0d08dc5f90791fb15398922b92c2f824c05f9231c9d6c99858013db0a2"
+  },
+  {
+    "id": "arch/normative-text-ledger.md",
+    "path": "arch/normative-text-ledger.md",
+    "sha256": "c4203fe13a043868666c53d08d3ef0562f11299db8d25d7291cec902e377776a"
+  },
+  {
+    "id": "arch/normative-visual-formatting-ledger.md",
+    "path": "arch/normative-visual-formatting-ledger.md",
+    "sha256": "1377c9ee75e348e05084aa65a52556dfee2327d54104c8da009ccb3928e35464"
+  },
+  {
+    "id": "tmp/css22/spec/about.html",
+    "path": "tmp/css22/spec/about.html",
+    "sha256": "b6da3027307e4452b06d8dc2f47ebb4d3af912097755f75aeccdd0faf4db3aae"
+  },
+  {
+    "id": "tmp/css22/spec/box.html",
+    "path": "tmp/css22/spec/box.html",
+    "sha256": "613d975ea38dd36a6a8157ab623c4236fa26ef947ca7d71e3e430ef5030b6eab"
+  },
+  {
+    "id": "tmp/css22/spec/cascade.html",
+    "path": "tmp/css22/spec/cascade.html",
+    "sha256": "4c99129c83c24b19bd4da7ccc3777653cbb37790d1f1c6d02dd2c01cd1024638"
+  },
+  {
+    "id": "tmp/css22/spec/colors.html",
+    "path": "tmp/css22/spec/colors.html",
+    "sha256": "2be8f1306daa036ce3d9f24a267f3d2e4c34a2f833451a933d858fd998395983"
+  },
+  {
+    "id": "tmp/css22/spec/conform.html",
+    "path": "tmp/css22/spec/conform.html",
+    "sha256": "ae3f5c86595f7da1ef47adcd1212117064389bcc26e4a73430ff3562ab81bfb7"
+  },
+  {
+    "id": "tmp/css22/spec/fonts.html",
+    "path": "tmp/css22/spec/fonts.html",
+    "sha256": "bedc1345702afca24012585dff6f4602754ca8fc52e1ee23c6f25f96588bda89"
+  },
+  {
+    "id": "tmp/css22/spec/generate.html",
+    "path": "tmp/css22/spec/generate.html",
+    "sha256": "467783fac9f2c85c54b2a7e7d6d2253300d3a11ac84fa097ddbd6d1db359b06c"
+  },
+  {
+    "id": "tmp/css22/spec/intro.html",
+    "path": "tmp/css22/spec/intro.html",
+    "sha256": "caab53f86dfdadd09a70ce592bbec26a8becc80bdf9cff28c8e097b822f55064"
+  },
+  {
+    "id": "tmp/css22/spec/media.html",
+    "path": "tmp/css22/spec/media.html",
+    "sha256": "3711acf6a5e84d24b33245968bb7958113af019f5537c2f313c716b48280777f"
+  },
+  {
+    "id": "tmp/css22/spec/page.html",
+    "path": "tmp/css22/spec/page.html",
+    "sha256": "5c5d0a2bc494d5f168b73080b5b4e7d12016d8f0b871c262c29131f87ca61df1"
+  },
+  {
+    "id": "tmp/css22/spec/selector.html",
+    "path": "tmp/css22/spec/selector.html",
+    "sha256": "ec9298b749956d9c897bed021d950543e6c481dde96a5d9a566aa67d77ba6e83"
+  },
+  {
+    "id": "tmp/css22/spec/syndata.html",
+    "path": "tmp/css22/spec/syndata.html",
+    "sha256": "134c0d3e0f85c4a94ce2e634f03885d7b0cb1eb5ac306df24e18fa79844e1ae0"
+  },
+  {
+    "id": "tmp/css22/spec/tables.html",
+    "path": "tmp/css22/spec/tables.html",
+    "sha256": "a57bee3e57104001442a313f695fd2e0aff808d9fb56f6e5655a1a3256b9e05e"
+  },
+  {
+    "id": "tmp/css22/spec/text.html",
+    "path": "tmp/css22/spec/text.html",
+    "sha256": "328512710cc0e8d8b718aec57ef0e0e4c948aff914f99210ce697bf6d712db46"
+  },
+  {
+    "id": "tmp/css22/spec/ui.html",
+    "path": "tmp/css22/spec/ui.html",
+    "sha256": "01f02ef1358bb5603c16c1ab44976a1e7aa6e1576ec3afaed19b66b69edd7835"
+  },
+  {
+    "id": "tmp/css22/spec/visudet.html",
+    "path": "tmp/css22/spec/visudet.html",
+    "sha256": "254bb76539cdde3070f7b0821dc9154efdc9b332a89e532359c6a8fd9d9dc732"
+  },
+  {
+    "id": "tmp/css22/spec/visufx.html",
+    "path": "tmp/css22/spec/visufx.html",
+    "sha256": "53ba65a9614291757db9226143885f859af22e8bdafa9bcf3b6ec07b79126fdf"
+  },
+  {
+    "id": "tmp/css22/spec/visuren.html",
+    "path": "tmp/css22/spec/visuren.html",
+    "sha256": "0b51183a0ec5bf3d8233ab66f07d45bbcaf235055b233c192044c330d200c3d8"
+  },
+  {
+    "id": "tmp/css22/spec/zindex.html",
+    "path": "tmp/css22/spec/zindex.html",
+    "sha256": "5edf6009256893146dc017fb971db58a1f91377b19d1962c108067d9bda154d3"
+  }
+]
