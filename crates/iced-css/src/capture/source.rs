@@ -57,6 +57,9 @@ struct Indexed<'a> {
 pub struct ConstructionSource<'a> {
     construction: &'a Construction,
     indexed: Vec<Indexed<'a>>,
+    work: usize,
+    #[cfg(test)]
+    work_receipt: (usize, usize),
 }
 fn charge(work: &mut usize, cost: usize) -> Result<(), ConstructionSourceError> {
     *work = work
@@ -171,7 +174,15 @@ impl<'a> ConstructionSource<'a> {
         Ok(Self {
             construction,
             indexed,
+            work: limits.work.get() - work,
+            #[cfg(test)]
+            work_receipt: (limits.work.get(), work),
         })
+    }
+    /// Checked structural work already consumed by this exact view construction.
+    /// Includes duplicate-ID comparisons; an allowance is not a use metric.
+    pub fn work(&self) -> usize {
+        self.work
     }
     pub fn root(&self) -> usize {
         self.construction.root()
@@ -203,5 +214,128 @@ impl SelectorSource for ConstructionSource<'_> {
     }
     fn previous_element(&self, position: usize) -> Option<usize> {
         self.indexed.get(position)?.previous
+    }
+}
+
+#[cfg(test)]
+mod work_tests {
+    use super::*;
+    use crate::capture::{CaptureLimits, CapturedElement, adapters};
+    use iced_css_core::source::AttributeLimits;
+    use std::num::NonZeroUsize;
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+    fn capture() -> CaptureLimits {
+        CaptureLimits {
+            nodes: nz(100),
+            depth: nz(100),
+            retained_bytes: nz(100000),
+            work: nz(100000),
+        }
+    }
+    fn attributes() -> AttributeLimits {
+        AttributeLimits {
+            entries: nz(100),
+            retained_bytes: nz(100000),
+            work: nz(100000),
+        }
+    }
+    fn leaf(id: Option<&str>) -> CapturedElement<'static, (), iced::Theme, ()> {
+        let value = adapters::text::<iced::Theme, ()>("x", capture())
+            .unwrap()
+            .erase();
+        if let Some(id) = id {
+            value.style_id(id, attributes()).unwrap()
+        } else {
+            value
+        }
+    }
+    #[test]
+    fn actual_view_work_and_observed_terminal_allowance() {
+        let cases = [
+            (vec![None], None, false, 5),
+            (vec![None, None], None, false, 13),
+            (vec![Some("a")], None, false, 13),
+            (vec![Some("a"), None], Some("root"), false, 33),
+            (vec![Some("a"), Some("bb")], Some("root"), false, 47),
+            (vec![Some("a"), Some("bb")], Some("root"), true, 55),
+            (vec![Some("a"), Some("")], Some("root"), false, 41),
+        ];
+        for (ids, root_id, lang, expected) in cases {
+            let mut element = if ids.len() == 1 {
+                leaf(ids[0])
+            } else {
+                adapters::row_from_vec(ids.iter().map(|&id| leaf(id)).collect(), capture())
+                    .unwrap()
+                    .erase()
+            };
+            if let Some(id) = root_id {
+                element = element.style_id(id, attributes()).unwrap();
+            }
+            if lang {
+                element = element.style_attribute("lang", "tr", attributes()).unwrap();
+            }
+            let construction = element.into_parts().1;
+            let nodes = construction.nodes();
+            let expected_attrs: Vec<_> = if ids.len() == 1 {
+                vec![usize::from(ids[0].is_some())]
+            } else {
+                vec![
+                    usize::from(ids[0].is_some()),
+                    usize::from(ids[1].is_some()),
+                    usize::from(root_id.is_some()) + usize::from(lang),
+                ]
+            };
+            assert_eq!(
+                nodes
+                    .iter()
+                    .map(|n| n.metadata().attribute_count())
+                    .collect::<Vec<_>>(),
+                expected_attrs
+            );
+            let mut expected_ids: Vec<_> =
+                ids.iter().map(|&id| id.filter(|s| !s.is_empty())).collect();
+            if ids.len() > 1 {
+                expected_ids.push(root_id);
+            }
+            assert_eq!(
+                nodes
+                    .iter()
+                    .map(|n| n.metadata().css_id())
+                    .collect::<Vec<_>>(),
+                expected_ids
+            );
+            let states = vec![ConstructionState::default(); nodes.len()];
+            for work in [expected, 100000, usize::MAX] {
+                let view = ConstructionSource::new(
+                    &construction,
+                    &states,
+                    DocumentLanguage::Unknown,
+                    SelectorTreeLimits {
+                        entries: nz(100),
+                        retained_bytes: nz(100000),
+                        work: nz(work),
+                    },
+                )
+                .unwrap();
+                assert_eq!(view.work(), expected);
+                assert_eq!(view.work_receipt.0, work);
+                assert_eq!(view.work_receipt.0 - view.work_receipt.1, expected);
+            }
+            assert!(matches!(
+                ConstructionSource::new(
+                    &construction,
+                    &states,
+                    DocumentLanguage::Unknown,
+                    SelectorTreeLimits {
+                        entries: nz(100),
+                        retained_bytes: nz(100000),
+                        work: nz(expected - 1)
+                    }
+                ),
+                Err(ConstructionSourceError::Work)
+            ));
+        }
     }
 }
