@@ -28,6 +28,7 @@
 pub mod capture;
 mod constrained;
 pub mod diagnostics;
+pub mod evaluation;
 
 pub use constrained::Constrained;
 pub use iced_css_core::{Length, MarginValue, Margins, Paddings, Resolved};

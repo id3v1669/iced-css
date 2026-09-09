@@ -119,6 +119,75 @@ fn limits() -> RuleCascadeLimits {
         declarations: work(),
     }
 }
+
+#[test]
+fn late_metadata_lookup_failure_preserves_the_batch_winners() {
+    let mut source_node = node();
+    source_node.metadata = Metadata::default();
+    for name in ["aa", "ab", "ac"] {
+        source_node.metadata.set_attribute(name, "");
+    }
+    let nodes = [element(&source_node)];
+    let tree = SelectorTree::new(
+        &nodes,
+        DocumentLanguage::Unknown,
+        SelectorTreeLimits {
+            entries: work(),
+            retained_bytes: work(),
+            work: work(),
+        },
+    )
+    .unwrap();
+    let universal = selectors("*");
+    let missing = selectors("[zz]");
+    let block = [record("display:block", 1)];
+    let hidden = [record("display:none", 2)];
+    let offers = [
+        RuleOffer {
+            selectors: &universal,
+            declarations: &block,
+            origin: RuleOrigin::User,
+        },
+        RuleOffer {
+            selectors: &missing,
+            declarations: &hidden,
+            origin: RuleOrigin::User,
+        },
+    ];
+    let mut table = PropertyWinners::new();
+    let result = cascade_rules(
+        &mut table,
+        offers,
+        RuleTarget {
+            source: &tree,
+            node: tree.root(),
+            pseudo: None,
+        },
+        &controls(),
+        RuleBatchLimits {
+            rules: work(),
+            per_rule: RuleCascadeLimits {
+                matching: MatchLimits {
+                    work: NonZeroUsize::new(12).unwrap(),
+                    ..limits().matching
+                },
+                ..limits()
+            },
+        },
+    );
+    assert_eq!(
+        result,
+        Err(RuleBatchError::Rule(RuleCascadeError::Match(
+            iced_css_core::selectors::MatchError::Work,
+        )))
+    );
+    assert!(
+        table
+            .candidate(PropertyId::lookup("display").unwrap())
+            .unwrap()
+            .is_none()
+    );
+}
 #[test]
 fn only_matching_group_members_contribute_specificity_to_property_winners() {
     let source_node = node();

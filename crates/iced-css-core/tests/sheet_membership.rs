@@ -190,3 +190,39 @@ fn failed_control_work_is_atomic_and_unused_capacity_is_still_charged() {
         Err(SheetError::DuplicateMembership)
     ));
 }
+
+#[test]
+fn exposed_work_limit_is_the_allowance_reused_by_membership_checks() {
+    let mut small = limits();
+    small.work = NonZeroUsize::MIN;
+    let sheets = AuthorSheets::new(
+        vec![AuthorSheet {
+            id: sheet(1),
+            enabled: true,
+            membership: Membership::Persistent,
+        }],
+        vec![],
+        false,
+        None,
+        small,
+    )
+    .unwrap();
+    assert_eq!(sheets.work_limit(), NonZeroUsize::MIN);
+    assert_eq!(sheets.applies(sheet(1)), Err(SheetError::Work));
+    small.work = NonZeroUsize::new(2).unwrap();
+    let sheets = AuthorSheets::new(
+        vec![AuthorSheet {
+            id: sheet(1),
+            enabled: true,
+            membership: Membership::Persistent,
+        }],
+        vec![],
+        false,
+        None,
+        small,
+    )
+    .unwrap();
+    assert_eq!(sheets.work_limit().get(), 2);
+    assert_eq!(sheets.applies(sheet(1)), Ok(false));
+    assert_eq!(sheets.applies(sheet(1)), Ok(false));
+}

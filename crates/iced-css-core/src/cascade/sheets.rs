@@ -187,6 +187,10 @@ impl AuthorSheets {
     pub fn sheet_ids(&self) -> impl ExactSizeIterator<Item = SheetId> + '_ {
         self.sheets.iter().map(|sheet| sheet.id)
     }
+    /// Stored per-call work allowance used by membership and control operations.
+    pub fn work_limit(&self) -> NonZeroUsize {
+        self.work
+    }
     pub fn native_hints_apply(&self) -> bool {
         self.author_enabled
     }

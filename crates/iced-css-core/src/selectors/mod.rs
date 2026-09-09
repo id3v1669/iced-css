@@ -82,6 +82,15 @@ impl MatchBudget {
             .ok_or(MatchLimit)?;
         self.charge(amount)
     }
+    // Reserve a full scan even for early hits. Unequal key lengths short-circuit;
+    // equal lengths compare at most name_bytes bytes, plus a visit/length check.
+    fn metadata_lookup(&mut self, entries: usize, name_bytes: usize) -> Result<(), MatchLimit> {
+        let cost = name_bytes
+            .checked_add(2)
+            .and_then(|per_entry| entries.checked_mul(per_entry))
+            .ok_or(MatchLimit)?;
+        self.charge(cost)
+    }
 }
 fn whitespace(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r' | '\n' | '\u{c}')
@@ -101,8 +110,9 @@ fn hyphen_match(actual: &str, expected: &str, ignore_ascii_case: bool) -> bool {
             && actual.as_bytes().get(expected.len()) == Some(&b'-'))
 }
 /// Evaluate a single selector test against already-established source facts.
-/// String comparison work is charged before comparison. Metadata storage/lookup
-/// and ancestor propagation belong to the source snapshot's separate limits.
+/// String comparisons and full possible metadata name scans are charged before
+/// lookup, even for early hits. Metadata construction/storage and ancestor
+/// propagation belong to the source snapshot's separate limits.
 /// This function does not infer parents, links, language or native state.
 pub fn matches_simple(
     selector: &SimpleSelector,
@@ -118,6 +128,7 @@ pub fn matches_simple(
         }
         SimpleSelector::Id(id) => {
             budget.strings(&[id])?;
+            budget.metadata_lookup(element.metadata.attribute_count(), "id".len())?;
             match element.metadata.css_id() {
                 Some(actual) => {
                     budget.strings(&[actual])?;
@@ -128,6 +139,7 @@ pub fn matches_simple(
         }
         SimpleSelector::Class(class) => {
             budget.strings(&[class])?;
+            budget.metadata_lookup(element.metadata.attribute_count(), "class".len())?;
             match element.metadata.attribute("class") {
                 Some(actual) => {
                     budget.strings(&[actual])?;
@@ -144,6 +156,7 @@ pub fn matches_simple(
             value,
         } => {
             budget.strings(&[name])?;
+            budget.metadata_lookup(element.metadata.attribute_count(), name.len())?;
             match element.metadata.attribute(name) {
                 None => false,
                 Some(actual) => match operator {
@@ -190,3 +203,30 @@ mod matching;
 pub use matching::{
     MatchError, MatchLimits, SelectorSource, matches_selector, matching_specificity,
 };
+
+#[cfg(test)]
+mod metadata_work_tests {
+    use super::MatchBudget;
+    use std::num::NonZeroUsize;
+
+    #[test]
+    fn lookup_arithmetic_overflow_preserves_remaining_work() {
+        for (entries, name_bytes) in [(usize::MAX, 1), (1, usize::MAX)] {
+            let mut budget = MatchBudget::new(NonZeroUsize::new(12).unwrap());
+            assert!(budget.metadata_lookup(entries, name_bytes).is_err());
+            assert_eq!(budget.remaining(), 12);
+        }
+    }
+
+    #[test]
+    fn lookup_reservation_has_exact_empty_and_exhaustion_boundaries() {
+        let mut exact = MatchBudget::new(NonZeroUsize::new(12).unwrap());
+        exact.metadata_lookup(0, 5).unwrap();
+        assert_eq!(exact.remaining(), 12);
+        exact.metadata_lookup(3, 2).unwrap();
+        assert_eq!(exact.remaining(), 0);
+        let mut short = MatchBudget::new(NonZeroUsize::new(11).unwrap());
+        assert!(short.metadata_lookup(3, 2).is_err());
+        assert_eq!(short.remaining(), 11);
+    }
+}

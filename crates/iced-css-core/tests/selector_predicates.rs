@@ -141,3 +141,93 @@ fn comparison_budget_exhaustion_is_not_a_nonmatch() {
         .is_err()
     );
 }
+
+fn lookup_boundary(selector: &SimpleSelector, metadata: &Metadata, total: usize, expected: bool) {
+    let mut exact = MatchBudget::new(NonZeroUsize::new(total).unwrap());
+    assert_eq!(
+        matches_simple(selector, facts(metadata), &mut exact).unwrap(),
+        expected
+    );
+    assert_eq!(exact.remaining(), 0);
+    let mut short = MatchBudget::new(NonZeroUsize::new(total - 1).unwrap());
+    assert!(matches_simple(selector, facts(metadata), &mut short).is_err());
+}
+
+#[test]
+fn metadata_lookup_misses_reserve_every_attribute_name() {
+    let mut metadata = Metadata::default();
+    for name in ["aa", "zx", "a-much-longer-unrelated-name"] {
+        metadata.set_attribute(name, "");
+    }
+    lookup_boundary(&SimpleSelector::Id("x".into()), &metadata, 15, false);
+    lookup_boundary(&SimpleSelector::Class("x".into()), &metadata, 24, false);
+    lookup_boundary(
+        &attr("zz", AttributeOperator::Present, ""),
+        &metadata,
+        16,
+        false,
+    );
+    lookup_boundary(
+        &attr("", AttributeOperator::Present, ""),
+        &metadata,
+        8,
+        false,
+    );
+    lookup_boundary(
+        &attr("é", AttributeOperator::Present, ""),
+        &metadata,
+        16,
+        false,
+    );
+}
+
+#[test]
+fn metadata_lookup_hits_reserve_the_full_scan_independent_of_position() {
+    for (name, selector, total) in [
+        ("id", SimpleSelector::Id("x".into()), 17),
+        ("class", SimpleSelector::Class("x".into()), 26),
+        ("zz", attr("zz", AttributeOperator::Present, ""), 16),
+    ] {
+        for first in [true, false] {
+            let mut metadata = Metadata::default();
+            if first {
+                metadata.set_attribute(name, "x");
+            }
+            metadata.set_attribute("aa", "");
+            metadata.set_attribute("long-unrelated-name", "");
+            if !first {
+                metadata.set_attribute(name, "x");
+            }
+            lookup_boundary(&selector, &metadata, total, true);
+        }
+    }
+}
+
+#[test]
+fn empty_metadata_adds_no_lookup_work_and_presence_ignores_value_bytes() {
+    let mut metadata = Metadata::default();
+    lookup_boundary(&SimpleSelector::Id("x".into()), &metadata, 3, false);
+    lookup_boundary(&SimpleSelector::Class("x".into()), &metadata, 3, false);
+    lookup_boundary(
+        &attr("zz", AttributeOperator::Present, ""),
+        &metadata,
+        4,
+        false,
+    );
+    metadata.set_attribute("aa", "");
+    metadata.set_attribute("ab", "");
+    metadata.set_attribute("zz", "");
+    lookup_boundary(
+        &attr("zz", AttributeOperator::Present, ""),
+        &metadata,
+        16,
+        true,
+    );
+    metadata.set_attribute("zz", &"v".repeat(1000));
+    lookup_boundary(
+        &attr("zz", AttributeOperator::Present, ""),
+        &metadata,
+        16,
+        true,
+    );
+}

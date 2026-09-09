@@ -143,3 +143,61 @@ fn missing_nodes_cycles_and_resource_limits_are_explicit_errors() {
         Err(MatchError::Bytes)
     );
 }
+
+#[test]
+fn metadata_lookup_exhaustion_is_a_matching_error() {
+    let mut metadata = Metadata::default();
+    for name in ["aa", "ab", "ac"] {
+        metadata.set_attribute(name, "");
+    }
+    let tree = Tree(vec![Node {
+        name: "text",
+        metadata,
+        parent: None,
+        previous: None,
+    }]);
+    let selector = selectors("[zz]");
+    assert_eq!(
+        matching_specificity(
+            &selector,
+            &tree,
+            0,
+            None,
+            MatchLimits {
+                work: NonZeroUsize::new(12).unwrap(),
+                ..limits()
+            }
+        ),
+        Err(MatchError::Work)
+    );
+    assert_eq!(
+        matching_specificity(&selector, &tree, 0, None, limits()),
+        Ok(None)
+    );
+}
+
+#[test]
+fn ancestor_metadata_lookup_uses_the_visited_nodes_attribute_count() {
+    let mut ancestor = node("row", "", None, None);
+    for name in ["aa", "ab", "ac", "ad", "ae", "af", "ag", "ah"] {
+        ancestor.metadata.set_attribute(name, "");
+    }
+    let tree = Tree(vec![ancestor, node("text", "", Some(0), None)]);
+    assert_eq!(
+        matching_specificity(
+            &selectors("[zz] > *"),
+            &tree,
+            1,
+            None,
+            MatchLimits {
+                work: NonZeroUsize::new(24).unwrap(),
+                ..limits()
+            }
+        ),
+        Err(MatchError::Work)
+    );
+    assert_eq!(
+        matching_specificity(&selectors("[zz] > *"), &tree, 1, None, limits()),
+        Ok(None)
+    );
+}
