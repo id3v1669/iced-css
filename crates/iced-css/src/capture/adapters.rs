@@ -467,3 +467,5 @@ pub use super::rich_text::{rich_text_new, rich_text_slice, rich_text_vec};
 pub use super::rich_text::{rich_text, rich_text as rich_text_with_spans};
 
 pub use super::rich_text::rich_text_from_iter;
+
+pub use super::table::{table_column, table_from_vecs};
