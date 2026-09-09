@@ -248,6 +248,12 @@ fn node_heap_bytes(node: &ConstructionNode) -> Result<usize, CaptureError> {
         | Kind::Slider
         | Kind::VerticalSlider
         | Kind::Opaque
+        | Kind::Table
+        | Kind::TableHeaderGroup
+        | Kind::TableRowGroup
+        | Kind::TableRow
+        | Kind::TableHeaderCell
+        | Kind::TableCell
         | Kind::Space => 0,
     };
     node.metadata

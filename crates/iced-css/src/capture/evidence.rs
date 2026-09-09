@@ -11,7 +11,7 @@ pub struct CaptureLimits {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureError {
-    /// Parallel native key and captured child vectors have different lengths.
+    /// Captured dimensions disagree or their arithmetic overflows.
     Dimensions,
     Nodes,
     Depth,
@@ -39,6 +39,12 @@ enum Kind {
     Toggler(Option<String>),
     Radio(String),
     PickList,
+    Table,
+    TableHeaderGroup,
+    TableRowGroup,
+    TableRow,
+    TableHeaderCell,
+    TableCell,
     PaneGrid,
     PaneControls,
     PaneTitle,
@@ -111,6 +117,12 @@ impl ConstructionNode {
             Kind::Toggler(_) => "toggler",
             Kind::Radio(_) => "radio",
             Kind::PickList => "pick_list",
+            Kind::Table => "table",
+            Kind::TableHeaderGroup => "table_header_group",
+            Kind::TableRowGroup => "table_row_group",
+            Kind::TableRow => "table_row",
+            Kind::TableHeaderCell => "table_header_cell",
+            Kind::TableCell => "table_cell",
             Kind::PaneGrid => "pane_grid",
             Kind::PaneControls => "pane_controls",
             Kind::PaneTitle => "pane_title",
@@ -161,6 +173,12 @@ impl ConstructionNode {
             | Kind::ProgressBar
             | Kind::Slider
             | Kind::VerticalSlider
+            | Kind::Table
+            | Kind::TableHeaderGroup
+            | Kind::TableRowGroup
+            | Kind::TableRow
+            | Kind::TableHeaderCell
+            | Kind::TableCell
             | Kind::PickList
             | Kind::PaneGrid
             | Kind::PaneControls
@@ -918,3 +936,5 @@ fn check_bytes(capacity: usize, text: usize, limits: CaptureLimits) -> Result<()
 mod pane;
 
 mod rich_text;
+
+mod table;
