@@ -61,6 +61,17 @@ where
     })
 }
 
+/// Record a borrowed string's implicit Text source without constructing Text yet.
+/// The native &str-to-Element conversion occurs at the consuming parent or erase.
+/// This explicit conversion does not import arbitrary native Elements.
+pub fn str_child(value: &str, limits: CaptureLimits) -> Result<Captured<&str>, CaptureError> {
+    let construction = Construction::text(value, limits)?;
+    Ok(Captured {
+        payload: value,
+        construction,
+    })
+}
+
 /// Exact `Row::from_vec` recipe: retain all supplied children, without push's
 /// native size-hint filtering or accumulation. This is not `with_children`.
 pub fn row_from_vec<'a, Message, Theme, Renderer>(

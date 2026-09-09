@@ -1262,3 +1262,31 @@ fn maximized_grid_keeps_all_pane_sources_and_separate_native_identity() {
         Some(b"second".as_slice())
     );
 }
+
+#[test]
+fn implicit_string_children_keep_text_selectors_without_conversion_nodes() {
+    let label = String::from("borrowed child");
+    let row = adapters::row_from_vec::<(), iced::Theme, ()>(
+        vec![
+            adapters::str_child(label.as_str(), limits())
+                .unwrap()
+                .style_classes(&["label"], attrs())
+                .unwrap()
+                .erase(),
+            text(),
+        ],
+        limits(),
+    )
+    .unwrap();
+    let states = [ConstructionState::default(); 3];
+    let source = ConstructionSource::new(
+        row.construction(),
+        &states,
+        DocumentLanguage::Unknown,
+        source_limits(),
+    )
+    .unwrap();
+    assert!(matches(&source, 0, "row > text.label:first-child"));
+    assert!(matches(&source, 1, "text.label + text"));
+    assert_eq!(row.construction().nodes()[0].text(), Some(label.as_str()));
+}
