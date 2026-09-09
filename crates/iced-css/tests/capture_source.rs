@@ -1176,3 +1176,38 @@ fn pane_controls_exposes_full_then_compact_to_selectors() {
     assert!(matches(&source, 1, "pane_controls > .full + text.compact"));
     assert!(!matches(&source, 1, "pane_controls > text:first-child"));
 }
+
+#[test]
+fn pane_title_precedes_body_after_replacement_and_preserves_parent_classes() {
+    let title = adapters::pane_title(text(), limits())
+        .unwrap()
+        .style_classes(&["heading"], attrs())
+        .unwrap()
+        .controls(adapters::pane_controls(text(), limits()).unwrap(), limits())
+        .unwrap();
+    let pane = adapters::pane_content(adapters::container(text(), limits()).unwrap(), limits())
+        .unwrap()
+        .style_classes(&["pane"], attrs())
+        .unwrap()
+        .title_bar(adapters::pane_title(text(), limits()).unwrap(), limits())
+        .unwrap()
+        .title_bar(title, limits())
+        .unwrap();
+    let states = vec![ConstructionState::default(); pane.construction().nodes().len()];
+    let source = ConstructionSource::new(
+        pane.construction(),
+        &states,
+        DocumentLanguage::Unknown,
+        source_limits(),
+    )
+    .unwrap();
+    assert!(matches(
+        &source,
+        3,
+        "pane_content.pane > pane_title.heading:first-child"
+    ));
+    assert!(matches(&source, 5, "pane_title + container"));
+    assert!(matches(&source, 0, "pane_title > text:first-child"));
+    assert!(matches(&source, 2, "pane_title > text + pane_controls"));
+    assert!(matches(&source, 1, "pane_controls > text:first-child"));
+}

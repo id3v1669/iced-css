@@ -34,6 +34,8 @@ enum Kind {
     Radio(String),
     PickList,
     PaneControls,
+    PaneTitle,
+    PaneContent,
     Container,
     Row,
     Column,
@@ -56,7 +58,7 @@ enum Kind {
     Space,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
     Base,
     Top,
@@ -64,6 +66,9 @@ enum Role {
     Tooltip,
     Full,
     Compact,
+    Title,
+    Body,
+    Controls,
     Ordered(usize),
 }
 
@@ -94,6 +99,8 @@ impl ConstructionNode {
             Kind::Radio(_) => "radio",
             Kind::PickList => "pick_list",
             Kind::PaneControls => "pane_controls",
+            Kind::PaneTitle => "pane_title",
+            Kind::PaneContent => "pane_content",
             Kind::Container => "container",
             Kind::Row => "row",
             Kind::Column => "column",
@@ -140,6 +147,8 @@ impl ConstructionNode {
             | Kind::VerticalSlider
             | Kind::PickList
             | Kind::PaneControls
+            | Kind::PaneTitle
+            | Kind::PaneContent
             | Kind::Opaque
             | Kind::Space => None,
         }
@@ -156,6 +165,9 @@ impl ConstructionNode {
             Role::Tooltip => "tooltip",
             Role::Full => "full",
             Role::Compact => "compact",
+            Role::Title => "title",
+            Role::Body => "body",
+            Role::Controls => "controls",
             Role::Ordered(_) => "children",
         })
     }
@@ -860,3 +872,5 @@ fn check_bytes(capacity: usize, text: usize, limits: CaptureLimits) -> Result<()
     }
     Ok(())
 }
+
+mod pane;

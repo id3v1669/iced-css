@@ -181,3 +181,6 @@ mod toggler;
 pub mod keyed_children;
 
 pub mod context;
+
+mod pane_descriptors;
+pub use pane_descriptors::{CapturedPaneContent, CapturedPaneTitle};
