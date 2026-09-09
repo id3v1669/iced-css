@@ -199,3 +199,20 @@ where
         self
     }
 }
+
+/// Preserve native Rich::from_iter's original IntoIterator/Vec collection path.
+/// Native iterator execution and Vec allocation occur before evidence admission
+/// and are outside CaptureLimits. Only subsequent source scans/copy/storage are
+/// bounded here; an evidence error follows collection and skips Rich construction.
+pub fn rich_text_from_iter<'a, Link, Message, Theme, R>(
+    spans: impl IntoIterator<Item = Span<'a, Link, R::Font>>,
+    limits: CaptureLimits,
+) -> Result<CapturedRichText<'a, Link, Message, Theme, R>, CaptureError>
+where
+    Link: Clone + 'static,
+    Theme: Catalog,
+    R: Renderer,
+    R::Font: 'a,
+{
+    rich_text_vec(spans.into_iter().collect::<Vec<_>>(), limits)
+}

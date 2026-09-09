@@ -320,3 +320,110 @@ fn native_custom_provider_is_read_during_layout_and_draw_not_construction() {
     observe(native.width(80).height(30).into());
     assert!(reads.get() > 0);
 }
+
+#[test]
+fn iterator_collection_matches_native_calls_before_bounded_evidence_admission() {
+    use std::cell::RefCell;
+    type Trace = Rc<RefCell<Vec<(&'static str, usize)>>>;
+    struct Input {
+        count: usize,
+        trace: Trace,
+        clones: Rc<Cell<usize>>,
+    }
+    struct Iter {
+        next: usize,
+        count: usize,
+        trace: Trace,
+        clones: Rc<Cell<usize>>,
+    }
+    impl IntoIterator for Input {
+        type Item = Span<'static, Link, iced::Font>;
+        type IntoIter = Iter;
+        fn into_iter(self) -> Iter {
+            self.trace.borrow_mut().push(("into", self.count));
+            Iter {
+                next: 0,
+                count: self.count,
+                trace: self.trace,
+                clones: self.clones,
+            }
+        }
+    }
+    impl Iterator for Iter {
+        type Item = Span<'static, Link, iced::Font>;
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            self.trace.borrow_mut().push(("hint", self.next));
+            (self.count - self.next, Some(self.count - self.next))
+        }
+        fn next(&mut self) -> Option<Self::Item> {
+            self.trace.borrow_mut().push(("next", self.next));
+            if self.next == self.count {
+                None
+            } else {
+                let text = self.next.to_string();
+                self.next += 1;
+                Some(Span::new(text).link(Link(self.clones.clone())))
+            }
+        }
+    }
+    for count in [0, 1, 3] {
+        let trace = Trace::default();
+        let clones = Rc::new(Cell::new(0));
+        DEFAULTS.set(0);
+        let captured = adapters::rich_text_from_iter::<_, (), Theme, ()>(
+            Input {
+                count,
+                trace: trace.clone(),
+                clones: clones.clone(),
+            },
+            limits(),
+        )
+        .unwrap();
+        assert_eq!(DEFAULTS.get(), 1);
+        assert_eq!(clones.get(), 0);
+        assert_eq!(
+            captured.construction().nodes()[0]
+                .text_runs()
+                .unwrap()
+                .len(),
+            count
+        );
+        assert_eq!(
+            captured.construction().nodes()[0].text().unwrap(),
+            (0..count).map(|i| i.to_string()).collect::<String>()
+        );
+        let actual = trace.borrow().clone();
+        trace.borrow_mut().clear();
+        DEFAULTS.set(0);
+        let native: Rich<'_, Link, (), Theme, ()> = Rich::from_iter(Input {
+            count,
+            trace: trace.clone(),
+            clones: clones.clone(),
+        });
+        assert_eq!(*trace.borrow(), actual);
+        assert_eq!(DEFAULTS.get(), 1);
+        assert_eq!(clones.get(), 0);
+        assert_eq!(
+            actual.iter().filter(|(event, _)| *event == "into").count(),
+            1
+        );
+        drop((captured, native));
+        trace.borrow_mut().clear();
+        DEFAULTS.set(0);
+        let result = adapters::rich_text_from_iter::<_, (), Theme, ()>(
+            Input {
+                count,
+                trace: trace.clone(),
+                clones: clones.clone(),
+            },
+            CaptureLimits {
+                retained_bytes: NonZeroUsize::new(1).unwrap(),
+                ..limits()
+            },
+        );
+        assert!(matches!(result, Err(CaptureError::Bytes)));
+        assert_eq!(*trace.borrow(), actual);
+        assert_eq!(DEFAULTS.get(), 0);
+        assert_eq!(clones.get(), 0);
+    }
+}
