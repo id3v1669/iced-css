@@ -1211,3 +1211,54 @@ fn pane_title_precedes_body_after_replacement_and_preserves_parent_classes() {
     assert!(matches(&source, 2, "pane_title > text + pane_controls"));
     assert!(matches(&source, 1, "pane_controls > text:first-child"));
 }
+
+#[test]
+fn maximized_grid_keeps_all_pane_sources_and_separate_native_identity() {
+    use iced::widget::pane_grid;
+    let (mut state, first) = pane_grid::State::new("first");
+    let (second, _) = state
+        .split(pane_grid::Axis::Vertical, first, "second")
+        .unwrap();
+    state.maximize(second);
+    let grid = adapters::pane_grid::<_, (), iced::Theme, ()>(
+        &state,
+        |_, name, _| {
+            adapters::pane_content(text(), limits())
+                .unwrap()
+                .style_classes(&[name], attrs())
+                .unwrap()
+                .source_key(name.as_bytes(), limits())
+                .unwrap()
+        },
+        limits(),
+    )
+    .unwrap();
+    let states = [ConstructionState::default(); 5];
+    let source = ConstructionSource::new(
+        grid.construction(),
+        &states,
+        DocumentLanguage::Unknown,
+        source_limits(),
+    )
+    .unwrap();
+    assert!(matches(
+        &source,
+        1,
+        "pane_grid > pane_content.first:first-child"
+    ));
+    assert!(matches(
+        &source,
+        3,
+        "pane_content.first + pane_content.second"
+    ));
+    assert_eq!(grid.construction().nodes()[1].pane_identity(), Some(first));
+    assert_eq!(grid.construction().nodes()[3].pane_identity(), Some(second));
+    assert_eq!(
+        grid.construction().nodes()[1].source_key(),
+        Some(b"first".as_slice())
+    );
+    assert_eq!(
+        grid.construction().nodes()[3].source_key(),
+        Some(b"second".as_slice())
+    );
+}

@@ -5,6 +5,47 @@ use super::{
 use std::ops::Range;
 
 impl Construction {
+    pub(in crate::capture) fn pane_grid(
+        children: Vec<crate::capture::Captured<iced::widget::pane_grid::Pane>>,
+        mut limits: CaptureLimits,
+    ) -> Result<Self, CaptureError> {
+        let mut count = 1usize;
+        let mut work = limits.work.get();
+        for child in &children {
+            charge(&mut work, 1)?;
+            if !matches!(
+                child.construction.nodes[child.construction.root()].kind,
+                Kind::PaneContent
+            ) {
+                return Err(CaptureError::Role);
+            }
+            count = count
+                .checked_add(child.construction.nodes.len())
+                .ok_or(CaptureError::Nodes)?;
+        }
+        charge(&mut work, count)?;
+        limits.work = std::num::NonZeroUsize::new(work).ok_or(CaptureError::Work)?;
+        let (panes, mut construction) = Self::ordered(children, Kind::PaneGrid, limits)?;
+        if panes
+            .capacity()
+            .checked_mul(size_of::<iced::widget::pane_grid::Pane>())
+            .is_none_or(|bytes| bytes > limits.retained_bytes.get())
+        {
+            return Err(CaptureError::Bytes);
+        }
+        let root = construction.root();
+        for node in &mut construction.nodes {
+            if node.parent == Some(root) {
+                let Some(Role::Ordered(position)) = node.role else {
+                    return Err(CaptureError::Role);
+                };
+                let identity = *panes.get(position).ok_or(CaptureError::Role)?;
+                node.role = Some(Role::Pane { identity, position });
+            }
+        }
+        Ok(construction)
+    }
+
     pub(in crate::capture) fn pane_title(
         self,
         limits: CaptureLimits,
@@ -177,7 +218,8 @@ fn node_heap_bytes(node: &ConstructionNode) -> Result<usize, CaptureError> {
     let label = match &node.kind {
         Kind::Text(s) | Kind::Radio(s) => s.capacity(),
         Kind::Checkbox(s) | Kind::Toggler(s) => s.as_ref().map_or(0, String::capacity),
-        Kind::PickList
+        Kind::PaneGrid
+        | Kind::PickList
         | Kind::PaneControls
         | Kind::PaneTitle
         | Kind::PaneContent

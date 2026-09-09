@@ -184,3 +184,6 @@ pub mod context;
 
 mod pane_descriptors;
 pub use pane_descriptors::{CapturedPaneContent, CapturedPaneTitle};
+
+mod pane_grid;
+pub use pane_grid::CapturedPaneGrid;

@@ -33,6 +33,7 @@ enum Kind {
     Toggler(Option<String>),
     Radio(String),
     PickList,
+    PaneGrid,
     PaneControls,
     PaneTitle,
     PaneContent,
@@ -70,6 +71,10 @@ enum Role {
     Body,
     Controls,
     Ordered(usize),
+    Pane {
+        identity: iced::widget::pane_grid::Pane,
+        position: usize,
+    },
 }
 
 /// A source construction record, independent of native state and formatting boxes.
@@ -98,6 +103,7 @@ impl ConstructionNode {
             Kind::Toggler(_) => "toggler",
             Kind::Radio(_) => "radio",
             Kind::PickList => "pick_list",
+            Kind::PaneGrid => "pane_grid",
             Kind::PaneControls => "pane_controls",
             Kind::PaneTitle => "pane_title",
             Kind::PaneContent => "pane_content",
@@ -146,6 +152,7 @@ impl ConstructionNode {
             | Kind::Slider
             | Kind::VerticalSlider
             | Kind::PickList
+            | Kind::PaneGrid
             | Kind::PaneControls
             | Kind::PaneTitle
             | Kind::PaneContent
@@ -169,12 +176,22 @@ impl ConstructionNode {
             Role::Body => "body",
             Role::Controls => "controls",
             Role::Ordered(_) => "children",
+            Role::Pane { .. } => "panes",
         })
     }
+    /// Exact native Pane identity supplied by the registered grid constructor.
+    /// Scoped to its native State; independent of source keys and CSS IDs.
+    pub fn pane_identity(&self) -> Option<iced::widget::pane_grid::Pane> {
+        match self.role {
+            Some(Role::Pane { identity, .. }) => Some(identity),
+            _ => None,
+        }
+    }
+
     /// Order within an ordered child role. This is not a repeated-data key.
     pub fn role_position(&self) -> Option<usize> {
         match self.role {
-            Some(Role::Ordered(position)) => Some(position),
+            Some(Role::Ordered(position) | Role::Pane { position, .. }) => Some(position),
             _ => None,
         }
     }

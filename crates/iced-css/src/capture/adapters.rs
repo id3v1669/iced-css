@@ -443,3 +443,5 @@ pub use super::toggler::toggler;
 pub use super::pane_controls::{pane_controls, pane_controls_dynamic};
 
 pub use super::pane_descriptors::{pane_content, pane_title};
+
+pub use super::pane_grid::pane_grid;
