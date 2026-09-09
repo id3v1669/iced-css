@@ -21,3 +21,7 @@ pub mod word_boundaries;
 pub mod word_data;
 
 pub mod bidi_initial;
+
+pub mod bidi_isolates;
+
+pub mod bidi_explicit;
