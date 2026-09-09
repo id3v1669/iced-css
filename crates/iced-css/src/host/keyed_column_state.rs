@@ -74,3 +74,87 @@ where
         _incoming: PhantomData,
     })
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyedRecipeStateError {
+    Native(KeyedColumnStateError),
+    Slots(super::reconcile::SlotError),
+}
+impl std::fmt::Display for KeyedRecipeStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "keyed recipe parent state: {self:?}")
+    }
+}
+impl std::error::Error for KeyedRecipeStateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Native(e) => Some(e),
+            Self::Slots(e) => Some(e),
+        }
+    }
+}
+impl From<super::reconcile::SlotError> for KeyedRecipeStateError {
+    fn from(error: super::reconcile::SlotError) -> Self {
+        Self::Slots(error)
+    }
+}
+/// Prepare stock keyed parent state without closing the recipe's native children.
+/// Staging bounds cover the copied key vector and n+2 work units. Native State
+/// construction has the same separate allocation/effect boundary as the direct
+/// native-column helper. No child Tree is constructed or moved.
+///
+/// The key cache remains tied to the actual recipe until commit/abandonment:
+/// ```compile_fail,E0505
+/// use iced_css::{capture::KeyedColumnRecipe,host::{keyed_column_state::prepare_keyed_recipe_state,reconcile::SlotLimits}};
+/// use iced::advanced::widget::Tree;
+/// fn lower(recipe:KeyedColumnRecipe<'_,u8,(),iced::Theme,()>,tree:&mut Tree,limits:SlotLimits) {
+///     let prepared=prepare_keyed_recipe_state(&recipe,&tree.tag,&mut tree.state,limits).unwrap();
+///     let _=recipe.into_native();
+///     prepared.commit();
+/// }
+/// ```
+pub fn prepare_keyed_recipe_state<'state, 'incoming, Key, Message, Theme, R>(
+    incoming: &'incoming crate::capture::KeyedColumnRecipe<'_, Key, Message, Theme, R>,
+    previous_tag: &'state Tag,
+    previous: &'state mut State,
+    limits: super::reconcile::SlotLimits,
+) -> Result<PreparedKeyedColumnState<'state, 'incoming>, KeyedRecipeStateError>
+where
+    Key: Copy + PartialEq + 'static,
+    R: Renderer,
+{
+    use super::reconcile::SlotError;
+    let empty = Column::<Key, Message, Theme, R>::new();
+    if *previous_tag != empty.tag() {
+        return Err(KeyedRecipeStateError::Native(KeyedColumnStateError::Tag));
+    }
+    let count = incoming.native_keys().len();
+    if count > limits.entries.get() {
+        return Err(SlotError::Entries.into());
+    }
+    if count.checked_add(2).ok_or(SlotError::Work)? > limits.work.get() {
+        return Err(SlotError::Work.into());
+    }
+    let bytes = |capacity: usize| {
+        capacity
+            .checked_mul(size_of::<Key>())
+            .filter(|n| *n <= limits.retained_bytes.get())
+            .ok_or(SlotError::Bytes)
+    };
+    bytes(count)?;
+    let mut keys = Vec::new();
+    keys.try_reserve_exact(count)
+        .map_err(|_| SlotError::Allocation)?;
+    bytes(keys.capacity())?;
+    keys.extend(incoming.native_keys().iter().copied());
+    // This object supplies only the native private key-cache representation.
+    // Never invoke its layout/diff/draw with its intentionally absent children.
+    let skeleton = Column::<Key, Message, Theme, R>::from_vecs(keys, Vec::new());
+    let prepared = skeleton.state();
+    Ok(PreparedKeyedColumnState {
+        previous,
+        prepared,
+        _tag: previous_tag,
+        _incoming: PhantomData,
+    })
+}
