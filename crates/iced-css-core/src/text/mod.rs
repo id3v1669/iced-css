@@ -3,6 +3,8 @@ pub mod casing_contexts;
 pub mod casing_data;
 pub mod casing_output;
 pub mod casing_selection;
+pub mod grapheme_boundaries;
+pub mod grapheme_data;
 pub mod lf_conversion;
 pub mod lf_whitespace;
 pub mod line_edges;
