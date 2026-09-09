@@ -7,6 +7,8 @@ pub mod grapheme_boundaries;
 pub mod grapheme_data;
 pub mod lf_conversion;
 pub mod lf_whitespace;
+pub mod line_break_aux_data;
+pub mod line_break_data;
 pub mod line_edges;
 pub mod newlines;
 pub mod preserved_spaces;
