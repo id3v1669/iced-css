@@ -11,3 +11,5 @@ pub mod preserved_spaces;
 pub mod space_collapse;
 pub mod unicode;
 pub mod whitespace_preprocessing;
+pub mod word_boundaries;
+pub mod word_data;
