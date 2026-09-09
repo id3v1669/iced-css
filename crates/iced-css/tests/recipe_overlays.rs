@@ -3,6 +3,7 @@ use iced::{
     advanced::{Layout, Shell, layout, widget::Tree},
     mouse,
 };
+use iced_css::capture::KeyedColumnRecipe;
 use iced_css::capture::{CaptureLimits, CapturedElement, ColumnRecipe, RowRecipe, adapters};
 use std::num::NonZeroUsize;
 fn limits() -> CaptureLimits {
@@ -17,22 +18,25 @@ fn limits() -> CaptureLimits {
 enum Recipe {
     Row(RowRecipe<'static, u8, iced::Theme, ()>),
     Column(ColumnRecipe<'static, u8, iced::Theme, ()>),
+    Keyed(KeyedColumnRecipe<'static, u8, u8, iced::Theme, ()>),
 }
 impl Recipe {
     fn children_mut(&mut self) -> &mut [Element<'static, u8, iced::Theme, ()>] {
         match self {
             Self::Row(r) => r.native_children_mut(),
             Self::Column(r) => r.native_children_mut(),
+            Self::Keyed(r) => r.native_children_mut(),
         }
     }
     fn lower(self) -> Element<'static, u8, iced::Theme, ()> {
         match self {
             Self::Row(r) => r.into_native().into(),
             Self::Column(r) => r.into_native().into(),
+            Self::Keyed(r) => r.into_native().into(),
         }
     }
 }
-fn recipe(column: bool) -> Recipe {
+fn recipe(family: u8) -> Recipe {
     let child: CapturedElement<'static, u8, iced::Theme, ()> =
         adapters::pick_list([1u8, 2], Some(1u8), |v| v, limits())
             .unwrap()
@@ -40,7 +44,14 @@ fn recipe(column: bool) -> Recipe {
             .on_open(100)
             .on_close(101)
             .erase();
-    if column {
+    if family == 2 {
+        Recipe::Keyed(
+            adapters::keyed_column_from_vecs(vec![0u8], vec![child], limits())
+                .unwrap()
+                .into_parts()
+                .0,
+        )
+    } else if family == 1 {
         Recipe::Column(
             adapters::column_from_vec(vec![child], limits())
                 .unwrap()
@@ -58,8 +69,8 @@ fn recipe(column: bool) -> Recipe {
 }
 #[test]
 fn raw_recipe_borrows_live_overlay_then_lowers_without_recreating_child_state() {
-    for column in [false, true] {
-        let mut recipe = recipe(column);
+    for family in [0, 1, 2] {
+        let mut recipe = recipe(family);
         let viewport = Rectangle::with_size(Size::new(200.0, 200.0));
         let child = &mut recipe.children_mut()[0];
         let mut tree = Tree::new(&*child);

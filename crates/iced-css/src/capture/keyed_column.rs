@@ -1,7 +1,6 @@
+use super::keyed_column_recipe::KeyedColumnRecipe as Column;
 use super::{CaptureError, CaptureLimits, Captured, CapturedElement, Construction};
-use iced::{
-    Alignment, Element, Length, Padding, Pixels, advanced::Renderer, widget::keyed::Column,
-};
+use iced::{Alignment, Element, Length, Padding, Pixels, advanced::Renderer};
 
 pub type CapturedKeyedColumn<'a, Key, Message, Theme = iced::Theme, R = iced::Renderer> =
     Captured<Column<'a, Key, Message, Theme, R>>;

@@ -196,3 +196,6 @@ pub use rich_text::{CapturedRichText, SpanStorage};
 
 mod table;
 pub use table::{CapturedTable, CapturedTableColumn, SafeTable};
+
+mod keyed_column_recipe;
+pub use keyed_column_recipe::KeyedColumnRecipe;
