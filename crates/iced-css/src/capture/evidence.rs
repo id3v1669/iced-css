@@ -970,3 +970,8 @@ mod resource;
 pub use resource::{ImageHints, ImageSource, RgbaBufferStatus, RgbaDeclaration};
 #[cfg(feature = "svg")]
 pub use resource::{SvgHints, SvgSource, SvgStyleSelection};
+
+mod content;
+pub use content::{
+    ContentCapability, ControlContentFamily, ManagedContentFamily, ReplacementCapability,
+};

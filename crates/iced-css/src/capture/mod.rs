@@ -5,7 +5,10 @@
 pub mod adapters;
 mod evidence;
 pub mod source;
-pub use evidence::{CaptureError, CaptureLimits, Construction, ConstructionNode};
+pub use evidence::{
+    CaptureError, CaptureLimits, Construction, ConstructionNode, ContentCapability,
+    ControlContentFamily, ManagedContentFamily, ReplacementCapability,
+};
 
 /// A native payload whose managed construction has not been erased.
 ///
