@@ -139,4 +139,5 @@ pub use defaulting::{
     DefaultedValue, DefaultedValueRef, DefaultingError, default_value, default_value_ref,
 };
 pub mod rule;
+pub mod ua_display;
 pub mod winner_table;
