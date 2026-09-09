@@ -86,3 +86,42 @@ impl<F: std::future::Future + ?Sized> std::future::Future for ScopedCaptureFutur
         this.context.run(|| this.future.as_mut().poll(cx))
     }
 }
+
+/// Entry-time choice for an ordinary public helper. This value does not activate
+/// a scope or build a view; branch before consuming the helper's inputs.
+#[derive(Debug, Clone, Copy)]
+pub enum PublicCaptureEntry {
+    Capture(CaptureLimits),
+    /// Run the ordinary native view once after reporting the missing setup.
+    Unstyled,
+}
+
+/// Select capture under the innermost explicit configuration, otherwise report
+/// the setup error once and select the ordinary unstyled view. No limits are
+/// invented. The reporter owns logging, attribution and cross-entry deduplication;
+/// a reporter panic propagates before a view branch is selected.
+///
+/// This is only the public entry decision: an error from the subsequently selected
+/// captured body must not retry through Unstyled. Async helpers select when their
+/// bodies run during polling, using the active poll-scoped configuration.
+pub fn public_entry(report_missing: impl FnOnce(ContextError)) -> PublicCaptureEntry {
+    match current_limits() {
+        Ok(limits) => PublicCaptureEntry::Capture(limits),
+        Err(error) => {
+            report_missing(error);
+            PublicCaptureEntry::Unstyled
+        }
+    }
+}
+
+/// Public helper entry using the facade's existing `log` backend. Missing setup
+/// emits an Error record under `iced_css::capture`, with the calling location,
+/// then selects the ordinary unstyled view. The application owns logger/filter
+/// configuration; this neither installs a logger nor creates a capture scope.
+#[track_caller]
+pub fn public_entry_logged() -> PublicCaptureEntry {
+    let caller = std::panic::Location::caller();
+    public_entry(|error| {
+        log::error!(target: "iced_css::capture", "{error} at {}:{}:{}; returning the ordinary unstyled iced view", caller.file(), caller.line(), caller.column());
+    })
+}
