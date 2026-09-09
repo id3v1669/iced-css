@@ -566,12 +566,12 @@ fn exact_aggregate_and_capacity_admission_and_one_less_boundaries() {
             base.declaration_offers(),
             base.membership_work()
         ),
-        (16, 18, 18_000, 20, 200)
+        (18, 18, 18_000, 20, 200)
     );
     let mut exact = limits();
     exact.nodes = nz(2);
     exact.retained_bytes = nz(base.retained_bytes());
-    exact.work = nz(16);
+    exact.work = nz(18);
     exact.rule_visits = nz(18);
     exact.matching_work = nz(18_000);
     exact.declaration_offers = nz(20);
@@ -592,7 +592,7 @@ fn exact_aggregate_and_capacity_admission_and_one_less_boundaries() {
         Err(SourceDisplayError::Bytes)
     ));
     cap = exact;
-    cap.work = nz(15);
+    cap.work = nz(17);
     assert!(matches!(
         evaluate_source_display(snapshot, &bundle, cap),
         Err(SourceDisplayError::Work)
@@ -810,7 +810,7 @@ fn suppressed_sources_inherit_keywords_without_mutating_text_or_runs() {
         .collect();
     let ua = catalog();
     let graph = graph(
-        "row{display:none;white-space:pre-wrap;text-transform:uppercase} container{white-space:inherit;text-transform:inherit} #rich{display:block;white-space:pre-line;text-transform:lowercase}",
+        "row{display:none;white-space:pre-wrap;text-transform:uppercase;direction:rtl;unicode-bidi:bidi-override} container{white-space:inherit;text-transform:inherit;unicode-bidi:inherit} #rich{display:block;white-space:pre-line;text-transform:lowercase;unicode-bidi:inherit}",
         ua.next_context(),
     );
     let sheets = controls(&[], true, 100);
@@ -830,6 +830,16 @@ fn suppressed_sources_inherit_keywords_without_mutating_text_or_runs() {
     assert_eq!(result.resolution(3).unwrap().display, Display::None);
     assert_eq!(result.resolution(1).unwrap().display, Display::Block);
     for (index, original) in originals.iter().enumerate() {
+        let bidi = result.bidi_style(index).unwrap();
+        assert_eq!(bidi.direction().as_str(), "rtl");
+        assert_eq!(
+            bidi.unicode_bidi().as_str(),
+            if index == 0 {
+                "normal"
+            } else {
+                "bidi-override"
+            }
+        );
         let pair = result.text_keywords(index).unwrap();
         assert_eq!(
             pair.white_space().keyword().as_str(),
@@ -873,4 +883,91 @@ fn root_text_inherit_uses_initials_independently_of_display_transformation() {
     let pair = result.text_keywords(0).unwrap();
     assert_eq!(pair.white_space().keyword().as_str(), "normal");
     assert_eq!(pair.text_transform().keyword().as_str(), "none");
+}
+
+#[test]
+fn bidi_style_defaults_inheritance_and_all_finite_graph_pairs() {
+    let owner = host(row(vec![named("inherit"), named("unset")]), None, None);
+    let ua = catalog();
+    let sheets = controls(&[], true, 100);
+    for direction in ["ltr", "rtl"] {
+        for unicode in ["normal", "embed", "bidi-override"] {
+            let graph = graph(
+                &format!(
+                    "row{{direction:{direction};unicode-bidi:{unicode}}} #inherit{{direction:inherit;unicode-bidi:inherit}}"
+                ),
+                ua.next_context(),
+            );
+            let bindings = [binding(&graph, GraphOrigin::User)];
+            let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
+            let result =
+                evaluate_source_display(owner.snapshot().unwrap(), &bundle, limits()).unwrap();
+            for index in 0..3 {
+                let value = result.bidi_style(index).unwrap();
+                assert_eq!(value.direction().as_str(), direction);
+                assert_eq!(
+                    value.unicode_bidi().as_str(),
+                    if index == 1 { "normal" } else { unicode }
+                );
+            }
+            assert!(result.bidi_style(3).is_none());
+            assert!(result.bidi_style(usize::MAX).is_none());
+        }
+    }
+    let root = host(text().into_parts().1, None, None);
+    for css in ["", "text{direction:inherit;unicode-bidi:inherit}"] {
+        let graph = graph(css, ua.next_context());
+        let bindings = [binding(&graph, GraphOrigin::User)];
+        let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
+        let result = evaluate_source_display(root.snapshot().unwrap(), &bundle, limits()).unwrap();
+        let pair = result.bidi_style(0).unwrap();
+        assert_eq!(pair.direction().as_str(), "ltr");
+        assert_eq!(pair.unicode_bidi().as_str(), "normal");
+    }
+}
+#[test]
+fn bidi_style_origins_importance_specificity_order_and_disabled_sheets() {
+    let owner = host(
+        row(vec![named("normal"), named("important"), named("order")]),
+        None,
+        None,
+    );
+    let ua = catalog();
+    let user = graph(
+        "row{direction:rtl;unicode-bidi:embed} #normal{direction:rtl;unicode-bidi:embed} #important{direction:rtl!important;unicode-bidi:bidi-override!important}",
+        ua.next_context(),
+    );
+    let author = graph(
+        "#normal{direction:ltr;unicode-bidi:normal} #important{direction:ltr!important;unicode-bidi:normal!important} #order{direction:rtl;unicode-bidi:normal} #order{direction:ltr;unicode-bidi:embed} text{direction:rtl;unicode-bidi:bidi-override}",
+        user.next_context().unwrap(),
+    );
+    for enabled in [true, false] {
+        let sheets = controls(&[1], enabled, 100);
+        let bindings = [
+            binding(&user, GraphOrigin::User),
+            binding(&author, GraphOrigin::Author(sheet(1))),
+        ];
+        let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
+        let result = evaluate_source_display(owner.snapshot().unwrap(), &bundle, limits()).unwrap();
+        let expected = if enabled {
+            [
+                ("ltr", "normal"),
+                ("rtl", "bidi-override"),
+                ("ltr", "embed"),
+                ("rtl", "embed"),
+            ]
+        } else {
+            [
+                ("rtl", "embed"),
+                ("rtl", "bidi-override"),
+                ("rtl", "normal"),
+                ("rtl", "embed"),
+            ]
+        };
+        for (index, (direction, unicode)) in expected.into_iter().enumerate() {
+            let value = result.bidi_style(index).unwrap();
+            assert_eq!(value.direction().as_str(), direction);
+            assert_eq!(value.unicode_bidi().as_str(), unicode);
+        }
+    }
 }

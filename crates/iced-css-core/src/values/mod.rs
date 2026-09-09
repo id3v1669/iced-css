@@ -1,4 +1,5 @@
 //! Exact specified-value primitives; property validation and f32 evaluation are separate.
+pub mod bidi;
 mod exact;
 pub use exact::{
     ConversionError, CounterError, CounterLimits, CounterStyle, Decimal, DecimalArithmeticError,

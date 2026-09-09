@@ -12,6 +12,7 @@ use iced_css_core::{
     identity::SourceRef,
     source::selector_tree::SelectorTreeLimits,
     values::{
+        bidi::{ComputedBidiError, ComputedBidiStyle, compute_bidi_style},
         display::{ComputedDisplayError, compute_display_style},
         text_keywords::{ComputedTextKeywords, ComputedTextKeywordsError, compute_text_keywords},
     },
@@ -23,8 +24,8 @@ pub struct SourceDisplayLimits {
     pub nodes: NonZeroUsize,
     /// Actual output-vector capacity, separate from borrowed owners and scratch.
     pub retained_bytes: NonZeroUsize,
-    /// Facade entries: admission + rule checks + slot initialization/display/text computation.
-    /// Exactly 1+r+3*n for a successful evaluation.
+    /// Facade entries: admission + rule checks + slot initialization/display/text/bidi computation.
+    /// Exactly 1+r+4*n for a successful evaluation.
     pub work: NonZeroUsize,
     /// Conservative n*r reservation, including excluded and unmatched rules.
     pub rule_visits: NonZeroUsize,
@@ -58,6 +59,10 @@ pub enum SourceDisplayError {
         index: usize,
         error: RuleBatchError,
     },
+    ComputedBidi {
+        index: usize,
+        error: ComputedBidiError,
+    },
     ComputedText {
         index: usize,
         error: ComputedTextKeywordsError,
@@ -79,6 +84,7 @@ impl std::error::Error for SourceDisplayError {
             Self::Cascade { error, .. } => Some(error),
             Self::Computed { error, .. } => Some(error),
             Self::ComputedText { error, .. } => Some(error),
+            Self::ComputedBidi { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -88,9 +94,10 @@ impl std::error::Error for SourceDisplayError {
 struct SourceComputed {
     display: DisplayResolution,
     text: ComputedTextKeywords,
+    bidi: ComputedBidiStyle,
 }
 
-/// Complete immutable display/position/float and text keywords in original source order.
+/// Complete immutable display/position/float, text and bidi keywords in original source order.
 /// This is source computation, not formatting suppression or native publication.
 /// The exact snapshot and bundle remain borrowed, including all bundle owners.
 ///
@@ -125,6 +132,37 @@ struct SourceComputed {
 ///     let _ = result.text_keywords(0);
 /// }
 /// ```
+/// ```compile_fail,E0505
+/// use iced_css::{host::source_publication::InitialSourceHost,
+///     evaluation::{display_rules::DisplayRuleBundle, source_display::*}};
+/// fn outlive(host: InitialSourceHost, bundle: &DisplayRuleBundle<'_>, limits: SourceDisplayLimits) {
+///     let result = evaluate_source_display(host.snapshot().unwrap(), bundle, limits).unwrap();
+///     drop(host);
+///     let _ = result.bidi_style(0);
+/// }
+/// ```
+/// ```compile_fail,E0505
+/// use iced_css::{host::source_publication::InitialSourceSnapshot,
+///     evaluation::{display_rules::DisplayRuleBundle, source_display::*}};
+/// fn outlive(snapshot: &InitialSourceSnapshot, bundle: DisplayRuleBundle<'_>, limits: SourceDisplayLimits) {
+///     let result = evaluate_source_display(snapshot, &bundle, limits).unwrap();
+///     drop(bundle);
+///     let _ = result.bidi_style(0);
+/// }
+/// ```
+/// ```compile_fail,E0502
+/// use iced_css::{host::source_publication::InitialSourceSnapshot,
+///     evaluation::{display_rules::*, source_display::*}};
+/// use iced_css_core::cascade::{sheets::AuthorSheets, ua_display::UaDisplayCatalog};
+/// fn mutate(snapshot: &InitialSourceSnapshot, ua: &UaDisplayCatalog,
+///     sheets: &mut AuthorSheets, bundle_limits: BundleLimits, limits: SourceDisplayLimits) {
+///     let bindings = [];
+///     let bundle = DisplayRuleBundle::new(ua, &bindings, sheets, bundle_limits).unwrap();
+///     let result = evaluate_source_display(snapshot, &bundle, limits).unwrap();
+///     sheets.set_author_enabled(false).unwrap();
+///     let _ = result.bidi_style(0);
+/// }
+/// ```
 #[must_use]
 pub struct SourceDisplay<'snapshot, 'bundle, 'rules> {
     snapshot: &'snapshot InitialSourceSnapshot,
@@ -156,6 +194,14 @@ impl<'snapshot, 'bundle, 'rules> SourceDisplay<'snapshot, 'bundle, 'rules> {
             .get(index)?
             .as_ref()
             .map(|value| &value.text)
+    }
+    /// Computed CSS bidi keywords at the original source slot, including suppressed sources.
+    /// This does not identify a CSS paragraph or its containing block.
+    pub fn bidi_style(&self, index: usize) -> Option<&ComputedBidiStyle> {
+        self.resolutions
+            .get(index)?
+            .as_ref()
+            .map(|value| &value.bidi)
     }
     /// Exact snapshot token at this original construction index; no token search.
     pub fn token(&self, index: usize) -> Option<&SourceRef> {
@@ -246,7 +292,7 @@ pub fn evaluate_source_display<'snapshot, 'bundle, 'rules>(
     )?;
     charge(
         &mut remaining,
-        n.checked_mul(3).ok_or(SourceDisplayError::Work)?,
+        n.checked_mul(4).ok_or(SourceDisplayError::Work)?,
     )?;
     let work = limits.work.get() - remaining;
     let (mut resolutions, retained_bytes) = output(n, limits.retained_bytes)?;
@@ -282,7 +328,13 @@ pub fn evaluate_source_display<'snapshot, 'bundle, 'rules>(
             .map_err(|error| SourceDisplayError::Computed { index, error })?;
         let text = compute_text_keywords(&winners, parent.map(|value| &value.text))
             .map_err(|error| SourceDisplayError::ComputedText { index, error })?;
-        resolutions[index] = Some(SourceComputed { display, text });
+        let bidi = compute_bidi_style(&winners, parent.map(|value| &value.bidi))
+            .map_err(|error| SourceDisplayError::ComputedBidi { index, error })?;
+        resolutions[index] = Some(SourceComputed {
+            display,
+            text,
+            bidi,
+        });
     }
     Ok(SourceDisplay {
         snapshot,
