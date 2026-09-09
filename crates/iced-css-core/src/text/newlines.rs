@@ -39,6 +39,11 @@ pub struct NormalizedText<'a> {
     scalars: Vec<NormalizedScalar>,
 }
 impl<'a> NormalizedText<'a> {
+    /// Actual owned text and scalar-map payload capacities. The original source
+    /// is borrowed; allocator internals and fixed owner headers are excluded.
+    pub fn retained_bytes(&self) -> usize {
+        self.text.capacity() + self.scalars.capacity() * size_of::<NormalizedScalar>()
+    }
     pub fn source(&self) -> &'a str {
         self.source
     }
@@ -173,4 +178,62 @@ pub fn normalize_default_newlines(
         text,
         scalars,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn owner(source: &str) -> NormalizedText<'_> {
+        normalize_default_newlines(
+            source,
+            NewlineLimits {
+                input_bytes: NonZeroUsize::MAX,
+                retained_bytes: NonZeroUsize::new(100_000).unwrap(),
+                work: NonZeroUsize::MAX,
+            },
+        )
+        .unwrap()
+    }
+    #[test]
+    fn retained_payload_tracks_independent_spare_capacity_without_changing_content() {
+        for source in ["", "ascii", "\r\n", "𠀀"] {
+            let text = owner(source);
+            assert_eq!(
+                text.retained_bytes(),
+                text.text.capacity() + text.scalars.capacity() * size_of::<NormalizedScalar>()
+            );
+        }
+        for grow_text in [true, false] {
+            let mut text = owner("é\r\n𠀀");
+            let original = text.text.clone();
+            let map = text.scalars.clone();
+            let before = text.retained_bytes();
+            let string_capacity = text.text.capacity();
+            let map_capacity = text.scalars.capacity();
+            if grow_text {
+                text.text
+                    .try_reserve_exact(string_capacity.checked_add(1).unwrap() - text.text.len())
+                    .unwrap();
+                assert!(text.text.capacity() > string_capacity);
+                assert_eq!(text.scalars.capacity(), map_capacity);
+                assert_eq!(
+                    text.retained_bytes() - before,
+                    text.text.capacity() - string_capacity
+                );
+            } else {
+                text.scalars
+                    .try_reserve_exact(map_capacity.checked_add(1).unwrap() - text.scalars.len())
+                    .unwrap();
+                assert!(text.scalars.capacity() > map_capacity);
+                assert_eq!(text.text.capacity(), string_capacity);
+                assert_eq!(
+                    text.retained_bytes() - before,
+                    (text.scalars.capacity() - map_capacity) * size_of::<NormalizedScalar>()
+                );
+            }
+            assert_eq!(text.text, original);
+            assert_eq!(text.scalars, map);
+            assert_eq!(text.source(), "é\r\n𠀀");
+        }
+    }
 }

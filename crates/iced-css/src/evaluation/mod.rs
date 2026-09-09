@@ -5,3 +5,5 @@ pub mod source_display;
 pub mod source_eligibility;
 pub mod source_participants;
 pub mod source_structural_events;
+
+pub mod source_whitespace;
