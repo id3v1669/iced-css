@@ -104,7 +104,8 @@ fn expand(args: &Args, function: &mut ItemFn) -> syn::Result<()> {
         stylesheet,
         errors: Vec::new(),
     };
-    rewriter.visit_item_fn_mut(function);
+    // The annotation owns this body, not public signature expressions.
+    rewriter.visit_block_mut(&mut function.block);
 
     match rewriter.errors.into_iter().reduce(|mut all, next| {
         all.combine(next);
@@ -121,6 +122,10 @@ struct Rewriter {
 }
 
 impl VisitMut for Rewriter {
+    // Nested functions, impls, constants and other items have independent scope.
+    // Rust expands any annotations on those items separately.
+    fn visit_item_mut(&mut self, _item: &mut syn::Item) {}
+
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
         syn::visit_mut::visit_expr_mut(self, expr);
 
@@ -200,6 +205,66 @@ fn literal_classes(arg: &Expr) -> syn::Result<Vec<(String, Span)>> {
             )),
         })
         .collect()
+}
+
+fn resolved_tokens(resolved: &Resolved) -> proc_macro2::TokenStream {
+    let length = |value: &Option<Length>| match value {
+        None => quote!(::core::option::Option::None),
+        Some(Length::Px(v)) => quote!(::core::option::Option::Some(::iced_css::Length::Px(#v))),
+        Some(Length::Percent(v)) => {
+            quote!(::core::option::Option::Some(::iced_css::Length::Percent(#v)))
+        }
+        Some(Length::Auto) => quote!(::core::option::Option::Some(::iced_css::Length::Auto)),
+    };
+    let margin_value = |value: &MarginValue| match value {
+        MarginValue::Px(v) => quote!(::iced_css::MarginValue::Px(#v)),
+        MarginValue::Auto => quote!(::iced_css::MarginValue::Auto),
+    };
+
+    let width = length(&resolved.width);
+    let height = length(&resolved.height);
+    let min_width = length(&resolved.min_width);
+    let max_width = length(&resolved.max_width);
+    let min_height = length(&resolved.min_height);
+    let max_height = length(&resolved.max_height);
+    let padding = match &resolved.padding {
+        None => quote!(::core::option::Option::None),
+        Some(p) => {
+            let (top, right, bottom, left) = (p.top, p.right, p.bottom, p.left);
+            quote!(::core::option::Option::Some(::iced_css::Paddings {
+                top: #top,
+                right: #right,
+                bottom: #bottom,
+                left: #left,
+            }))
+        }
+    };
+    let margin = match &resolved.margin {
+        None => quote!(::core::option::Option::None),
+        Some(margins) => {
+            let top = margin_value(&margins.top);
+            let right = margin_value(&margins.right);
+            let bottom = margin_value(&margins.bottom);
+            let left = margin_value(&margins.left);
+            quote!(::core::option::Option::Some(::iced_css::Margins {
+                top: #top,
+                right: #right,
+                bottom: #bottom,
+                left: #left,
+            }))
+        }
+    };
+
+    quote!(::iced_css::Resolved {
+        width: #width,
+        height: #height,
+        min_width: #min_width,
+        max_width: #max_width,
+        min_height: #min_height,
+        max_height: #max_height,
+        margin: #margin,
+        padding: #padding,
+    })
 }
 
 #[cfg(test)]
@@ -347,64 +412,4 @@ mod tests {
             .is_err()
         );
     }
-}
-
-fn resolved_tokens(resolved: &Resolved) -> proc_macro2::TokenStream {
-    let length = |value: &Option<Length>| match value {
-        None => quote!(::core::option::Option::None),
-        Some(Length::Px(v)) => quote!(::core::option::Option::Some(::iced_css::Length::Px(#v))),
-        Some(Length::Percent(v)) => {
-            quote!(::core::option::Option::Some(::iced_css::Length::Percent(#v)))
-        }
-        Some(Length::Auto) => quote!(::core::option::Option::Some(::iced_css::Length::Auto)),
-    };
-    let margin_value = |value: &MarginValue| match value {
-        MarginValue::Px(v) => quote!(::iced_css::MarginValue::Px(#v)),
-        MarginValue::Auto => quote!(::iced_css::MarginValue::Auto),
-    };
-
-    let width = length(&resolved.width);
-    let height = length(&resolved.height);
-    let min_width = length(&resolved.min_width);
-    let max_width = length(&resolved.max_width);
-    let min_height = length(&resolved.min_height);
-    let max_height = length(&resolved.max_height);
-    let padding = match &resolved.padding {
-        None => quote!(::core::option::Option::None),
-        Some(p) => {
-            let (top, right, bottom, left) = (p.top, p.right, p.bottom, p.left);
-            quote!(::core::option::Option::Some(::iced_css::Paddings {
-                top: #top,
-                right: #right,
-                bottom: #bottom,
-                left: #left,
-            }))
-        }
-    };
-    let margin = match &resolved.margin {
-        None => quote!(::core::option::Option::None),
-        Some(margins) => {
-            let top = margin_value(&margins.top);
-            let right = margin_value(&margins.right);
-            let bottom = margin_value(&margins.bottom);
-            let left = margin_value(&margins.left);
-            quote!(::core::option::Option::Some(::iced_css::Margins {
-                top: #top,
-                right: #right,
-                bottom: #bottom,
-                left: #left,
-            }))
-        }
-    };
-
-    quote!(::iced_css::Resolved {
-        width: #width,
-        height: #height,
-        min_width: #min_width,
-        max_width: #max_width,
-        min_height: #min_height,
-        max_height: #max_height,
-        margin: #margin,
-        padding: #padding,
-    })
 }
