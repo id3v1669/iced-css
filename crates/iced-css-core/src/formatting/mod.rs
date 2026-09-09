@@ -41,3 +41,5 @@ pub mod table_fixed_columns;
 pub mod table_repair_stage1;
 
 pub mod table_repair_stage2;
+
+pub mod table_repair_stage3;
