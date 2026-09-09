@@ -27,3 +27,5 @@ pub mod bidi_isolates;
 pub mod bidi_explicit;
 
 pub mod bidi_runs;
+
+pub mod bidi_weak;
