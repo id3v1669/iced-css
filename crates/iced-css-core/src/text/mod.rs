@@ -29,3 +29,5 @@ pub mod bidi_explicit;
 pub mod bidi_runs;
 
 pub mod bidi_weak;
+
+pub mod bidi_bracket_pairs;
