@@ -11,3 +11,5 @@ pub mod source_whitespace;
 pub mod source_casing;
 
 pub mod source_structure;
+
+pub mod source_analysis_input;
