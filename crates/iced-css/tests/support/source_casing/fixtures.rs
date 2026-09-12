@@ -185,7 +185,7 @@ fn exact_work_one_short_and_recovery_with_generous_bytes() {
     );
 }
 #[test]
-fn captured_source_limit_and_transform_precedence() {
+fn captured_source_limit_and_language_precedence() {
     with_whitespace!(
         [
             leaf(0, "X", "capitalize", Some("tr\0")),
@@ -212,24 +212,22 @@ fn captured_source_limit_and_transform_precedence() {
             lim.language_bytes = nz(1);
             assert!(matches!(
                 evaluate_source_casing(&w, lim),
-                Err(SourceCasingError::Transform {
-                    reason: SourceCasingTransformReason::Capitalize,
-                    ..
-                })
+                Err(SourceCasingError::LanguageBytes { source: 0 })
             ));
         }
     );
 }
 #[test]
-fn empty_capitalize_is_rejected_but_managed_override_is_admitted() {
+fn empty_capitalize_and_managed_override_are_admitted() {
     with_whitespace!([leaf(0, "", "capitalize", None)], None, None, "", |w| {
-        assert!(matches!(
-            evaluate_source_casing(&w, casing_limits()),
-            Err(SourceCasingError::Transform {
-                reason: SourceCasingTransformReason::Capitalize,
-                ..
-            })
-        ));
+        let out = evaluate_source_casing(&w, casing_limits()).unwrap();
+        assert_eq!(
+            out.source(0).unwrap().operation(),
+            Some(SourceCasingOperation::Capitalize)
+        );
+        assert_eq!(out.capitalize_scalar_count(), 0);
+        assert_eq!(out.capitalize_context_count(), 0);
+        assert_eq!(out.capitalize_unit_count(), 0);
     });
     with_whitespace!(
         [leaf(0, "X", "none", None)],

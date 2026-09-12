@@ -1,9 +1,10 @@
-//! Mapped lower/upper/none casing over the exact source-whitespace owner.
+//! Mapped lower/upper/capitalize/none casing over the exact source-whitespace owner.
 //!
 //! Original normalized context crosses admitted inline boundaries and stops at
 //! Block boundaries. Per-target language and operation select pinned Unicode17
 //! mappings. Temporary context strings are algorithm inputs, never application
-//! source identities. This does not implement capitalize, shaping or line edges.
+//! source identities. Capitalize uses first complete graphemes of a coarsened word partition.
+//! Shaping and line edges remain separate.
 use super::{
     source_participants::{SourceOuterCategory, SourceParticipant, SourceParticipants},
     source_structural_events::SourceStructuralEventKind,
@@ -20,7 +21,9 @@ use iced_css_core::{
             CasingOperation, CasingSelectionError, CasingSelectionLimits, CasingSelectionOrigin,
             select_case_mappings,
         },
+        grapheme_boundaries::GraphemeBoundaryError,
         newlines::{NewlineError, NewlineLimits, normalize_default_newlines},
+        word_boundaries::WordBoundaryError,
     },
 };
 use std::{iter::FusedIterator, mem::size_of, num::NonZeroUsize, ops::Range};
@@ -31,6 +34,7 @@ pub enum SourceCasingOperation {
     None,
     Lower,
     Upper,
+    Capitalize,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceCasingLanguageStatus {
@@ -112,7 +116,6 @@ pub struct SourceCasingLimits {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceCasingTransformReason {
-    Capitalize,
     InvalidKeyword,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +124,7 @@ pub enum SourceCasingInvariantReason {
     OriginalCr,
     Alignment,
     TargetCoverage,
+    Boundaries,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceCasingError {
@@ -148,6 +152,14 @@ pub enum SourceCasingError {
         start: usize,
         error: NewlineError,
     },
+    WordBoundaries {
+        start: usize,
+        error: WordBoundaryError,
+    },
+    GraphemeBoundaries {
+        start: usize,
+        error: GraphemeBoundaryError,
+    },
     Contexts {
         start: usize,
         error: CasingContextError,
@@ -170,6 +182,8 @@ impl std::error::Error for SourceCasingError {
             Self::LanguageView(e) => Some(e),
             Self::Newlines { error, .. } => Some(error),
             Self::Contexts { error, .. } => Some(error),
+            Self::WordBoundaries { error, .. } => Some(error),
+            Self::GraphemeBoundaries { error, .. } => Some(error),
             Self::Selection { error, .. } => Some(error),
             _ => None,
         }
@@ -187,6 +201,12 @@ struct ScalarRecord {
     mapping: CaseMapping,
     origin: SourceCasingOrigin,
 }
+#[derive(Debug, Clone, Copy)]
+struct UnitRecord {
+    start: usize,
+    unit_end: usize,
+    word_end: usize,
+}
 /// Immutable selections borrow exact whitespace provenance. Returned scalar/source
 /// views borrow this owner; copied mappings and presentations contain static values.
 #[must_use]
@@ -194,6 +214,9 @@ pub struct SourceCasing<'w, 'e, 'd, 's, 'b, 'r> {
     whitespace: &'w SourceWhitespace<'e, 'd, 's, 'b, 'r>,
     sources: Vec<SourceRecord>,
     scalars: Vec<ScalarRecord>,
+    units: Vec<UnitRecord>,
+    capitalize_scalars: usize,
+    capitalize_contexts: usize,
     captured_sources: usize,
     language_bytes: usize,
     known_languages: usize,
@@ -227,6 +250,43 @@ impl<'w, 'e, 'd, 's, 'b, 'r> SourceCasing<'w, 'e, 'd, 's, 'b, 'r> {
     pub fn scalar_count(&self) -> usize {
         self.scalars.len()
     }
+    /// Number of original normalized scalars whose own source operation is
+    /// `Capitalize`, including unselected and whitespace-suppressed scalars.
+    pub fn capitalize_scalar_count(&self) -> usize {
+        self.capitalize_scalars
+    }
+    /// Number of nonempty original Block-delimited contexts analyzed because
+    /// they contain at least one capitalize-owned scalar.
+    pub fn capitalize_context_count(&self) -> usize {
+        self.capitalize_contexts
+    }
+    /// Number of sparse operative units retained by this owner.
+    ///
+    /// These are first complete graphemes of coarsened words that contain a
+    /// capitalize-owned member; this is not an enumeration of all words or
+    /// graphemes.
+    pub fn capitalize_unit_count(&self) -> usize {
+        self.units.len()
+    }
+    /// Returns one sparse operative unit in this owner's original normalized
+    /// scalar coordinate system.
+    pub fn capitalize_unit(
+        &self,
+        ordinal: usize,
+    ) -> Option<SourceCapitalizeUnit<'_, 'w, 'e, 'd, 's, 'b, 'r>> {
+        self.units.get(ordinal)?;
+        Some(SourceCapitalizeUnit {
+            owner: self,
+            ordinal,
+        })
+    }
+    /// Iterates the sparse operative units in increasing original scalar order.
+    pub fn capitalize_units(&self) -> SourceCapitalizeUnits<'_, 'w, 'e, 'd, 's, 'b, 'r> {
+        SourceCapitalizeUnits {
+            owner: self,
+            range: 0..self.units.len(),
+        }
+    }
     pub fn language_bytes(&self) -> usize {
         self.language_bytes
     }
@@ -248,7 +308,7 @@ impl<'w, 'e, 'd, 's, 'b, 'r> SourceCasing<'w, 'e, 'd, 's, 'b, 'r> {
     pub fn work(&self) -> usize {
         self.work
     }
-    /// Actual two-vector retained payload, excluding borrowed/static/fixed storage.
+    /// Actual three-vector retained payload, excluding borrowed/static/fixed storage.
     pub fn retained_bytes(&self) -> usize {
         self.retained_bytes
     }
@@ -334,6 +394,31 @@ impl<'o, 'w, 'e, 'd, 's, 'b, 'r> SourceCasingScalar<'o, 'w, 'e, 'd, 's, 'b, 'r> 
     pub fn origin(&self) -> SourceCasingOrigin {
         self.owner.scalars[self.index].origin
     }
+    /// Returns the sparse operative unit containing this original scalar.
+    ///
+    /// Unit membership includes members whose own operation is not capitalize
+    /// and members suppressed during presentation. `None` only means this
+    /// scalar is outside the retained operative units; it does not describe
+    /// every word or first grapheme in the source.
+    pub fn capitalize_unit(&self) -> Option<SourceCapitalizeUnit<'o, 'w, 'e, 'd, 's, 'b, 'r>> {
+        let ordinal = self
+            .owner
+            .units
+            .partition_point(|unit| unit.start <= self.index)
+            .checked_sub(1)?;
+        (self.index < self.owner.units[ordinal].unit_end).then_some(SourceCapitalizeUnit {
+            owner: self.owner,
+            ordinal,
+        })
+    }
+    /// Whether this member is both inside an operative unit and owned by a
+    /// source whose operation is `Capitalize`.
+    ///
+    /// Whitespace suppression affects presentation, not target selection.
+    pub fn is_capitalize_target(&self) -> bool {
+        self.source().operation() == Some(SourceCasingOperation::Capitalize)
+            && self.capitalize_unit().is_some()
+    }
     pub fn presentation(&self) -> SourceCasingPresentation {
         let Some(scalar) = self.whitespace_scalar().rendered_scalar() else {
             return SourceCasingPresentation::SuppressedByWhitespace;
@@ -384,6 +469,54 @@ impl<'o, 'w, 'e, 'd, 's, 'b, 'r> Iterator for SourceCasingScalars<'o, 'w, 'e, 'd
 }
 impl ExactSizeIterator for SourceCasingScalars<'_, '_, '_, '_, '_, '_, '_> {}
 impl FusedIterator for SourceCasingScalars<'_, '_, '_, '_, '_, '_, '_> {}
+/// Owner-bound first complete grapheme selected for an operative coarsened word.
+#[derive(Debug)]
+pub struct SourceCapitalizeUnit<'o, 'w, 'e, 'd, 's, 'b, 'r> {
+    owner: &'o SourceCasing<'w, 'e, 'd, 's, 'b, 'r>,
+    ordinal: usize,
+}
+impl<'o, 'w, 'e, 'd, 's, 'b, 'r> SourceCapitalizeUnit<'o, 'w, 'e, 'd, 's, 'b, 'r> {
+    /// Ordinal in the owner's sparse operative-unit sequence.
+    pub fn index(&self) -> usize {
+        self.ordinal
+    }
+    /// Complete unit range in the owner's original normalized scalar domain.
+    pub fn scalar_range(&self) -> Range<usize> {
+        let unit = self.owner.units[self.ordinal];
+        unit.start..unit.unit_end
+    }
+    /// Coarsened word range in the owner's original normalized scalar domain.
+    pub fn word_range(&self) -> Range<usize> {
+        let unit = self.owner.units[self.ordinal];
+        unit.start..unit.word_end
+    }
+    /// Iterates every unit member, including members with another operation.
+    pub fn scalars(&self) -> SourceCasingScalars<'o, 'w, 'e, 'd, 's, 'b, 'r> {
+        SourceCasingScalars {
+            owner: self.owner,
+            range: self.scalar_range(),
+        }
+    }
+}
+#[derive(Debug)]
+pub struct SourceCapitalizeUnits<'o, 'w, 'e, 'd, 's, 'b, 'r> {
+    owner: &'o SourceCasing<'w, 'e, 'd, 's, 'b, 'r>,
+    range: Range<usize>,
+}
+impl<'o, 'w, 'e, 'd, 's, 'b, 'r> Iterator for SourceCapitalizeUnits<'o, 'w, 'e, 'd, 's, 'b, 'r> {
+    type Item = SourceCapitalizeUnit<'o, 'w, 'e, 'd, 's, 'b, 'r>;
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(SourceCapitalizeUnit {
+            owner: self.owner,
+            ordinal: self.range.next()?,
+        })
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.range.size_hint()
+    }
+}
+impl ExactSizeIterator for SourceCapitalizeUnits<'_, '_, '_, '_, '_, '_, '_> {}
+impl FusedIterator for SourceCapitalizeUnits<'_, '_, '_, '_, '_, '_, '_> {}
 fn invariant(start: usize, reason: SourceCasingInvariantReason) -> SourceCasingError {
     SourceCasingError::Invariant { start, reason }
 }
@@ -458,19 +591,16 @@ fn operation(value: &str, source: usize) -> Result<SourceCasingOperation, Source
         "none" => Ok(SourceCasingOperation::None),
         "lowercase" => Ok(SourceCasingOperation::Lower),
         "uppercase" => Ok(SourceCasingOperation::Upper),
+        "capitalize" => Ok(SourceCasingOperation::Capitalize),
         _ => Err(SourceCasingError::Transform {
             source,
-            reason: if value == "capitalize" {
-                SourceCasingTransformReason::Capitalize
-            } else {
-                SourceCasingTransformReason::InvalidKeyword
-            },
+            reason: SourceCasingTransformReason::InvalidKeyword,
         }),
     }
 }
 fn lane(record: SourceRecord) -> Option<usize> {
     let offset = match record.operation? {
-        SourceCasingOperation::None => return None,
+        SourceCasingOperation::None | SourceCasingOperation::Capitalize => return None,
         SourceCasingOperation::Lower => 0,
         SourceCasingOperation::Upper => 4,
     };
@@ -514,7 +644,7 @@ struct Receipt {
     phase: &'static str,
     start: usize,
     lane: Option<usize>,
-    components: [usize; 7],
+    components: [usize; 11],
     live: usize,
     peak: usize,
     remaining_work: usize,
@@ -537,9 +667,11 @@ macro_rules! observe {
         });
     };
 }
+#[path = "source_casing_capitalize.rs"]
+mod capitalize;
 /// Evaluate the narrow admitted source domain without consuming its owner.
 ///
-/// The result retains two vectors (eligible-source profiles and scalar mappings)
+/// The result retains profiles, scalar mappings and operative capitalize units
 /// and borrows the exact whitespace owner for application provenance. Temporary
 /// original-context strings and their normalized/context/selection owners drop
 /// before publication; these strings are never application source identities.
@@ -553,7 +685,8 @@ macro_rules! observe {
 /// capacity checks follow the documented stage order; nested errors preserve
 /// their helper and original source index or global scalar start as applicable.
 /// Malformed tags retain default-fallback diagnostics rather than failing.
-/// `capitalize` on actual content (even empty content) returns `Transform`.
+/// Empty capitalize content retains source diagnostics without boundary allocation.
+/// Units reserve the capitalize-scalar upper bound, so capacity can exceed unit count.
 /// Failure publishes no partial result and leaves all borrowed owners usable.
 pub fn evaluate_source_casing<'w, 'e, 'd, 's, 'b, 'r>(
     whitespace: &'w SourceWhitespace<'e, 'd, 's, 'b, 'r>,
@@ -593,6 +726,9 @@ fn build<'w, 'e, 'd, 's, 'b, 'r>(
         whitespace,
         sources: Vec::new(),
         scalars: Vec::new(),
+        units: Vec::new(),
+        capitalize_scalars: 0,
+        capitalize_contexts: 0,
         captured_sources: captured,
         language_bytes: 0,
         known_languages: 0,
@@ -605,7 +741,7 @@ fn build<'w, 'e, 'd, 's, 'b, 'r>(
         peak: 0,
     };
     if k == 0 {
-        observe!(observer, ledger, "publish", 0, None, [0; 7], None);
+        observe!(observer, ledger, "publish", 0, None, [0; 11], None);
         return Ok(out);
     }
     let view_work = NonZeroUsize::new(ledger.work).ok_or(SourceCasingError::Work)?;
@@ -627,7 +763,7 @@ fn build<'w, 'e, 'd, 's, 'b, 'r>(
         "view",
         0,
         None,
-        [l, 0, 0, 0, 0, 0, 0],
+        [l, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         Some((view_bytes.get(), view_work.get()))
     );
     ledger.charge(k)?;
@@ -640,7 +776,7 @@ fn build<'w, 'e, 'd, 's, 'b, 'r>(
         "profiles",
         0,
         None,
-        [l, p, 0, 0, 0, 0, 0],
+        [l, p, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         None
     );
     let participants = SourceParticipants::new(eligibility);
@@ -696,7 +832,7 @@ fn build<'w, 'e, 'd, 's, 'b, 'r>(
         "view_drop",
         0,
         None,
-        [0, p, 0, 0, 0, 0, 0],
+        [0, p, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         None
     );
     ledger.charge(n)?;
@@ -709,7 +845,7 @@ fn build<'w, 'e, 'd, 's, 'b, 'r>(
         "scalars",
         0,
         None,
-        [0, p, r, 0, 0, 0, 0],
+        [0, p, r, 0, 0, 0, 0, 0, 0, 0, 0],
         None
     );
     for scalar in whitespace.scalars() {
@@ -719,12 +855,30 @@ fn build<'w, 'e, 'd, 's, 'b, 'r>(
                 scalar.index(),
                 SourceCasingInvariantReason::Source,
             ))?;
+        if out.sources[source].operation == Some(SourceCasingOperation::Capitalize) {
+            out.capitalize_scalars += 1;
+        }
         out.scalars.push(ScalarRecord {
             source,
             mapping: CaseMapping::Identity,
             origin: SourceCasingOrigin::Untransformed,
         });
     }
+    if out.capitalize_scalars > 0 {
+        ledger.charge(1)?;
+        out.units = reserve(out.capitalize_scalars, &mut ledger)?;
+    }
+    #[cfg(test)]
+    let j = payload::<UnitRecord>(out.units.capacity())?;
+    observe!(
+        observer,
+        ledger,
+        "units",
+        0,
+        None,
+        [0, p, r, j, 0, 0, 0, 0, 0, 0, 0],
+        None
+    );
     ledger.charge(whitespace.event_count())?;
     let mut start = 0;
     for event in whitespace.events() {
@@ -760,10 +914,24 @@ fn build<'w, 'e, 'd, 's, 'b, 'r>(
         "publish",
         n,
         None,
-        [0, p, r, 0, 0, 0, 0],
+        [0, p, r, j, 0, 0, 0, 0, 0, 0, 0],
         None
     );
     Ok(out)
+}
+fn zero_lane_coverage(
+    start: usize,
+    targets: usize,
+    before: usize,
+    after: usize,
+) -> Result<(), SourceCasingError> {
+    if targets != 0 || before != after {
+        return Err(invariant(
+            start,
+            SourceCasingInvariantReason::TargetCoverage,
+        ));
+    }
+    Ok(())
 }
 fn segment(
     out: &mut SourceCasing<'_, '_, '_, '_, '_, '_>,
@@ -781,6 +949,7 @@ fn segment(
     let mut u = 0usize;
     let mut mask = 0u8;
     let mut targets = 0usize;
+    let mut has_capitalize = false;
     for i in range.clone() {
         let scalar = out
             .whitespace
@@ -793,12 +962,14 @@ fn segment(
         u = u
             .checked_add(scalar.len_utf8())
             .ok_or(SourceCasingError::ContextBytes { start })?;
+        has_capitalize |=
+            out.sources[out.scalars[i].source].operation == Some(SourceCasingOperation::Capitalize);
         if let Some(bit) = lane(out.sources[out.scalars[i].source]) {
             mask |= 1 << bit;
             targets += 1;
         }
     }
-    if mask == 0 {
+    if mask == 0 && !has_capitalize {
         return Ok(());
     }
     ledger.charge(1)?;
@@ -819,13 +990,15 @@ fn segment(
     let p = payload::<SourceRecord>(out.sources.capacity())?;
     #[cfg(test)]
     let r = payload::<ScalarRecord>(out.scalars.capacity())?;
+    #[cfg(test)]
+    let j = payload::<UnitRecord>(out.units.capacity())?;
     observe!(
         observer,
         ledger,
         "string",
         start,
         None,
-        [0, p, r, h, 0, 0, 0],
+        [0, p, r, j, h, 0, 0, 0, 0, 0, 0],
         None
     );
     for i in range.clone() {
@@ -856,7 +1029,7 @@ fn segment(
         "normalized",
         start,
         None,
-        [0, p, r, h, a, 0, 0],
+        [0, p, r, j, h, a, 0, 0, 0, 0, 0],
         Some((bytes.get(), nw))
     );
     ledger.charge(m)?;
@@ -876,6 +1049,49 @@ fn segment(
             return Err(invariant(start, SourceCasingInvariantReason::Alignment));
         }
         byte = end;
+    }
+    out.active_contexts += 1;
+    let first_unit = out.units.len();
+    if has_capitalize {
+        out.capitalize_contexts += 1;
+        let (cap_mask, cap_targets) = capitalize::analyze(
+            out,
+            range.clone(),
+            &normalized,
+            ledger,
+            h,
+            a,
+            #[cfg(test)]
+            observer,
+        )?;
+        mask |= cap_mask;
+        targets += cap_targets;
+    }
+    if mask == 0 {
+        zero_lane_coverage(start, targets, first_unit, out.units.len())?;
+        drop(normalized);
+        ledger.live -= a;
+        observe!(
+            observer,
+            ledger,
+            "normalized_drop",
+            start,
+            None,
+            [0, p, r, j, h, 0, 0, 0, 0, 0, 0],
+            None
+        );
+        drop(text);
+        ledger.live -= h;
+        observe!(
+            observer,
+            ledger,
+            "string_drop",
+            start,
+            None,
+            [0, p, r, j, 0, 0, 0, 0, 0, 0, 0],
+            None
+        );
+        return Ok(());
     }
     let cw = cost(m, 3, 1)?;
     ledger.charge(cw)?;
@@ -897,10 +1113,9 @@ fn segment(
         "contexts",
         start,
         None,
-        [0, p, r, h, a, c, 0],
+        [0, p, r, j, h, a, 0, 0, 0, c, 0],
         Some((bytes.get(), cw))
     );
-    out.active_contexts += 1;
     let mut writes = 0;
     for bit in 0..8 {
         if mask & (1 << bit) == 0 {
@@ -930,13 +1145,32 @@ fn segment(
             "selection",
             start,
             Some(bit),
-            [0, p, r, h, a, c, q],
+            [0, p, r, j, h, a, 0, 0, 0, c, q],
             Some((bytes.get(), sw))
         );
         ledger.charge(m)?;
+        let mut unit_cursor = first_unit;
         for (local, i) in range.clone().enumerate() {
+            if out
+                .units
+                .get(unit_cursor)
+                .is_some_and(|unit| i >= unit.unit_end)
+            {
+                unit_cursor += 1;
+            }
+            let member = out
+                .units
+                .get(unit_cursor)
+                .is_some_and(|unit| unit.start <= i && i < unit.unit_end);
             let record = &mut out.scalars[i];
-            if lane(out.sources[record.source]) == Some(bit) {
+            let source = out.sources[record.source];
+            let target_lane =
+                if member && source.operation == Some(SourceCasingOperation::Capitalize) {
+                    capitalize::upper_lane(source)
+                } else {
+                    lane(source)
+                };
+            if target_lane == Some(bit) {
                 record.mapping = selected
                     .mapping(local)
                     .ok_or(invariant(start, SourceCasingInvariantReason::Alignment))?;
@@ -959,7 +1193,7 @@ fn segment(
             "selection_drop",
             start,
             Some(bit),
-            [0, p, r, h, a, c, 0],
+            [0, p, r, j, h, a, 0, 0, 0, c, 0],
             None
         );
     }
@@ -977,7 +1211,7 @@ fn segment(
         "contexts_drop",
         start,
         None,
-        [0, p, r, h, a, 0, 0],
+        [0, p, r, j, h, a, 0, 0, 0, 0, 0],
         None
     );
     drop(normalized);
@@ -988,7 +1222,7 @@ fn segment(
         "normalized_drop",
         start,
         None,
-        [0, p, r, h, 0, 0, 0],
+        [0, p, r, j, h, 0, 0, 0, 0, 0, 0],
         None
     );
     drop(text);
@@ -999,11 +1233,14 @@ fn segment(
         "string_drop",
         start,
         None,
-        [0, p, r, 0, 0, 0, 0],
+        [0, p, r, j, 0, 0, 0, 0, 0, 0, 0],
         None
     );
     Ok(())
 }
+#[cfg(test)]
+#[path = "source_casing_capitalize_tests.rs"]
+mod capitalize_tests;
 #[cfg(test)]
 #[path = "source_casing_tests.rs"]
 mod tests;

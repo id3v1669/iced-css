@@ -114,6 +114,9 @@ fn actual_components_and_drops_bound_every_phase() {
         let mut selected = None;
         let mut context_start = None;
         for receipt in &receipts {
+            for index in [3, 6, 7, 8] {
+                assert_eq!(receipt.components[index], 0);
+            }
             let total: usize = receipt.components.iter().sum();
             assert_eq!(receipt.live, total);
             peak = peak.max(total);
@@ -128,9 +131,9 @@ fn actual_components_and_drops_bound_every_phase() {
             if let Some((bytes, forwarded_work)) = receipt.forwarded {
                 let component = match receipt.phase {
                     "view" => 0,
-                    "normalized" => 4,
-                    "contexts" => 5,
-                    "selection" => 6,
+                    "normalized" => 5,
+                    "contexts" => 9,
+                    "selection" => 10,
                     _ => panic!("unexpected helper"),
                 };
                 let before = total - receipt.components[component];
@@ -159,7 +162,7 @@ fn actual_components_and_drops_bound_every_phase() {
                     );
                 }
                 "view_drop" => assert_eq!(receipt.components[0], 0),
-                "scalars" => assert_eq!(receipt.components[0], 0),
+                "scalars" | "units" => assert_eq!(receipt.components[0], 0),
                 "string" => {
                     assert!(context_start.is_none());
                     context_start = Some(receipt.start);
@@ -172,14 +175,14 @@ fn actual_components_and_drops_bound_every_phase() {
                 }
                 "selection_drop" => {
                     assert_eq!(selected, receipt.lane);
-                    assert_eq!(receipt.components[6], 0);
+                    assert_eq!(receipt.components[10], 0);
                     selected = None;
                 }
-                "contexts_drop" => assert_eq!(receipt.components[5], 0),
-                "normalized_drop" => assert_eq!(receipt.components[4], 0),
+                "contexts_drop" => assert_eq!(receipt.components[9], 0),
+                "normalized_drop" => assert_eq!(receipt.components[5], 0),
                 "string_drop" => {
                     assert!(selected.is_none());
-                    assert_eq!(&receipt.components[3..], &[0; 4]);
+                    assert_eq!(&receipt.components[4..], &[0; 7]);
                     context_start = None;
                 }
                 "publish" => {
