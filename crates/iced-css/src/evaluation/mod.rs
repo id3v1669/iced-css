@@ -9,3 +9,5 @@ pub mod source_structural_events;
 pub mod source_whitespace;
 
 pub mod source_casing;
+
+pub mod source_structure;
