@@ -39,3 +39,4 @@ pub mod bidi_implicit;
 pub mod bidi_lines;
 
 pub mod bidi_stored;
+pub mod font_precedence;
