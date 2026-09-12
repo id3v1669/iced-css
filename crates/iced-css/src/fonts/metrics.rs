@@ -92,6 +92,59 @@ fn assign<'a>(
     *slot = Some(data);
     Ok(())
 }
+
+// RawFace's Stream checks a u32 endpoint with a debug assertion before slice
+// bounds, and its collection array multiplication uses usize. Preflight only
+// the spans that can exceed that domain; leave format policy to RawFace.
+fn preflight_collection(data: &[u8], face_index: u32) -> Result<(), FaceParsingError> {
+    if !data.starts_with(b"ttcf") {
+        return Ok(());
+    }
+    let malformed = FaceParsingError::MalformedFont;
+    let count_bytes = data.get(8..12).ok_or(malformed)?;
+    let count = u32::from_be_bytes(count_bytes.try_into().map_err(|_| malformed)?);
+    let offsets_end = 12 + 4 * u64::from(count);
+    if offsets_end > u64::from(u32::MAX) || offsets_end > data.len() as u64 {
+        return Err(malformed);
+    }
+    if face_index >= count {
+        return Ok(());
+    }
+    // The checked array endpoint bounds this entry and its usize conversion.
+    let entry = usize::try_from(12 + 4 * u64::from(face_index)).map_err(|_| malformed)?;
+    let offset = u32::from_be_bytes(
+        data.get(entry..entry + 4)
+            .ok_or(malformed)?
+            .try_into()
+            .map_err(|_| malformed)?,
+    );
+    let offset = u64::from(offset);
+    if offset < offsets_end || offset > data.len() as u64 {
+        return Ok(());
+    }
+    if offset + 4 > u64::from(u32::MAX) {
+        return Err(malformed);
+    }
+    let start = usize::try_from(offset).map_err(|_| malformed)?;
+    // Unknown or nested-collection magic returns before the directory reads.
+    if !matches!(
+        data.get(start..start + 4),
+        Some(b"\0\x01\0\0" | b"true" | b"OTTO")
+    ) {
+        return Ok(());
+    }
+    if offset + 6 > u64::from(u32::MAX) {
+        return Err(malformed);
+    }
+    let Some(table_count) = data.get(start + 4..start + 6) else {
+        return Ok(());
+    };
+    let table_count = u16::from_be_bytes(table_count.try_into().map_err(|_| malformed)?);
+    if offset + 12 + 16 * u64::from(table_count) > u64::from(u32::MAX) {
+        return Err(malformed);
+    }
+    Ok(())
+}
 /// Read the explicitly selected SFNT face, preserving raw design-unit values.
 /// CSS's recommended OS/2 metrics take precedence without requiring fsSelection's
 /// optional USE_TYPO_METRICS flag. Only absent OS/2 falls back to hhea.
@@ -113,6 +166,7 @@ pub fn read_sfnt_design_metrics(
         .get()
         .checked_sub(5)
         .ok_or(FontMetricError::Work)?;
+    preflight_collection(data, face_index).map_err(FontMetricError::Directory)?;
     let face = RawFace::parse(data, face_index).map_err(FontMetricError::Directory)?;
     let count = usize::from(face.table_records.len());
     if count > limits.tables.get() {
