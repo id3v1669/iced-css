@@ -5,6 +5,7 @@ struct QualificationTrace {
     phases: Vec<String>,
     work: usize,
     reservations: [usize; 3],
+    reservation_order: Vec<usize>,
 }
 std::thread_local! {
     static TRACE: std::cell::RefCell<Option<QualificationTrace>> = const { std::cell::RefCell::new(None) };
@@ -28,6 +29,7 @@ fn trace_reservation(phase: usize) {
     TRACE.with_borrow_mut(|trace| {
         if let Some(t) = trace {
             t.reservations[phase] += 1;
+            t.reservation_order.push(phase);
         }
     });
 }
@@ -644,4 +646,19 @@ mod tests {
             Err(SourceAnalysisInputInvariantReason::ScopeFinalization)
         );
     }
+}
+
+#[test]
+fn ordered_reservations_preserve_requested_floor_and_three_slot_order() {
+    TRACE.with_borrow_mut(|trace| *trace = Some(QualificationTrace::default()));
+    let completed = reserve_three(1, 1, 1, usize::MAX).unwrap();
+    let trace = TRACE.with_borrow_mut(|trace| trace.take().unwrap());
+    assert_eq!(trace.reservation_order, [0, 1, 2]);
+    assert_eq!(trace.reservations, [1, 1, 1]);
+    drop(completed);
+    TRACE.with_borrow_mut(|trace| *trace = Some(QualificationTrace::default()));
+    assert!(matches!(reserve_three(1, 1, 1, 1), Err(Error::Bytes)));
+    let trace = TRACE.with_borrow_mut(|trace| trace.take().unwrap());
+    assert!(trace.reservation_order.is_empty());
+    assert_eq!(trace.reservations, [0, 0, 0]);
 }

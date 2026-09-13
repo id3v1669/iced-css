@@ -1,4 +1,4 @@
-use super::super::source_structural_events::SourceStructuralEventKind;
+use super::super::source_presentation_join::{self as join, JoinReason};
 use super::*;
 use SourceAnalysisInputError as Error;
 use SourceAnalysisInputInvariantReason as Reason;
@@ -8,6 +8,17 @@ use std::mem::size_of;
 
 fn invariant(record: Option<usize>, reason: Reason) -> Error {
     Error::Invariant { record, reason }
+}
+fn join_error(record: Option<usize>, reason: JoinReason) -> Error {
+    let reason = match reason {
+        JoinReason::OwnerCounts => Reason::OwnerCounts,
+        JoinReason::SourceJoin => Reason::SourceJoin,
+        JoinReason::ScopeState => Reason::ScopeState,
+        JoinReason::RecordParent => Reason::RecordParent,
+        JoinReason::PayloadCoverage => Reason::PayloadCoverage,
+        JoinReason::ScalarCoverage => Reason::ScalarCoverage,
+    };
+    invariant(record, reason)
 }
 fn checked_limit(value: usize, extra: usize, limit: usize, error: Error) -> Result<usize, Error> {
     value
@@ -334,23 +345,7 @@ fn marker_participation(
     structure: &SourceStructure<'_, '_, '_, '_, '_, '_>,
     index: usize,
 ) -> Result<Participation, Error> {
-    let marker = structure
-        .record(index)
-        .ok_or_else(|| invariant(Some(index), Reason::ScopeState))?;
-    let participation = match structure.record(index + 1) {
-        Some(next) if next.formatting_parent().is_some_and(|p| p.index() == index) => {
-            match next.kind() {
-                Kind::SourceInline => Participation::InlineSequence,
-                Kind::SourceBlock | Kind::AnonymousBlock => Participation::BlockChildren,
-                Kind::Payload => return Err(invariant(Some(index), Reason::ScopeState)),
-            }
-        }
-        _ => Participation::Empty,
-    };
-    if marker.kind() == Kind::AnonymousBlock && participation != Participation::InlineSequence {
-        return Err(invariant(Some(index), Reason::ScopeState));
-    }
-    Ok(participation)
+    join::marker_participation(structure, index).map_err(|reason| join_error(Some(index), reason))
 }
 
 /// Count, admit, and directly generate a normal-only mapped input.
@@ -363,7 +358,7 @@ pub fn build_source_analysis_input<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>(
     casing: &'c SourceCasing<'wc, 'e, 'd, 's, 'b, 'r>,
     limits: SourceAnalysisInputLimits,
 ) -> Result<SourceAnalysisInput<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>, Error> {
-    if !std::ptr::eq(structure.whitespace(), casing.whitespace()) {
+    if !join::same_whitespace_owner(structure, casing) {
         return Err(Error::OwnerMismatch);
     }
     let mut ledger = Ledger {
@@ -386,19 +381,7 @@ pub fn build_source_analysis_input<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>(
     if counts.sources > limits.sources.get() {
         return Err(Error::Sources);
     }
-    let whitespace = structure.whitespace();
-    let sr = structure.receipt();
-    if casing.source_count() != counts.sources
-        || whitespace.source_count() != counts.sources
-        || whitespace.content_count() != counts.payloads
-        || whitespace.scalar_count() != counts.originals
-        || sr.records != counts.records
-        || sr.sources != counts.sources
-        || (counts.sources == 0) != (counts.records == 0)
-        || (counts.records == 0 && (counts.payloads != 0 || counts.originals != 0))
-    {
-        return Err(invariant(None, Reason::OwnerCounts));
-    }
+    join::owner_counts(structure, casing).map_err(|reason| join_error(None, reason))?;
     if counts.records != 0 {
         let prepaid = counts
             .sources
@@ -413,11 +396,7 @@ pub fn build_source_analysis_input<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>(
         }
         ledger.charge(prepaid)?;
         for (ordinal, source) in casing.sources().enumerate() {
-            if source.ordinal() != ordinal
-                || source.source_index() != source.participant().source_index()
-            {
-                return Err(invariant(None, Reason::SourceJoin));
-            }
+            join::source_join(ordinal, &source).map_err(|reason| join_error(None, reason))?;
             let value = source.participant().bidi_style().unicode_bidi();
             if value != ComputedUnicodeBidi::Normal {
                 return Err(Error::Nonnormal {
@@ -435,71 +414,56 @@ pub fn build_source_analysis_input<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>(
                 .record(index)
                 .ok_or_else(|| invariant(Some(index), Reason::RecordParent))?;
             let parent = record.formatting_parent();
-            if let Some(p) = &parent {
-                if p.index() >= index {
-                    return Err(invariant(Some(index), Reason::RecordParent));
-                }
-            } else if index != 0 || record.kind() != Kind::SourceBlock {
-                return Err(invariant(Some(index), Reason::RecordParent));
-            }
+            join::record_parent(
+                index,
+                record.kind(),
+                parent.as_ref().map(|p| (p.index(), p.kind())),
+            )
+            .map_err(|reason| join_error(Some(index), reason))?;
             match record.kind() {
                 Kind::SourceBlock | Kind::AnonymousBlock => {
                     counts.scopes =
                         checked_limit(counts.scopes, 1, limits.scopes.get(), Error::Scopes)?;
-                    if parent.is_some_and(|p| p.kind() != Kind::SourceBlock) {
-                        return Err(invariant(Some(index), Reason::RecordParent));
-                    }
+                    join::scope_parent(parent.as_ref().map(|p| p.kind()))
+                        .map_err(|reason| join_error(Some(index), reason))?;
                     let participation = marker_participation(structure, index)?;
                     counts.domains += usize::from(participation == Participation::InlineSequence);
                     marker = Some((index, participation));
                 }
                 Kind::SourceInline | Kind::Payload => {
-                    let (marker_index, participation) =
-                        marker.ok_or_else(|| invariant(Some(index), Reason::ScopeState))?;
-                    if participation != Participation::InlineSequence {
-                        return Err(invariant(Some(index), Reason::ScopeState));
-                    }
+                    join::inline_parent(
+                        record.kind(),
+                        marker,
+                        parent.as_ref().map(|p| (p.index(), p.kind())),
+                    )
+                    .map_err(|reason| join_error(Some(index), reason))?;
                     let parent =
                         parent.ok_or_else(|| invariant(Some(index), Reason::RecordParent))?;
-                    if parent.index() < marker_index
-                        || !(parent.kind() == Kind::SourceInline
-                            || (record.kind() == Kind::SourceInline
-                                && parent.index() == marker_index))
-                    {
-                        return Err(invariant(Some(index), Reason::RecordParent));
-                    }
                     if record.kind() == Kind::Payload {
                         let content = record
                             .content_event()
                             .ok_or_else(|| invariant(Some(index), Reason::PayloadCoverage))?;
-                        if content.kind() != SourceStructuralEventKind::Content
-                            || previous_content.is_some_and(|p| p >= content.index())
-                            || parent.source_index() != Some(content.participant().source_index())
-                            || record.source_index() != parent.source_index()
-                        {
-                            return Err(invariant(Some(index), Reason::PayloadCoverage));
-                        }
-                        let range = content.scalar_range();
-                        if range.start != originals
-                            || range.end < range.start
-                            || range.end > counts.originals
-                        {
-                            return Err(invariant(Some(index), Reason::ScalarCoverage));
-                        }
+                        let range = join::payload_join(
+                            &record,
+                            parent.source_index(),
+                            &content,
+                            previous_content,
+                            originals,
+                            counts.originals,
+                        )
+                        .map_err(|reason| join_error(Some(index), reason))?;
                         payloads += 1;
                         previous_content = Some(content.index());
                         for original in range {
                             let scalar = casing
                                 .scalar(original)
                                 .ok_or_else(|| invariant(Some(index), Reason::ScalarCoverage))?;
-                            if scalar.index() != original
-                                || scalar.source().source_index()
-                                    != content.participant().source_index()
-                                || scalar.whitespace_scalar().participant().source_index()
-                                    != content.participant().source_index()
-                            {
-                                return Err(invariant(Some(index), Reason::ScalarCoverage));
-                            }
+                            join::original_join(
+                                original,
+                                &scalar,
+                                content.participant().source_index(),
+                            )
+                            .map_err(|reason| join_error(Some(index), reason))?;
                             let presentation = scalar.presentation();
                             counts.characters = checked_limit(
                                 counts.characters,

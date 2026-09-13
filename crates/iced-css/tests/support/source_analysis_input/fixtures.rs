@@ -593,6 +593,99 @@ fn public_count_limit_categories_and_fixed_requested_byte_preflight() {
 }
 
 #[test]
+fn normal_preflight_combined_defects_preserve_sources_work_and_style_order() {
+    with_predecessors!(
+        managed(
+            "s",
+            InputFamily::Column,
+            "block",
+            "ltr",
+            "normal",
+            vec![managed("s_0", InputFamily::Row, "inline", "ltr", "embed", vec![])]
+        ),
+        |_whitespace, casing, structure| {
+            assert_eq!(
+                (structure.source_count(), structure.record_count(), casing.scalar_count()),
+                (2, 2, 0)
+            );
+            let inline = structure
+                .records()
+                .find(|record| record.kind() == SourceStructureKind::SourceInline)
+                .unwrap();
+            let participant = inline.participant().unwrap();
+            let value = iced_css_core::values::bidi::ComputedUnicodeBidi::Embed;
+            assert_eq!(participant.bidi_style().unicode_bidi(), value);
+            let nonnormal = SourceAnalysisInputError::Nonnormal {
+                source: participant.source_index(),
+                value,
+            };
+            for (sources, work, expected) in [
+                (1, 1, SourceAnalysisInputError::Sources),
+                (2, 4, SourceAnalysisInputError::Work),
+                (2, 5, nonnormal),
+            ] {
+                let mut limits = analysis_limits();
+                limits.sources = nz(sources);
+                limits.work = nz(work);
+                limits.retained_bytes = nz(1);
+                assert_eq!(
+                    build_source_analysis_input(&structure, &casing, limits).unwrap_err(),
+                    expected,
+                    "sources={sources}, work={work}"
+                );
+            }
+        }
+    );
+}
+
+#[test]
+fn normal_expansion_combined_defects_preserve_member_and_allocation_preflight_order() {
+    with_predecessors!(
+        managed(
+            "s",
+            InputFamily::Column,
+            "block",
+            "ltr",
+            "normal",
+            vec![text("s_0", "ß", "normal", "upper", "default", "normal")]
+        ),
+        |_whitespace, casing, structure| {
+            assert_eq!(
+                (structure.source_count(), structure.record_count(), casing.scalar_count()),
+                (2, 3, 1)
+            );
+            assert_eq!(
+                casing.scalar(0).unwrap().presentation().characters().collect::<Vec<_>>(),
+                ['S', 'S']
+            );
+            let baseline =
+                build_source_analysis_input(&structure, &casing, analysis_limits()).unwrap();
+            let receipt = baseline.receipt();
+            assert_eq!((receipt.output_scalars, receipt.output_bytes, receipt.work), (2, 2, 16));
+            assert_eq!(baseline.scope(0).unwrap().inline_sequence().unwrap().text(), "SS");
+            for (scalars, work, bytes, retained, expected) in [
+                (1, 7, 1, usize::MAX, SourceAnalysisInputError::OutputScalars),
+                (2, 8, 1, usize::MAX, SourceAnalysisInputError::Work),
+                (2, 9, 1, usize::MAX, SourceAnalysisInputError::OutputBytes),
+                (2, 15, 2, 1, SourceAnalysisInputError::Work),
+                (2, 16, 2, 1, SourceAnalysisInputError::Bytes),
+            ] {
+                let mut limits = analysis_limits();
+                limits.output_scalars = nz(scalars);
+                limits.work = nz(work);
+                limits.output_bytes = nz(bytes);
+                limits.retained_bytes = nz(retained);
+                assert_eq!(
+                    build_source_analysis_input(&structure, &casing, limits).unwrap_err(),
+                    expected,
+                    "scalars={scalars}, work={work}, bytes={bytes}, retained={retained}"
+                );
+            }
+        }
+    );
+}
+
+#[test]
 fn public_zero_request_allocations_and_three_live_capacity_receipt() {
     with_predecessors!(
         managed("s", InputFamily::Column, "block", "ltr", "normal", vec![]),
