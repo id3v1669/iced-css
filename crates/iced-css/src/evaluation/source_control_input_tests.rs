@@ -403,24 +403,40 @@ mod actual_owner {
                             .unwrap(),
                         Some('\u{202b}')
                     );
-                    let mut mismatched = valid;
-                    mismatched.fragments.swap(0, 1);
-                    let mut cached = Some(mismatched);
-                    let error =
-                        super::inline_open(&before, context, &mut ledger, debit, &mut cached)
-                            .unwrap_err();
-                    let trace = super::RESERVATIONS.with_borrow_mut(|trace| trace.take().unwrap());
-                    assert!(matches!(
-                        error.kind,
-                        super::ErrorKind::Invariant(super::Reason::EmissionCounts)
-                    ));
-                    assert_eq!(
-                        (error.source, error.record, error.original, error.member),
-                        (before.source_index(), Some(before.index()), None, None)
-                    );
-                    assert_eq!(ledger.used, 22);
-                    assert_eq!((trace.inventory_attempts, trace.inventory_records), (0, 0));
-                    assert!(trace.slots.is_empty());
+                    // Two safe private corruptions of the cached inventory: an alien
+                    // affected source, and a count that denies this fragment its
+                    // interruption edge. Neither forges a predecessor or uses unsafe.
+                    for mismatched in [
+                        super::InterruptionInventory {
+                            source: valid.source + 1,
+                            ..valid
+                        },
+                        super::InterruptionInventory {
+                            interruptions: 0,
+                            ..valid
+                        },
+                    ] {
+                        let mut cached = Some(mismatched);
+                        let error =
+                            super::inline_open(&before, context, &mut ledger, debit, &mut cached)
+                                .unwrap_err();
+                        let trace =
+                            super::RESERVATIONS.with_borrow_mut(|trace| trace.take().unwrap());
+                        assert!(matches!(
+                            error.kind,
+                            super::ErrorKind::Invariant(super::Reason::EmissionCounts)
+                        ));
+                        assert_eq!(
+                            (error.source, error.record, error.original, error.member),
+                            (before.source_index(), Some(before.index()), None, None)
+                        );
+                        assert_eq!(ledger.used, 22);
+                        assert_eq!((trace.inventory_attempts, trace.inventory_records), (0, 0));
+                        assert!(trace.slots.is_empty());
+                        super::RESERVATIONS.with_borrow_mut(|trace| {
+                            *trace = Some(super::ReservationTrace::default());
+                        });
+                    }
                 }
             }
         );

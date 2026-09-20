@@ -294,8 +294,10 @@ fn opening(direction: ComputedDirection, bidi: ComputedUnicodeBidi) -> Option<ch
 #[derive(Debug, Clone, Copy)]
 struct InterruptionInventory {
     source: usize,
-    fragments: [usize; 2],
-    payloads: [usize; 3],
+    /// Number of interrupting blocks. The validated shape fixes the whole layout, so
+    /// every admitted record index is arithmetic in its seven-record period and no
+    /// per-record list is stored.
+    interruptions: usize,
     trigger: Context,
     kind: SourceStructureEdgeKind,
 }
@@ -306,6 +308,15 @@ impl InterruptionInventory {
                 self.kind,
             )))
     }
+    /// Whether `record` is one of the graph's payloads. Defensive: a validated shape
+    /// admits every payload it contains, so no public input reaches the rejecting arm.
+    /// Both the affected element's
+    /// payloads (offset 4 of each period) and the interrupting blocks' payloads
+    /// (offset 7) belong to the admitted graph.
+    fn authenticates_payload(self, record: usize) -> bool {
+        (record >= 4 && (record - 4).is_multiple_of(7) && (record - 4) / 7 <= self.interruptions)
+            || (record >= 7 && record.is_multiple_of(7) && record / 7 <= self.interruptions)
+    }
     fn accepts(
         self,
         record: usize,
@@ -313,13 +324,22 @@ impl InterruptionInventory {
         side: SourceStructureBoundarySide,
         kind: SourceStructureEdgeKind,
     ) -> bool {
-        source == Some(self.source)
-            && ((record == self.fragments[0]
-                && side == SourceStructureBoundarySide::End
-                && kind == SourceStructureEdgeKind::BeforeInterruption)
-                || (record == self.fragments[1]
-                    && side == SourceStructureBoundarySide::Start
-                    && kind == SourceStructureEdgeKind::AfterInterruption))
+        if source != Some(self.source) || record < 2 || !(record - 2).is_multiple_of(7) {
+            return false;
+        }
+        let fragment = (record - 2) / 7;
+        if fragment > self.interruptions {
+            return false;
+        }
+        match (side, kind) {
+            (SourceStructureBoundarySide::End, SourceStructureEdgeKind::BeforeInterruption) => {
+                fragment < self.interruptions
+            }
+            (SourceStructureBoundarySide::Start, SourceStructureEdgeKind::AfterInterruption) => {
+                fragment >= 1
+            }
+            _ => false,
+        }
     }
 }
 #[derive(Clone, Copy)]
@@ -356,157 +376,172 @@ fn inventory_shape(
     kind: SourceStructureEdgeKind,
 ) -> Result<InterruptionInventory, SourceControlInputError> {
     let failure = || trigger.error(ErrorKind::Unsupported(Unsupported::InterruptedInline(kind)));
-    if structure.source_count() != 6 || structure.record_count() != 12 {
+    // The admitted graph is an outer block followed by N periods of seven records and a
+    // final four-record fragment group: records = 7N + 5 and sources = 3N + 3.
+    let count = structure.record_count();
+    if count < 12 || !(count - 5).is_multiple_of(7) {
         return Err(failure());
     }
-    let kinds = [
-        Kind::SourceBlock,
-        Kind::AnonymousBlock,
-        Kind::SourceInline,
-        Kind::SourceInline,
-        Kind::Payload,
-        Kind::SourceBlock,
-        Kind::SourceInline,
-        Kind::Payload,
-        Kind::AnonymousBlock,
-        Kind::SourceInline,
-        Kind::SourceInline,
-        Kind::Payload,
-    ];
-    let parents = [
-        None,
-        Some(0),
-        Some(1),
-        Some(2),
-        Some(3),
-        Some(0),
-        Some(5),
-        Some(6),
-        Some(0),
-        Some(8),
-        Some(9),
-        Some(10),
-    ];
-    let mut records = [0; 12];
-    let mut sources = [None; 12];
-    let mut starts = [None; 12];
-    let mut ends = [None; 12];
+    let interruptions = (count - 5) / 7;
+    if structure.source_count() != 3 * interruptions + 3 {
+        return Err(failure());
+    }
+    let last_fragment = 7 * interruptions + 2;
+    let mut outer = None;
+    let mut affected = None;
+    let mut previous_block_end = None;
+    let mut pending_fragment_end = None;
     for (role, record) in structure.records().enumerate() {
         #[cfg(test)]
         qualification::inventory_record();
-        if record.kind() != kinds[role]
-            || record.formatting_parent().map(|p| p.index()) != parents[role].map(|p| records[p])
+        // Role classification is pure arithmetic on the period, so it never consults a
+        // captured identity: source indices are observed, never assumed.
+        let offset = if role == 0 { 0 } else { (role - 1) % 7 + 1 };
+        let expected_kind = match offset {
+            0 | 5 => Kind::SourceBlock,
+            1 => Kind::AnonymousBlock,
+            2 | 3 | 6 => Kind::SourceInline,
+            4 | 7 => Kind::Payload,
+            _ => return Err(failure()),
+        };
+        let expected_parent = match offset {
+            0 => None,
+            1 | 5 => Some(0),
+            _ => Some(role - 1),
+        };
+        // `records()` yields indices in order, so the index check restates the API's
+        // guarantee; it is kept because the congruence tests below depend on it.
+        if record.kind() != expected_kind
+            || record.formatting_parent().map(|p| p.index()) != expected_parent
+            || record.index() != role
         {
             return Err(failure());
         }
-        records[role] = record.index();
-        sources[role] = record.source_index();
+        let source = record.source_index();
         match record.kind() {
             Kind::SourceBlock | Kind::SourceInline => {
                 let participant = record.participant().ok_or_else(failure)?;
-                // Only an inline carries an embedding effect (CSS 2.2 §9.10); a block
-                // may compute Embed or Override without one. Role 0 owns anonymous
-                // children, so an overridden outer block is already rejected at its
-                // first anonymous record before this runs; role 5 may be overridden
-                // and is deliberately admitted. The affected inline roles are 2 and 9.
+                // Only an inline carries an embedding effect (CSS 2.2 §9.10); a block may
+                // compute Embed or Override without one. An overridden outer block is
+                // already rejected at its first anonymous record before this runs, and an
+                // overridden interrupting block is deliberately admitted. The affected
+                // inline is exactly the fragment at each period's offset 2.
                 let effective = record.kind() == Kind::SourceInline
                     && participant.bidi_style().unicode_bidi() != ComputedUnicodeBidi::Normal;
-                if effective != (role == 2 || role == 9) {
+                if effective != (offset == 2) {
                     return Err(failure());
                 }
-                starts[role] =
-                    Some(anchor(&record, SourceStructureBoundarySide::Start).ok_or_else(failure)?);
-                ends[role] =
-                    Some(anchor(&record, SourceStructureBoundarySide::End).ok_or_else(failure)?);
+                let start =
+                    anchor(&record, SourceStructureBoundarySide::Start).ok_or_else(failure)?;
+                let end = anchor(&record, SourceStructureBoundarySide::End).ok_or_else(failure)?;
+                let source = source.ok_or_else(failure)?;
+                if offset == 2 {
+                    // Every fragment belongs to one affected element; the first opens with
+                    // its original begin and the last closes with its original end.
+                    if *affected.get_or_insert(source) != source {
+                        return Err(failure());
+                    }
+                    let opens_original = role == 2;
+                    let closes_original = role == last_fragment;
+                    if start.kind
+                        != if opens_original {
+                            SourceStructureEdgeKind::OriginalBegin
+                        } else {
+                            SourceStructureEdgeKind::AfterInterruption
+                        }
+                        || end.kind
+                            != if closes_original {
+                                SourceStructureEdgeKind::OriginalEnd
+                            } else {
+                                SourceStructureEdgeKind::BeforeInterruption
+                            }
+                        || start.event_kind
+                            != if opens_original {
+                                SourceStructuralEventKind::Begin
+                            } else {
+                                SourceStructuralEventKind::End
+                            }
+                        || end.event_kind
+                            != if closes_original {
+                                SourceStructuralEventKind::End
+                            } else {
+                                SourceStructuralEventKind::Begin
+                            }
+                        || (opens_original && start.source != source)
+                        || (closes_original && end.source != source)
+                    {
+                        return Err(failure());
+                    }
+                    // An interruption edge names the neighbouring block and shares its
+                    // event; cuts intentionally differ by side and are not compared.
+                    if !opens_original
+                        && previous_block_end.take() != Some((start.event, start.source))
+                    {
+                        return Err(failure());
+                    }
+                    if !closes_original {
+                        pending_fragment_end = Some((end.event, end.source));
+                    }
+                } else {
+                    // Every other element is unfragmented: both of its edges are original
+                    // and name itself. An element with both original edges owns exactly one
+                    // record. What this establishes *locally* is only that no such role
+                    // carries the affected source: an inline sharing it would share its
+                    // nonnormal value and fail the `effective` test above, and a block
+                    // cannot share a source with an inline because the structure builder
+                    // picks a record's kind from its participant's display. Mutual
+                    // distinctness of these roles rests on the builder emitting one Begin
+                    // and one End per source, which is not re-proven here; nothing in this
+                    // producer depends on it.
+                    if start.kind != SourceStructureEdgeKind::OriginalBegin
+                        || end.kind != SourceStructureEdgeKind::OriginalEnd
+                        || start.event_kind != SourceStructuralEventKind::Begin
+                        || end.event_kind != SourceStructuralEventKind::End
+                        || start.source != source
+                        || end.source != source
+                        || affected.is_some_and(|a| a == source)
+                    {
+                        return Err(failure());
+                    }
+                    if role == 0 {
+                        outer = Some(source);
+                    }
+                    if offset == 5 {
+                        // The interrupting block must answer the fragment that just closed.
+                        if pending_fragment_end.take() != Some((start.event, source)) {
+                            return Err(failure());
+                        }
+                        previous_block_end = Some((end.event, source));
+                    }
+                }
             }
             Kind::AnonymousBlock => {
                 let origin = record.anonymous_origin().ok_or_else(failure)?;
-                if sources[role].is_some()
-                    || origin.enclosing_block().index() != records[0]
-                    || Some(origin.inheritance_source().source_index()) != sources[0]
+                if source.is_some()
+                    || origin.enclosing_block().index() != 0
+                    || Some(origin.inheritance_source().source_index()) != outer
                 {
                     return Err(failure());
                 }
             }
             Kind::Payload => {
-                if sources[role] != sources[parents[role].ok_or_else(failure)?] {
+                if source
+                    != structure
+                        .record(role - 1)
+                        .ok_or_else(failure)?
+                        .source_index()
+                {
                     return Err(failure());
                 }
             }
         }
     }
-    let distinct = [
-        sources[0],
-        sources[2],
-        sources[3],
-        sources[5],
-        sources[6],
-        sources[10],
-    ];
-    for (index, source) in distinct.iter().enumerate() {
-        if source.is_none() || distinct[..index].contains(source) {
-            return Err(failure());
-        }
-    }
-    if sources[9] != sources[2] {
-        return Err(failure());
-    }
-    for role in [0, 2, 3, 5, 6, 9, 10] {
-        for (edge, expected, event_kind) in [
-            (
-                starts[role].ok_or_else(failure)?,
-                if role == 9 {
-                    SourceStructureEdgeKind::AfterInterruption
-                } else {
-                    SourceStructureEdgeKind::OriginalBegin
-                },
-                if role == 9 {
-                    SourceStructuralEventKind::End
-                } else {
-                    SourceStructuralEventKind::Begin
-                },
-            ),
-            (
-                ends[role].ok_or_else(failure)?,
-                if role == 2 {
-                    SourceStructureEdgeKind::BeforeInterruption
-                } else {
-                    SourceStructureEdgeKind::OriginalEnd
-                },
-                if role == 2 {
-                    SourceStructuralEventKind::Begin
-                } else {
-                    SourceStructuralEventKind::End
-                },
-            ),
-        ] {
-            let source_role = if matches!(
-                expected,
-                SourceStructureEdgeKind::BeforeInterruption
-                    | SourceStructureEdgeKind::AfterInterruption
-            ) {
-                5
-            } else {
-                role
-            };
-            if edge.kind != expected
-                || edge.event_kind != event_kind
-                || Some(edge.source) != sources[source_role]
-            {
-                return Err(failure());
-            }
-        }
-    }
-    // Edge cuts intentionally differ by side; compare their shared events.
-    if ends[2].ok_or_else(failure)?.event != starts[5].ok_or_else(failure)?.event
-        || starts[9].ok_or_else(failure)?.event != ends[5].ok_or_else(failure)?.event
-    {
+    if previous_block_end.is_some() || pending_fragment_end.is_some() {
         return Err(failure());
     }
     Ok(InterruptionInventory {
-        source: sources[2].ok_or_else(failure)?,
-        fragments: [records[2], records[9]],
-        payloads: [records[4], records[7], records[11]],
+        source: affected.ok_or_else(failure)?,
+        interruptions,
         trigger,
         kind,
     })
@@ -713,7 +748,7 @@ fn walk(
                     let payload = w.counts.payloads;
                     let payload_start = w.counts.tokens;
                     let literal_start = w.counts.literals;
-                    if inventory.is_some_and(|i| !i.payloads.contains(&index)) {
+                    if inventory.is_some_and(|i| !i.authenticates_payload(index)) {
                         return Err(c.invariant(Reason::EmissionCounts));
                     }
                     let mut non_b = false;
