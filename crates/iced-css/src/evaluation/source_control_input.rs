@@ -2,7 +2,8 @@
 //!
 //! This intermediate producer admits uninterrupted inline controls, strict-interior
 //! paragraph separators, and a bounded single-block interruption profile. The latter
-//! requires one affected inline, one intervening Normal block, and exactly one
+//! requires one affected inline, one intervening non-Override block (Normal or
+//! inert block Embed), and exactly one
 //! nonempty, B-free payload before, inside, and after that block. Other interruption
 //! shapes remain unsupported. It does not replace the broader Normal-only adapter.
 use super::{

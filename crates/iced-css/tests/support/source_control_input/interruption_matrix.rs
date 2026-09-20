@@ -313,12 +313,13 @@ fn single_interruption_uses_eligible_roles_instead_of_source_numbers() {
 }
 
 #[test]
-fn single_interruption_rejects_nonnormal_blocks_before_inventory() {
-    // Plan §4: nonnormal B or K in the six-source graph is rejected as BlockBidi by the
+fn single_interruption_rejects_override_blocks_before_inventory() {
+    // Plan §4: bidi-override on B or K in the six-source graph is rejected as BlockBidi by the
     // source pass, which precedes the interruption inventory; the block's observed
     // source wins over the cached interruption witness.
     for block in ["B", "K"] {
-        for bidi in ["embed", "bidi-override"] {
+        {
+            let bidi = "bidi-override";
             let mut root = interruption_recipe("ltr", "ltr", "rtl", "embed");
             let target = if block == "B" {
                 &mut root

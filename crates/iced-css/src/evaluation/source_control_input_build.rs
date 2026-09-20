@@ -395,9 +395,12 @@ fn inventory_shape(
         match record.kind() {
             Kind::SourceBlock | Kind::SourceInline => {
                 let participant = record.participant().ok_or_else(failure)?;
-                let nonnormal =
-                    participant.bidi_style().unicode_bidi() != ComputedUnicodeBidi::Normal;
-                if nonnormal != (role == 2 || role == 9) {
+                // Only an inline carries an embedding effect (CSS 2.2 §9.10); a block
+                // may compute Embed without effect, and block Override was rejected
+                // by the source pass. The affected inline roles are exactly 2 and 9.
+                let effective = record.kind() == Kind::SourceInline
+                    && participant.bidi_style().unicode_bidi() != ComputedUnicodeBidi::Normal;
+                if effective != (role == 2 || role == 9) {
                     return Err(failure());
                 }
                 starts[role] =
@@ -983,8 +986,11 @@ pub fn build_source_control_input<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>(
         join::source_join(ordinal, &source).map_err(|r| c.join(r))?;
         let participant = source.participant();
         let bidi = participant.bidi_style().unicode_bidi();
+        // Block Embed has no inline embedding effect and is admitted as Normal while
+        // keeping its computed value; block Override's descendant/anonymous-block
+        // rule is not implemented and still rejects here, before frames and inventory.
         if participant.outer_category() == SourceOuterCategory::Block
-            && bidi != ComputedUnicodeBidi::Normal
+            && bidi == ComputedUnicodeBidi::BidiOverride
         {
             return Err(c.error(ErrorKind::Unsupported(Unsupported::BlockBidi(bidi))));
         }

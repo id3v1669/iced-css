@@ -547,13 +547,8 @@ mod actual_owner {
         );
     }
     #[test]
-    fn nonnormal_blocks_in_interrupted_graph_reject_without_inventory_or_reservation() {
-        for (block, bidi) in [
-            ("B", "embed"),
-            ("B", "bidi-override"),
-            ("K", "embed"),
-            ("K", "bidi-override"),
-        ] {
+    fn override_blocks_in_interrupted_graph_reject_without_inventory_or_reservation() {
+        for (block, bidi) in [("B", "bidi-override"), ("K", "bidi-override")] {
             let mut root = interruption_recipe("a", "x", "b", "embed");
             let target = if block == "B" {
                 &mut root

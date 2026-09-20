@@ -120,8 +120,10 @@ fn empty_nested_and_sibling_payloads_preserve_distinct_causes() {
     }
 }
 #[test]
-fn nonnormal_blocks_and_interior_b_interruption_reject() {
-    for bidi in ["embed", "bidi-override"] {
+fn override_blocks_and_interior_b_interruption_reject() {
+    // Block Embed is admitted (no inline embedding effect); only bidi-override rejects.
+    {
+        let bidi = "bidi-override";
         let root = managed(
             "B",
             InputFamily::Column,
