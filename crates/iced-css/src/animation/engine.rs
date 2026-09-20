@@ -2,6 +2,7 @@
 use super::{
     clock::{AnimationClock, AnimationTiming, TimingError, TimingPhase, TimingWindow},
     linear_progress::{ProgressError, linear_progress},
+    motion_sync::MotionSync,
     wakeup::{ProgressWakeup, progress_wakeup},
 };
 use iced_animate::{Anim, Curve, Easing, Motion, MotionKey};
@@ -96,6 +97,7 @@ fn quiesce(motion: &Motion, binding: &Binding) {
 pub struct ProgressEngine {
     sources: SourceRegistry,
     motion: Motion,
+    sync: MotionSync,
     clock: AnimationClock,
     next: Option<NonZeroU64>,
     limits: ProgressLimits,
@@ -110,6 +112,7 @@ impl ProgressEngine {
         Self {
             sources,
             motion: Motion::new(),
+            sync: MotionSync::default(),
             clock: AnimationClock::default(),
             next: NonZeroU64::new(1),
             limits,
@@ -150,8 +153,12 @@ impl ProgressEngine {
     /// a track. The host coordinates outgoing dependency sampling after advance.
     pub fn advance(&mut self, now: Instant) -> Instant {
         let accepted = self.clock.accept(now);
-        let _ = self.motion.tick(accepted);
+        self.sync.synchronize(&self.motion, accepted);
         accepted
+    }
+    /// Ticks handed to the dependency so far; a bounded-work diagnostic.
+    pub fn synchronization_ticks(&self) -> u64 {
+        self.sync.ticks()
     }
     /// Start a prevalidated set of progress tracks atomically with respect to
     /// returned admission errors. The caller must validate CSS endpoints, target
@@ -434,6 +441,7 @@ impl PreparedProgressBatch<'_, '_> {
             }
         }
         engine.next = post_next;
+        engine.sync.restart(&engine.motion, accepted);
         accepted
     }
 }
@@ -536,6 +544,116 @@ mod tests {
                 assert_eq!(engine.next, NonZeroU64::new(2));
             }
         }
+    }
+    #[test]
+    fn synchronization_issues_bounded_sub_steps_and_none_while_idle() {
+        let mut engine = engine();
+        let source = engine.register_source().unwrap();
+        let color = PropertyId::lookup("color").unwrap();
+        let now = Instant::now();
+        engine.advance(now);
+        assert_eq!(
+            engine.synchronization_ticks(),
+            0,
+            "idle advances issue no tick"
+        );
+        engine
+            .start_progress(
+                &source,
+                &selection("color"),
+                AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+                now,
+            )
+            .unwrap();
+        assert_eq!(
+            engine.synchronization_ticks(),
+            1,
+            "one zero-spend restart tick"
+        );
+        engine.advance(now + Duration::from_millis(250));
+        assert_eq!(
+            engine.synchronization_ticks(),
+            5,
+            "four exact 62.5 ms steps"
+        );
+        assert_eq!(engine.sample(&source, color).unwrap(), Some(0.25));
+        engine.advance(now + Duration::from_millis(260));
+        assert_eq!(
+            engine.synchronization_ticks(),
+            6,
+            "a 10 ms delta is one tick"
+        );
+        let sample = engine.sample(&source, color).unwrap().unwrap();
+        assert!((sample - 0.26).abs() <= 2.0 * f32::EPSILON, "{sample}");
+        engine.advance(now + Duration::from_secs(3));
+        // 0.74 s remain: eleven full steps reach 0.9475, the twelfth settles the
+        // track but reports movement, and the thirteenth observes rest (the
+        // dependency's own was_moving rule); the remaining span is not ticked.
+        assert_eq!(engine.synchronization_ticks(), 19);
+        assert_eq!(engine.sample(&source, color).unwrap(), None);
+        assert!(!engine.is_animating());
+        engine.advance(now + Duration::from_secs(3600));
+        assert_eq!(engine.synchronization_ticks(), 19, "idle again: no tick");
+    }
+    #[test]
+    fn start_at_the_settling_instant_uses_a_one_nanosecond_restart() {
+        let mut engine = engine();
+        let source = engine.register_source().unwrap();
+        let now = Instant::now();
+        let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+        engine
+            .start_progress(&source, &selection("color"), timing, now)
+            .unwrap();
+        engine.advance(now + Duration::from_secs(1));
+        assert_eq!(
+            engine.synchronization_ticks(),
+            17,
+            "restart plus sixteen steps"
+        );
+        assert!(!engine.is_animating());
+        // The settling step reported movement; this tick observes rest exactly
+        // at the instant the next batch is accepted.
+        let rest = now + Duration::from_millis(1100);
+        engine.advance(rest);
+        assert_eq!(engine.synchronization_ticks(), 18);
+        engine
+            .start_progress(&source, &selection("margin-top"), timing, rest)
+            .unwrap();
+        assert_eq!(
+            engine.synchronization_ticks(),
+            19,
+            "restart one nanosecond later"
+        );
+        engine.advance(rest + Duration::from_millis(250));
+        assert_eq!(engine.synchronization_ticks(), 23);
+        // The new track trails wall-clock by one nanosecond, below f32 resolution here.
+        assert_eq!(
+            engine
+                .sample(&source, PropertyId::lookup("margin-top").unwrap())
+                .unwrap(),
+            Some(0.25)
+        );
+    }
+    #[test]
+    fn delayed_start_counts_as_moving_and_burns_its_delay_on_wall_clock() {
+        let mut engine = engine();
+        let source = engine.register_source().unwrap();
+        let color = PropertyId::lookup("color").unwrap();
+        let now = Instant::now();
+        engine
+            .start_progress(
+                &source,
+                &selection("color"),
+                AnimationTiming::new(Duration::from_secs(1), Duration::from_secs(1)),
+                now,
+            )
+            .unwrap();
+        engine.advance(now + Duration::from_millis(500));
+        assert_eq!(engine.synchronization_ticks(), 9, "holding still ticks");
+        assert_eq!(engine.sample(&source, color).unwrap(), Some(0.0));
+        engine.advance(now + Duration::from_millis(1250));
+        assert_eq!(engine.synchronization_ticks(), 21);
+        assert_eq!(engine.sample(&source, color).unwrap(), Some(0.25));
     }
     #[test]
     fn cancellation_quiesces_only_its_private_track_at_the_current_raw_sample() {

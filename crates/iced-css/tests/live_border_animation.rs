@@ -1,5 +1,5 @@
 use iced_animate::{Curve, Easing, Motion, MotionKey};
-use iced_css::animation::{clock::*, linear_progress::*};
+use iced_css::animation::{clock::*, linear_progress::*, motion_sync::MotionSync};
 use iced_css_core::{
     animation::{border::*, combine::Combination},
     formatting::table_borders::BorderStyle,
@@ -58,9 +58,10 @@ fn parsed(input: &str) -> ParsedProperty {
 #[test]
 fn actual_style_progress_is_applied_before_the_width_sample() {
     let motion = Motion::new();
+    let mut sync = MotionSync::default();
     let start = Instant::now();
     let mut clock = AnimationClock::default();
-    let _ = motion.tick(clock.accept(start));
+    let _ = clock.accept(start);
     let duration = Duration::from_secs(1);
     let style = motion.play(
         MotionKey::from_raw(1),
@@ -68,12 +69,14 @@ fn actual_style_progress_is_applied_before_the_width_sample() {
         0.0_f32,
         1.0,
     );
+    sync.restart(&motion, start);
     let width = motion.play(
         MotionKey::from_raw(2),
         Curve::ease(Easing::Linear, duration),
         0.0_f32,
         1.0,
     );
+    sync.restart(&motion, start);
     let timing = AnimationTiming::new(duration, Duration::ZERO)
         .accept(start)
         .unwrap();
@@ -85,7 +88,7 @@ fn actual_style_progress_is_applied_before_the_width_sample() {
         (1000, 20.0, false),
     ] {
         let now = clock.accept(start + Duration::from_millis(millis));
-        let _ = motion.tick(now);
+        sync.synchronize(&motion, now);
         let style_progress = linear_progress(timing.phase_at(now), style.get()).unwrap();
         let width_progress = linear_progress(timing.phase_at(now), width.get()).unwrap();
         let selected = combine_border_style(
@@ -107,9 +110,10 @@ fn actual_style_progress_is_applied_before_the_width_sample() {
 #[test]
 fn refreshed_relative_target_uses_current_progress_and_an_unchanged_absolute_start() {
     let motion = Motion::new();
+    let mut sync = MotionSync::default();
     let start = Instant::now();
     let mut clock = AnimationClock::default();
-    let _ = motion.tick(clock.accept(start));
+    let _ = clock.accept(start);
     let duration = Duration::from_secs(1);
     let track = motion.play(
         MotionKey::from_raw(1),
@@ -117,6 +121,7 @@ fn refreshed_relative_target_uses_current_progress_and_an_unchanged_absolute_sta
         0.0_f32,
         1.0,
     );
+    sync.restart(&motion, start);
     let timing = AnimationTiming::new(duration, Duration::ZERO)
         .accept(start)
         .unwrap();
@@ -131,7 +136,7 @@ fn refreshed_relative_target_uses_current_progress_and_an_unchanged_absolute_sta
         (1000, 20.0, BorderStyle::Solid, 40.0),
     ] {
         let now = clock.accept(start + Duration::from_millis(millis));
-        let _ = motion.tick(now);
+        sync.synchronize(&motion, now);
         let progress = linear_progress(timing.phase_at(now), track.get()).unwrap();
         let target_value = compute_border_width(
             &target,
@@ -164,9 +169,10 @@ fn inherited_target_refresh_uses_parent_computed_width_on_the_running_track() {
         values::{computed_border_width::*, registry::PropertyId},
     };
     let motion = Motion::new();
+    let mut sync = MotionSync::default();
     let start = Instant::now();
     let mut clock = AnimationClock::default();
-    let _ = motion.tick(clock.accept(start));
+    let _ = clock.accept(start);
     let duration = Duration::from_secs(1);
     let track = motion.play(
         MotionKey::from_raw(1),
@@ -174,6 +180,7 @@ fn inherited_target_refresh_uses_parent_computed_width_on_the_running_track() {
         0.0_f32,
         1.0,
     );
+    sync.restart(&motion, start);
     let timing = AnimationTiming::new(duration, Duration::ZERO)
         .accept(start)
         .unwrap();
@@ -199,7 +206,7 @@ fn inherited_target_refresh_uses_parent_computed_width_on_the_running_track() {
         (1000, 20.0, "solid", 40.0),
     ] {
         let now = clock.accept(start + Duration::from_millis(millis));
-        let _ = motion.tick(now);
+        sync.synchronize(&motion, now);
         let progress = linear_progress(timing.phase_at(now), track.get()).unwrap();
         let parent = compute_cascaded_border_width(
             &parent_winners,
