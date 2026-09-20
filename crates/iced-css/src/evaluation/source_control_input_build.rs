@@ -1,5 +1,4 @@
 use super::super::{
-    source_participants::SourceOuterCategory,
     source_presentation_join::{self as join, JoinReason},
     source_structural_events::SourceStructuralEventKind,
     source_structure::SourceStructureKind as Kind,
@@ -159,6 +158,10 @@ struct Walk<'a> {
     output: Option<&'a mut Storage>,
     scope: Option<PendingScope>,
     occurrence: usize,
+    /// The one live block frame carrying an opening, if any. An overridden block has
+    /// `InlineSequence` participation, so no block can nest inside it and at most one
+    /// exists at a time. Kept here so the forced-break guard costs no traversal.
+    block_opening: Option<Frame>,
 }
 impl Walk<'_> {
     fn tick(&mut self, c: Context) -> Result<(), SourceControlInputError> {
@@ -234,6 +237,12 @@ impl Walk<'_> {
         Ok(())
     }
     fn pop(&mut self, frame: Frame) -> Result<(), SourceControlInputError> {
+        if self
+            .block_opening
+            .is_some_and(|live| live.record == frame.record)
+        {
+            self.block_opening = None;
+        }
         self.tick(frame.context())?;
         if frame.opening.is_some() {
             self.synthetic(
@@ -396,8 +405,10 @@ fn inventory_shape(
             Kind::SourceBlock | Kind::SourceInline => {
                 let participant = record.participant().ok_or_else(failure)?;
                 // Only an inline carries an embedding effect (CSS 2.2 §9.10); a block
-                // may compute Embed without effect, and block Override was rejected
-                // by the source pass. The affected inline roles are exactly 2 and 9.
+                // may compute Embed or Override without one. Role 0 owns anonymous
+                // children, so an overridden outer block is already rejected at its
+                // first anonymous record before this runs; role 5 may be overridden
+                // and is deliberately admitted. The affected inline roles are 2 and 9.
                 let effective = record.kind() == Kind::SourceInline
                     && participant.bidi_style().unicode_bidi() != ComputedUnicodeBidi::Normal;
                 if effective != (role == 2 || role == 9) {
@@ -595,6 +606,7 @@ fn walk(
         output,
         scope: None,
         occurrence: 0,
+        block_opening: None,
     };
     let mut previous_content = None;
     for index in 0..structure.record_count() {
@@ -625,6 +637,23 @@ fn walk(
         let mut open = None;
         match record.kind() {
             Kind::SourceBlock | Kind::AnonymousBlock => {
+                // CSS 2.2 §9.10 places a block override opening at the start of each
+                // anonymous child block box but names only one PDF, at the element
+                // end. That per-anonymous-child closing schedule is unresolved.
+                if let Some(origin) = record.anonymous_origin()
+                    && origin.inheritance_source().bidi_style().unicode_bidi()
+                        == ComputedUnicodeBidi::BidiOverride
+                {
+                    let enclosing = origin.enclosing_block();
+                    let bc = Context {
+                        source: enclosing.source_index(),
+                        record: Some(index),
+                        ..global()
+                    };
+                    return Err(bc.error(ErrorKind::Unsupported(Unsupported::BlockBidi(
+                        ComputedUnicodeBidi::BidiOverride,
+                    ))));
+                }
                 let scopes = add(w.counts.scopes, 1, c)?;
                 admit(scopes, limits.scopes.get(), Limit::Scopes, c)?;
                 join::scope_parent(parent.as_ref().map(|p| p.kind())).map_err(|r| c.join(r))?;
@@ -634,6 +663,19 @@ fn walk(
                 w.counts.scopes = scopes;
                 if participation == Participation::InlineSequence {
                     w.counts.domains = add(w.counts.domains, 1, c)?;
+                    // A block container overrides its inline-level descendants that are
+                    // not within another block container. `InlineSequence` is exactly
+                    // "no anonymous child block box": source_structure_build's run_parent
+                    // wraps *every* inline run of a block that has any block-display
+                    // descendant begin, so a block's children are all inline or all
+                    // block. The opening therefore goes at the element start and its PDF
+                    // at the element end, wrapping this one domain.
+                    if let Some(participant) = record.participant() {
+                        let style = participant.bidi_style();
+                        if style.unicode_bidi() == ComputedUnicodeBidi::BidiOverride {
+                            open = opening(style.direction(), style.unicode_bidi());
+                        }
+                    }
                 }
                 w.scope = Some(PendingScope {
                     record: index,
@@ -712,6 +754,22 @@ fn walk(
                                 if !non_b {
                                     return Err(mc.error(ErrorKind::Unsupported(
                                         Unsupported::BreakBoundary(SourceControlBreakSide::Before),
+                                    )));
+                                }
+                                // Writing Modes §2.4.4's close/reopen rule is scoped to
+                                // an *inline* box broken around a paragraph boundary. A
+                                // block container is not broken here, and §9.10 names no
+                                // reopening, so renewing a block override at this break
+                                // would invent a schedule no authority states.
+                                if let Some(block_frame) = w.block_opening {
+                                    let bc = Context {
+                                        source: block_frame.source,
+                                        record: Some(block_frame.record),
+                                        original: Some(original),
+                                        member: Some(member),
+                                    };
+                                    return Err(bc.error(ErrorKind::Unsupported(
+                                        Unsupported::BlockBidi(ComputedUnicodeBidi::BidiOverride),
                                     )));
                                 }
                                 for frame in frames.iter().rev().copied() {
@@ -805,6 +863,9 @@ fn walk(
                 opening: open,
             };
             push(frames, frame, c)?;
+            if open.is_some() && record.kind() == Kind::SourceBlock {
+                w.block_opening = Some(frame);
+            }
             w.counts.frames = add(w.counts.frames, 1, c)?;
             w.counts.depth = w.counts.depth.max(depth);
             if let Some(ch) = open {
@@ -984,16 +1045,8 @@ pub fn build_source_control_input<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>(
             ..global()
         };
         join::source_join(ordinal, &source).map_err(|r| c.join(r))?;
-        let participant = source.participant();
-        let bidi = participant.bidi_style().unicode_bidi();
-        // Block Embed has no inline embedding effect and is admitted as Normal while
-        // keeping its computed value; block Override's descendant/anonymous-block
-        // rule is not implemented and still rejects here, before frames and inventory.
-        if participant.outer_category() == SourceOuterCategory::Block
-            && bidi == ComputedUnicodeBidi::BidiOverride
-        {
-            return Err(c.error(ErrorKind::Unsupported(Unsupported::BlockBidi(bidi))));
-        }
+        // Block values are no longer decided here: Embed is inert, and Override needs
+        // structural facts (anonymous children, forced breaks) that only the walk has.
     }
     let mut frames = Vec::new();
     admit_scratch(bytes::<Frame>(records)?, limits)?;

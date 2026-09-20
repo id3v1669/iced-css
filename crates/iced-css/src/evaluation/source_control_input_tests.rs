@@ -320,6 +320,7 @@ fn bounded_push_and_completion_reject_partial_output() {
             bytes: 0,
         }),
         occurrence: 0,
+        block_opening: None,
     };
     assert!(matches!(
         walk.finalize(1).unwrap_err().kind,
@@ -547,15 +548,12 @@ mod actual_owner {
         );
     }
     #[test]
-    fn override_blocks_in_interrupted_graph_reject_without_inventory_or_reservation() {
-        for (block, bidi) in [("B", "bidi-override"), ("K", "bidi-override")] {
+    fn override_outer_block_rejects_before_any_inventory_attempt() {
+        // K is admitted now: it owns a single inline sequence. Only the outer block,
+        // which owns anonymous child block boxes, still rejects.
+        {
             let mut root = interruption_recipe("a", "x", "b", "embed");
-            let target = if block == "B" {
-                &mut root
-            } else {
-                &mut root.children[0].children[1]
-            };
-            target.unicode_bidi = bidi.into();
+            root.unicode_bidi = "bidi-override".into();
             with_predecessors!(root, |_w, casing, structure| {
                 super::RESERVATIONS
                     .with_borrow_mut(|t| *t = Some(super::ReservationTrace::default()));
@@ -566,12 +564,16 @@ mod actual_owner {
                     error.kind,
                     super::ErrorKind::Unsupported(super::Unsupported::BlockBidi(_))
                 ));
+                // The anonymous children are records 1 and 8, both ahead of the
+                // record-2 edge that would request an inventory.
                 assert_eq!((trace.inventory_attempts, trace.inventory_records), (0, 0));
                 assert_eq!(
                     (trace.inventory_before, trace.inventory_after),
                     (None, None)
                 );
-                assert!(trace.slots.is_empty());
+                // The decision needs structural facts, so it is taken inside the walk;
+                // only the scratch Frames reservation precedes it.
+                assert_eq!(trace.slots, [super::Slot::Frames]);
             });
         }
     }

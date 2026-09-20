@@ -120,34 +120,7 @@ fn empty_nested_and_sibling_payloads_preserve_distinct_causes() {
     }
 }
 #[test]
-fn override_blocks_and_interior_b_interruption_reject() {
-    // Block Embed is admitted (no inline embedding effect); only bidi-override rejects.
-    {
-        let bidi = "bidi-override";
-        let root = managed(
-            "B",
-            InputFamily::Column,
-            "block",
-            "ltr",
-            bidi,
-            vec![text("T", "a\nb", "pre", "none", "default", "normal")],
-        );
-        with_predecessors!(root, |_whitespace, casing, structure| {
-            let e = build_source_control_input(&structure, &casing, control_limits()).unwrap_err();
-            assert!(matches!(
-                e.kind,
-                SourceControlInputErrorKind::Unsupported(SourceControlUnsupported::BlockBidi(_))
-            ));
-            let block = structure
-                .records()
-                .find(|r| r.kind() == SourceStructureKind::SourceBlock)
-                .unwrap();
-            assert_eq!(
-                (e.source, e.record, e.original, e.member),
-                (block.source_index(), None, None, None)
-            );
-        });
-    }
+fn interior_b_interruption_rejects() {
     let root = managed(
         "B",
         InputFamily::Column,
