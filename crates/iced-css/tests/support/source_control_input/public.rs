@@ -384,7 +384,7 @@ fn supplemental_empty_and_zero_output_preservation() {
     });
 }
 #[test]
-fn preserved_sixth_interruption_rejected() {
+fn preserved_sixth_column_interruption_accepted() {
     let root = managed(
         "B",
         InputFamily::Column,
@@ -412,16 +412,21 @@ fn preserved_sixth_interruption_rejected() {
         )],
     );
     with_predecessors!(root, |_whitespace, casing, structure| {
-        let e = build_source_control_input(&structure, &casing, control_limits()).unwrap_err();
-        assert!(matches!(
-            e.kind,
-            SourceControlInputErrorKind::Unsupported(SourceControlUnsupported::InterruptedInline(
-                SourceStructureEdgeKind::BeforeInterruption
-            ))
-        ));
-        assert_eq!(
-            (e.source, e.record, e.original, e.member),
-            (Some(4), Some(2), None, None)
-        );
+        let owner = build_source_control_input(&structure, &casing, control_limits()).unwrap();
+        assert_eq!((owner.scope_count(), owner.domain_count()), (4, 3));
+        for (index, text) in ["\u{202b}a\u{202c}", "x", "\u{202b}b\u{202c}"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                owner
+                    .scope(index + 1)
+                    .unwrap()
+                    .inline_sequence()
+                    .unwrap()
+                    .text(),
+                text
+            );
+        }
     });
 }

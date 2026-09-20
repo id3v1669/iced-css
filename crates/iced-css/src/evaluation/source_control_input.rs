@@ -1,7 +1,10 @@
 //! Immutable CSS-generated directional controls with exact captured-source origins.
 //!
-//! This intermediate producer admits uninterrupted inline controls and strict-interior
-//! paragraph separators. It does not replace the broader Normal-only adapter.
+//! This intermediate producer admits uninterrupted inline controls, strict-interior
+//! paragraph separators, and a bounded single-block interruption profile. The latter
+//! requires one affected inline, one intervening Normal block, and exactly one
+//! nonempty, B-free payload before, inside, and after that block. Other interruption
+//! shapes remain unsupported. It does not replace the broader Normal-only adapter.
 use super::{
     source_analysis_input::SourceAnalysisParticipation,
     source_casing::{SourceCasing, SourceCasingPresentation, SourceCasingScalar},

@@ -282,9 +282,227 @@ fn opening(direction: ComputedDirection, bidi: ComputedUnicodeBidi) -> Option<ch
         (ComputedDirection::RightToLeft, ComputedUnicodeBidi::BidiOverride) => Some('\u{202e}'),
     }
 }
+#[derive(Debug, Clone, Copy)]
+struct InterruptionInventory {
+    source: usize,
+    fragments: [usize; 2],
+    payloads: [usize; 3],
+    trigger: Context,
+    kind: SourceStructureEdgeKind,
+}
+impl InterruptionInventory {
+    fn unsupported(self) -> SourceControlInputError {
+        self.trigger
+            .error(ErrorKind::Unsupported(Unsupported::InterruptedInline(
+                self.kind,
+            )))
+    }
+    fn accepts(
+        self,
+        record: usize,
+        source: Option<usize>,
+        side: SourceStructureBoundarySide,
+        kind: SourceStructureEdgeKind,
+    ) -> bool {
+        source == Some(self.source)
+            && ((record == self.fragments[0]
+                && side == SourceStructureBoundarySide::End
+                && kind == SourceStructureEdgeKind::BeforeInterruption)
+                || (record == self.fragments[1]
+                    && side == SourceStructureBoundarySide::Start
+                    && kind == SourceStructureEdgeKind::AfterInterruption))
+    }
+}
+#[derive(Clone, Copy)]
+struct EdgeAnchor {
+    kind: SourceStructureEdgeKind,
+    event: usize,
+    event_kind: SourceStructuralEventKind,
+    source: usize,
+}
+fn anchor(
+    record: &SourceStructureRecord<'_, '_, '_, '_, '_, '_, '_>,
+    side: SourceStructureBoundarySide,
+) -> Option<EdgeAnchor> {
+    let edge = match side {
+        SourceStructureBoundarySide::Start => record.start_edge(),
+        SourceStructureBoundarySide::End => record.end_edge(),
+    }?;
+    if !edge.record().is_same_record(record) || edge.side() != side {
+        return None;
+    }
+    let event = edge.event();
+    Some(EdgeAnchor {
+        kind: edge.kind(),
+        event: event.index(),
+        event_kind: event.kind(),
+        source: event.participant().source_index(),
+    })
+}
+/// One prepaid record pass. Roles describe the tree; captured source/record IDs
+/// are never constants in the admission predicate. No presentation is inspected.
+fn inventory_shape(
+    structure: &SourceStructure<'_, '_, '_, '_, '_, '_>,
+    trigger: Context,
+    kind: SourceStructureEdgeKind,
+) -> Result<InterruptionInventory, SourceControlInputError> {
+    let failure = || trigger.error(ErrorKind::Unsupported(Unsupported::InterruptedInline(kind)));
+    if structure.source_count() != 6 || structure.record_count() != 12 {
+        return Err(failure());
+    }
+    let kinds = [
+        Kind::SourceBlock,
+        Kind::AnonymousBlock,
+        Kind::SourceInline,
+        Kind::SourceInline,
+        Kind::Payload,
+        Kind::SourceBlock,
+        Kind::SourceInline,
+        Kind::Payload,
+        Kind::AnonymousBlock,
+        Kind::SourceInline,
+        Kind::SourceInline,
+        Kind::Payload,
+    ];
+    let parents = [
+        None,
+        Some(0),
+        Some(1),
+        Some(2),
+        Some(3),
+        Some(0),
+        Some(5),
+        Some(6),
+        Some(0),
+        Some(8),
+        Some(9),
+        Some(10),
+    ];
+    let mut records = [0; 12];
+    let mut sources = [None; 12];
+    let mut starts = [None; 12];
+    let mut ends = [None; 12];
+    for (role, record) in structure.records().enumerate() {
+        #[cfg(test)]
+        qualification::inventory_record();
+        if record.kind() != kinds[role]
+            || record.formatting_parent().map(|p| p.index()) != parents[role].map(|p| records[p])
+        {
+            return Err(failure());
+        }
+        records[role] = record.index();
+        sources[role] = record.source_index();
+        match record.kind() {
+            Kind::SourceBlock | Kind::SourceInline => {
+                let participant = record.participant().ok_or_else(failure)?;
+                let nonnormal =
+                    participant.bidi_style().unicode_bidi() != ComputedUnicodeBidi::Normal;
+                if nonnormal != (role == 2 || role == 9) {
+                    return Err(failure());
+                }
+                starts[role] =
+                    Some(anchor(&record, SourceStructureBoundarySide::Start).ok_or_else(failure)?);
+                ends[role] =
+                    Some(anchor(&record, SourceStructureBoundarySide::End).ok_or_else(failure)?);
+            }
+            Kind::AnonymousBlock => {
+                let origin = record.anonymous_origin().ok_or_else(failure)?;
+                if sources[role].is_some()
+                    || origin.enclosing_block().index() != records[0]
+                    || Some(origin.inheritance_source().source_index()) != sources[0]
+                {
+                    return Err(failure());
+                }
+            }
+            Kind::Payload => {
+                if sources[role] != sources[parents[role].ok_or_else(failure)?] {
+                    return Err(failure());
+                }
+            }
+        }
+    }
+    let distinct = [
+        sources[0],
+        sources[2],
+        sources[3],
+        sources[5],
+        sources[6],
+        sources[10],
+    ];
+    for (index, source) in distinct.iter().enumerate() {
+        if source.is_none() || distinct[..index].contains(source) {
+            return Err(failure());
+        }
+    }
+    if sources[9] != sources[2] {
+        return Err(failure());
+    }
+    for role in [0, 2, 3, 5, 6, 9, 10] {
+        for (edge, expected, event_kind) in [
+            (
+                starts[role].ok_or_else(failure)?,
+                if role == 9 {
+                    SourceStructureEdgeKind::AfterInterruption
+                } else {
+                    SourceStructureEdgeKind::OriginalBegin
+                },
+                if role == 9 {
+                    SourceStructuralEventKind::End
+                } else {
+                    SourceStructuralEventKind::Begin
+                },
+            ),
+            (
+                ends[role].ok_or_else(failure)?,
+                if role == 2 {
+                    SourceStructureEdgeKind::BeforeInterruption
+                } else {
+                    SourceStructureEdgeKind::OriginalEnd
+                },
+                if role == 2 {
+                    SourceStructuralEventKind::Begin
+                } else {
+                    SourceStructuralEventKind::End
+                },
+            ),
+        ] {
+            let source_role = if matches!(
+                expected,
+                SourceStructureEdgeKind::BeforeInterruption
+                    | SourceStructureEdgeKind::AfterInterruption
+            ) {
+                5
+            } else {
+                role
+            };
+            if edge.kind != expected
+                || edge.event_kind != event_kind
+                || Some(edge.source) != sources[source_role]
+            {
+                return Err(failure());
+            }
+        }
+    }
+    // Edge cuts intentionally differ by side; compare their shared events.
+    if ends[2].ok_or_else(failure)?.event != starts[5].ok_or_else(failure)?.event
+        || starts[9].ok_or_else(failure)?.event != ends[5].ok_or_else(failure)?.event
+    {
+        return Err(failure());
+    }
+    Ok(InterruptionInventory {
+        source: sources[2].ok_or_else(failure)?,
+        fragments: [records[2], records[9]],
+        payloads: [records[4], records[7], records[11]],
+        trigger,
+        kind,
+    })
+}
 fn inline_open(
     record: &SourceStructureRecord<'_, '_, '_, '_, '_, '_, '_>,
     c: Context,
+    ledger: &mut Ledger,
+    debit: bool,
+    inventory: &mut Option<InterruptionInventory>,
 ) -> Result<Option<char>, SourceControlInputError> {
     let participant = record
         .participant()
@@ -332,7 +550,23 @@ fn inline_open(
                 )
             )
         {
-            return Err(c.error(ErrorKind::Unsupported(Unsupported::InterruptedInline(kind))));
+            if inventory.is_none() {
+                if !debit {
+                    return Err(c.invariant(Reason::EmissionCounts));
+                }
+                #[cfg(test)]
+                qualification::inventory_before(ledger.used);
+                ledger.charge(record.owner().record_count(), global())?;
+                #[cfg(test)]
+                qualification::inventory_after(ledger.used);
+                *inventory = Some(inventory_shape(record.owner(), c, kind)?);
+            }
+            let admitted = inventory.ok_or_else(|| c.invariant(Reason::EmissionCounts))?;
+            if !admitted.accepts(record.index(), record.source_index(), side, kind) {
+                return Err(c.invariant(Reason::EmissionCounts));
+            }
+            #[cfg(test)]
+            qualification::inventory_use(debit);
         }
     }
     Ok(value)
@@ -344,6 +578,7 @@ fn walk(
     ledger: &mut Ledger,
     limits: SourceControlInputLimits,
     output: Option<&mut Storage>,
+    inventory: &mut Option<InterruptionInventory>,
 ) -> Result<Counts, SourceControlInputError> {
     if !frames.is_empty() {
         return Err(global().invariant(Reason::TraversalCompletion));
@@ -416,7 +651,7 @@ fn walk(
                 )
                 .map_err(|r| c.join(r))?;
                 if record.kind() == Kind::SourceInline {
-                    open = inline_open(&record, c)?;
+                    open = inline_open(&record, c, w.ledger, w.debit, inventory)?;
                 } else {
                     let content = record
                         .content_event()
@@ -432,6 +667,10 @@ fn walk(
                     .map_err(|r| c.join(r))?;
                     let payload = w.counts.payloads;
                     let payload_start = w.counts.tokens;
+                    let literal_start = w.counts.literals;
+                    if inventory.is_some_and(|i| !i.payloads.contains(&index)) {
+                        return Err(c.invariant(Reason::EmissionCounts));
+                    }
                     let mut non_b = false;
                     let mut pending: Option<Context> = None;
                     for original in range.clone() {
@@ -458,6 +697,9 @@ fn walk(
                             };
                             w.tick(mc)?;
                             let is_b = bidi_class(ch) == BidiClass::B;
+                            if is_b && let Some(admitted) = *inventory {
+                                return Err(admitted.unsupported());
+                            }
                             if is_b {
                                 if let Some(earlier) = pending {
                                     return Err(earlier.error(ErrorKind::Unsupported(
@@ -528,6 +770,11 @@ fn walk(
                         return Err(earlier.error(ErrorKind::Unsupported(
                             Unsupported::BreakBoundary(SourceControlBreakSide::After),
                         )));
+                    }
+                    if w.counts.literals == literal_start
+                        && let Some(admitted) = *inventory
+                    {
+                        return Err(admitted.unsupported());
                     }
                     if let Some(out) = w.output.as_deref_mut() {
                         push(
@@ -750,10 +997,19 @@ pub fn build_source_control_input<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>(
     qualification::observe_frames(frame_capacity, false);
     let scratch = bytes::<Frame>(frame_capacity)?;
     admit_scratch(scratch, limits)?;
+    let mut inventory = None;
     let counts = if records == 0 {
         Counts::default()
     } else {
-        walk(structure, casing, &mut frames, &mut ledger, limits, None)?
+        walk(
+            structure,
+            casing,
+            &mut frames,
+            &mut ledger,
+            limits,
+            None,
+            &mut inventory,
+        )?
     };
     ledger.charge(counts.units, global())?;
     let mut output = reserve_storage(&counts, scratch, limits)?;
@@ -768,6 +1024,7 @@ pub fn build_source_control_input<'t, 'c, 'wt, 'wc, 'e, 'd, 's, 'b, 'r>(
             &mut ledger,
             limits,
             Some(&mut output),
+            &mut inventory,
         )?
     };
     verify_emission(

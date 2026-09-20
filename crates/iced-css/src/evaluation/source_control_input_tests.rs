@@ -7,8 +7,47 @@ struct ReservationTrace {
     extra: Option<Slot>,
     acquired_frames: Option<usize>,
     final_frames: Option<usize>,
+    inventory_attempts: usize,
+    inventory_records: usize,
+    inventory_before: Option<usize>,
+    inventory_after: Option<usize>,
+    inventory_count_uses: usize,
+    inventory_replay_uses: usize,
 }
 thread_local! { static RESERVATIONS: RefCell<Option<ReservationTrace>> = const { RefCell::new(None) }; }
+pub(super) fn inventory_before(work: usize) {
+    RESERVATIONS.with_borrow_mut(|trace| {
+        if let Some(t) = trace {
+            t.inventory_attempts += 1;
+            assert!(t.inventory_before.replace(work).is_none());
+        }
+    });
+}
+pub(super) fn inventory_after(work: usize) {
+    RESERVATIONS.with_borrow_mut(|trace| {
+        if let Some(t) = trace {
+            assert!(t.inventory_after.replace(work).is_none());
+        }
+    });
+}
+pub(super) fn inventory_record() {
+    RESERVATIONS.with_borrow_mut(|trace| {
+        if let Some(t) = trace {
+            t.inventory_records += 1;
+        }
+    });
+}
+pub(super) fn inventory_use(count: bool) {
+    RESERVATIONS.with_borrow_mut(|trace| {
+        if let Some(t) = trace {
+            if count {
+                t.inventory_count_uses += 1;
+            } else {
+                t.inventory_replay_uses += 1;
+            }
+        }
+    });
+}
 fn impossible_reservation() -> TryReserveError {
     Vec::<u8>::new().try_reserve(usize::MAX).unwrap_err()
 }
@@ -297,6 +336,294 @@ mod actual_owner {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/support/source_control_input/setup.rs"
     ));
+    fn interruption_recipe(before: &str, middle: &str, after: &str, bidi: &str) -> InputNode {
+        managed(
+            "B",
+            InputFamily::Column,
+            "block",
+            "ltr",
+            "normal",
+            vec![managed(
+                "I",
+                InputFamily::Row,
+                "inline",
+                "rtl",
+                bidi,
+                vec![
+                    text("A", before, "pre", "none", "default", "normal"),
+                    managed(
+                        "K",
+                        InputFamily::Column,
+                        "block",
+                        "ltr",
+                        "normal",
+                        vec![text("X", middle, "pre", "none", "default", "normal")],
+                    ),
+                    text("C", after, "pre", "none", "default", "normal"),
+                ],
+            )],
+        )
+    }
+    #[test]
+    fn mismatched_private_inventory_is_invariant_in_count_and_replay() {
+        with_predecessors!(
+            interruption_recipe("a", "x", "b", "embed"),
+            |_whitespace, _casing, structure| {
+                let before = structure
+                    .records()
+                    .find(|record| {
+                        record.end_edge().is_some_and(|edge| {
+                            edge.kind() == SourceStructureEdgeKind::BeforeInterruption
+                        })
+                    })
+                    .unwrap();
+                let context = super::Context {
+                    source: before.source_index(),
+                    record: Some(before.index()),
+                    ..super::global()
+                };
+                let valid = super::inventory_shape(
+                    &structure,
+                    context,
+                    SourceStructureEdgeKind::BeforeInterruption,
+                )
+                .unwrap();
+                for debit in [true, false] {
+                    let mut ledger = super::Ledger {
+                        used: 22,
+                        limit: usize::MAX,
+                    };
+                    let mut cached = Some(valid);
+                    super::RESERVATIONS.with_borrow_mut(|trace| {
+                        *trace = Some(super::ReservationTrace::default());
+                    });
+                    assert_eq!(
+                        super::inline_open(&before, context, &mut ledger, debit, &mut cached)
+                            .unwrap(),
+                        Some('\u{202b}')
+                    );
+                    let mut mismatched = valid;
+                    mismatched.fragments.swap(0, 1);
+                    let mut cached = Some(mismatched);
+                    let error =
+                        super::inline_open(&before, context, &mut ledger, debit, &mut cached)
+                            .unwrap_err();
+                    let trace = super::RESERVATIONS.with_borrow_mut(|trace| trace.take().unwrap());
+                    assert!(matches!(
+                        error.kind,
+                        super::ErrorKind::Invariant(super::Reason::EmissionCounts)
+                    ));
+                    assert_eq!(
+                        (error.source, error.record, error.original, error.member),
+                        (before.source_index(), Some(before.index()), None, None)
+                    );
+                    assert_eq!(ledger.used, 22);
+                    assert_eq!((trace.inventory_attempts, trace.inventory_records), (0, 0));
+                    assert!(trace.slots.is_empty());
+                }
+            }
+        );
+    }
+    #[test]
+    fn actual_lazy_inventory_once_and_no_scan_for_normal_fragments() {
+        for (bidi, work, scans) in [("embed", 83, 1), ("normal", 63, 0)] {
+            with_predecessors!(
+                interruption_recipe("a", "x", "b", bidi),
+                |_w, casing, structure| {
+                    assert_eq!(
+                        (
+                            structure.source_count(),
+                            structure.record_count(),
+                            casing.scalar_count()
+                        ),
+                        (6, 12, 3)
+                    );
+                    super::RESERVATIONS
+                        .with_borrow_mut(|t| *t = Some(super::ReservationTrace::default()));
+                    let owner =
+                        super::build_source_control_input(&structure, &casing, super::limits())
+                            .unwrap();
+                    let trace = super::RESERVATIONS.with_borrow_mut(|t| t.take().unwrap());
+                    let r = owner.receipt();
+                    assert_eq!(r.work, work);
+                    assert_eq!(
+                        (
+                            r.frames_pushed,
+                            r.max_depth,
+                            r.payloads,
+                            r.scopes,
+                            r.domains
+                        ),
+                        (9, 4, 3, 4, 3)
+                    );
+                    assert_eq!(trace.inventory_attempts, scans);
+                    assert_eq!(trace.inventory_records, scans * 12);
+                    assert_eq!(trace.inventory_count_uses, scans * 2);
+                    assert_eq!(trace.inventory_replay_uses, scans * 2);
+                    assert_eq!(trace.inventory_before, (scans != 0).then_some(10));
+                    assert_eq!(trace.inventory_after, (scans != 0).then_some(22));
+                    assert_eq!(
+                        trace.slots,
+                        [
+                            super::Slot::Frames,
+                            super::Slot::Scopes,
+                            super::Slot::Payloads,
+                            super::Slot::Originals,
+                            super::Slot::Tokens,
+                            super::Slot::Transport
+                        ]
+                    );
+                }
+            );
+        }
+    }
+    #[test]
+    fn actual_lazy_inventory_work_boundaries_precede_retained_allocation() {
+        with_predecessors!(
+            interruption_recipe("a", "x", "b", "embed"),
+            |_w, casing, structure| {
+                let cause = structure
+                    .records()
+                    .find(|r| {
+                        r.kind() == SourceStructureKind::SourceInline
+                            && r.participant().unwrap().bidi_style().unicode_bidi()
+                                != iced_css_core::values::bidi::ComputedUnicodeBidi::Normal
+                    })
+                    .unwrap();
+                for allowance in [21, 22, 82] {
+                    let mut limits = super::limits();
+                    limits.work = super::nz(allowance);
+                    super::RESERVATIONS
+                        .with_borrow_mut(|t| *t = Some(super::ReservationTrace::default()));
+                    let error =
+                        super::build_source_control_input(&structure, &casing, limits).unwrap_err();
+                    let trace = super::RESERVATIONS.with_borrow_mut(|t| t.take().unwrap());
+                    assert!(matches!(
+                        error.kind,
+                        super::ErrorKind::Limit(super::Limit::Work)
+                    ));
+                    assert_eq!(
+                        (error.source, error.record, error.original, error.member),
+                        if allowance == 22 {
+                            (cause.source_index(), Some(cause.index()), None, None)
+                        } else {
+                            (None, None, None, None)
+                        }
+                    );
+                    assert_eq!(trace.inventory_attempts, 1);
+                    assert_eq!(trace.inventory_before, Some(10));
+                    assert_eq!(trace.inventory_after, (allowance != 21).then_some(22));
+                    assert_eq!(
+                        trace.inventory_records,
+                        if allowance == 21 { 0 } else { 12 }
+                    );
+                    assert_eq!(trace.inventory_replay_uses, 0);
+                    assert_eq!(trace.slots, [super::Slot::Frames]);
+                }
+                let mut exact = super::limits();
+                exact.work = super::nz(83);
+                assert_eq!(
+                    super::build_source_control_input(&structure, &casing, exact)
+                        .unwrap()
+                        .receipt()
+                        .work,
+                    83
+                );
+                let mut scratch_short = super::limits();
+                scratch_short.scratch_bytes = super::nz(1);
+                scratch_short.work = super::nz(21);
+                super::RESERVATIONS
+                    .with_borrow_mut(|t| *t = Some(super::ReservationTrace::default()));
+                let error = super::build_source_control_input(&structure, &casing, scratch_short)
+                    .unwrap_err();
+                let trace = super::RESERVATIONS.with_borrow_mut(|t| t.take().unwrap());
+                assert!(matches!(
+                    error.kind,
+                    super::ErrorKind::Limit(super::Limit::ScratchBytes)
+                ));
+                assert_eq!(trace.inventory_attempts, 0);
+                assert!(trace.slots.is_empty());
+            }
+        );
+    }
+    #[test]
+    fn nonnormal_blocks_in_interrupted_graph_reject_without_inventory_or_reservation() {
+        for (block, bidi) in [
+            ("B", "embed"),
+            ("B", "bidi-override"),
+            ("K", "embed"),
+            ("K", "bidi-override"),
+        ] {
+            let mut root = interruption_recipe("a", "x", "b", "embed");
+            let target = if block == "B" {
+                &mut root
+            } else {
+                &mut root.children[0].children[1]
+            };
+            target.unicode_bidi = bidi.into();
+            with_predecessors!(root, |_w, casing, structure| {
+                super::RESERVATIONS
+                    .with_borrow_mut(|t| *t = Some(super::ReservationTrace::default()));
+                let error = super::build_source_control_input(&structure, &casing, super::limits())
+                    .unwrap_err();
+                let trace = super::RESERVATIONS.with_borrow_mut(|t| t.take().unwrap());
+                assert!(matches!(
+                    error.kind,
+                    super::ErrorKind::Unsupported(super::Unsupported::BlockBidi(_))
+                ));
+                assert_eq!((trace.inventory_attempts, trace.inventory_records), (0, 0));
+                assert_eq!(
+                    (trace.inventory_before, trace.inventory_after),
+                    (None, None)
+                );
+                assert!(trace.slots.is_empty());
+            });
+        }
+    }
+    #[test]
+    fn actual_interrupted_member_rejections_keep_trigger_and_only_scratch() {
+        for (before, middle, after) in [
+            ("", "x", "b"),
+            ("a", "", "b"),
+            ("a", "x", ""),
+            ("a\nb", "x", "b"),
+            ("a", "x\ny", "b"),
+            ("a", "x", "b\nc"),
+        ] {
+            with_predecessors!(
+                interruption_recipe(before, middle, after, "embed"),
+                |_w, casing, structure| {
+                    let cause = structure
+                        .records()
+                        .find(|r| {
+                            r.kind() == SourceStructureKind::SourceInline
+                                && r.participant().unwrap().bidi_style().unicode_bidi()
+                                    != iced_css_core::values::bidi::ComputedUnicodeBidi::Normal
+                        })
+                        .unwrap();
+                    super::RESERVATIONS
+                        .with_borrow_mut(|t| *t = Some(super::ReservationTrace::default()));
+                    let error =
+                        super::build_source_control_input(&structure, &casing, super::limits())
+                            .unwrap_err();
+                    let trace = super::RESERVATIONS.with_borrow_mut(|t| t.take().unwrap());
+                    assert!(matches!(
+                        error.kind,
+                        super::ErrorKind::Unsupported(super::Unsupported::InterruptedInline(
+                            SourceStructureEdgeKind::BeforeInterruption
+                        ))
+                    ));
+                    assert_eq!(
+                        (error.source, error.record, error.original, error.member),
+                        (cause.source_index(), Some(cause.index()), None, None)
+                    );
+                    assert_eq!(trace.inventory_records, 12);
+                    assert_eq!(trace.inventory_replay_uses, 0);
+                    assert_eq!(trace.slots, [super::Slot::Frames]);
+                }
+            );
+        }
+    }
     #[test]
     fn actual_owner_capacity_receipt_and_budget_boundaries() {
         let root = managed(
@@ -324,6 +651,15 @@ mod actual_owner {
                 + owner.tokens.capacity() * std::mem::size_of::<super::TokenRow>()
                 + owner.transport.capacity();
             let trace = super::RESERVATIONS.with_borrow_mut(|t| t.take().unwrap());
+            assert_eq!(
+                (
+                    trace.inventory_attempts,
+                    trace.inventory_records,
+                    trace.inventory_count_uses,
+                    trace.inventory_replay_uses
+                ),
+                (0, 0, 0, 0)
+            );
             let acquired = trace
                 .acquired_frames
                 .expect("actual frame acquisition observed");
