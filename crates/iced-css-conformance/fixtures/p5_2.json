@@ -1,0 +1,15 @@
+{
+  "id": "P5.2",
+  "runner": "p5_2",
+  "spec": "architecture-54-floats-positioning.md",
+  "classification": "requirement",
+  "input": {
+    "scenario": "shrink_to_fit",
+    "preferred_minimum": 40,
+    "available": 70,
+    "preferred": 100
+  },
+  "expected": {
+    "used_width": 70.0
+  }
+}

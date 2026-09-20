@@ -36,6 +36,7 @@ pub fn builtins() -> Result<Registry, String> {
         ("p3_3", crate::adapters::p3_3::run),
         ("p4_1", crate::adapters::p4_1::run),
         ("p5_1", crate::adapters::p5_1::run),
+        ("p5_2", crate::adapters::p5_2::run),
         ("p5_4", crate::adapters::p5_4::run),
         ("p5_3", crate::adapters::p5_3::run),
         ("p7_1", crate::adapters::p7_1::run),

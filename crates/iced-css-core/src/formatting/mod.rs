@@ -16,6 +16,8 @@ pub mod generated {
     pub use crate::values::counter_scope::generated::*;
 }
 
+pub mod floats;
+
 pub mod shrink;
 
 pub mod replaced_constraints;

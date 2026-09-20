@@ -6,6 +6,7 @@ pub mod p2_2;
 pub(crate) mod p2_3;
 pub(crate) mod p4_1;
 pub(crate) mod p5_1;
+pub(crate) mod p5_2;
 pub(crate) mod p5_3;
 pub(crate) mod p5_4;
 
