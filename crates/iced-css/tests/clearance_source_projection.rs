@@ -2,7 +2,8 @@ use iced_css::{
     animation::engine::ProgressLimits,
     capture::{CaptureLimits, CapturedElement, adapters, source::ConstructionState},
     evaluation::clearance_source_projection::{
-        ClearanceProjectionError, ClearanceProjectionLimits, prepare_clearance_source_projection,
+        ClearanceProjectionError, ClearanceProjectionLimits, ClearanceProjectionShape,
+        prepare_clearance_source_projection,
     },
     host::source_publication::{InitialSourceHost, PublicationLimits},
 };
@@ -119,6 +120,7 @@ fn actual_capture_preserves_identity_membership_and_original_metadata() {
     let (host, _native) = publish(tree());
     let snapshot = host.snapshot().unwrap();
     let projection = prepare_clearance_source_projection(&host, snapshot, limits()).unwrap();
+    assert_eq!(projection.shape(), ClearanceProjectionShape::RootRegion);
     assert!(std::ptr::eq(projection.host(), &host));
     assert!(std::ptr::eq(projection.snapshot(), snapshot));
     for (projected, original) in [3, 0, 1, 2].into_iter().enumerate() {
@@ -343,4 +345,142 @@ fn row_parent_and_empty_column_children_are_admitted() {
         projection.original_node(1).unwrap().canonical_type(),
         "column"
     );
+}
+
+#[test]
+fn nested_capture_keeps_complete_graph_and_exact_budget() {
+    let outer = adapters::column_from_vec(vec![tree()], capture_limits())
+        .unwrap()
+        .erase();
+    let (host, _native) = publish(outer);
+    let snapshot = host.snapshot().unwrap();
+    let mut budget = limits();
+    budget.work = nz(36);
+    // Real allocators may return spare capacity; exact capacity checks use the seam.
+    let projection = prepare_clearance_source_projection(&host, snapshot, budget).unwrap();
+    assert_eq!(projection.shape(), ClearanceProjectionShape::NestedRegion);
+    assert_eq!(projection.nodes().len(), 5);
+    assert_eq!(
+        snapshot
+            .construction()
+            .nodes()
+            .iter()
+            .map(|n| n.parent())
+            .collect::<Vec<_>>(),
+        vec![Some(3), Some(3), Some(3), Some(4), None]
+    );
+    for (original, node) in snapshot.construction().nodes().iter().enumerate() {
+        assert_eq!(
+            node.role(),
+            if original == 4 {
+                None
+            } else {
+                Some("children")
+            }
+        );
+        assert_eq!(
+            node.role_position(),
+            if original == 4 {
+                None
+            } else {
+                Some(if original < 3 { original } else { 0 })
+            }
+        );
+    }
+    for index in [5, usize::MAX] {
+        assert_eq!(projection.original_index(index), None);
+        assert_eq!(projection.projected_index(index), None);
+        assert!(projection.original_node(index).is_none());
+        assert!(projection.metadata(index).is_none());
+        assert!(projection.token(index).is_none());
+    }
+    assert_eq!(projection.receipt().work, 36);
+    for (projected, original) in [4, 3, 0, 1, 2].into_iter().enumerate() {
+        assert_eq!(projection.original_index(projected), Some(original));
+        assert_eq!(projection.projected_index(original), Some(projected));
+        assert!(std::ptr::eq(
+            projection.token(projected).unwrap(),
+            snapshot.token(original).unwrap()
+        ));
+        assert!(std::ptr::eq(
+            projection.metadata(projected).unwrap(),
+            snapshot.construction().nodes()[original].metadata()
+        ));
+        assert_eq!(
+            projection.nodes()[projected].instance,
+            host.engine()
+                .instance(snapshot.token(original).unwrap())
+                .unwrap()
+        );
+    }
+    let nodes = projection.nodes();
+    assert_eq!(nodes[0].children, vec![nodes[1].instance]);
+    assert_eq!(nodes[1].parent, Some(nodes[0].instance));
+    assert_eq!(
+        nodes[1].children,
+        nodes[2..].iter().map(|n| n.instance).collect::<Vec<_>>()
+    );
+    for node in &nodes[2..] {
+        assert_eq!(node.parent, Some(nodes[1].instance));
+        assert!(node.children.is_empty());
+    }
+    budget.work = nz(35);
+    assert!(matches!(
+        prepare_clearance_source_projection(&host, snapshot, budget),
+        Err(ClearanceProjectionError::Work)
+    ));
+    budget.work = nz(36);
+    budget.retained_bytes = nz(4 * size_of::<InstanceId>() - 1);
+    assert!(matches!(
+        prepare_clearance_source_projection(&host, snapshot, budget),
+        Err(ClearanceProjectionError::Bytes)
+    ));
+}
+
+#[test]
+fn nested_shape_requires_the_entire_exact_capture_and_roles() {
+    let mut budget = limits();
+    budget.work = nz(36);
+    let six = adapters::column_from_vec(vec![tree(), leaf()], capture_limits())
+        .unwrap()
+        .erase();
+    let (host, _native) = publish(six);
+    assert!(matches!(
+        prepare_clearance_source_projection(&host, host.snapshot().unwrap(), budget),
+        Err(ClearanceProjectionError::NodeCount)
+    ));
+    let siblings =
+        adapters::column_from_vec(vec![leaf(), leaf(), leaf(), leaf()], capture_limits())
+            .unwrap()
+            .erase();
+    let (host, _native) = publish(siblings);
+    assert!(matches!(
+        prepare_clearance_source_projection(&host, host.snapshot().unwrap(), budget),
+        Err(ClearanceProjectionError::Parent { original: 0 })
+    ));
+    let wrong_role = adapters::container(tree(), capture_limits())
+        .unwrap()
+        .erase();
+    let (host, _native) = publish(wrong_role);
+    assert!(matches!(
+        prepare_clearance_source_projection(&host, host.snapshot().unwrap(), budget),
+        Err(ClearanceProjectionError::Role { original: 3 })
+    ));
+    let nested_leaf = adapters::column_from_vec(
+        vec![
+            adapters::column_from_vec(vec![leaf()], capture_limits())
+                .unwrap()
+                .erase(),
+            leaf(),
+            leaf(),
+        ],
+        capture_limits(),
+    )
+    .unwrap()
+    .erase();
+    let (host, _native) = publish(nested_leaf);
+    assert!(matches!(
+        prepare_clearance_source_projection(&host, host.snapshot().unwrap(), budget),
+        Err(ClearanceProjectionError::Parent { original: 0 })
+    ));
 }

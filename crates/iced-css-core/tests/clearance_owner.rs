@@ -304,7 +304,7 @@ fn shape_and_pointer_checks_are_bounded_and_ordered() {
     bad[0].children.swap(0, 1);
     assert_eq!(
         build_clearance_owner(&bad, input(&bad)).unwrap_err(),
-        ClearanceOwnerError::ChildMembership { slot: 0 }
+        ClearanceOwnerError::ChildMembership { source: 0, slot: 0 }
     );
     for first in 0..4 {
         for second in first + 1..4 {
@@ -687,5 +687,156 @@ fn both_isolation_edges_and_role_independent_height_categories_are_checked() {
     assert_eq!(
         build_clearance_owner(&s, f).unwrap_err(),
         ClearanceOwnerError::SourcePointer { source: 3 }
+    );
+}
+
+fn nested_sources() -> [SourceNode; 5] {
+    let mut ids = IdAllocator::new(NonZeroU64::new(5).unwrap());
+    let mut s = std::array::from_fn(|_| SourceNode {
+        instance: ids.allocate().unwrap(),
+        parent: None,
+        children: vec![],
+        metadata: Metadata::default(),
+    });
+    s[0].children = vec![s[1].instance];
+    s[1].parent = Some(s[0].instance);
+    s[1].children = s[2..].iter().map(|n| n.instance).collect();
+    for i in 2..5 {
+        s[i].parent = Some(s[1].instance);
+    }
+    s
+}
+fn outer(s: &[SourceNode]) -> OuterFacts<'_> {
+    OuterFacts {
+        source: &s[0],
+        display: display(),
+        content: OwnerContent::NoOwnContentNonReplaced,
+        generated: OwnerGenerated::None,
+    }
+}
+#[test]
+fn nested_owner_retains_outer_and_maps_shared_solver_indices() {
+    let nested = nested_sources();
+    let root = sources();
+    let a = build_clearance_owner(&root, input(&root)).unwrap();
+    let b = build_nested_clearance_owner(&nested, outer(&nested), input(&nested[1..])).unwrap();
+    assert!(std::ptr::eq(b.sources(), nested.as_slice()));
+    assert_eq!(
+        b.source_indices(),
+        OwnerSourceIndices {
+            parent: 1,
+            before: 2,
+            float: 3,
+            after: 4
+        }
+    );
+    assert_eq!(b.before(), a.before());
+    assert_eq!(b.after(), a.after());
+    assert_eq!(b.placed_float(), a.placed_float());
+    assert_eq!(b.hypothetical_top(), a.hypothetical_top());
+    assert_eq!(b.zero_clearance_top(), a.zero_clearance_top());
+    assert_eq!(b.clearance(), a.clearance());
+    assert_eq!(b.barrier_source_index(), Some(4));
+    assert_eq!(b.hypothetical_group().members()[0].source_index, 2);
+    assert_eq!(b.hypothetical_group().members()[1].source_index, 4);
+    assert_eq!(b.sources()[1].parent, Some(b.sources()[0].instance));
+    assert_eq!(
+        build_clearance_owner(&nested, input(&nested[1..])).unwrap_err(),
+        ClearanceOwnerError::NodeCount
+    );
+}
+
+#[test]
+fn nested_gate_reports_full_graph_indices_before_geometry() {
+    let mut s = nested_sources();
+    s[0].children[0] = s[2].instance;
+    assert_eq!(
+        build_nested_clearance_owner(&s, outer(&s), input(&s[1..])).unwrap_err(),
+        ClearanceOwnerError::ChildMembership { source: 0, slot: 0 }
+    );
+    s[0].children[0] = s[1].instance;
+    s[1].children.swap(0, 1);
+    assert_eq!(
+        build_nested_clearance_owner(&s, outer(&s), input(&s[1..])).unwrap_err(),
+        ClearanceOwnerError::ChildMembership { source: 1, slot: 0 }
+    );
+    s[1].children.swap(0, 1);
+    s[4].parent = Some(s[0].instance);
+    assert_eq!(
+        build_nested_clearance_owner(&s, outer(&s), input(&s[1..])).unwrap_err(),
+        ClearanceOwnerError::ParentMembership { source: 4 }
+    );
+    s[4].parent = Some(s[1].instance);
+    let foreign = nested_sources();
+    let mut f = input(&s[1..]);
+    f.after.source = &foreign[4];
+    assert_eq!(
+        build_nested_clearance_owner(&s, outer(&s), f).unwrap_err(),
+        ClearanceOwnerError::SourcePointer { source: 4 }
+    );
+    let mut f = input(&s[1..]);
+    f.float.height = OwnerHeight::Explicit(-1.);
+    assert_eq!(
+        build_nested_clearance_owner(&s, outer(&s), f).unwrap_err(),
+        ClearanceOwnerError::InvalidNumber {
+            source: 3,
+            field: "height"
+        }
+    );
+    let mut f = input(&s[1..]);
+    f.parent.padding.top = -1.;
+    assert_eq!(
+        build_nested_clearance_owner(&s, outer(&s), f).unwrap_err(),
+        ClearanceOwnerError::InvalidNumber {
+            source: 1,
+            field: "padding"
+        }
+    );
+    for (display_value, content_value, generated, reason) in [
+        (
+            DisplayResolution {
+                display: Display::None,
+                ..display()
+            },
+            OwnerContent::NoOwnContentNonReplaced,
+            OwnerGenerated::None,
+            OwnerProfileReason::DisplayOrFlow,
+        ),
+        (
+            display(),
+            OwnerContent::TextOrRichText,
+            OwnerGenerated::None,
+            OwnerProfileReason::Content,
+        ),
+        (
+            display(),
+            OwnerContent::NoOwnContentNonReplaced,
+            OwnerGenerated::Present,
+            OwnerProfileReason::GeneratedContent,
+        ),
+    ] {
+        let o = OuterFacts {
+            source: &s[0],
+            display: display_value,
+            content: content_value,
+            generated,
+        };
+        assert_eq!(
+            build_nested_clearance_owner(&s, o, input(&s[1..])).unwrap_err(),
+            ClearanceOwnerError::Unsupported { source: 0, reason }
+        );
+    }
+    s[4].instance = s[3].instance;
+    assert_eq!(
+        build_nested_clearance_owner(&s, outer(&s), input(&s[1..])).unwrap_err(),
+        ClearanceOwnerError::DuplicateInstance {
+            first: 3,
+            second: 4
+        }
+    );
+    s[4].children.push(s[0].instance);
+    assert_eq!(
+        build_nested_clearance_owner(&s, outer(&s), input(&s[1..])).unwrap_err(),
+        ClearanceOwnerError::ChildCount { source: 4 }
     );
 }

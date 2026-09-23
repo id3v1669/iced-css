@@ -1,7 +1,9 @@
 //! Bounded computed box facts from exact captured source and stylesheet owners.
 //! This stage establishes neither used geometry nor a root formatting context.
 use super::{
-    clearance_source_projection::ClearanceSourceProjection, source_display::SourceDisplay,
+    clearance_profile::{ClearanceProjectionShape, ClearanceSlots},
+    clearance_source_projection::ClearanceSourceProjection,
+    source_display::SourceDisplay,
 };
 use crate::capture::source::ConstructionSourceError;
 use iced_css_core::{
@@ -200,7 +202,7 @@ impl std::error::Error for ClearanceBoxFactsError {
 pub struct ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
     projection: &'p ClearanceSourceProjection<'h>,
     display: &'d SourceDisplay<'s, 'b, 'r>,
-    rows: [ClearanceBoxFact; 4],
+    rows: ClearanceSlots<ClearanceBoxFact>,
     receipt: ClearanceBoxFactsReceipt,
 }
 impl<'p, 'h, 'd, 's, 'b, 'r> ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
@@ -211,16 +213,16 @@ impl<'p, 'h, 'd, 's, 'b, 'r> ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
         self.display
     }
     pub fn row(&self, projected: usize) -> Option<&ClearanceBoxFact> {
-        self.rows.get(projected)
+        self.rows.as_slice().get(projected)
     }
     pub fn receipt(&self) -> ClearanceBoxFactsReceipt {
         self.receipt
     }
 }
-/// Recascade twelve actual element/pseudo targets and publish four immutable rows.
+/// Recascade 12/15 actual element/pseudo targets into four/five immutable rows.
 /// Fixed registry preparation is included in the initial registry-sized work unit.
 /// Each source join and rule-shape visit is charged before inspection; the remaining
-/// 105 facade units and aggregate reservations precede selector/service scratch.
+/// 26*N+1 facade units and aggregate reservations precede selector/service scratch.
 /// # Errors
 /// Returns named admission errors or source/property/target-specific service errors.
 /// Failure publishes no partial batch and leaves both predecessors unchanged.
@@ -237,11 +239,12 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
     }
     let snapshot = projection.snapshot();
     let nodes = snapshot.construction().nodes();
-    if nodes.len() != 4 || display.node_count() != 4 || snapshot.tokens().len() != 4 {
+    let count = projection.nodes().len();
+    if nodes.len() != count || display.node_count() != count || snapshot.tokens().len() != count {
         return Err(E::Nodes);
     }
-    let mut originals = [0; 4];
-    for (projected, original) in originals.iter_mut().enumerate() {
+    let mut originals = [0; 5];
+    for (projected, original) in originals[..count].iter_mut().enumerate() {
         charge(&mut remaining, 1)?;
         *original = projection
             .original_index(projected)
@@ -272,8 +275,15 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
             return Err(E::Declarations { rule });
         }
     }
-    charge(&mut remaining, 105)?;
-    let rule_visits = product(12, r, limits.rule_visits, E::RuleVisits)?;
+    charge(
+        &mut remaining,
+        count
+            .checked_mul(26)
+            .and_then(|n| n.checked_add(1))
+            .ok_or(E::Work)?,
+    )?;
+    let targets = count.checked_mul(3).ok_or(E::Work)?;
+    let rule_visits = product(targets, r, limits.rule_visits, E::RuleVisits)?;
     let matching_work = product(
         rule_visits,
         limits.per_target.per_rule.matching.work.get(),
@@ -281,12 +291,12 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
         E::MatchingWork,
     )?;
     let declaration_offers = product(
-        12,
+        targets,
         bundle.declaration_count(),
         limits.declaration_offers,
         E::DeclarationOffers,
     )?;
-    let authors = 12usize
+    let authors = targets
         .checked_mul(bundle.author_rule_count())
         .ok_or(E::MembershipWork)?;
     let membership_work = product(
@@ -296,13 +306,13 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
         E::MembershipWork,
     )?;
     let numeric_work = product(
-        56,
+        count.checked_mul(14).ok_or(E::NumericWork)?,
         limits.numeric.work.get(),
         limits.numeric_work,
         E::NumericWork,
     )?;
     let mut receipt = ClearanceBoxFactsReceipt {
-        targets: 12,
+        targets,
         work: limits.work.get() - remaining,
         rule_visits,
         matching_work,
@@ -323,15 +333,18 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
         .matching
         .retained_bytes
         .min(NonZeroUsize::new(isize::MAX as usize).expect("isize::MAX is positive"));
-    let mut rows = [resolve::initial_row(); 4];
-    for (projected, original) in originals.into_iter().enumerate() {
+    let mut rows = match projection.shape() {
+        ClearanceProjectionShape::RootRegion => ClearanceSlots::Four([resolve::initial_row(); 4]),
+        ClearanceProjectionShape::NestedRegion => ClearanceSlots::Five([resolve::initial_row(); 5]),
+    };
+    for (projected, original) in originals[..count].iter().copied().enumerate() {
         let parent = nodes[original]
             .parent()
             .map(|index| {
                 projection
                     .projected_index(index)
                     .filter(|&p| p < projected)
-                    .map(|p| (index, rows[p]))
+                    .map(|p| (index, rows.as_slice()[p]))
                     .ok_or(E::SourceJoin { projected })
             })
             .transpose()?;
@@ -388,7 +401,7 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
                 BoxFactTarget::Element => unreachable!(),
             }
         }
-        rows[projected] = row;
+        rows.as_mut_slice()[projected] = row;
     }
     Ok(ClearanceBoxFacts {
         projection,

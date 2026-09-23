@@ -1,5 +1,7 @@
-//! Bounded identity/membership storage for an entire four-source captured document.
+//! Bounded identity/membership storage for a finite entire captured document.
 //! No CSS box, generated-content, BFC or geometry facts are established here.
+pub use super::clearance_profile::ClearanceProjectionShape;
+use super::clearance_profile::ClearanceSlots;
 use crate::{
     animation::engine::EngineError,
     capture::{ConstructionNode, ContentCapability, ManagedContentFamily},
@@ -15,13 +17,14 @@ use std::{collections::TryReserveError, mem::size_of, num::NonZeroUsize};
 pub struct ClearanceProjectionLimits {
     /// New owned heap payload capacity; excludes inline and predecessor storage.
     pub retained_bytes: NonZeroUsize,
-    /// Named facade operations, not machine comparisons. Success consumes 27.
+    /// Named facade operations, not machine comparisons. Success consumes 27 (root) or 36 (nested).
     pub work: NonZeroUsize,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClearanceProjectionReceipt {
     pub nodes: usize,
     pub work: usize,
+    /// Total capacity across all owned child vectors.
     pub child_capacity: usize,
     pub child_element_bytes: usize,
     pub retained_bytes: usize,
@@ -57,8 +60,6 @@ impl std::error::Error for ClearanceProjectionError {
         }
     }
 }
-const ORIGINAL: [usize; 4] = [3, 0, 1, 2];
-const PROJECTED: [usize; 4] = [1, 2, 3, 0];
 /// Immutable storage retaining the exact initial host and snapshot provenance.
 /// Original observations borrow the host and may outlive this projection; `nodes`
 /// borrows this owner's inline storage and cannot outlive or cross its move.
@@ -67,14 +68,15 @@ const PROJECTED: [usize; 4] = [1, 2, 3, 0];
 pub struct ClearanceSourceProjection<'h> {
     host: &'h InitialSourceHost,
     snapshot: &'h InitialSourceSnapshot,
-    nodes: [SourceNode; 4],
+    nodes: ClearanceSlots<SourceNode>,
+    shape: ClearanceProjectionShape,
     receipt: ClearanceProjectionReceipt,
 }
 impl std::fmt::Debug for ClearanceSourceProjection<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClearanceSourceProjection")
             .field("receipt", &self.receipt)
-            .field("original_indices", &ORIGINAL)
+            .field("original_indices", &self.shape.original())
             .finish_non_exhaustive()
     }
 }
@@ -88,14 +90,17 @@ impl<'h> ClearanceSourceProjection<'h> {
     /// Geometry-facing identity/membership only: all metadata here is deliberately
     /// empty. Do not run selectors/cascade against these as document metadata.
     /// Use `metadata` or `original_node` for the exact borrowed original objects.
-    pub fn nodes(&self) -> &[SourceNode; 4] {
-        &self.nodes
+    pub fn nodes(&self) -> &[SourceNode] {
+        self.nodes.as_slice()
+    }
+    pub fn shape(&self) -> ClearanceProjectionShape {
+        self.shape
     }
     pub fn original_index(&self, projected: usize) -> Option<usize> {
-        ORIGINAL.get(projected).copied()
+        self.shape.original().get(projected).copied()
     }
     pub fn projected_index(&self, original: usize) -> Option<usize> {
-        PROJECTED.get(original).copied()
+        self.shape.projected().get(original).copied()
     }
     pub fn original_node(&self, projected: usize) -> Option<&'h ConstructionNode> {
         self.snapshot
@@ -113,14 +118,16 @@ impl<'h> ClearanceSourceProjection<'h> {
         self.receipt
     }
 }
-/// Prepare an entire Row/Column root with exactly three empty Row/Column children.
-/// Source positions do not imply CSS B1/float/B2 roles. No identities are minted.
+/// Prepare either a Row/Column root with three empty Row/Column children, or
+/// that same region beneath a sole Row/Column outer root. Positions do not imply
+/// CSS B1/float/B2 roles. No identities are minted or parent links cropped.
 ///
-/// One preflight unit precedes publication/pointer/count/root checks; 26 prepaid
-/// units cover 4 membership, 4 content, 4 identity, 6 duplicate, 4 construction,
-/// 3 child writes and 1 publication/accounting operations. Each identity lookup
-/// is bounded by the checked four live sources. Only the parent's child vector
-/// allocates; its actual capacity is charged, excluding borrowed source storage.
+/// One preflight unit precedes publication/pointer/count/root checks. Remaining
+/// work is prepaid: N membership, N content, N identity, N construction,
+/// N*(N-1)/2 duplicate checks, N-1 child writes and one publication operation.
+/// This consumes 27/36 named units, with identity scans bounded by 4/5 live sources.
+/// Only the one/two parent child vectors allocate. Combined actual capacity is
+/// charged; this admission contract does not bound allocator peak memory.
 ///
 /// # Errors
 /// Rejects publication mismatch, unsupported whole-document profile, invalid
@@ -130,17 +137,17 @@ pub fn prepare_clearance_source_projection<'h>(
     snapshot: &'h InitialSourceSnapshot,
     limits: ClearanceProjectionLimits,
 ) -> Result<ClearanceSourceProjection<'h>, ClearanceProjectionError> {
-    prepare_with_reserve(host, snapshot, limits, |children| {
-        children.try_reserve_exact(3)
+    prepare_with_reserve(host, snapshot, limits, |children, requested| {
+        children.try_reserve_exact(requested)
     })
 }
-// Private, synchronous reserve seam: production always performs precisely one
-// try_reserve_exact(3). Tests can preserve real reserve errors or spare capacity.
+// Private synchronous seam: production uses try_reserve_exact(requested).
+// Tests preserve real errors from either call or expose allocator spare capacity.
 fn prepare_with_reserve<'h>(
     host: &'h InitialSourceHost,
     snapshot: &'h InitialSourceSnapshot,
     limits: ClearanceProjectionLimits,
-    reserve: impl FnOnce(&mut Vec<InstanceId>) -> Result<(), TryReserveError>,
+    mut reserve: impl FnMut(&mut Vec<InstanceId>, usize) -> Result<(), TryReserveError>,
 ) -> Result<ClearanceSourceProjection<'h>, ClearanceProjectionError> {
     use ClearanceProjectionError as E;
     let remaining = limits.work.get().checked_sub(1).ok_or(E::Work)?;
@@ -149,28 +156,36 @@ fn prepare_with_reserve<'h>(
         return Err(E::SnapshotMismatch);
     }
     let source = snapshot.construction();
-    if source.nodes().len() != 4 {
-        return Err(E::NodeCount);
-    }
-    if snapshot.tokens().len() != 4 {
+    let shape = match source.nodes().len() {
+        4 => ClearanceProjectionShape::RootRegion,
+        5 => ClearanceProjectionShape::NestedRegion,
+        _ => return Err(E::NodeCount),
+    };
+    let count = shape.original().len();
+    let work = if count == 4 { 27 } else { 36 };
+    if snapshot.tokens().len() != count {
         return Err(E::TokenCount);
     }
-    if host.engine().live_source_count() != 4 {
+    if host.engine().live_source_count() != count {
         return Err(E::LiveCount);
     }
-    if source.root() != 3 {
+    if source.root() != count - 1 {
         return Err(E::Root);
     }
-    remaining.checked_sub(26).ok_or(E::Work)?;
+    remaining.checked_sub(work - 1).ok_or(E::Work)?;
     for (original, node) in source.nodes().iter().enumerate() {
-        let parent = if original == 3 { None } else { Some(3) };
+        let projected = shape.projected()[original];
+        let parent = shape.parents()[projected].map(|p| shape.original()[p]);
         if node.parent() != parent {
             return Err(E::Parent { original });
         }
-        let (role, position) = if original == 3 {
+        let (role, position) = if original == count - 1 {
             (None, None)
         } else {
-            (Some("children"), Some(original))
+            (
+                Some("children"),
+                Some(if original < 3 { original } else { 0 }),
+            )
         };
         if node.role() != role || node.role_position() != position {
             return Err(E::Role { original });
@@ -189,22 +204,48 @@ fn prepare_with_reserve<'h>(
             .instance(&snapshot.tokens()[original])
             .map_err(|error| E::Identity { original, error })
     };
-    let ids = [identity(0)?, identity(1)?, identity(2)?, identity(3)?];
-    for first in 0..4 {
-        for second in first + 1..4 {
+    let ids = match shape {
+        ClearanceProjectionShape::RootRegion => {
+            ClearanceSlots::Four([identity(0)?, identity(1)?, identity(2)?, identity(3)?])
+        }
+        ClearanceProjectionShape::NestedRegion => ClearanceSlots::Five([
+            identity(0)?,
+            identity(1)?,
+            identity(2)?,
+            identity(3)?,
+            identity(4)?,
+        ]),
+    };
+    let ids = ids.as_slice();
+    for first in 0..count {
+        for second in first + 1..count {
             if ids[first] == ids[second] {
                 return Err(E::DuplicateInstance { first, second });
             }
         }
     }
-    checked_bytes(3, limits.retained_bytes)?;
+    checked_bytes(count - 1, limits.retained_bytes)?;
+    let mut outer_children = Vec::new();
     let mut children = Vec::new();
-    reserve(&mut children).map_err(E::Allocation)?;
-    let retained_bytes = checked_bytes(children.capacity(), limits.retained_bytes)?;
+    if shape == ClearanceProjectionShape::NestedRegion {
+        checked_bytes(1, limits.retained_bytes)?;
+        reserve(&mut outer_children, 1).map_err(E::Allocation)?;
+        checked_bytes(
+            outer_children.capacity().checked_add(3).ok_or(E::Bytes)?,
+            limits.retained_bytes,
+        )?;
+    }
+    checked_bytes(3, limits.retained_bytes)?;
+    reserve(&mut children, 3).map_err(E::Allocation)?;
+    let child_capacity = outer_children
+        .capacity()
+        .checked_add(children.capacity())
+        .ok_or(E::Bytes)?;
+    let retained_bytes = checked_bytes(child_capacity, limits.retained_bytes)?;
     let receipt = ClearanceProjectionReceipt {
-        nodes: 4,
-        work: 27,
-        child_capacity: children.capacity(),
+        nodes: count,
+        work,
+        child_capacity,
         child_element_bytes: size_of::<InstanceId>(),
         retained_bytes,
     };
@@ -215,21 +256,37 @@ fn prepare_with_reserve<'h>(
         children: Vec::new(),
         metadata: Metadata::default(),
     };
-    let nodes = [
-        SourceNode {
-            instance: ids[3],
-            parent: None,
-            children,
-            metadata: Metadata::default(),
-        },
-        leaf(ids[0]),
-        leaf(ids[1]),
-        leaf(ids[2]),
-    ];
+    let parent = SourceNode {
+        instance: ids[3],
+        parent: if count == 5 { Some(ids[4]) } else { None },
+        children,
+        metadata: Metadata::default(),
+    };
+    let nodes = match shape {
+        ClearanceProjectionShape::RootRegion => {
+            ClearanceSlots::Four([parent, leaf(ids[0]), leaf(ids[1]), leaf(ids[2])])
+        }
+        ClearanceProjectionShape::NestedRegion => {
+            outer_children.push(ids[3]);
+            ClearanceSlots::Five([
+                SourceNode {
+                    instance: ids[4],
+                    parent: None,
+                    children: outer_children,
+                    metadata: Metadata::default(),
+                },
+                parent,
+                leaf(ids[0]),
+                leaf(ids[1]),
+                leaf(ids[2]),
+            ])
+        }
+    };
     Ok(ClearanceSourceProjection {
         host,
         snapshot,
         nodes,
+        shape,
         receipt,
     })
 }
@@ -257,6 +314,9 @@ mod tests {
         NonZeroUsize::new(value).unwrap()
     }
     fn host() -> InitialSourceHost {
+        host_shape(false)
+    }
+    fn host_shape(nested: bool) -> InitialSourceHost {
         let n = nz(100000);
         let c = CaptureLimits {
             nodes: n,
@@ -271,6 +331,11 @@ mod tests {
                 .erase()
         };
         let captured = adapters::column_from_vec(vec![leaf(), leaf(), leaf()], c).unwrap();
+        let captured = if nested {
+            adapters::column_from_vec(vec![captured.erase()], c).unwrap()
+        } else {
+            captured
+        };
         let (_native, construction) = captured.into_parts();
         let mut host = InitialSourceHost::new(
             NonZeroU64::new(100).unwrap(),
@@ -291,7 +356,7 @@ mod tests {
                     active: false,
                     focused: false
                 };
-                4
+                if nested { 5 } else { 4 }
             ],
             None,
             PublicationLimits {
@@ -327,8 +392,11 @@ mod tests {
             .try_reserve_exact(usize::MAX)
             .unwrap_err();
         let expected = raw.to_string();
-        let error = prepare_with_reserve(&host, host.snapshot().unwrap(), limits(), |_| Err(raw))
-            .unwrap_err();
+        let mut raw = Some(raw);
+        let error = prepare_with_reserve(&host, host.snapshot().unwrap(), limits(), |_, _| {
+            Err(raw.take().unwrap())
+        })
+        .unwrap_err();
         assert!(matches!(error, ClearanceProjectionError::Allocation(_)));
         assert_eq!(
             error
@@ -348,7 +416,7 @@ mod tests {
         let mut small = limits();
         small.retained_bytes = nz(3 * size_of::<InstanceId>() - 1);
         assert!(matches!(
-            prepare_with_reserve(&host, snapshot, small, |v| {
+            prepare_with_reserve(&host, snapshot, small, |v, _| {
                 called.set(true);
                 v.try_reserve_exact(3)
             }),
@@ -358,7 +426,7 @@ mod tests {
         small.retained_bytes = nz(3 * size_of::<InstanceId>());
         let capacity = Cell::new(0);
         assert!(matches!(
-            prepare_with_reserve(&host, snapshot, small, |v| {
+            prepare_with_reserve(&host, snapshot, small, |v, _| {
                 v.try_reserve_exact(4)?;
                 capacity.set(v.capacity());
                 Ok(())
@@ -366,7 +434,7 @@ mod tests {
             Err(ClearanceProjectionError::Bytes)
         ));
         assert!(capacity.get() >= 4);
-        let result = prepare_with_reserve(&host, snapshot, limits(), |v| {
+        let result = prepare_with_reserve(&host, snapshot, limits(), |v, _| {
             v.try_reserve_exact(4)?;
             capacity.set(v.capacity());
             Ok(())
@@ -386,7 +454,7 @@ mod tests {
         let mut short = limits();
         short.work = nz(26);
         assert!(matches!(
-            prepare_with_reserve(&host, host.snapshot().unwrap(), short, |_| panic!(
+            prepare_with_reserve(&host, host.snapshot().unwrap(), short, |_, _| panic!(
                 "reserve reached before prepayment"
             )),
             Err(ClearanceProjectionError::Work)
@@ -404,5 +472,61 @@ mod tests {
             error.source().unwrap().downcast_ref::<EngineError>(),
             Some(&engine_error)
         );
+    }
+    #[test]
+    fn nested_reserve_failures_and_spare_capacity_are_atomic_and_accounted() {
+        let host = host_shape(true);
+        let snapshot = host.snapshot().unwrap();
+        let mut budget = limits();
+        budget.work = nz(36);
+        for fail in [1, 2] {
+            let mut calls = 0;
+            let error = prepare_with_reserve(&host, snapshot, budget, |v, n| {
+                calls += 1;
+                if calls == fail {
+                    v.try_reserve_exact(usize::MAX)
+                } else {
+                    v.try_reserve_exact(n)
+                }
+            })
+            .unwrap_err();
+            assert_eq!(calls, fail);
+            assert!(
+                error
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<TryReserveError>()
+                    .is_some()
+            );
+        }
+        for spare_at in [1, 2] {
+            let mut calls = 0;
+            let result = prepare_with_reserve(&host, snapshot, budget, |v, n| {
+                calls += 1;
+                v.try_reserve_exact(n + usize::from(calls == spare_at))
+            })
+            .unwrap();
+            assert_eq!(calls, 2);
+            let capacity =
+                result.nodes()[0].children.capacity() + result.nodes()[1].children.capacity();
+            assert_eq!(result.receipt().child_capacity, capacity);
+            assert_eq!(
+                result.receipt().retained_bytes,
+                capacity * size_of::<InstanceId>()
+            );
+        }
+        budget.retained_bytes = nz(4 * size_of::<InstanceId>());
+        let mut calls = 0;
+        let error = prepare_with_reserve(&host, snapshot, budget, |v, n| {
+            calls += 1;
+            assert_eq!(
+                calls, 1,
+                "impossible remaining minimum must prevent second reserve"
+            );
+            v.try_reserve_exact(n + 1)
+        })
+        .unwrap_err();
+        assert!(matches!(error, ClearanceProjectionError::Bytes));
+        assert_eq!(calls, 1);
     }
 }

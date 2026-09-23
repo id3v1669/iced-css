@@ -21,3 +21,7 @@ pub mod source_control_input;
 pub mod clearance_source_projection;
 
 pub mod clearance_box_facts;
+
+mod clearance_profile;
+
+pub mod clearance_bridge;

@@ -1,4 +1,5 @@
-//! Bounded vertical clearance ownership for exactly `[parent, B1, float, B2]`.
+//! Bounded vertical clearance ownership for a four-source region, optionally
+//! beneath a sole outer source retained in the full five-source graph.
 //!
 //! Resolved style/content/context facts are explicit caller assertions, not facts
 //! inferred from empty source children or captured native measurements. The parent
@@ -60,6 +61,21 @@ pub struct OwnerEdges {
     pub right: f32,
     pub bottom: f32,
     pub left: f32,
+}
+/// Explicit outer source facts; no root formatting context or geometry is asserted.
+#[derive(Debug, Clone, Copy)]
+pub struct OuterFacts<'s> {
+    pub source: &'s SourceNode,
+    pub display: DisplayResolution,
+    pub content: OwnerContent,
+    pub generated: OwnerGenerated,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnerSourceIndices {
+    pub parent: usize,
+    pub before: usize,
+    pub float: usize,
+    pub after: usize,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct ParentFacts<'s> {
@@ -128,6 +144,7 @@ pub enum ClearanceOwnerError {
         source: usize,
     },
     ChildMembership {
+        source: usize,
         slot: usize,
     },
     InvalidNumber {
@@ -217,6 +234,7 @@ pub struct BlockVertical {
 #[derive(Debug)]
 pub struct ClearanceOwner<'s> {
     sources: &'s [SourceNode],
+    indices: OwnerSourceIndices,
     before: BlockVertical,
     placed_float: PlacedFloat,
     after: BlockVertical,
@@ -233,6 +251,9 @@ impl<'s> ClearanceOwner<'s> {
     }
     pub fn source(&self, index: usize) -> Option<&'s SourceNode> {
         self.sources.get(index)
+    }
+    pub fn source_indices(&self) -> OwnerSourceIndices {
+        self.indices
     }
     pub fn before(&self) -> BlockVertical {
         self.before
@@ -259,7 +280,7 @@ impl<'s> ClearanceOwner<'s> {
         &self.actual_groups[..self.actual_len]
     }
     pub fn barrier_source_index(&self) -> Option<usize> {
-        self.clearance.map(|_| 3)
+        self.clearance.map(|_| self.indices.after)
     }
 }
 fn unsupported(source: usize, reason: OwnerProfileReason) -> ClearanceOwnerError {
@@ -302,10 +323,14 @@ fn check_edges(
     }
     Ok(())
 }
-fn display(facts: DisplayResolution, source: usize) -> Result<(), ClearanceOwnerError> {
+fn display(
+    facts: DisplayResolution,
+    source: usize,
+    floating: bool,
+) -> Result<(), ClearanceOwnerError> {
     let valid = facts.display == Display::Block
         && facts.position == Position::Static
-        && if source == 2 {
+        && if floating {
             facts.flow == Flow::Floating && matches!(facts.float, Float::Left | Float::Right)
         } else {
             facts.flow == Flow::Normal && facts.float == Float::None
@@ -325,34 +350,39 @@ fn content(c: OwnerContent, g: OwnerGenerated, source: usize) -> Result<(), Clea
     }
     Ok(())
 }
-fn parent(f: ParentFacts<'_>) -> Result<(), ClearanceOwnerError> {
-    display(f.display, 0)?;
-    content(f.content, f.generated, 0)?;
+fn parent(f: ParentFacts<'_>, source: usize) -> Result<(), ClearanceOwnerError> {
+    display(f.display, source, false)?;
+    content(f.content, f.generated, source)?;
     if f.bfc != ParentBfc::NewWithEmptyPrefix {
-        return Err(unsupported(0, OwnerProfileReason::ParentContext));
+        return Err(unsupported(source, OwnerProfileReason::ParentContext));
     }
-    finite(f.content_top, 0, "content_top")?;
-    finite(f.containing.left, 0, "containing_left")?;
-    finite(f.containing.right, 0, "containing_right")?;
+    finite(f.content_top, source, "content_top")?;
+    finite(f.containing.left, source, "containing_left")?;
+    finite(f.containing.right, source, "containing_right")?;
     if f.containing.left > f.containing.right {
         return Err(ClearanceOwnerError::InvalidNumber {
-            source: 0,
+            source,
             field: "containing_order",
         });
     }
-    check_edges(f.border, 0, "border", true)?;
-    check_edges(f.padding, 0, "padding", true)?;
+    check_edges(f.border, source, "border", true)?;
+    check_edges(f.padding, source, "padding", true)?;
     if !(f.border.top > 0. || f.padding.top > 0.)
         || !(f.border.bottom > 0. || f.padding.bottom > 0.)
     {
-        return Err(unsupported(0, OwnerProfileReason::ParentIsolation));
+        return Err(unsupported(source, OwnerProfileReason::ParentIsolation));
     }
     Ok(())
 }
-fn child(f: ChildFacts<'_>, source: usize) -> Result<f32, ClearanceOwnerError> {
-    display(f.display, source)?;
+fn child(
+    f: ChildFacts<'_>,
+    source: usize,
+    floating: bool,
+    after: bool,
+) -> Result<f32, ClearanceOwnerError> {
+    display(f.display, source, floating)?;
     if f.context
-        != if source == 2 {
+        != if floating {
             ChildContext::FloatBfc
         } else {
             ChildContext::OrdinaryNonBfc
@@ -365,7 +395,7 @@ fn child(f: ChildFacts<'_>, source: usize) -> Result<f32, ClearanceOwnerError> {
         return Err(unsupported(source, OwnerProfileReason::HeightKind));
     };
     finite(height, source, "height")?;
-    if source == 2 {
+    if floating {
         nonnegative(height, source, "height")?;
     } else if height <= 0. {
         return Err(unsupported(
@@ -374,7 +404,7 @@ fn child(f: ChildFacts<'_>, source: usize) -> Result<f32, ClearanceOwnerError> {
         ));
     }
     check_edges(f.margin, source, "margin", false)?;
-    if source == 2 {
+    if floating {
         if edge_values(f.margin).into_iter().any(|v| v != 0.) {
             return Err(unsupported(source, OwnerProfileReason::FloatMargin));
         }
@@ -387,7 +417,7 @@ fn child(f: ChildFacts<'_>, source: usize) -> Result<f32, ClearanceOwnerError> {
             return Err(unsupported(source, OwnerProfileReason::ChildDecoration));
         }
     }
-    if source != 3 && f.clear != ClearSide::None {
+    if !after && f.clear != ClearSide::None {
         return Err(unsupported(
             source,
             OwnerProfileReason::ClearOnBeforeOrFloat,
@@ -483,19 +513,101 @@ pub fn build_clearance_owner<'s>(
     }
     for (slot, &id) in sources[0].children.iter().enumerate() {
         if id != sources[slot + 1].instance {
-            return Err(ClearanceOwnerError::ChildMembership { slot });
+            return Err(ClearanceOwnerError::ChildMembership { source: 0, slot });
         }
     }
-    parent(input.parent)?;
-    let before_height = child(input.before, 1)?;
-    let float_height = child(input.float, 2)?;
-    let after_height = child(input.after, 3)?;
-    nonnegative(input.float_width, 2, "float_width")?;
+    solve_region(
+        sources,
+        OwnerSourceIndices {
+            parent: 0,
+            before: 1,
+            float: 2,
+            after: 3,
+        },
+        input,
+    )
+}
+/// Admit the entire `[outer, parent, B1, float, B2]` graph, then solve its inner region.
+/// The outer facts do not establish a root BFC or solve the outer box.
+/// # Errors
+/// Rejects invalid full-document membership or unsupported facts before geometry.
+pub fn build_nested_clearance_owner<'s>(
+    sources: &'s [SourceNode],
+    outer: OuterFacts<'s>,
+    input: ClearanceOwnerInput<'s>,
+) -> Result<ClearanceOwner<'s>, ClearanceOwnerError> {
+    if sources.len() != 5 {
+        return Err(ClearanceOwnerError::NodeCount);
+    }
+    for (source, expected) in [1, 3, 0, 0, 0].into_iter().enumerate() {
+        if sources[source].children.len() != expected {
+            return Err(ClearanceOwnerError::ChildCount { source });
+        }
+    }
+    for (source, fact) in [
+        outer.source,
+        input.parent.source,
+        input.before.source,
+        input.float.source,
+        input.after.source,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if !std::ptr::eq(fact, &sources[source]) || fact.instance != sources[source].instance {
+            return Err(ClearanceOwnerError::SourcePointer { source });
+        }
+    }
+    for first in 0..5 {
+        for second in first + 1..5 {
+            if sources[first].instance == sources[second].instance {
+                return Err(ClearanceOwnerError::DuplicateInstance { first, second });
+            }
+        }
+    }
+    for (source, parent) in [None, Some(0), Some(1), Some(1), Some(1)]
+        .into_iter()
+        .enumerate()
+    {
+        if sources[source].parent != parent.map(|p| sources[p].instance) {
+            return Err(ClearanceOwnerError::ParentMembership { source });
+        }
+    }
+    for (source, children) in [(0, &[1][..]), (1, &[2, 3, 4][..])] {
+        for (slot, &child) in children.iter().enumerate() {
+            if sources[source].children[slot] != sources[child].instance {
+                return Err(ClearanceOwnerError::ChildMembership { source, slot });
+            }
+        }
+    }
+    display(outer.display, 0, false)?;
+    content(outer.content, outer.generated, 0)?;
+    solve_region(
+        sources,
+        OwnerSourceIndices {
+            parent: 1,
+            before: 2,
+            float: 3,
+            after: 4,
+        },
+        input,
+    )
+}
+fn solve_region<'s>(
+    sources: &'s [SourceNode],
+    indices: OwnerSourceIndices,
+    input: ClearanceOwnerInput<'s>,
+) -> Result<ClearanceOwner<'s>, ClearanceOwnerError> {
+    parent(input.parent, indices.parent)?;
+    let before_height = child(input.before, indices.before, false, false)?;
+    let float_height = child(input.float, indices.float, true, false)?;
+    let after_height = child(input.after, indices.after, false, true)?;
+    nonnegative(input.float_width, indices.float, "float_width")?;
     if Exact::from_f32(input.float_width)
         > Exact::from_f32(input.parent.containing.right)
             .sub(Exact::from_f32(input.parent.containing.left))
     {
-        return Err(unsupported(2, OwnerProfileReason::FloatTooWide));
+        return Err(unsupported(indices.float, OwnerProfileReason::FloatTooWide));
     }
     let before_top = sum(
         &[input.parent.content_top, input.before.margin.top],
@@ -522,12 +634,12 @@ pub fn build_clearance_owner<'s>(
     .placed;
     let members = [
         MarginMember {
-            source_index: 1,
+            source_index: indices.before,
             side: MarginSide::Bottom,
             value: input.before.margin.bottom,
         },
         MarginMember {
-            source_index: 3,
+            source_index: indices.after,
             side: MarginSide::Top,
             value: input.after.margin.top,
         },
@@ -578,6 +690,7 @@ pub fn build_clearance_owner<'s>(
     let after_bottom = sum(&[placement.border_top, after_height], "after_bottom")?;
     Ok(ClearanceOwner {
         sources,
+        indices,
         before: BlockVertical {
             top: before_top,
             bottom: before_bottom,
