@@ -1,5 +1,6 @@
 use iced_css_core::{
     formatting::{
+        block::AutoLength,
         clearance::ClearSide,
         clearance_owner::*,
         display::{Display, DisplayResolution, Float, Flow, Position},
@@ -48,7 +49,7 @@ fn input(s: &[SourceNode]) -> ClearanceOwnerInput<'_> {
         generated: OwnerGenerated::None,
         // Explicit asserts positive computed CSS height and used height after min/max.
         height: OwnerHeight::Explicit(1.),
-        margin: edges(),
+        margin: edges().into(),
         border: edges(),
         padding: edges(),
         clear: ClearSide::None,
@@ -361,7 +362,7 @@ fn profile_rejections_are_typed() {
             2 => f.parent.border.bottom = 0.,
             3 => f.before.height = OwnerHeight::Explicit(0.),
             4 => f.after.margin.top = -1.,
-            5 => f.before.margin.left = 1.,
+            5 => f.before.margin.left = AutoLength::Value(1.),
             6 => f.after.padding.top = 1.,
             7 => f.float.margin.bottom = 1.,
             8 => f.before.clear = ClearSide::Left,
@@ -544,30 +545,44 @@ fn invalid_measurements_are_rejected_by_source_and_field() {
                 }
                 for edge in 0..4 {
                     let mut f = input(&s);
-                    let e = if source == 0 {
-                        if field == "border" {
-                            &mut f.parent.border
-                        } else {
-                            &mut f.parent.padding
-                        }
-                    } else {
+                    if field == "margin" {
                         let c = match source {
                             1 => &mut f.before,
                             2 => &mut f.float,
                             _ => &mut f.after,
                         };
-                        match field {
-                            "margin" => &mut c.margin,
-                            "border" => &mut c.border,
-                            _ => &mut c.padding,
+                        match edge {
+                            0 => c.margin.top = bad,
+                            1 => c.margin.right = AutoLength::Value(bad),
+                            2 => c.margin.bottom = bad,
+                            _ => c.margin.left = AutoLength::Value(bad),
                         }
-                    };
-                    match edge {
-                        0 => e.top = bad,
-                        1 => e.right = bad,
-                        2 => e.bottom = bad,
-                        _ => e.left = bad,
-                    };
+                    } else {
+                        let e = if source == 0 {
+                            if field == "border" {
+                                &mut f.parent.border
+                            } else {
+                                &mut f.parent.padding
+                            }
+                        } else {
+                            let c = match source {
+                                1 => &mut f.before,
+                                2 => &mut f.float,
+                                _ => &mut f.after,
+                            };
+                            if field == "border" {
+                                &mut c.border
+                            } else {
+                                &mut c.padding
+                            }
+                        };
+                        match edge {
+                            0 => e.top = bad,
+                            1 => e.right = bad,
+                            2 => e.bottom = bad,
+                            _ => e.left = bad,
+                        };
+                    }
                     assert_eq!(
                         build_clearance_owner(&s, f).unwrap_err(),
                         ClearanceOwnerError::InvalidNumber { source, field }
@@ -604,7 +619,7 @@ fn invalid_measurements_are_rejected_by_source_and_field() {
     // Within an edge record finiteness precedes range, then profile checks.
     let mut f = input(&s);
     f.before.margin.top = -1.;
-    f.before.margin.left = f32::NAN;
+    f.before.margin.left = AutoLength::Value(f32::NAN);
     assert_eq!(
         build_clearance_owner(&s, f).unwrap_err(),
         ClearanceOwnerError::InvalidNumber {
@@ -640,15 +655,164 @@ fn strict_owner_rejects_signed_horizontal_margins_for_both_normal_roles() {
                     &mut facts.after
                 };
                 if edge == "left" {
-                    child.margin.left = value;
+                    child.margin.left = AutoLength::Value(value);
                 } else {
-                    child.margin.right = value;
+                    child.margin.right = AutoLength::Value(value);
                 }
                 assert_eq!(
                     build_clearance_owner(&s, facts).unwrap_err(),
                     ClearanceOwnerError::Unsupported { source, reason }
                 );
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StrictAutoCase {
+    LeftAuto,
+    RightAuto,
+    BothAuto,
+    RightNumber(f32),
+    NegativeTop,
+    BorderLeft,
+    NonpositiveHeight,
+}
+
+fn strict_auto_error(nested: bool, case: StrictAutoCase) -> ClearanceOwnerError {
+    let flat_sources = sources();
+    let nested_sources = nested_sources();
+    let source_slice = if nested {
+        &nested_sources[1..]
+    } else {
+        &flat_sources[..]
+    };
+    let mut facts = input(source_slice);
+    match case {
+        StrictAutoCase::LeftAuto => facts.before.margin.left = AutoLength::Auto,
+        StrictAutoCase::RightAuto => facts.before.margin.right = AutoLength::Auto,
+        StrictAutoCase::BothAuto => {
+            facts.before.margin.left = AutoLength::Auto;
+            facts.before.margin.right = AutoLength::Auto;
+        }
+        StrictAutoCase::RightNumber(value) => {
+            facts.before.margin.left = AutoLength::Auto;
+            facts.before.margin.right = AutoLength::Value(value);
+        }
+        StrictAutoCase::NegativeTop => {
+            facts.before.margin.left = AutoLength::Auto;
+            facts.before.margin.top = -1.0;
+        }
+        StrictAutoCase::BorderLeft => {
+            facts.before.margin.left = AutoLength::Auto;
+            facts.before.border.left = 1.0;
+        }
+        StrictAutoCase::NonpositiveHeight => {
+            facts.before.margin.left = AutoLength::Auto;
+            facts.before.height = OwnerHeight::Explicit(0.0);
+        }
+    }
+    if nested {
+        build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts).unwrap_err()
+    } else {
+        build_clearance_owner(&flat_sources, facts).unwrap_err()
+    }
+}
+
+#[test]
+fn strict_auto_margin_errors_preserve_numeric_precedence() {
+    for nested in [false, true] {
+        let source = if nested { 2 } else { 1 };
+        for case in [
+            StrictAutoCase::LeftAuto,
+            StrictAutoCase::RightAuto,
+            StrictAutoCase::BothAuto,
+            StrictAutoCase::RightNumber(1.0),
+            StrictAutoCase::BorderLeft,
+        ] {
+            assert_eq!(
+                strict_auto_error(nested, case),
+                ClearanceOwnerError::Unsupported {
+                    source,
+                    reason: OwnerProfileReason::AutoHorizontalMargin,
+                }
+            );
+        }
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(
+                strict_auto_error(nested, StrictAutoCase::RightNumber(bad)),
+                ClearanceOwnerError::InvalidNumber {
+                    source,
+                    field: "margin",
+                }
+            );
+        }
+        for case in [
+            StrictAutoCase::NegativeTop,
+            StrictAutoCase::RightNumber(-1.0),
+        ] {
+            assert_eq!(
+                strict_auto_error(nested, case),
+                ClearanceOwnerError::Unsupported {
+                    source,
+                    reason: OwnerProfileReason::NegativeMargin,
+                }
+            );
+        }
+        assert_eq!(
+            strict_auto_error(nested, StrictAutoCase::NonpositiveHeight),
+            ClearanceOwnerError::Unsupported {
+                source,
+                reason: OwnerProfileReason::NonpositiveBlockHeight,
+            }
+        );
+
+        let flat_sources = sources();
+        let nested_sources = nested_sources();
+        let source_slice = if nested {
+            &nested_sources[1..]
+        } else {
+            &flat_sources[..]
+        };
+        let float_source = if nested { 3 } else { 2 };
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut facts = input(source_slice);
+            facts.float.margin.left = AutoLength::Auto;
+            facts.float.margin.right = AutoLength::Value(bad);
+            let error = if nested {
+                build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts)
+                    .unwrap_err()
+            } else {
+                build_clearance_owner(&flat_sources, facts).unwrap_err()
+            };
+            assert_eq!(
+                error,
+                ClearanceOwnerError::InvalidNumber {
+                    source: float_source,
+                    field: "margin",
+                }
+            );
+        }
+        for (value, reason) in [
+            (AutoLength::Auto, OwnerProfileReason::AutoHorizontalMargin),
+            (AutoLength::Value(1.0), OwnerProfileReason::FloatMargin),
+            (AutoLength::Value(-1.0), OwnerProfileReason::NegativeMargin),
+        ] {
+            let mut facts = input(source_slice);
+            facts.float.margin.left = value;
+            let error = if nested {
+                build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts)
+                    .unwrap_err()
+            } else {
+                build_clearance_owner(&flat_sources, facts).unwrap_err()
+            };
+            assert_eq!(
+                error,
+                ClearanceOwnerError::Unsupported {
+                    source: float_source,
+                    reason,
+                }
+            );
         }
     }
 }

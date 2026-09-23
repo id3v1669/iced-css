@@ -7,7 +7,8 @@ use iced_css::evaluation::sibling_layout::{
 };
 use iced_css::evaluation::{
     clearance_box_facts::{
-        BoxFactOrigin, BoxFactTarget, BoxFactUnsupported, BoxLengthFact, ClearanceBoxFactsError,
+        AbsoluteBoxFact, BoxFactOrigin, BoxFactTarget, BoxFactUnsupported, BoxLengthFact,
+        ClearanceBoxFactsError,
     },
     clearance_bridge::{
         CapturedClearanceError, CapturedClearanceUnsupported, ClearanceOuterContentGeometry,
@@ -24,6 +25,7 @@ use iced_css_core::formatting::{
         ClearanceOwnerError, MarginGroupId, MarginMember, MarginSide, OwnerProfileReason,
     },
     clearance_sequence::{ClearanceSequenceError, ClearanceSequenceLimits},
+    first_child_origin::{FirstChildOriginError, OriginCoordinateStage},
 };
 use support::*;
 
@@ -132,6 +134,36 @@ fn authored_negative_horizontal_margin_reaches_actual_css_geometry() {
             passes: 1,
         },
         -10.0,
+        80.0,
+    );
+}
+
+#[test]
+fn authored_paired_auto_horizontal_margins_reach_geometry() {
+    assert_authored_margin_case(
+        "width:40px; margin-left:auto; margin-right:auto;",
+        BlockWidthResult {
+            width: 40.0,
+            margin_left: 30.0,
+            margin_right: 30.0,
+            passes: 1,
+        },
+        30.0,
+        70.0,
+    );
+}
+
+#[test]
+fn authored_single_auto_horizontal_margin_reaches_geometry() {
+    assert_authored_margin_case(
+        "width:40px; margin-left:auto; margin-right:20px;",
+        BlockWidthResult {
+            width: 40.0,
+            margin_left: 40.0,
+            margin_right: 20.0,
+            passes: 1,
+        },
+        40.0,
         80.0,
     );
 }
@@ -281,7 +313,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            32 + 32 * 6 + 3 * (6 - 2) + 32 * (6 - 3)
+            32 + 32 * 6 + 19 * (6 - 2) + 64 * (6 - 3)
         );
     });
 }
@@ -489,13 +521,13 @@ struct VerticalObservation {
     parent: (f32, f32, f32),
 }
 
-fn actual_margin_observation(
+fn actual_horizontal_observation(
     source_count: usize,
     selector: &str,
     selected_source: usize,
     width_css: &str,
-    left_margin: i32,
-    right_margin: i32,
+    left_margin: &str,
+    right_margin: &str,
     parent_direction: &str,
 ) -> (
     BlockWidthResult,
@@ -517,7 +549,7 @@ fn actual_margin_observation(
     let css = format!(
         "{} {b4} #o {{ direction:{opposite}; }} #p {{ direction:{parent_direction}; }} \
          {selector} {{ direction:{opposite}; width:{width_css}; \
-         margin-left:{left_margin}px; margin-right:{right_margin}px; }}",
+         margin-left:{left_margin}; margin-right:{right_margin}; }}",
         baseline_css()
     );
     let mut observed = None;
@@ -534,6 +566,15 @@ fn actual_margin_observation(
             layout_limits(),
         )
         .unwrap();
+        let float = &layout.children()[1];
+        let initial_zero = BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels: 0.0,
+            rounded_to_zero: false,
+            origin: BoxFactOrigin::Initial,
+        });
+        assert_eq!(float.computed_margin_left(), initial_zero);
+        assert_eq!(float.computed_margin_right(), initial_zero);
+        assert_eq!(float.normal_width(), None);
         let child = &layout.children()[selected_source - 2];
         assert_eq!(child.source_index(), selected_source);
         assert_eq!(child.containing_source_index(), 1);
@@ -605,6 +646,32 @@ fn actual_margin_observation(
         ));
     });
     observed.unwrap()
+}
+
+fn actual_margin_observation(
+    source_count: usize,
+    selector: &str,
+    selected_source: usize,
+    width_css: &str,
+    left_margin: i32,
+    right_margin: i32,
+    parent_direction: &str,
+) -> (
+    BlockWidthResult,
+    PrincipalEdges,
+    BoxLengthFact,
+    BoxLengthFact,
+    VerticalObservation,
+) {
+    actual_horizontal_observation(
+        source_count,
+        selector,
+        selected_source,
+        width_css,
+        &format!("{left_margin}px"),
+        &format!("{right_margin}px"),
+        parent_direction,
+    )
 }
 
 #[test]
@@ -767,6 +834,323 @@ fn signed_horizontal_margin_matrix_uses_parent_direction_and_preserves_vertical_
                     (31.0, 20.0, 32.0)
                 }
             );
+        }
+    }
+}
+
+#[test]
+fn auto_horizontal_margins_follow_all_normal_width_branches() {
+    let auto = BoxLengthFact::Auto {
+        origin: BoxFactOrigin::Specified,
+    };
+    let absolute = |pixels| {
+        BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels,
+            rounded_to_zero: false,
+            origin: BoxFactOrigin::Specified,
+        })
+    };
+    let cases = [
+        (
+            "40px", "auto", "auto", "ltr", 40.0, 30.0, 30.0, 1, 30.0, 70.0, auto, auto,
+        ),
+        (
+            "40px", "auto", "auto", "rtl", 40.0, 30.0, 30.0, 1, 30.0, 70.0, auto, auto,
+        ),
+        (
+            "40px",
+            "auto",
+            "20px",
+            "ltr",
+            40.0,
+            40.0,
+            20.0,
+            1,
+            40.0,
+            80.0,
+            auto,
+            absolute(20.0),
+        ),
+        (
+            "40px",
+            "auto",
+            "20px",
+            "rtl",
+            40.0,
+            40.0,
+            20.0,
+            1,
+            40.0,
+            80.0,
+            auto,
+            absolute(20.0),
+        ),
+        (
+            "40px",
+            "10px",
+            "auto",
+            "ltr",
+            40.0,
+            10.0,
+            50.0,
+            1,
+            10.0,
+            50.0,
+            absolute(10.0),
+            auto,
+        ),
+        (
+            "40px",
+            "10px",
+            "auto",
+            "rtl",
+            40.0,
+            10.0,
+            50.0,
+            1,
+            10.0,
+            50.0,
+            absolute(10.0),
+            auto,
+        ),
+        (
+            "40px",
+            "auto",
+            "-20px",
+            "ltr",
+            40.0,
+            80.0,
+            -20.0,
+            1,
+            80.0,
+            120.0,
+            auto,
+            absolute(-20.0),
+        ),
+        (
+            "40px",
+            "auto",
+            "-20px",
+            "rtl",
+            40.0,
+            80.0,
+            -20.0,
+            1,
+            80.0,
+            120.0,
+            auto,
+            absolute(-20.0),
+        ),
+        (
+            "120px", "auto", "auto", "ltr", 120.0, 0.0, -20.0, 1, 0.0, 120.0, auto, auto,
+        ),
+        (
+            "120px", "auto", "auto", "rtl", 120.0, -20.0, 0.0, 1, -20.0, 100.0, auto, auto,
+        ),
+        (
+            "90px",
+            "auto",
+            "20px",
+            "ltr",
+            90.0,
+            0.0,
+            10.0,
+            1,
+            0.0,
+            90.0,
+            auto,
+            absolute(20.0),
+        ),
+        (
+            "90px",
+            "auto",
+            "20px",
+            "rtl",
+            90.0,
+            -10.0,
+            20.0,
+            1,
+            -10.0,
+            80.0,
+            auto,
+            absolute(20.0),
+        ),
+        (
+            "auto",
+            "auto",
+            "20px",
+            "ltr",
+            80.0,
+            0.0,
+            20.0,
+            1,
+            0.0,
+            80.0,
+            auto,
+            absolute(20.0),
+        ),
+        (
+            "auto",
+            "auto",
+            "20px",
+            "rtl",
+            80.0,
+            0.0,
+            20.0,
+            1,
+            0.0,
+            80.0,
+            auto,
+            absolute(20.0),
+        ),
+        (
+            "auto",
+            "-20px",
+            "auto",
+            "ltr",
+            120.0,
+            -20.0,
+            0.0,
+            1,
+            -20.0,
+            100.0,
+            absolute(-20.0),
+            auto,
+        ),
+        (
+            "auto",
+            "-20px",
+            "auto",
+            "rtl",
+            120.0,
+            -20.0,
+            0.0,
+            1,
+            -20.0,
+            100.0,
+            absolute(-20.0),
+            auto,
+        ),
+        (
+            "auto",
+            "auto",
+            "120px",
+            "ltr",
+            0.0,
+            0.0,
+            100.0,
+            2,
+            0.0,
+            0.0,
+            auto,
+            absolute(120.0),
+        ),
+        (
+            "auto",
+            "auto",
+            "120px",
+            "rtl",
+            0.0,
+            -20.0,
+            120.0,
+            2,
+            -20.0,
+            -20.0,
+            auto,
+            absolute(120.0),
+        ),
+        (
+            "auto",
+            "120px",
+            "auto",
+            "ltr",
+            0.0,
+            120.0,
+            -20.0,
+            2,
+            120.0,
+            120.0,
+            absolute(120.0),
+            auto,
+        ),
+        (
+            "auto",
+            "120px",
+            "auto",
+            "rtl",
+            0.0,
+            100.0,
+            0.0,
+            2,
+            100.0,
+            100.0,
+            absolute(120.0),
+            auto,
+        ),
+    ];
+
+    for (source_count, selector, selected_source, top, bottom) in [
+        (6, "#b1", 2, 11.0, 12.0),
+        (6, "#b3", 5, 22.0, 23.0),
+        (7, "#b4", 6, 27.0, 29.0),
+    ] {
+        for (
+            width_css,
+            left_css,
+            right_css,
+            direction,
+            width,
+            margin_left,
+            margin_right,
+            passes,
+            content_left,
+            content_right,
+            computed_left,
+            computed_right,
+        ) in cases
+        {
+            let (used, edges, actual_left, actual_right, vertical) = actual_horizontal_observation(
+                source_count,
+                selector,
+                selected_source,
+                width_css,
+                left_css,
+                right_css,
+                direction,
+            );
+            assert_eq!(
+                used,
+                BlockWidthResult {
+                    width,
+                    margin_left,
+                    margin_right,
+                    passes,
+                }
+            );
+            assert_eq!(
+                edges,
+                PrincipalEdges {
+                    left: content_left,
+                    right: content_right,
+                    top,
+                    bottom,
+                }
+            );
+            assert_eq!(actual_left, computed_left);
+            assert_eq!(actual_right, computed_right);
+
+            let (_, _, zero_left, zero_right, zero_vertical) = actual_horizontal_observation(
+                source_count,
+                selector,
+                selected_source,
+                width_css,
+                "0px",
+                "0px",
+                direction,
+            );
+            assert_eq!(zero_left, absolute(0.0));
+            assert_eq!(zero_right, absolute(0.0));
+            assert_eq!(vertical, zero_vertical);
         }
     }
 }
@@ -1360,6 +1744,202 @@ fn horizontal_margin_provenance_is_copied_from_actual_css() {
 }
 
 #[test]
+fn auto_margin_provenance_survives_used_zero_and_inheritance() {
+    for (direction, width_css, expected) in [
+        (
+            "ltr",
+            "40px",
+            BlockWidthResult {
+                width: 40.0,
+                margin_left: 30.0,
+                margin_right: 30.0,
+                passes: 1,
+            },
+        ),
+        (
+            "rtl",
+            "40px",
+            BlockWidthResult {
+                width: 40.0,
+                margin_left: 30.0,
+                margin_right: 30.0,
+                passes: 1,
+            },
+        ),
+        (
+            "ltr",
+            "auto",
+            BlockWidthResult {
+                width: 100.0,
+                margin_left: 0.0,
+                margin_right: 0.0,
+                passes: 1,
+            },
+        ),
+        (
+            "rtl",
+            "auto",
+            BlockWidthResult {
+                width: 100.0,
+                margin_left: 0.0,
+                margin_right: 0.0,
+                passes: 1,
+            },
+        ),
+        (
+            "ltr",
+            "120px",
+            BlockWidthResult {
+                width: 120.0,
+                margin_left: 0.0,
+                margin_right: -20.0,
+                passes: 1,
+            },
+        ),
+        (
+            "rtl",
+            "120px",
+            BlockWidthResult {
+                width: 120.0,
+                margin_left: -20.0,
+                margin_right: 0.0,
+                passes: 1,
+            },
+        ),
+    ] {
+        let css = format!(
+            "{} #p {{ direction:{direction}; margin-left:auto; margin-right:auto; }} \
+             #b3 {{ width:{width_css}; margin-left:inherit; margin-right:inherit; }}",
+            baseline_css()
+        );
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let original_parent = projection.original_index(1).unwrap();
+            assert_eq!(original_parent, 4);
+            let layout = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            )
+            .unwrap();
+            let b3 = &layout.children()[3];
+            assert_eq!(b3.normal_width(), Some(expected));
+            assert_eq!(
+                b3.computed_margin_left(),
+                BoxLengthFact::Auto {
+                    origin: BoxFactOrigin::Inherited { original_parent },
+                }
+            );
+            assert_eq!(
+                b3.computed_margin_right(),
+                BoxLengthFact::Auto {
+                    origin: BoxFactOrigin::Inherited { original_parent },
+                }
+            );
+        });
+    }
+
+    for (rule, expected_fact, expected_left) in [
+        (
+            "margin-left:10px; margin-left:auto;",
+            BoxLengthFact::Auto {
+                origin: BoxFactOrigin::Specified,
+            },
+            60.0,
+        ),
+        (
+            "margin-left:auto; margin-left:10px;",
+            BoxLengthFact::Absolute(AbsoluteBoxFact {
+                pixels: 10.0,
+                rounded_to_zero: false,
+                origin: BoxFactOrigin::Specified,
+            }),
+            10.0,
+        ),
+    ] {
+        let css = format!("{} #b3 {{ width:40px; {rule} }}", baseline_css());
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let layout = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            )
+            .unwrap();
+            let b3 = &layout.children()[3];
+            assert_eq!(b3.computed_margin_left(), expected_fact);
+            assert_eq!(b3.normal_width().unwrap().margin_left, expected_left);
+        });
+    }
+
+    let controls = format!(
+        "{} #p {{ margin-left:0; }} #b2 {{ margin-left:0; }} \
+         #b3 {{ margin-left:inherit; \
+         margin-right:-0.0000000000000000000000000000000000000000000000000001px; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &controls, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let original_parent = projection.original_index(1).unwrap();
+        let layout = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: 0.0,
+                content_width: 100.0,
+                content_top: 10.0,
+            },
+            layout_limits(),
+        )
+        .unwrap();
+        assert!(matches!(
+            layout.children()[0].computed_margin_left(),
+            BoxLengthFact::Absolute(AbsoluteBoxFact {
+                pixels: 0.0,
+                rounded_to_zero: false,
+                origin: BoxFactOrigin::Initial,
+            })
+        ));
+        assert!(matches!(
+            layout.children()[2].computed_margin_left(),
+            BoxLengthFact::Absolute(AbsoluteBoxFact {
+                pixels: 0.0,
+                rounded_to_zero: false,
+                origin: BoxFactOrigin::Specified,
+            })
+        ));
+        assert_eq!(
+            layout.children()[3].computed_margin_left(),
+            BoxLengthFact::Absolute(AbsoluteBoxFact {
+                pixels: 0.0,
+                rounded_to_zero: false,
+                origin: BoxFactOrigin::Inherited { original_parent },
+            })
+        );
+        assert!(matches!(
+            layout.children()[3].computed_margin_right(),
+            BoxLengthFact::Absolute(AbsoluteBoxFact {
+                pixels: 0.0,
+                rounded_to_zero: true,
+                origin: BoxFactOrigin::Specified,
+            })
+        ));
+    });
+}
+
+#[test]
 fn used_width_remains_independent_when_published_endpoints_collapse() {
     for (rule, expected_width) in [("", 100.0), ("#b3 { width:40px; }", 40.0)] {
         let css = format!("{} #f {{ width:0; }} {rule}", baseline_css());
@@ -1481,8 +2061,8 @@ fn explicit_parent_height_is_lazy_but_all_children_are_still_laid_out() {
 #[test]
 fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
     let css = format!(
-        "{} #b1 {{ margin-left:-10px; }} \
-         #b3 {{ margin-right:20px; overflow:hidden; }}",
+        "{} #b1 {{ margin-left:auto; }} \
+         #b3 {{ margin-right:auto; overflow:hidden; }}",
         baseline_css()
     );
     sibling_fixture(6, &css, |projection, display| {
@@ -1493,8 +2073,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 332;
-        for short in [1, 331] {
+        let work = 492;
+        for short in [1, 491] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -1520,11 +2100,11 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
 #[test]
 fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
     for (source_count, suffix, work) in [
-        (5, "", 265),
+        (5, "#b1 { margin-left:auto; }", 377),
         (
             7,
-            "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }",
-            399,
+            "#b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
+            607,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -1548,6 +2128,9 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             let layout = build_captured_sibling_layout(&facts, outer(), exact).unwrap();
             assert_eq!(layout.receipt().nodes, source_count);
             assert_eq!(layout.receipt().work, work);
+            let children = source_count - 2;
+            let normals = source_count - 3;
+            assert_eq!(work, 32 + 32 * source_count + 19 * children + 64 * normals);
         });
     }
 }
@@ -1559,68 +2142,96 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
     };
     use std::mem::size_of;
 
-    sibling_fixture(6, baseline_css(), |projection, display| {
-        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
-        let outer = || ClearanceOuterContentGeometry {
-            outer: &projection.nodes()[0],
-            content_left: 0.0,
-            content_width: 100.0,
-            content_top: 10.0,
-        };
+    for (source_count, suffix, facade_work, core_work) in [
+        (5, "#b1 { margin-left:auto; }", 377, 197),
+        (6, "#b3 { margin-left:auto; }", 492, 259),
+        (
+            7,
+            "#b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
+            607,
+            322,
+        ),
+    ] {
+        let css = format!("{} {suffix}", baseline_css());
+        sibling_fixture(source_count, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let outer = || ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: 0.0,
+                content_width: 100.0,
+                content_top: 10.0,
+            };
 
-        let mut limits = layout_limits();
-        limits.sources = nz(5);
-        limits.work = nz(1);
-        assert!(matches!(
-            build_captured_sibling_layout(&facts, outer(), limits),
-            Err(SiblingLayoutError::Sources)
-        ));
+            let mut limits = layout_limits();
+            limits.sources = nz(source_count - 1);
+            limits.work = nz(1);
+            assert!(matches!(
+                build_captured_sibling_layout(&facts, outer(), limits),
+                Err(SiblingLayoutError::Sources)
+            ));
 
-        limits = layout_limits();
-        limits.scratch_bytes = nz(4 * size_of::<ChildFacts<'_>>() - 1);
-        assert!(matches!(
-            build_captured_sibling_layout(&facts, outer(), limits),
-            Err(SiblingLayoutError::ScratchBytes)
-        ));
+            limits = layout_limits();
+            limits.work = nz(facade_work - 1);
+            assert!(matches!(
+                build_captured_sibling_layout(&facts, outer(), limits),
+                Err(SiblingLayoutError::Work)
+            ));
 
-        limits = layout_limits();
-        limits.retained_bytes = nz(2 * size_of::<SequenceNormalPlacement>()
-            + 4 * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>()
-            - 1);
-        assert!(matches!(
-            build_captured_sibling_layout(&facts, outer(), limits),
-            Err(SiblingLayoutError::Bytes)
-        ));
+            limits = layout_limits();
+            let child_count = source_count - 2;
+            let tail_count = source_count - 4;
+            limits.scratch_bytes = nz(child_count * size_of::<ChildFacts<'_>>() - 1);
+            assert!(matches!(
+                build_captured_sibling_layout(&facts, outer(), limits),
+                Err(SiblingLayoutError::ScratchBytes)
+            ));
 
-        limits = layout_limits();
-        limits.core.work = nz(130);
-        assert!(matches!(
-            build_captured_sibling_layout(&facts, outer(), limits),
-            Err(SiblingLayoutError::Core(ClearanceSequenceError::Work))
-        ));
-
-        let layout = build_captured_sibling_layout(&facts, outer(), layout_limits()).unwrap();
-        assert!(
-            layout.receipt().scratch_bytes >= layout.children().len() * size_of::<ChildFacts<'_>>()
-        );
-        assert_eq!(
-            layout.receipt().scratch_bytes % size_of::<ChildFacts<'_>>(),
-            0
-        );
-        assert_eq!(
-            layout.receipt().retained_bytes,
-            layout.receipt().core.retained_bytes
-                + layout.receipt().child_capacity
+            limits = layout_limits();
+            limits.retained_bytes = nz(tail_count * size_of::<SequenceNormalPlacement>()
+                + child_count
                     * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>()
-        );
-        assert_eq!(layout.receipt().core.nodes, 6);
-        assert_eq!(layout.receipt().core.tail, 2);
-        assert_eq!(layout.receipt().core.work, 131);
-        assert_eq!(
-            layout.receipt().core.retained_bytes,
-            layout.receipt().core.record_capacity * size_of::<SequenceNormalPlacement>()
-        );
-    });
+                - 1);
+            assert!(matches!(
+                build_captured_sibling_layout(&facts, outer(), limits),
+                Err(SiblingLayoutError::Bytes)
+            ));
+
+            limits = layout_limits();
+            limits.core.work = nz(core_work - 1);
+            assert!(matches!(
+                build_captured_sibling_layout(&facts, outer(), limits),
+                Err(SiblingLayoutError::Core(ClearanceSequenceError::Work))
+            ));
+
+            limits = layout_limits();
+            limits.work = nz(facade_work);
+            limits.core.work = nz(core_work);
+            let layout = build_captured_sibling_layout(&facts, outer(), limits).unwrap();
+            assert_eq!(layout.receipt().nodes, source_count);
+            assert_eq!(layout.receipt().work, facade_work);
+            assert!(layout.receipt().scratch_bytes >= child_count * size_of::<ChildFacts<'_>>());
+            assert_eq!(
+                layout.receipt().scratch_bytes % size_of::<ChildFacts<'_>>(),
+                0
+            );
+            assert_eq!(
+                layout.receipt().retained_bytes,
+                layout.receipt().core.retained_bytes
+                    + layout.receipt().child_capacity
+                        * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>()
+            );
+            assert_eq!(layout.receipt().core.nodes, source_count);
+            assert_eq!(layout.receipt().core.tail, tail_count);
+            assert_eq!(layout.receipt().core.work, core_work);
+            assert!(layout.receipt().child_capacity >= child_count);
+            assert!(layout.receipt().core.record_capacity >= tail_count);
+            assert_eq!(
+                layout.receipt().core.retained_bytes,
+                layout.receipt().core.record_capacity * size_of::<SequenceNormalPlacement>()
+            );
+        });
+    }
 }
 
 #[test]
@@ -1650,6 +2261,125 @@ fn exact_outer_pointer_binding_precedes_facade_prepayment() {
             Err(SiblingLayoutError::Captured(
                 CapturedClearanceError::GeometrySource
             ))
+        ));
+    });
+}
+
+#[test]
+fn auto_multi_faults_preserve_phase_dominance() {
+    use iced_css_core::formatting::clearance_owner::ChildFacts;
+    use std::mem::size_of;
+
+    const MAX: &str = "340282346638528859811704183484516925440px";
+    let conversion_css = format!(
+        "{} #p {{ margin-top:{MAX}; }} \
+         #b1 {{ margin-left:auto; margin-bottom:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &conversion_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let mut scratch_short = layout_limits();
+        scratch_short.scratch_bytes = nz(4 * size_of::<ChildFacts<'_>>() - 1);
+        assert!(matches!(
+            build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: f32::MAX,
+                },
+                scratch_short,
+            ),
+            Err(SiblingLayoutError::ScratchBytes)
+        ));
+        assert!(matches!(
+            build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: f32::MAX,
+                },
+                layout_limits(),
+            ),
+            Err(SiblingLayoutError::Captured(
+                CapturedClearanceError::Unsupported {
+                    projected: 2,
+                    property: "margin-bottom",
+                    reason: CapturedClearanceUnsupported::AutoMargin,
+                }
+            ))
+        ));
+    });
+
+    let conversion_control_css = format!(
+        "{} #p {{ margin-top:{MAX}; }} #b1 {{ margin-left:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &conversion_control_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(matches!(
+            build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: f32::MAX,
+                },
+                layout_limits(),
+            ),
+            Err(SiblingLayoutError::ParentOrigin(
+                FirstChildOriginError::Unrepresentable {
+                    stage: OriginCoordinateStage::BorderTop,
+                }
+            ))
+        ));
+    });
+
+    let horizontal_css = format!(
+        "{} #p {{ width:{MAX}; margin-left:{MAX}; margin-right:auto; }} \
+         #b1 {{ margin-left:auto; }} #b3 {{ padding-left:1px; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &horizontal_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(matches!(
+            build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            ),
+            Err(SiblingLayoutError::ParentHorizontal(_))
+        ));
+    });
+
+    let origin_css = format!(
+        "{} #p {{ margin-top:{MAX}; }} #b1 {{ margin-left:auto; }} \
+         #b3 {{ padding-left:1px; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &origin_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(matches!(
+            build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: f32::MAX,
+                },
+                layout_limits(),
+            ),
+            Err(SiblingLayoutError::ParentOrigin(_))
         ));
     });
 }
@@ -1709,9 +2439,9 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
 
     for (suffix, source, property, reason) in [
         (
-            "#b1 { margin-left:auto; }",
+            "#b1 { margin-top:auto; }",
             2,
-            "margin-left",
+            "margin-top",
             Unsupported::AutoMargin,
         ),
         ("#b3 { height:auto; }", 5, "height", Unsupported::HeightKind),
@@ -1822,6 +2552,124 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
                     target: BoxFactTarget::After,
                     reason: BoxFactUnsupported::GeneratedContent,
                     ..
+                }
+            ))
+        ));
+    });
+}
+
+#[test]
+fn remaining_auto_margin_errors_keep_source_and_edge_order() {
+    use CapturedClearanceUnsupported as U;
+
+    for (selector, projected, margins, property) in [
+        (
+            "#b1",
+            2,
+            "margin-right:auto; margin-bottom:auto; margin-left:auto;",
+            "margin-bottom",
+        ),
+        (
+            "#b3",
+            5,
+            "margin-right:auto; margin-bottom:auto; margin-left:auto;",
+            "margin-bottom",
+        ),
+        (
+            "#b1",
+            2,
+            "margin-top:auto; margin-right:auto; margin-bottom:auto; margin-left:auto;",
+            "margin-top",
+        ),
+        (
+            "#b3",
+            5,
+            "margin-top:auto; margin-right:auto; margin-bottom:auto; margin-left:auto;",
+            "margin-top",
+        ),
+        (
+            "#f",
+            3,
+            "margin-right:auto; margin-bottom:auto; margin-left:auto;",
+            "margin-right",
+        ),
+    ] {
+        let css = format!("{} {selector} {{ {margins} }}", baseline_css());
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            assert!(matches!(
+                build_captured_sibling_layout(
+                    &facts,
+                    ClearanceOuterContentGeometry {
+                        outer: &projection.nodes()[0],
+                        content_left: 0.0,
+                        content_width: 100.0,
+                        content_top: 10.0,
+                    },
+                    layout_limits(),
+                ),
+                Err(SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
+                    projected: actual_projected,
+                    property: actual_property,
+                    reason: U::AutoMargin,
+                })) if actual_projected == projected && actual_property == property
+            ));
+        });
+    }
+
+    for suffix in [
+        "#b1 { margin-bottom:auto; } #b3 { height:auto; }",
+        "#b1 { margin-bottom:auto; } #b3 { padding-left:1px; }",
+    ] {
+        let css = format!("{} {suffix}", baseline_css());
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            assert!(matches!(
+                build_captured_sibling_layout(
+                    &facts,
+                    ClearanceOuterContentGeometry {
+                        outer: &projection.nodes()[0],
+                        content_left: 0.0,
+                        content_width: 100.0,
+                        content_top: 10.0,
+                    },
+                    layout_limits(),
+                ),
+                Err(SiblingLayoutError::Captured(
+                    CapturedClearanceError::Unsupported {
+                        projected: 2,
+                        property: "margin-bottom",
+                        reason: U::AutoMargin,
+                    }
+                ))
+            ));
+        });
+    }
+
+    let same_child = format!(
+        "{} #b1 {{ height:auto; margin-top:auto; margin-bottom:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &same_child, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(matches!(
+            build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            ),
+            Err(SiblingLayoutError::Captured(
+                CapturedClearanceError::Unsupported {
+                    projected: 2,
+                    property: "height",
+                    reason: U::HeightKind,
                 }
             ))
         ));
@@ -2014,7 +2862,7 @@ fn finite_child_endpoint_overflow_and_vertical_error_phase_remain_typed() {
     let competing_css = format!(
         "{} #f {{ width:0; height:0; }} \
          #b1 {{ width:auto; margin-left:-{MAX}; margin-right:-{MAX}; }} \
-         #b2 {{ clear:both; }}",
+         #b2 {{ clear:both; }} #b3 {{ margin-left:auto; }}",
         baseline_css()
     );
     sibling_fixture(6, &competing_css, |projection, display| {

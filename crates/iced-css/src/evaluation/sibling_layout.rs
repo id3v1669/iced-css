@@ -7,9 +7,9 @@
 use super::{
     clearance_box_facts::{BoxLengthFact, BoxOverflow, ClearanceBoxFact, KeywordBoxFact},
     clearance_bridge::{
-        CapturedClearanceError, CapturedClearanceUnsupported, ClearanceOuterContentGeometry,
-        auto_length, child_facts_from_row, edges, joined_direction, joined_display, same_source,
-        unsupported,
+        CapturedClearanceError, CapturedClearanceUnsupported, ChildMarginMode,
+        ClearanceOuterContentGeometry, auto_length, child_facts_from_row, edges, joined_direction,
+        joined_display, same_source, unsupported,
     },
     sibling_box_facts::SiblingBoxFacts,
 };
@@ -305,10 +305,10 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `32 + 32*N + 3*(N-2) + 32*(N-3)` is prepaid before any
-/// proportional join, profile scan, or allocation. Three constant-size actions
-/// per child retain the existing horizontal result and two computed margin facts;
-/// 32 actions per normal cover its possible minimum-width category rerun. Each
+/// Facade work `32 + 32*N + 19*(N-2) + 64*(N-3)` is prepaid before any
+/// proportional join, profile scan, or allocation. Nineteen constant-size actions
+/// per child cover typed conversion and retained horizontal facts; 64 actions per
+/// normal cover Auto categories and a possible minimum-width category rerun. Each
 /// normal still has one horizontal producer invocation. The core is invoked
 /// exactly once. Temporary child facts are released before the source-only output
 /// is published.
@@ -422,8 +422,17 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             }
         };
         let display = joined_display(projection, facts.display(), source).map_err(E::Captured)?;
-        child_facts
-            .push(child_facts_from_row(nodes, display, row, source, height).map_err(E::Captured)?);
+        child_facts.push(
+            child_facts_from_row(
+                nodes,
+                display,
+                row,
+                source,
+                height,
+                ChildMarginMode::SequenceNormals,
+            )
+            .map_err(E::Captured)?,
+        );
     }
     let float_width = match fact_row(facts, 3, "width")?.width {
         BoxLengthFact::Absolute(value) => value.pixels,
@@ -736,13 +745,13 @@ fn place_child_horizontal(
 fn facade_work(nodes: usize) -> Option<usize> {
     let children = nodes.checked_sub(2)?;
     let normals = nodes.checked_sub(3)?;
-    let retained_actions = children.checked_mul(3)?;
-    let extra_category_actions = normals.checked_mul(32)?;
+    let child_actions = children.checked_mul(19)?;
+    let category_actions = normals.checked_mul(64)?;
     nodes
         .checked_mul(32)?
         .checked_add(32)?
-        .checked_add(retained_actions)?
-        .checked_add(extra_category_actions)
+        .checked_add(child_actions)?
+        .checked_add(category_actions)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {

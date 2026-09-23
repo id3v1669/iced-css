@@ -23,9 +23,9 @@ use iced_css_core::{
             classify_clearance, lowest_clearance_float_bottom,
         },
         clearance_owner::{
-            ChildContext, ChildFacts, ClearanceOwner, ClearanceOwnerError, ClearanceOwnerInput,
-            OuterFacts, OwnerContent, OwnerEdges, OwnerGenerated, OwnerHeight, ParentBfc,
-            ParentFacts, build_nested_clearance_owner,
+            ChildContext, ChildFacts, ChildMargins, ClearanceOwner, ClearanceOwnerError,
+            ClearanceOwnerInput, OuterFacts, OwnerContent, OwnerEdges, OwnerGenerated, OwnerHeight,
+            ParentBfc, ParentFacts, build_nested_clearance_owner,
         },
         display::{Display, DisplayResolution, Float, Flow, Position},
         first_child_origin::{
@@ -234,27 +234,42 @@ pub(super) fn joined_direction<'h>(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ChildMarginMode {
+    AbsoluteOnly,
+    SequenceNormals,
+}
+
 pub(super) fn child_facts_from_row<'p>(
     nodes: &'p [SourceNode],
     display: DisplayResolution,
     row: &ClearanceBoxFact,
     projected: usize,
     height: OwnerHeight,
+    mode: ChildMarginMode,
 ) -> Result<ChildFacts<'p>, CapturedClearanceError> {
     use CapturedClearanceError as E;
     use CapturedClearanceUnsupported as U;
-    let mut margin = [0.; 4];
-    for (edge, property) in ["margin-top", "margin-right", "margin-bottom", "margin-left"]
-        .into_iter()
-        .enumerate()
-    {
-        margin[edge] = match row.margin[edge] {
-            BoxLengthFact::Absolute(value) => value.pixels,
-            BoxLengthFact::Auto { .. } => {
-                return Err(unsupported(projected, property, U::AutoMargin));
-            }
-        };
-    }
+    let allow_horizontal_auto = mode == ChildMarginMode::SequenceNormals && projected != 3;
+    let vertical = |edge: usize, property: &'static str| match row.margin[edge] {
+        BoxLengthFact::Absolute(value) => Ok(value.pixels),
+        BoxLengthFact::Auto { .. } => Err(unsupported(projected, property, U::AutoMargin)),
+    };
+    let horizontal = |edge: usize, property: &'static str| match row.margin[edge] {
+        BoxLengthFact::Absolute(value) => Ok(AutoLength::Value(value.pixels)),
+        BoxLengthFact::Auto { .. } if allow_horizontal_auto => Ok(AutoLength::Auto),
+        BoxLengthFact::Auto { .. } => Err(unsupported(projected, property, U::AutoMargin)),
+    };
+    let top = vertical(0, "margin-top")?;
+    let right = horizontal(1, "margin-right")?;
+    let bottom = vertical(2, "margin-bottom")?;
+    let left = horizontal(3, "margin-left")?;
+    let margin = ChildMargins {
+        top,
+        right,
+        bottom,
+        left,
+    };
     Ok(ChildFacts {
         source: nodes.get(projected).ok_or(E::Join { projected })?,
         display,
@@ -266,7 +281,7 @@ pub(super) fn child_facts_from_row<'p>(
         content: OwnerContent::NoOwnContentNonReplaced,
         generated: OwnerGenerated::None,
         height,
-        margin: edges(margin),
+        margin,
         border: edges(row.border_widths()),
         padding: edges(row.padding.map(|value| value.pixels)),
         clear: row.clear.value,
@@ -342,6 +357,7 @@ fn admit_captured_region<'p>(
             r,
             projected,
             heights[projected - 2],
+            ChildMarginMode::AbsoluteOnly,
         )
     };
     Ok(AdmittedRegion {

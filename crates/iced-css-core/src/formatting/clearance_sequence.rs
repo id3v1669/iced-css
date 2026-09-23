@@ -145,11 +145,11 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// Source/count/work checks precede the complete graph and profile scan. All
 /// profile checks, including the last child and float endpoint fit, precede the
 /// fallible record allocation; allocation precedes every numerical kernel.
-/// Sequence normals admit genuine finite signed absolute horizontal margins;
+/// Sequence normals admit genuine finite signed absolute or Auto horizontal margins;
 /// floats retain zero margins, and this vertical solve does not publish a new
 /// horizontal placement. Work
-/// `32 + 8*N + N*(N-1)/2 + 16*(N-4) + (N-2)` is prepaid, including one
-/// constant-size margin-policy dispatch for each child.
+/// `32 + 8*N + N*(N-1)/2 + 16*(N-4) + 33*(N-2)` is prepaid, including
+/// constant-size typed margin validation for each child.
 ///
 /// # Errors
 /// Returns bounded admission/allocation failures, complete-profile failures, or a
@@ -348,16 +348,17 @@ fn record(source_index: usize, placement: NormalKernel) -> SequenceNormalPlaceme
 fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
     // 32 fixed admission/kernel actions, eight bounded per-node actions, every
     // duplicate comparison, sixteen fixed arithmetic/group actions per tail,
-    // and one constant-size margin-policy dispatch per child.
+    // and 33 constant-size typed margin actions per child.
     let children = nodes.checked_sub(2)?;
     let linear = nodes.checked_mul(8)?;
     let pairs = nodes.checked_mul(nodes.checked_sub(1)?)?.checked_div(2)?;
     let kernels = tail.checked_mul(16)?;
+    let margin_actions = children.checked_mul(33)?;
     32usize
         .checked_add(linear)?
         .checked_add(pairs)?
         .checked_add(kernels)?
-        .checked_add(children)
+        .checked_add(margin_actions)
 }
 
 fn retained_bytes(capacity: usize) -> Option<usize> {
@@ -370,9 +371,11 @@ mod tests {
     use super::*;
     use crate::{
         formatting::{
+            block::AutoLength,
             clearance::ClearSide,
             clearance_owner::{
-                ChildContext, OwnerContent, OwnerEdges, OwnerGenerated, OwnerHeight, ParentBfc,
+                ChildContext, OwnerContent, OwnerEdges, OwnerGenerated, OwnerHeight,
+                OwnerProfileReason, ParentBfc,
             },
             display::{Display, DisplayResolution, Float, Flow, Position},
             floats::Band,
@@ -401,7 +404,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(101).unwrap(),
+            work: NonZeroUsize::new(197).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -459,7 +462,7 @@ mod tests {
                 content: OwnerContent::NoOwnContentNonReplaced,
                 generated: OwnerGenerated::None,
                 height: OwnerHeight::Explicit(1.),
-                margin: edges(),
+                margin: edges().into(),
                 border: edges(),
                 padding: edges(),
                 clear: ClearSide::None,
@@ -478,6 +481,7 @@ mod tests {
         let (outer, mut parent, mut children) = input(&sources);
         parent.content_top = f32::MAX;
         children[0].margin.top = f32::MAX;
+        children[0].margin.left = AutoLength::Auto;
         let expected = Vec::<u8>::new()
             .try_reserve_exact(usize::MAX)
             .unwrap_err()
@@ -503,7 +507,8 @@ mod tests {
     #[test]
     fn requested_floor_precedes_reserve_and_spare_capacity_is_charged() {
         let (sources, mut limits) = fixture();
-        let (outer, parent, children) = input(&sources);
+        let (outer, parent, mut children) = input(&sources);
+        children[0].margin.left = AutoLength::Auto;
         limits.retained_bytes =
             NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
         let error = build_with_reserve(
@@ -521,7 +526,8 @@ mod tests {
         assert!(matches!(error, ClearanceSequenceError::Bytes));
 
         let (sources, limits) = fixture();
-        let (outer, parent, children) = input(&sources);
+        let (outer, parent, mut children) = input(&sources);
+        children[0].margin.left = AutoLength::Auto;
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -543,8 +549,9 @@ mod tests {
 
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
-        children[0].margin.left = f32::NAN;
-        limits.work = NonZeroUsize::new(100).unwrap();
+        children[0].margin.left = AutoLength::Auto;
+        children[2].padding.left = 1.0;
+        limits.work = NonZeroUsize::new(196).unwrap();
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -558,5 +565,51 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, ClearanceSequenceError::Work));
+    }
+
+    #[test]
+    fn complete_profile_and_byte_preflight_precede_reserve_with_auto_facts() {
+        let (sources, limits) = fixture();
+        let (outer, parent, mut children) = input(&sources);
+        children[0].margin.left = AutoLength::Auto;
+        children[2].height = OwnerHeight::Auto;
+        let error = build_with_reserve(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.0,
+            },
+            limits,
+            |_, _| panic!("reserve reached before complete profile validation"),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
+                source: 4,
+                reason: OwnerProfileReason::HeightKind,
+            })
+        ));
+
+        let (sources, mut limits) = fixture();
+        let (outer, parent, mut children) = input(&sources);
+        children[0].margin.left = AutoLength::Auto;
+        limits.retained_bytes =
+            NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
+        let error = build_with_reserve(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.0,
+            },
+            limits,
+            |_, _| panic!("reserve reached before requested byte floor"),
+        )
+        .unwrap_err();
+        assert!(matches!(error, ClearanceSequenceError::Bytes));
     }
 }

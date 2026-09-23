@@ -205,6 +205,8 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
         ("#b1 {height:auto;}", 2, "height", U::HeightKind),
         ("#f {width:auto;}", 3, "width", U::FloatWidth),
         ("#b2 {margin-top:auto;}", 4, "margin-top", U::AutoMargin),
+        ("#b1 {margin-left:auto;}", 2, "margin-left", U::AutoMargin),
+        ("#f {margin-right:auto;}", 3, "margin-right", U::AutoMargin),
     ] {
         fixture(&format!("{CSS} {suffix}"), |p, d| {
             let facts = evaluate_clearance_box_facts(p, d, fact_limits()).unwrap();
@@ -266,6 +268,47 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
             );
         });
     }
+}
+
+#[test]
+fn remaining_auto_margin_errors_keep_source_and_edge_order() {
+    use CapturedClearanceUnsupported as U;
+
+    for (suffix, projected, property) in [
+        (
+            "#b1 { width:auto; margin-right:auto; margin-bottom:auto; margin-left:auto; }",
+            2,
+            "margin-right",
+        ),
+        ("#b1 { width:auto; margin-left:auto; }", 2, "margin-left"),
+    ] {
+        fixture(&format!("{CSS} {suffix}"), |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                CapturedClearanceError::Unsupported {
+                    projected,
+                    property,
+                    reason: U::AutoMargin,
+                }
+            );
+        });
+    }
+
+    fixture(
+        &format!("{CSS} #b1 {{ width:auto; margin-right:auto; }} #b2 {{ height:auto; }}"),
+        |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                CapturedClearanceError::Unsupported {
+                    projected: 4,
+                    property: "height",
+                    reason: U::HeightKind,
+                }
+            );
+        },
+    );
 }
 #[test]
 fn actual_generated_content_fails_before_bridge_and_geometry_is_pointer_bound() {

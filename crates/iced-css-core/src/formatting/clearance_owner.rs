@@ -7,6 +7,7 @@
 //! ordinary positive-height B1/B2 cannot collapse through. This is not full layout.
 use super::{
     arithmetic::Exact,
+    block::AutoLength,
     clearance::{
         ClearSide, ClearanceError, ClearanceFloatError, ClearancePresenceError,
         ClearanceRequirement, ClearanceState, classify_clearance, lowest_clearance_float_bottom,
@@ -62,6 +63,27 @@ pub struct OwnerEdges {
     pub bottom: f32,
     pub left: f32,
 }
+/// Computed child margins for the bounded clearance inputs.
+/// Horizontal Auto remains a category, never a substituted used zero.
+/// Vertical margins retain their existing absolute-only input domain.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChildMargins {
+    pub top: f32,
+    pub right: AutoLength,
+    pub bottom: f32,
+    pub left: AutoLength,
+}
+
+impl From<OwnerEdges> for ChildMargins {
+    fn from(edges: OwnerEdges) -> Self {
+        Self {
+            top: edges.top,
+            right: AutoLength::Value(edges.right),
+            bottom: edges.bottom,
+            left: AutoLength::Value(edges.left),
+        }
+    }
+}
 /// Explicit outer source facts; no root formatting context or geometry is asserted.
 #[derive(Debug, Clone, Copy)]
 pub struct OuterFacts<'s> {
@@ -97,7 +119,7 @@ pub struct ChildFacts<'s> {
     pub content: OwnerContent,
     pub generated: OwnerGenerated,
     pub height: OwnerHeight,
-    pub margin: OwnerEdges,
+    pub margin: ChildMargins,
     pub border: OwnerEdges,
     pub padding: OwnerEdges,
     pub clear: ClearSide,
@@ -121,6 +143,7 @@ pub enum OwnerProfileReason {
     HeightKind,
     NonpositiveBlockHeight,
     NegativeMargin,
+    AutoHorizontalMargin,
     HorizontalMargin,
     ChildDecoration,
     FloatMargin,
@@ -378,7 +401,7 @@ fn parent(f: ParentFacts<'_>, source: usize) -> Result<(), ClearanceOwnerError> 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NormalHorizontalMargins {
     Zero,
-    SignedAbsolute,
+    SignedOrAuto,
 }
 
 fn child(
@@ -411,20 +434,44 @@ fn child(
             OwnerProfileReason::NonpositiveBlockHeight,
         ));
     }
-    if !floating && horizontal_margins == NormalHorizontalMargins::SignedAbsolute {
-        for value in edge_values(f.margin) {
+    let values = [
+        AutoLength::Value(f.margin.top),
+        f.margin.right,
+        AutoLength::Value(f.margin.bottom),
+        f.margin.left,
+    ];
+    for value in values {
+        if let AutoLength::Value(value) = value {
             finite(value, source, "margin")?;
         }
+    }
+    if !floating && horizontal_margins == NormalHorizontalMargins::SignedOrAuto {
         if f.margin.top < 0.0 || f.margin.bottom < 0.0 {
             return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
         }
     } else {
-        check_edges(f.margin, source, "margin", false)?;
+        if values
+            .into_iter()
+            .any(|v| matches!(v, AutoLength::Value(v) if v < 0.0))
+        {
+            return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
+        }
+        if values.into_iter().any(|v| matches!(v, AutoLength::Auto)) {
+            return Err(unsupported(
+                source,
+                OwnerProfileReason::AutoHorizontalMargin,
+            ));
+        }
         if floating {
-            if edge_values(f.margin).into_iter().any(|v| v != 0.0) {
+            if values
+                .into_iter()
+                .any(|v| matches!(v, AutoLength::Value(v) if v != 0.0))
+            {
                 return Err(unsupported(source, OwnerProfileReason::FloatMargin));
             }
-        } else if f.margin.left != 0.0 || f.margin.right != 0.0 {
+        } else if f.margin.left != AutoLength::Value(0.0)
+            || f.margin.right != AutoLength::Value(0.0)
+        {
             return Err(unsupported(source, OwnerProfileReason::HorizontalMargin));
         }
     }
@@ -514,7 +561,7 @@ pub(super) fn validate_sequence_child(
     let margins = if floating {
         NormalHorizontalMargins::Zero
     } else {
-        NormalHorizontalMargins::SignedAbsolute
+        NormalHorizontalMargins::SignedOrAuto
     };
     child(facts, source, floating, after, margins)
 }
