@@ -1,8 +1,9 @@
 //! Inner vertical layout from the actual private computed batch and full capture.
 //! The explicit-band entry accepts P geometry; the horizontal entry derives its
 //! band from actual P box facts and source-bound upstream O left/width. Both retain
-//! explicit P top. Source binding proves identity, not upstream layout agreement.
-//! Neither computes outer placement, parent auto-height, clipping or native geometry.
+//! explicit P top. The outer-only entry also derives P top from actual CSS.
+//! Source binding proves identity, not upstream layout agreement.
+//! These entries do not compute O placement, parent auto-height, clipping or native geometry.
 use super::{
     clearance_box_facts::{BoxLengthFact, BoxOverflow, ClearanceBoxFacts},
     clearance_source_projection::ClearanceProjectionShape,
@@ -13,12 +14,20 @@ use iced_css_core::{
             AutoLength, BlockHorizontalError, BlockHorizontalPlacement, BlockWidthInput, Direction,
             place_block_horizontal,
         },
+        clearance::{
+            ClearSide, ClearanceFloatError, ClearancePresenceError, ClearanceRequirement,
+            classify_clearance, lowest_clearance_float_bottom,
+        },
         clearance_owner::{
             ChildContext, ChildFacts, ClearanceOwner, ClearanceOwnerError, ClearanceOwnerInput,
             OuterFacts, OwnerContent, OwnerEdges, OwnerGenerated, OwnerHeight, ParentBfc,
             ParentFacts, build_nested_clearance_owner,
         },
         display::{Display, DisplayResolution, Float, Flow, Position},
+        first_child_origin::{
+            FirstChildOriginError, FirstChildOriginInput, FirstChildOriginPlacement,
+            place_first_child_origin,
+        },
         floats::Band,
     },
     source::SourceNode,
@@ -105,13 +114,20 @@ fn preflight(
     facts: &ClearanceBoxFacts<'_, '_, '_, '_, '_, '_>,
     parent: &SourceNode,
 ) -> Result<(), CapturedClearanceError> {
-    let projection = facts.projection();
-    let nodes = projection.nodes();
-    if projection.shape() != ClearanceProjectionShape::NestedRegion || nodes.len() != 5 {
-        return Err(CapturedClearanceError::Shape);
-    }
+    shape_preflight(facts)?;
+    let nodes = facts.projection().nodes();
     if !same_source(parent, &nodes[1]) {
         return Err(CapturedClearanceError::GeometrySource);
+    }
+    Ok(())
+}
+fn shape_preflight(
+    facts: &ClearanceBoxFacts<'_, '_, '_, '_, '_, '_>,
+) -> Result<(), CapturedClearanceError> {
+    let projection = facts.projection();
+    if projection.shape() != ClearanceProjectionShape::NestedRegion || projection.nodes().len() != 5
+    {
+        return Err(CapturedClearanceError::Shape);
     }
     Ok(())
 }
@@ -125,6 +141,8 @@ struct AdmittedRegion<'p> {
     parent_display: DisplayResolution,
     parent_border: OwnerEdges,
     parent_padding: OwnerEdges,
+    margin_top: BoxLengthFact,
+    parent_clear: ClearSide,
     width: AutoLength,
     margin_left: AutoLength,
     margin_right: AutoLength,
@@ -277,6 +295,8 @@ fn admit_captured_region<'p>(
         parent_display: display(1)?,
         parent_border: edges(p.border_widths()),
         parent_padding: edges(p.padding.map(|v| v.pixels)),
+        margin_top: p.margin[0],
+        parent_clear: p.clear.value,
         width: auto_length(p.width),
         margin_left: auto_length(p.margin[3]),
         margin_right: auto_length(p.margin[1]),
@@ -357,6 +377,23 @@ pub fn build_captured_clearance_with_horizontal<'p, 'h, 'd, 's, 'b, 'r>(
         return Err(E::OuterGeometrySource);
     }
     let admitted = admit_captured_region(facts).map_err(E::Captured)?;
+    let horizontal =
+        place_admitted_horizontal(facts, &admitted, outer.content_left, outer.content_width)?;
+    let owner = admitted
+        .finish(parent.content_top, horizontal.content)
+        .map_err(E::Captured)?;
+    Ok(CapturedHorizontalClearance { horizontal, owner })
+}
+
+/// One direction join and horizontal solver dispatch shared by both derived entries.
+fn place_admitted_horizontal(
+    facts: &ClearanceBoxFacts<'_, '_, '_, '_, '_, '_>,
+    admitted: &AdmittedRegion<'_>,
+    content_left: f32,
+    content_width: f32,
+) -> Result<BlockHorizontalPlacement, HorizontalClearanceError> {
+    use HorizontalClearanceError as E;
+    let projection = facts.projection();
     let original = projection
         .original_index(0)
         .ok_or(E::Captured(CapturedClearanceError::Join { projected: 0 }))?;
@@ -368,10 +405,10 @@ pub fn build_captured_clearance_with_horizontal<'p, 'h, 'd, 's, 'b, 'r>(
         ComputedDirection::LeftToRight => Direction::Ltr,
         ComputedDirection::RightToLeft => Direction::Rtl,
     };
-    let horizontal = place_block_horizontal(
-        outer.content_left,
+    place_block_horizontal(
+        content_left,
         BlockWidthInput {
-            containing_width: outer.content_width,
+            containing_width: content_width,
             direction,
             width: admitted.width,
             margin_left: admitted.margin_left,
@@ -385,9 +422,134 @@ pub fn build_captured_clearance_with_horizontal<'p, 'h, 'd, 's, 'b, 'r>(
             max_width: None,
         },
     )
-    .map_err(E::Horizontal)?;
+    .map_err(E::Horizontal)
+}
+
+/// Already established content geometry of the exact outer source O.
+/// Agreement with upstream CSS layout remains the caller's assertion.
+pub struct ClearanceOuterContentGeometry<'p> {
+    pub outer: &'p SourceNode,
+    pub content_left: f32,
+    pub content_width: f32,
+    pub content_top: f32,
+}
+/// Copied observations and inner owner borrowing only projection source storage.
+#[derive(Debug)]
+pub struct CapturedParentClearance<'p> {
+    horizontal: BlockHorizontalPlacement,
+    parent_origin: FirstChildOriginPlacement,
+    computed_margin_top: BoxLengthFact,
+    parent_clear: ClearSide,
+    parent_clearance: ClearanceRequirement,
+    owner: ClearanceOwner<'p>,
+}
+impl<'p> CapturedParentClearance<'p> {
+    /// Used width and separately published content endpoints.
+    pub fn horizontal(&self) -> BlockHorizontalPlacement {
+        self.horizontal
+    }
+    /// Used top margin and separately published border/content tops.
+    pub fn parent_origin(&self) -> FirstChildOriginPlacement {
+        self.parent_origin
+    }
+    /// Actual computed P margin, including inheritance and rounding history.
+    pub fn computed_margin_top(&self) -> BoxLengthFact {
+        self.computed_margin_top
+    }
+    /// Actual computed P clear side.
+    pub fn parent_clear(&self) -> ClearSide {
+        self.parent_clear
+    }
+    /// Classified absence, distinct from numerical zero clearance.
+    pub fn parent_clearance(&self) -> ClearanceRequirement {
+        self.parent_clearance
+    }
+    /// Borrows this result; owner sources retain their upstream projection lifetime.
+    pub fn owner(&self) -> &ClearanceOwner<'p> {
+        &self.owner
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParentClearanceError {
+    OuterGeometrySource,
+    Captured(CapturedClearanceError),
+    Horizontal(BlockHorizontalError),
+    Origin(FirstChildOriginError),
+    ParentFloatSelection(ClearanceFloatError),
+    ParentPresence(ClearancePresenceError),
+    UnexpectedParentClearance,
+}
+impl std::fmt::Display for ParentClearanceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "captured parent clearance: {self:?}")
+    }
+}
+impl std::error::Error for ParentClearanceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Captured(e) => Some(e),
+            Self::Horizontal(e) => Some(e),
+            Self::Origin(e) => Some(e),
+            Self::ParentFloatSelection(e) => Some(e),
+            Self::ParentPresence(e) => Some(e),
+            Self::OuterGeometrySource | Self::UnexpectedParentClearance => None,
+        }
+    }
+}
+/// Derive P's content origin and horizontal band from actual CSS and O geometry.
+/// O is the actual root with only P; root margins do not collapse. P is a nonroot
+/// hidden-overflow BFC. Its descendants cannot constrain its own clearance. This
+/// establishes noncollapsing first-child placement without asserting a root BFC.
+/// O content top already accounts for O's margins/padding; they are not added again.
+/// P auto-height, bottom geometry and native layout remain outside this entry.
+/// # Errors
+/// Checks shape, O identity, shared admission, horizontal placement, top origin,
+/// parent clearance absence and finally the inner owner, in that order. No partial
+/// result is published. Temporary facts/style/geometry wrappers are not retained.
+pub fn build_captured_clearance_from_outer<'p, 'h, 'd, 's, 'b, 'r>(
+    facts: &ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
+    outer: ClearanceOuterContentGeometry<'p>,
+) -> Result<CapturedParentClearance<'p>, ParentClearanceError> {
+    use ParentClearanceError as E;
+    shape_preflight(facts).map_err(E::Captured)?;
+    if !same_source(outer.outer, &facts.projection().nodes()[0]) {
+        return Err(E::OuterGeometrySource);
+    }
+    let admitted = admit_captured_region(facts).map_err(E::Captured)?;
+    let horizontal =
+        place_admitted_horizontal(facts, &admitted, outer.content_left, outer.content_width)
+            .map_err(|error| match error {
+                HorizontalClearanceError::Captured(e) => E::Captured(e),
+                HorizontalClearanceError::Horizontal(e) => E::Horizontal(e),
+                HorizontalClearanceError::OuterGeometrySource => E::OuterGeometrySource,
+            })?;
+    let computed_margin_top = admitted.margin_top;
+    let parent_clear = admitted.parent_clear;
+    let parent_origin = place_first_child_origin(FirstChildOriginInput {
+        containing_top: outer.content_top,
+        margin_top: auto_length(computed_margin_top),
+        border_top: admitted.parent_border.top,
+        padding_top: admitted.parent_padding.top,
+    })
+    .map_err(E::Origin)?;
+    // Full graph/content admission proves no earlier outer float. Original source
+    // indices are postorder storage positions, never float-eligibility evidence.
+    let selected = lowest_clearance_float_bottom(&[], parent_clear, std::num::NonZeroUsize::MIN)
+        .map_err(E::ParentFloatSelection)?;
+    let parent_clearance =
+        classify_clearance(parent_origin.border_top, selected).map_err(E::ParentPresence)?;
+    if parent_clearance != ClearanceRequirement::Absent {
+        return Err(E::UnexpectedParentClearance);
+    }
     let owner = admitted
-        .finish(parent.content_top, horizontal.content)
+        .finish(parent_origin.content_top, horizontal.content)
         .map_err(E::Captured)?;
-    Ok(CapturedHorizontalClearance { horizontal, owner })
+    Ok(CapturedParentClearance {
+        horizontal,
+        parent_origin,
+        computed_margin_top,
+        parent_clear,
+        parent_clearance,
+        owner,
+    })
 }

@@ -51,3 +51,5 @@ pub mod table_row_inventory;
 pub mod clearance;
 
 pub mod clearance_owner;
+
+pub mod first_child_origin;
