@@ -3,13 +3,15 @@
 //! band from actual P box facts and source-bound upstream O left/width. Both retain
 //! explicit P top. The outer-only entry also derives P top from actual CSS.
 //! Source binding proves identity, not upstream layout agreement.
-//! These entries do not compute O placement, parent auto-height, clipping or native geometry.
+//! The height entry also derives bounded P content height from those results.
+//! These entries do not compute O placement, clipping or native geometry.
 use super::{
     clearance_box_facts::{BoxLengthFact, BoxOverflow, ClearanceBoxFacts},
     clearance_source_projection::ClearanceProjectionShape,
 };
 use iced_css_core::{
     formatting::{
+        bfc_height::{BfcHeightError, BfcHeightPlacement},
         block::{
             AutoLength, BlockHorizontalError, BlockHorizontalPlacement, BlockWidthInput, Direction,
             place_block_horizontal,
@@ -551,5 +553,104 @@ pub fn build_captured_clearance_from_outer<'p, 'h, 'd, 's, 'b, 'r>(
         parent_clear,
         parent_clearance,
         owner,
+    })
+}
+
+/// Accepted parent layout plus copied content-height observations and provenance.
+/// Only the projection source borrow is retained; style/fact wrappers may end.
+#[derive(Debug)]
+pub struct CapturedParentHeight<'p> {
+    parent: CapturedParentClearance<'p>,
+    height: BfcHeightPlacement,
+    computed_height: BoxLengthFact,
+}
+impl<'p> CapturedParentHeight<'p> {
+    /// Borrows this combined result; its owner's sources retain projection lifetime.
+    pub fn parent(&self) -> &CapturedParentClearance<'p> {
+        &self.parent
+    }
+    /// Used content height and independently published content-bottom observations.
+    pub fn height(&self) -> BfcHeightPlacement {
+        self.height
+    }
+    /// Actual computed P height, preserving origin and conversion history.
+    pub fn computed_height(&self) -> BoxLengthFact {
+        self.computed_height
+    }
+}
+/// Existing parent errors precede any new content-height work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParentHeightError {
+    Parent(ParentClearanceError),
+    FactInvariant {
+        projected: usize,
+        property: &'static str,
+    },
+    Height(BfcHeightError),
+}
+impl std::fmt::Display for ParentHeightError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "captured parent height: {self:?}")
+    }
+}
+impl std::error::Error for ParentHeightError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parent(error) => Some(error),
+            Self::Height(error) => Some(error),
+            Self::FactInvariant { .. } => None,
+        }
+    }
+}
+/// Derive bounded P content height from real CSS and the accepted parent pipeline.
+/// Runs that pipeline once, then uses its published top and child/float bottoms.
+/// Explicit height does not evaluate descendant extents for this new stage.
+/// P bottom decorations and own bottom margin are outside content height; general
+/// tree height, O placement, clipping and native geometry remain outside scope.
+/// # Errors
+/// Existing parent validation/placement errors come first. FactInvariant denotes
+/// an internal predecessor inconsistency, not a new authored-CSS category.
+/// Height errors name invalid primitive inputs or finite publication limits.
+/// No partial combined output is published on failure.
+pub fn build_captured_clearance_with_parent_height<'p, 'h, 'd, 's, 'b, 'r>(
+    facts: &ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
+    outer: ClearanceOuterContentGeometry<'p>,
+) -> Result<CapturedParentHeight<'p>, ParentHeightError> {
+    use ParentHeightError as E;
+    use iced_css_core::formatting::bfc_height::{BfcHeightInput, BfcHeightMode, solve_bfc_height};
+    let parent = build_captured_clearance_from_outer(facts, outer).map_err(E::Parent)?;
+    let computed_height = facts
+        .row(1)
+        .ok_or(E::FactInvariant {
+            projected: 1,
+            property: "height",
+        })?
+        .height;
+    let mode = match computed_height {
+        BoxLengthFact::Absolute(value) => BfcHeightMode::Explicit(value.pixels),
+        BoxLengthFact::Auto { .. } => {
+            let invariant = E::FactInvariant {
+                projected: 4,
+                property: "margin-bottom",
+            };
+            let BoxLengthFact::Absolute(margin) = facts.row(4).ok_or(invariant)?.margin[2] else {
+                return Err(invariant);
+            };
+            BfcHeightMode::Auto {
+                last_in_flow_border_bottom: parent.owner().after().bottom,
+                last_in_flow_margin_bottom: margin.pixels,
+                float_bottom: parent.owner().placed_float().bottom,
+            }
+        }
+    };
+    let height = solve_bfc_height(BfcHeightInput {
+        content_top: parent.parent_origin().content_top,
+        mode,
+    })
+    .map_err(E::Height)?;
+    Ok(CapturedParentHeight {
+        parent,
+        height,
+        computed_height,
     })
 }
