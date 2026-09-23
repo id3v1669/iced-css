@@ -654,3 +654,84 @@ pub fn build_captured_clearance_with_parent_height<'p, 'h, 'd, 's, 'b, 'r>(
         computed_height,
     })
 }
+
+use iced_css_core::formatting::block_bottom::{BlockBottomError, BlockBottomPlacement};
+
+/// Accepted parent height plus copied own bottom edges and computed provenance.
+/// Only the projection source borrow is retained; temporary style/fact wrappers end.
+#[derive(Debug)]
+pub struct CapturedParentBottom<'p> {
+    parent: CapturedParentHeight<'p>,
+    bottom: BlockBottomPlacement,
+    computed_margin_bottom: BoxLengthFact,
+}
+impl<'p> CapturedParentBottom<'p> {
+    /// Borrow the preceding layout; its source getter retains projection lifetime.
+    pub fn parent(&self) -> &CapturedParentHeight<'p> {
+        &self.parent
+    }
+    /// Independently published bottom coordinates and used margin length/category.
+    pub fn bottom(&self) -> BlockBottomPlacement {
+        self.bottom
+    }
+    /// Actual computed margin, including origin and underflow history.
+    pub fn computed_margin_bottom(&self) -> BoxLengthFact {
+        self.computed_margin_bottom
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParentBottomError {
+    Parent(ParentHeightError),
+    FactInvariant {
+        projected: usize,
+        property: &'static str,
+    },
+    Bottom(BlockBottomError),
+}
+impl std::fmt::Display for ParentBottomError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "captured parent bottom: {self:?}")
+    }
+}
+impl std::error::Error for ParentBottomError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parent(e) => Some(e),
+            Self::Bottom(e) => Some(e),
+            Self::FactInvariant { .. } => None,
+        }
+    }
+}
+/// Derive P's own bottom edges from the once-delegated height pipeline and facts.
+/// Uses its authoritative content endpoint, never top plus rounded used height.
+/// Signed own margins may invert edge ordering. This does not establish sibling
+/// flow/collapse, O height, native geometry or broader border-style admission.
+/// # Errors
+/// All predecessor errors come first. A missing private row is an internal fact
+/// invariant, not authored CSS invalidity. Bottom publication errors return no
+/// partial result. Earlier inputs remain reusable by the independent height API.
+pub fn build_captured_clearance_with_parent_bottom<'p, 'h, 'd, 's, 'b, 'r>(
+    facts: &ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
+    outer: ClearanceOuterContentGeometry<'p>,
+) -> Result<CapturedParentBottom<'p>, ParentBottomError> {
+    use ParentBottomError as E;
+    use iced_css_core::formatting::block_bottom::{BlockBottomInput, place_block_bottom};
+    let parent = build_captured_clearance_with_parent_height(facts, outer).map_err(E::Parent)?;
+    let row = facts.row(1).ok_or(E::FactInvariant {
+        projected: 1,
+        property: "margin-bottom",
+    })?;
+    let computed_margin_bottom = row.margin[2];
+    let bottom = place_block_bottom(BlockBottomInput {
+        content_bottom: parent.height().content_bottom,
+        padding_bottom: row.padding[2].pixels,
+        border_bottom: row.border_widths()[2],
+        margin_bottom: auto_length(computed_margin_bottom),
+    })
+    .map_err(E::Bottom)?;
+    Ok(CapturedParentBottom {
+        parent,
+        bottom,
+        computed_margin_bottom,
+    })
+}
