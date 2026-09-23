@@ -330,6 +330,53 @@ fn remaining_auto_margin_errors_keep_source_and_edge_order() {
         },
     );
 }
+
+#[test]
+fn legacy_capture_keeps_auto_margin_and_width_extraction_precedence() {
+    fixture(
+        &format!("{CSS} #f {{ width:101px; margin-left:auto; }}"),
+        |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                CapturedClearanceError::Unsupported {
+                    projected: 3,
+                    property: "margin-left",
+                    reason: CapturedClearanceUnsupported::AutoMargin,
+                }
+            );
+        },
+    );
+
+    fixture(
+        &format!("{CSS} #f {{ width:101px; }}"),
+        |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                CapturedClearanceError::Core(ClearanceOwnerError::Unsupported {
+                    source: 3,
+                    reason: OwnerProfileReason::FloatTooWide,
+                })
+            );
+        },
+    );
+
+    fixture(
+        &format!("{CSS} #f {{ width:auto; margin-left:auto; }}"),
+        |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                CapturedClearanceError::Unsupported {
+                    projected: 3,
+                    property: "width",
+                    reason: CapturedClearanceUnsupported::FloatWidth,
+                }
+            );
+        },
+    );
+}
 #[test]
 fn actual_generated_content_fails_before_bridge_and_geometry_is_pointer_bound() {
     for (selector, original, target) in [

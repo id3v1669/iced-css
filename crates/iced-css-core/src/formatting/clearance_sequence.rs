@@ -9,7 +9,7 @@ use super::{
     clearance_owner::{
         BlockVertical, ChildFacts, ClearanceOwnerError, FirstFloatInput, KernelError, MarginGroup,
         NormalKernel, OuterFacts, ParentFacts, place_first_float, place_next_normal,
-        validate_float_width, validate_outer, validate_parent, validate_sequence_child,
+        validate_outer, validate_parent, validate_sequence_child, validate_sequence_float_width,
     },
     floats::PlacedFloat,
 };
@@ -22,6 +22,9 @@ pub struct ClearanceSequenceInput<'s, 'f> {
     pub parent: ParentFacts<'s>,
     /// Exact projected children B1, F, and tail in source order.
     pub children: &'f [ChildFacts<'s>],
+    /// Explicit finite nonnegative content width. Under the admitted used-zero
+    /// margins and decoration it is also the margin-box width; finite oversized
+    /// placement is supported.
     pub float_width: f32,
 }
 
@@ -143,12 +146,12 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// Validate and solve the complete source-owned sibling sequence.
 ///
 /// Source/count/work checks precede the complete graph and profile scan. All
-/// profile checks, including the last child and float endpoint fit, precede the
+/// profile checks, including the last child and float-width domain, precede the
 /// fallible record allocation; allocation precedes every numerical kernel.
 /// Sequence normals admit genuine finite signed absolute or Auto horizontal margins.
 /// Floats admit computed horizontal Auto or absolute zero; both have used value zero,
 /// and this vertical solve does not publish a new horizontal placement. Work
-/// `32 + 8*N + N*(N-1)/2 + 16*(N-4) + 33*(N-2)` is prepaid, including
+/// `48 + 8*N + N*(N-1)/2 + 16*(N-4) + 33*(N-2)` is prepaid, including
 /// constant-size typed margin validation for each child.
 ///
 /// # Errors
@@ -246,7 +249,7 @@ fn build_with_reserve<'s>(
         let source = offset + 2;
         validate_sequence_child(facts, source, source == 3, source >= 4).map_err(profile)?;
     }
-    validate_float_width(input.parent, input.float_width, 3).map_err(profile)?;
+    validate_sequence_float_width(input.float_width, 3).map_err(profile)?;
 
     let requested_bytes = retained_bytes(tail_count).ok_or(ClearanceSequenceError::Bytes)?;
     if requested_bytes > limits.retained_bytes.get() {
@@ -346,15 +349,17 @@ fn record(source_index: usize, placement: NormalKernel) -> SequenceNormalPlaceme
 }
 
 fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
-    // 32 fixed admission/kernel actions, eight bounded per-node actions, every
-    // duplicate comparison, sixteen fixed arithmetic/group actions per tail,
-    // and 33 constant-size typed margin actions per child.
+    // 32 existing fixed admission/kernel actions plus 16 prepaid empty-prefix
+    // fallback actions from the source-backed oversized-float inventory, eight
+    // bounded per-node actions, every duplicate comparison, sixteen fixed
+    // arithmetic/group actions per tail, and 33 constant-size typed margin
+    // actions per child.
     let children = nodes.checked_sub(2)?;
     let linear = nodes.checked_mul(8)?;
     let pairs = nodes.checked_mul(nodes.checked_sub(1)?)?.checked_div(2)?;
     let kernels = tail.checked_mul(16)?;
     let margin_actions = children.checked_mul(33)?;
-    32usize
+    48usize
         .checked_add(linear)?
         .checked_add(pairs)?
         .checked_add(kernels)?
@@ -404,7 +409,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(197).unwrap(),
+            work: NonZeroUsize::new(213).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -494,7 +499,7 @@ mod tests {
                 outer,
                 parent,
                 children: &children,
-                float_width: 10.,
+                float_width: 140.,
             },
             limits,
             |records, _| records.try_reserve_exact(usize::MAX),
@@ -617,6 +622,52 @@ mod tests {
                 parent,
                 children: &children,
                 float_width: 10.0,
+            },
+            limits,
+            |_, _| panic!("reserve reached before requested byte floor"),
+        )
+        .unwrap_err();
+        assert!(matches!(error, ClearanceSequenceError::Bytes));
+
+        let (sources, mut limits) = fixture();
+        let (outer, parent, mut children) = input(&sources);
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
+        limits.retained_bytes =
+            NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
+        let error = build_with_reserve(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: f32::NAN,
+            },
+            limits,
+            |_, _| panic!("reserve reached before float-width domain validation"),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ClearanceSequenceError::Profile(ClearanceOwnerError::InvalidNumber {
+                source: 3,
+                field: "float_width",
+            })
+        ));
+
+        let (sources, mut limits) = fixture();
+        let (outer, parent, mut children) = input(&sources);
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
+        limits.retained_bytes =
+            NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
+        let error = build_with_reserve(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 140.0,
             },
             limits,
             |_, _| panic!("reserve reached before requested byte floor"),

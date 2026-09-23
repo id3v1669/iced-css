@@ -572,6 +572,13 @@ pub(super) fn validate_float_width(
     }
 }
 
+pub(super) fn validate_sequence_float_width(
+    width: f32,
+    source: usize,
+) -> Result<(), ClearanceOwnerError> {
+    nonnegative(width, source, "float_width")
+}
+
 pub(super) struct KernelError {
     pub source: usize,
     pub error: ClearanceOwnerError,

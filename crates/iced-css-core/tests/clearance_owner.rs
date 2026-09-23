@@ -414,6 +414,51 @@ fn profile_rejections_are_typed() {
         }
     }
 }
+
+#[test]
+fn strict_flat_and_nested_owners_keep_fit_and_margin_precedence() {
+    let flat = sources();
+    let mut flat_input = input(&flat);
+    flat_input.float_width = 140.0;
+    assert_eq!(
+        build_clearance_owner(&flat, flat_input).unwrap_err(),
+        ClearanceOwnerError::Unsupported {
+            source: 2,
+            reason: OwnerProfileReason::FloatTooWide,
+        }
+    );
+    let mut flat_input = input(&flat);
+    flat_input.float_width = 140.0;
+    flat_input.float.margin.left = AutoLength::Auto;
+    assert_eq!(
+        build_clearance_owner(&flat, flat_input).unwrap_err(),
+        ClearanceOwnerError::Unsupported {
+            source: 2,
+            reason: OwnerProfileReason::AutoHorizontalMargin,
+        }
+    );
+
+    let nested = nested_sources();
+    let mut nested_input = input(&nested[1..]);
+    nested_input.float_width = 140.0;
+    assert_eq!(
+        build_nested_clearance_owner(&nested, outer(&nested), nested_input).unwrap_err(),
+        ClearanceOwnerError::Unsupported {
+            source: 3,
+            reason: OwnerProfileReason::FloatTooWide,
+        }
+    );
+    let mut nested_input = input(&nested[1..]);
+    nested_input.float_width = 140.0;
+    nested_input.float.margin.right = AutoLength::Auto;
+    assert_eq!(
+        build_nested_clearance_owner(&nested, outer(&nested), nested_input).unwrap_err(),
+        ClearanceOwnerError::Unsupported {
+            source: 3,
+            reason: OwnerProfileReason::AutoHorizontalMargin,
+        }
+    );
+}
 #[test]
 fn stages_and_checked_float_producer_report_the_actual_failure() {
     let s = sources();

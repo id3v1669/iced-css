@@ -152,6 +152,115 @@ fn build<'s>(
     )
 }
 
+fn build_width<'s>(
+    sources: &'s [SourceNode],
+    outer: OuterFacts<'s>,
+    parent: ParentFacts<'s>,
+    children: &[ChildFacts<'s>],
+    float_width: f32,
+    limits: ClearanceSequenceLimits,
+) -> Result<
+    iced_css_core::formatting::clearance_sequence::ClearanceSequenceOwner<'s>,
+    ClearanceSequenceError,
+> {
+    build_clearance_sequence(
+        sources,
+        ClearanceSequenceInput {
+            outer,
+            parent,
+            children,
+            float_width,
+        },
+        limits,
+    )
+}
+
+#[test]
+fn oversized_core_float_uses_the_existing_overflow_placement() {
+    let sources = sources(6);
+    let (outer, parent, children) = facts(&sources);
+    let owner = build_clearance_sequence(
+        &sources,
+        ClearanceSequenceInput {
+            outer,
+            parent,
+            children: &children,
+            float_width: 140.0,
+        },
+        limits(6),
+    )
+    .unwrap();
+    let placed = owner.placed_float();
+    assert_eq!(
+        (placed.left, placed.right, placed.top, placed.bottom),
+        (0.0, 140.0, 16.0, 18.0)
+    );
+    assert_eq!(
+        (
+            owner.tail()[1].vertical().top,
+            owner.tail()[1].vertical().bottom
+        ),
+        (22.0, 23.0)
+    );
+}
+
+#[test]
+fn oversized_core_matrix_changes_only_the_float_horizontal_placement() {
+    for count in [5, 6, 7] {
+        for side in [Float::Left, Float::Right] {
+            for (left, right) in [
+                (AutoLength::Value(0.0), AutoLength::Value(0.0)),
+                (AutoLength::Auto, AutoLength::Value(0.0)),
+                (AutoLength::Value(0.0), AutoLength::Auto),
+                (AutoLength::Auto, AutoLength::Auto),
+            ] {
+                for width in [101.0, 140.0] {
+                    for height in [2.0, 40.0] {
+                        let sources = sources(count);
+                        let (outer, parent, mut children) = facts(&sources);
+                        children[1].display.float = side;
+                        children[1].margin.left = left;
+                        children[1].margin.right = right;
+                        children[1].height = OwnerHeight::Explicit(height);
+                        let oversized =
+                            build_width(&sources, outer, parent, &children, width, limits(count))
+                                .unwrap();
+                        let control =
+                            build_width(&sources, outer, parent, &children, 10.0, limits(count))
+                                .unwrap();
+                        let placed = oversized.placed_float();
+                        assert_eq!(
+                            (placed.left, placed.right, placed.top, placed.bottom),
+                            if side == Float::Left {
+                                (0.0, width, 16.0, 16.0 + height)
+                            } else {
+                                (100.0 - width, 100.0, 16.0, 16.0 + height)
+                            }
+                        );
+                        assert_eq!(oversized.before(), control.before());
+                        assert_eq!(oversized.receipt(), control.receipt());
+                        assert_eq!(oversized.tail().len(), control.tail().len());
+                        for (actual, expected) in oversized.tail().iter().zip(control.tail().iter())
+                        {
+                            assert_eq!(actual.source_index(), expected.source_index());
+                            assert_eq!(actual.vertical(), expected.vertical());
+                            assert_eq!(actual.hypothetical_top(), expected.hypothetical_top());
+                            assert_eq!(actual.zero_clearance_top(), expected.zero_clearance_top());
+                            assert_eq!(actual.clearance(), expected.clearance());
+                            assert_eq!(
+                                actual.barrier_source_index(),
+                                expected.barrier_source_index()
+                            );
+                            assert_eq!(actual.hypothetical_group(), expected.hypothetical_group());
+                            assert_eq!(actual.actual_groups(), expected.actual_groups());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn six_and_seven_sources_publish_each_real_tail_in_order() {
     for (count, expected) in [
@@ -803,6 +912,84 @@ fn complete_profile_validation_precedes_bytes_and_numeric_publication() {
 }
 
 #[test]
+fn float_width_domain_storage_and_placement_follow_the_documented_phase_order() {
+    let source_nodes = sources(6);
+    let (outer, parent, mut children) = facts(&source_nodes);
+    children[3].margin.top = -1.0;
+    assert!(matches!(
+        build_width(&source_nodes, outer, parent, &children, f32::NAN, limits(6),),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported {
+                source: 5,
+                reason: OwnerProfileReason::NegativeMargin,
+            }
+        ))
+    ));
+    assert!(matches!(
+        build_width(&source_nodes, outer, parent, &children, 10.0, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported {
+                source: 5,
+                reason: OwnerProfileReason::NegativeMargin,
+            }
+        ))
+    ));
+
+    for width in [f32::NAN, -1.0] {
+        let (outer, parent, children) = facts(&source_nodes);
+        let short = ClearanceSequenceLimits {
+            retained_bytes: NonZeroUsize::MIN,
+            ..limits(6)
+        };
+        assert!(matches!(
+            build_width(&source_nodes, outer, parent, &children, width, short),
+            Err(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::InvalidNumber {
+                    source: 3,
+                    field: "float_width",
+                }
+            ))
+        ));
+    }
+
+    let (outer, parent, children) = facts(&source_nodes);
+    let short = ClearanceSequenceLimits {
+        retained_bytes: NonZeroUsize::MIN,
+        ..limits(6)
+    };
+    assert!(matches!(
+        build_width(&source_nodes, outer, parent, &children, 140.0, short),
+        Err(ClearanceSequenceError::Bytes)
+    ));
+
+    let sources = sources(5);
+    let (outer, mut parent, mut children) = facts(&sources);
+    parent.containing = Band {
+        left: f32::MAX,
+        right: f32::MAX,
+    };
+    children[1].height = OwnerHeight::Explicit(0.0);
+    children[1].display.float = Float::Left;
+    assert!(matches!(
+        build_width(&sources, outer, parent, &children, f32::MAX, limits(5),),
+        Err(ClearanceSequenceError::Placement {
+            source: 3,
+            error: ClearanceOwnerError::FloatPlacement(
+                iced_css_core::formatting::floats::FloatError::Unrepresentable
+            ),
+        })
+    ));
+    children[1].display.float = Float::Right;
+    assert!(matches!(
+        build_width(&sources, outer, parent, &children, f32::MAX, limits(5),),
+        Err(ClearanceSequenceError::Placement {
+            source: 4,
+            error: ClearanceOwnerError::UnsupportedEquality,
+        })
+    ));
+}
+
+#[test]
 fn source_pointer_checks_reject_equal_ids_from_unrelated_storage() {
     let actual = sources(6);
     let other = sources(6);
@@ -828,7 +1015,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work) in [(5, 197), (6, 259), (7, 322)] {
+    for (count, work, old_work) in [(5, 213, 197), (6, 275, 259), (7, 338, 322)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -840,16 +1027,23 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
             build(&sources, outer, parent, &children, limit),
             Err(ClearanceSequenceError::Work)
         ));
+        limit.work = NonZeroUsize::new(old_work).unwrap();
+        assert!(matches!(
+            build(&sources, outer, parent, &children, limit),
+            Err(ClearanceSequenceError::Work)
+        ));
         limit.work = NonZeroUsize::new(work).unwrap();
         let owner = build(&sources, outer, parent, &children, limit).unwrap();
+        let oversized = build_width(&sources, outer, parent, &children, 140.0, limit).unwrap();
         let child_count = count - 2;
         let tail_count = count - 4;
         assert_eq!(owner.receipt().nodes, count);
         assert_eq!(owner.receipt().tail, tail_count);
         assert_eq!(owner.receipt().work, work);
+        assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            32 + 8 * count + count * (count - 1) / 2 + 16 * tail_count + 33 * child_count
+            48 + 8 * count + count * (count - 1) / 2 + 16 * tail_count + 33 * child_count
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert_eq!(
@@ -925,7 +1119,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(258).unwrap();
+    short.work = NonZeroUsize::new(274).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -974,7 +1168,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].padding.left = 1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(258).unwrap();
+    one_short.work = NonZeroUsize::new(274).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
