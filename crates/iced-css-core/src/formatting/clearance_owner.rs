@@ -457,6 +457,217 @@ fn amount_error(error: ClearanceError) -> ClearanceOwnerError {
         other => ClearanceOwnerError::Amount(other),
     }
 }
+
+pub(super) fn validate_outer(
+    facts: OuterFacts<'_>,
+    source: usize,
+) -> Result<(), ClearanceOwnerError> {
+    display(facts.display, source, false)?;
+    content(facts.content, facts.generated, source)
+}
+
+pub(super) fn validate_parent(
+    facts: ParentFacts<'_>,
+    source: usize,
+) -> Result<(), ClearanceOwnerError> {
+    parent(facts, source)
+}
+
+pub(super) fn validate_child(
+    facts: ChildFacts<'_>,
+    source: usize,
+    floating: bool,
+    after: bool,
+) -> Result<f32, ClearanceOwnerError> {
+    child(facts, source, floating, after)
+}
+
+pub(super) fn validate_float_width(
+    parent: ParentFacts<'_>,
+    width: f32,
+    source: usize,
+) -> Result<(), ClearanceOwnerError> {
+    nonnegative(width, source, "float_width")?;
+    if Exact::from_f32(width)
+        > Exact::from_f32(parent.containing.right).sub(Exact::from_f32(parent.containing.left))
+    {
+        Err(unsupported(source, OwnerProfileReason::FloatTooWide))
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) struct KernelError {
+    pub source: usize,
+    pub error: ClearanceOwnerError,
+}
+
+pub(super) struct FirstFloatKernel {
+    pub before: BlockVertical,
+    pub placed_float: PlacedFloat,
+}
+
+pub(super) struct FirstFloatInput<'s> {
+    pub parent: ParentFacts<'s>,
+    pub before: ChildFacts<'s>,
+    pub before_height: f32,
+    pub before_source: usize,
+    pub float: ChildFacts<'s>,
+    pub float_height: f32,
+    pub float_width: f32,
+    pub float_source: usize,
+}
+
+pub(super) struct NormalKernel {
+    pub vertical: BlockVertical,
+    pub hypothetical_top: f32,
+    pub zero_clearance_top: Option<f32>,
+    pub clearance: Option<f32>,
+    pub hypothetical_group: MarginGroup,
+    pub actual_groups: [MarginGroup; 2],
+    pub actual_len: usize,
+}
+
+pub(super) fn place_first_float(
+    input: FirstFloatInput<'_>,
+) -> Result<FirstFloatKernel, KernelError> {
+    let before_top = sum(
+        &[input.parent.content_top, input.before.margin.top],
+        "before_top",
+    )
+    .map_err(|error| KernelError {
+        source: input.before_source,
+        error,
+    })?;
+    let before_bottom =
+        sum(&[before_top, input.before_height], "before_bottom").map_err(|error| KernelError {
+            source: input.before_source,
+            error,
+        })?;
+    let float_top =
+        sum(&[before_bottom, input.before.margin.bottom], "float_top").map_err(|error| {
+            KernelError {
+                source: input.float_source,
+                error,
+            }
+        })?;
+    let placed_float = place_float(
+        &[],
+        input.parent.containing,
+        FloatRequest {
+            side: match input.float.display.float {
+                Float::Right => FloatSide::Right,
+                _ => FloatSide::Left,
+            },
+            width: input.float_width,
+            height: input.float_height,
+            containing_top: input.parent.content_top,
+            hypothetical_top: float_top,
+        },
+        NonZeroUsize::MIN,
+    )
+    .map_err(|error| KernelError {
+        source: input.float_source,
+        error: ClearanceOwnerError::FloatPlacement(error),
+    })?
+    .placed;
+    Ok(FirstFloatKernel {
+        before: BlockVertical {
+            top: before_top,
+            bottom: before_bottom,
+        },
+        placed_float,
+    })
+}
+
+pub(super) fn place_next_normal(
+    previous_border_bottom: f32,
+    previous_bottom_margin: f32,
+    previous_source: usize,
+    next: ChildFacts<'_>,
+    next_height: f32,
+    next_source: usize,
+    placed_float: PlacedFloat,
+) -> Result<NormalKernel, KernelError> {
+    let result = (|| {
+        let members = [
+            MarginMember {
+                source_index: previous_source,
+                side: MarginSide::Bottom,
+                value: previous_bottom_margin,
+            },
+            MarginMember {
+                source_index: next_source,
+                side: MarginSide::Top,
+                value: next.margin.top,
+            },
+        ];
+        let hypothetical_group = group(MarginGroupId::HypotheticalPair, members, 2)?;
+        let hypothetical_top = sum(
+            &[
+                previous_border_bottom,
+                hypothetical_group.extrema.collapsed(),
+            ],
+            "hypothetical_top",
+        )?;
+        let selected =
+            lowest_clearance_float_bottom(&[placed_float], next.clear, NonZeroUsize::MIN)
+                .map_err(ClearanceOwnerError::FloatSelection)?;
+        let requirement =
+            classify_clearance(hypothetical_top, selected).map_err(|error| match error {
+                ClearancePresenceError::UnsupportedEquality => {
+                    ClearanceOwnerError::UnsupportedEquality
+                }
+                other => ClearanceOwnerError::Presence(other),
+            })?;
+        let (zero_clearance_top, state, actual_groups, actual_len) = match requirement {
+            ClearanceRequirement::Absent => {
+                let pair = MarginGroup {
+                    id: MarginGroupId::ActualPair,
+                    ..hypothetical_group
+                };
+                (None, ClearanceState::Absent, [pair, pair], 1)
+            }
+            ClearanceRequirement::Required => {
+                let baseline = sum(
+                    &[previous_border_bottom, members[0].value, members[1].value],
+                    "zero_clearance_top",
+                )?;
+                let bottom = selected.ok_or(ClearanceOwnerError::MissingRequiredFloat)?;
+                (
+                    Some(baseline),
+                    ClearanceState::Required {
+                        zero_clearance_border_top: baseline,
+                        lowest_float_bottom: bottom,
+                    },
+                    [
+                        group(MarginGroupId::BeforeBarrier, [members[0], members[0]], 1)?,
+                        group(MarginGroupId::AfterBarrier, [members[1], members[1]], 1)?,
+                    ],
+                    2,
+                )
+            }
+        };
+        let placement = solve_clearance(hypothetical_top, state).map_err(amount_error)?;
+        let bottom = sum(&[placement.border_top, next_height], "after_bottom")?;
+        Ok(NormalKernel {
+            vertical: BlockVertical {
+                top: placement.border_top,
+                bottom,
+            },
+            hypothetical_top,
+            zero_clearance_top,
+            clearance: placement.clearance,
+            hypothetical_group,
+            actual_groups,
+            actual_len,
+        })
+    })();
+    result.map_err(|error| KernelError {
+        source: next_source,
+        error,
+    })
+}
 /// Admit and solve the fixed source profile without allocating owner storage.
 ///
 /// Child counts precede any child traversal; pointer joins and distinct IDs precede
@@ -580,8 +791,7 @@ pub fn build_nested_clearance_owner<'s>(
             }
         }
     }
-    display(outer.display, 0, false)?;
-    content(outer.content, outer.generated, 0)?;
+    validate_outer(outer, 0)?;
     solve_region(
         sources,
         OwnerSourceIndices {
@@ -598,113 +808,43 @@ fn solve_region<'s>(
     indices: OwnerSourceIndices,
     input: ClearanceOwnerInput<'s>,
 ) -> Result<ClearanceOwner<'s>, ClearanceOwnerError> {
-    parent(input.parent, indices.parent)?;
-    let before_height = child(input.before, indices.before, false, false)?;
-    let float_height = child(input.float, indices.float, true, false)?;
-    let after_height = child(input.after, indices.after, false, true)?;
-    nonnegative(input.float_width, indices.float, "float_width")?;
-    if Exact::from_f32(input.float_width)
-        > Exact::from_f32(input.parent.containing.right)
-            .sub(Exact::from_f32(input.parent.containing.left))
-    {
-        return Err(unsupported(indices.float, OwnerProfileReason::FloatTooWide));
-    }
-    let before_top = sum(
-        &[input.parent.content_top, input.before.margin.top],
-        "before_top",
-    )?;
-    let before_bottom = sum(&[before_top, before_height], "before_bottom")?;
-    let float_top = sum(&[before_bottom, input.before.margin.bottom], "float_top")?;
-    let placed_float = place_float(
-        &[],
-        input.parent.containing,
-        FloatRequest {
-            side: match input.float.display.float {
-                Float::Right => FloatSide::Right,
-                _ => FloatSide::Left,
-            },
-            width: input.float_width,
-            height: float_height,
-            containing_top: input.parent.content_top,
-            hypothetical_top: float_top,
-        },
-        NonZeroUsize::MIN,
+    validate_parent(input.parent, indices.parent)?;
+    let before_height = validate_child(input.before, indices.before, false, false)?;
+    let float_height = validate_child(input.float, indices.float, true, false)?;
+    let after_height = validate_child(input.after, indices.after, false, true)?;
+    validate_float_width(input.parent, input.float_width, indices.float)?;
+    let first = place_first_float(FirstFloatInput {
+        parent: input.parent,
+        before: input.before,
+        before_height,
+        before_source: indices.before,
+        float: input.float,
+        float_height,
+        float_width: input.float_width,
+        float_source: indices.float,
+    })
+    .map_err(|failure| failure.error)?;
+    let after = place_next_normal(
+        first.before.bottom,
+        input.before.margin.bottom,
+        indices.before,
+        input.after,
+        after_height,
+        indices.after,
+        first.placed_float,
     )
-    .map_err(ClearanceOwnerError::FloatPlacement)?
-    .placed;
-    let members = [
-        MarginMember {
-            source_index: indices.before,
-            side: MarginSide::Bottom,
-            value: input.before.margin.bottom,
-        },
-        MarginMember {
-            source_index: indices.after,
-            side: MarginSide::Top,
-            value: input.after.margin.top,
-        },
-    ];
-    let hypothetical_group = group(MarginGroupId::HypotheticalPair, members, 2)?;
-    let hypothetical_top = sum(
-        &[before_bottom, hypothetical_group.extrema.collapsed()],
-        "hypothetical_top",
-    )?;
-    let selected =
-        lowest_clearance_float_bottom(&[placed_float], input.after.clear, NonZeroUsize::MIN)
-            .map_err(ClearanceOwnerError::FloatSelection)?;
-    let requirement = classify_clearance(hypothetical_top, selected).map_err(|e| match e {
-        ClearancePresenceError::UnsupportedEquality => ClearanceOwnerError::UnsupportedEquality,
-        other => ClearanceOwnerError::Presence(other),
-    })?;
-    let (zero_clearance_top, state, actual_groups, actual_len) = match requirement {
-        ClearanceRequirement::Absent => {
-            let pair = MarginGroup {
-                id: MarginGroupId::ActualPair,
-                ..hypothetical_group
-            };
-            (None, ClearanceState::Absent, [pair, pair], 1)
-        }
-        ClearanceRequirement::Required => {
-            let baseline = sum(
-                &[before_bottom, members[0].value, members[1].value],
-                "zero_clearance_top",
-            )?;
-            // Required can only result from Some(bottom); do not invent a
-            // primitive validation cause if that internal contract ever changes.
-            let bottom = selected.ok_or(ClearanceOwnerError::MissingRequiredFloat)?;
-            (
-                Some(baseline),
-                ClearanceState::Required {
-                    zero_clearance_border_top: baseline,
-                    lowest_float_bottom: bottom,
-                },
-                [
-                    group(MarginGroupId::BeforeBarrier, [members[0], members[0]], 1)?,
-                    group(MarginGroupId::AfterBarrier, [members[1], members[1]], 1)?,
-                ],
-                2,
-            )
-        }
-    };
-    let placement = solve_clearance(hypothetical_top, state).map_err(amount_error)?;
-    let after_bottom = sum(&[placement.border_top, after_height], "after_bottom")?;
+    .map_err(|failure| failure.error)?;
     Ok(ClearanceOwner {
         sources,
         indices,
-        before: BlockVertical {
-            top: before_top,
-            bottom: before_bottom,
-        },
-        placed_float,
-        after: BlockVertical {
-            top: placement.border_top,
-            bottom: after_bottom,
-        },
-        hypothetical_top,
-        zero_clearance_top,
-        clearance: placement.clearance,
-        hypothetical_group,
-        actual_groups,
-        actual_len,
+        before: first.before,
+        placed_float: first.placed_float,
+        after: after.vertical,
+        hypothetical_top: after.hypothetical_top,
+        zero_clearance_top: after.zero_clearance_top,
+        clearance: after.clearance,
+        hypothetical_group: after.hypothetical_group,
+        actual_groups: after.actual_groups,
+        actual_len: after.actual_len,
     })
 }

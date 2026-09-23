@@ -19,8 +19,11 @@ mod source_presentation_join;
 pub mod source_control_input;
 
 pub mod clearance_source_projection;
+pub mod sibling_source_projection;
 
 pub mod clearance_box_facts;
+pub mod sibling_box_facts;
+pub mod sibling_layout;
 
 mod clearance_profile;
 

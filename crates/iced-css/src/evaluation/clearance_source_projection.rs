@@ -1,7 +1,7 @@
 //! Bounded identity/membership storage for a finite entire captured document.
 //! No CSS box, generated-content, BFC or geometry facts are established here.
 pub use super::clearance_profile::ClearanceProjectionShape;
-use super::clearance_profile::ClearanceSlots;
+use super::clearance_profile::{ClearanceSlots, ProjectionView};
 use crate::{
     animation::engine::EngineError,
     capture::{ConstructionNode, ContentCapability, ManagedContentFamily},
@@ -82,40 +82,64 @@ impl std::fmt::Debug for ClearanceSourceProjection<'_> {
 }
 impl<'h> ClearanceSourceProjection<'h> {
     pub fn host(&self) -> &'h InitialSourceHost {
-        self.host
+        <Self as ProjectionView>::host(self)
     }
     pub fn snapshot(&self) -> &'h InitialSourceSnapshot {
-        self.snapshot
+        <Self as ProjectionView>::snapshot(self)
     }
     /// Geometry-facing identity/membership only: all metadata here is deliberately
     /// empty. Do not run selectors/cascade against these as document metadata.
     /// Use `metadata` or `original_node` for the exact borrowed original objects.
     pub fn nodes(&self) -> &[SourceNode] {
-        self.nodes.as_slice()
+        <Self as ProjectionView>::nodes(self)
     }
     pub fn shape(&self) -> ClearanceProjectionShape {
         self.shape
     }
     pub fn original_index(&self, projected: usize) -> Option<usize> {
-        self.shape.original().get(projected).copied()
+        <Self as ProjectionView>::original_index(self, projected)
     }
     pub fn projected_index(&self, original: usize) -> Option<usize> {
-        self.shape.projected().get(original).copied()
+        <Self as ProjectionView>::projected_index(self, original)
     }
     pub fn original_node(&self, projected: usize) -> Option<&'h ConstructionNode> {
-        self.snapshot
-            .construction()
-            .nodes()
-            .get(self.original_index(projected)?)
+        <Self as ProjectionView>::original_node(self, projected)
     }
     pub fn token(&self, projected: usize) -> Option<&'h SourceRef> {
-        self.snapshot.token(self.original_index(projected)?)
+        <Self as ProjectionView>::token(self, projected)
     }
     pub fn metadata(&self, projected: usize) -> Option<&'h Metadata> {
-        Some(self.original_node(projected)?.metadata())
+        <Self as ProjectionView>::metadata(self, projected)
     }
     pub fn receipt(&self) -> ClearanceProjectionReceipt {
         self.receipt
+    }
+}
+impl<'h> ProjectionView<'h> for ClearanceSourceProjection<'h> {
+    fn host(&self) -> &'h InitialSourceHost {
+        self.host
+    }
+    fn snapshot(&self) -> &'h InitialSourceSnapshot {
+        self.snapshot
+    }
+    fn nodes(&self) -> &[SourceNode] {
+        self.nodes.as_slice()
+    }
+    fn original_index(&self, projected: usize) -> Option<usize> {
+        self.shape.original().get(projected).copied()
+    }
+    fn projected_index(&self, original: usize) -> Option<usize> {
+        self.shape.projected().get(original).copied()
+    }
+    fn original_node(&self, projected: usize) -> Option<&'h ConstructionNode> {
+        self.snapshot
+            .construction()
+            .nodes()
+            .get(self.shape.original().get(projected).copied()?)
+    }
+    fn token(&self, projected: usize) -> Option<&'h SourceRef> {
+        self.snapshot
+            .token(self.shape.original().get(projected).copied()?)
     }
 }
 /// Prepare either a Row/Column root with three empty Row/Column children, or

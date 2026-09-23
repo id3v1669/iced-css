@@ -267,7 +267,10 @@ pub fn display_limits() -> SourceDisplayLimits {
     }
 }
 
-pub use iced_css::evaluation::{clearance_box_facts::*, clearance_source_projection::*};
+pub use iced_css::evaluation::{
+    clearance_box_facts::*, clearance_source_projection::*, sibling_box_facts::*,
+    sibling_source_projection::*,
+};
 pub use iced_css_core::formatting::{clearance::ClearSide, table_borders::BorderStyle};
 pub fn captured() -> InitialSourceHost {
     captured_shape(false)
@@ -298,6 +301,37 @@ pub fn captured_shape(nested: bool) -> InitialSourceHost {
     let (_, construction) = element.into_parts();
     host(construction, None, None)
 }
+pub fn captured_siblings(source_count: usize) -> InitialSourceHost {
+    type Element = CapturedElement<'static, (), iced::Theme, ()>;
+    let names = ["b1", "f", "b2", "b3", "b4"];
+    let children = names[..source_count - 2]
+        .iter()
+        .map(|&id| {
+            adapters::row_from_vec(Vec::<Element>::new(), capture_limits())
+                .unwrap()
+                .style_id(id, attrs())
+                .unwrap()
+                .erase()
+        })
+        .collect();
+    let parent = adapters::column_from_vec(children, capture_limits())
+        .unwrap()
+        .style_id("p", attrs())
+        .unwrap()
+        .erase();
+    let outer = adapters::column_from_vec(vec![parent], capture_limits())
+        .unwrap()
+        .style_id("o", attrs())
+        .unwrap()
+        .erase();
+    let (_, construction) = outer.into_parts();
+    let host = host(construction, None, None);
+    assert_eq!(
+        host.snapshot().unwrap().construction().nodes().len(),
+        source_count
+    );
+    host
+}
 pub fn fact_limits() -> ClearanceBoxFactsLimits {
     let d = display_limits();
     ClearanceBoxFactsLimits {
@@ -327,6 +361,34 @@ pub fn fixture(
         ClearanceProjectionLimits {
             work: nz(27),
             retained_bytes: bound(),
+        },
+    )
+    .unwrap();
+    let ua = catalog();
+    let graph = graph(css, context(100, 100));
+    let sheets = controls(&[1], true, 100);
+    let bindings = [binding(&graph, GraphOrigin::Author(sheet(1)))];
+    let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
+    let display = evaluate_source_display(snapshot, &bundle, display_limits()).unwrap();
+    check(&projection, &display);
+}
+pub fn sibling_fixture(
+    source_count: usize,
+    css: &str,
+    check: impl FnOnce(
+        &SiblingSourceProjection<'_>,
+        &iced_css::evaluation::source_display::SourceDisplay<'_, '_, '_>,
+    ),
+) {
+    let host = captured_siblings(source_count);
+    let snapshot = host.snapshot().unwrap();
+    let projection = prepare_sibling_source_projection(
+        &host,
+        snapshot,
+        SiblingProjectionLimits {
+            sources: bound(),
+            work: bound(),
+            retained_bytes: nz(20_000_000),
         },
     )
     .unwrap();

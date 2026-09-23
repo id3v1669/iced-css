@@ -1,4 +1,29 @@
 //! Finite whole-document storage and reciprocal postorder mappings.
+use crate::{
+    capture::ConstructionNode,
+    host::source_publication::{InitialSourceHost, InitialSourceSnapshot},
+};
+use iced_css_core::{
+    identity::SourceRef,
+    source::{Metadata, SourceNode},
+};
+
+/// Internal read-only projection contract shared by fixed and dynamic owners.
+/// Original objects retain the host lifetime; projected nodes retain the owner borrow.
+pub(super) trait ProjectionView<'h> {
+    fn host(&self) -> &'h InitialSourceHost;
+    fn snapshot(&self) -> &'h InitialSourceSnapshot;
+    fn nodes(&self) -> &[SourceNode];
+    fn original_index(&self, projected: usize) -> Option<usize>;
+    fn projected_index(&self, original: usize) -> Option<usize>;
+    fn original_node(&self, projected: usize) -> Option<&'h ConstructionNode>;
+    fn token(&self, projected: usize) -> Option<&'h SourceRef>;
+
+    fn metadata(&self, projected: usize) -> Option<&'h Metadata> {
+        Some(self.original_node(projected)?.metadata())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClearanceProjectionShape {
     RootRegion,

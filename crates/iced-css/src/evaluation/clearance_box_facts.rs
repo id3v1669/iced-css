@@ -1,7 +1,7 @@
 //! Bounded computed box facts from exact captured source and stylesheet owners.
 //! This stage establishes neither used geometry nor a root formatting context.
 use super::{
-    clearance_profile::{ClearanceProjectionShape, ClearanceSlots},
+    clearance_profile::{ClearanceProjectionShape, ClearanceSlots, ProjectionView},
     clearance_source_projection::ClearanceSourceProjection,
     source_display::SourceDisplay,
 };
@@ -231,6 +231,43 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
     display: &'d SourceDisplay<'s, 'b, 'r>,
     limits: ClearanceBoxFactsLimits,
 ) -> Result<ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r>, ClearanceBoxFactsError> {
+    let mut prepared = prepare_box_facts(projection, display, limits)?;
+    let mut rows = match projection.shape() {
+        ClearanceProjectionShape::RootRegion => ClearanceSlots::Four([resolve::initial_row(); 4]),
+        ClearanceProjectionShape::NestedRegion => ClearanceSlots::Five([resolve::initial_row(); 5]),
+    };
+    evaluate_box_rows(
+        projection,
+        display,
+        limits,
+        &prepared.ids,
+        prepared.per_target,
+        &mut prepared.receipt,
+        rows.as_mut_slice(),
+    )?;
+    Ok(ClearanceBoxFacts {
+        projection,
+        display,
+        rows,
+        receipt: prepared.receipt,
+    })
+}
+
+pub(super) struct PreparedBoxFacts {
+    pub(super) ids: [PropertyId; 21],
+    pub(super) receipt: ClearanceBoxFactsReceipt,
+    pub(super) per_target: RuleBatchLimits,
+}
+
+pub(super) fn initial_box_fact() -> ClearanceBoxFact {
+    resolve::initial_row()
+}
+
+pub(super) fn prepare_box_facts<'h>(
+    projection: &impl ProjectionView<'h>,
+    display: &SourceDisplay<'_, '_, '_>,
+    limits: ClearanceBoxFactsLimits,
+) -> Result<PreparedBoxFacts, ClearanceBoxFactsError> {
     use ClearanceBoxFactsError as E;
     let mut remaining = limits.work.get();
     charge(&mut remaining, 1)?;
@@ -243,22 +280,21 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
     if nodes.len() != count || display.node_count() != count || snapshot.tokens().len() != count {
         return Err(E::Nodes);
     }
-    let mut originals = [0; 5];
-    for (projected, original) in originals[..count].iter_mut().enumerate() {
+    for projected in 0..count {
         charge(&mut remaining, 1)?;
-        *original = projection
+        let original = projection
             .original_index(projected)
             .ok_or(E::SourceJoin { projected })?;
-        let joined = projection.projected_index(*original) == Some(projected)
+        let joined = projection.projected_index(original) == Some(projected)
             && projection
                 .original_node(projected)
-                .zip(nodes.get(*original))
+                .zip(nodes.get(original))
                 .is_some_and(|(a, b)| std::ptr::eq(a, b))
             && projection
                 .token(projected)
-                .zip(display.token(*original))
+                .zip(display.token(original))
                 .is_some_and(|(a, b)| std::ptr::eq(a, b))
-            && display.resolution(*original).is_some();
+            && display.resolution(original).is_some();
         if !joined {
             return Err(E::SourceJoin { projected });
         }
@@ -311,7 +347,7 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
         limits.numeric_work,
         E::NumericWork,
     )?;
-    let mut receipt = ClearanceBoxFactsReceipt {
+    let receipt = ClearanceBoxFactsReceipt {
         targets,
         work: limits.work.get() - remaining,
         rule_visits,
@@ -322,9 +358,6 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
         numeric_calls: 0,
         owned_heap_bytes: 0,
     };
-    let source = snapshot
-        .selector_source(limits.selectors)
-        .map_err(E::Source)?;
     // Match SourceDisplay's addressability cap: a larger caller allowance must
     // not reject a small admissible matcher stack.
     let mut per_target = limits.per_target;
@@ -333,18 +366,44 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
         .matching
         .retained_bytes
         .min(NonZeroUsize::new(isize::MAX as usize).expect("isize::MAX is positive"));
-    let mut rows = match projection.shape() {
-        ClearanceProjectionShape::RootRegion => ClearanceSlots::Four([resolve::initial_row(); 4]),
-        ClearanceProjectionShape::NestedRegion => ClearanceSlots::Five([resolve::initial_row(); 5]),
-    };
-    for (projected, original) in originals[..count].iter().copied().enumerate() {
+    Ok(PreparedBoxFacts {
+        ids,
+        receipt,
+        per_target,
+    })
+}
+
+pub(super) fn evaluate_box_rows<'h>(
+    projection: &impl ProjectionView<'h>,
+    display: &SourceDisplay<'_, '_, '_>,
+    limits: ClearanceBoxFactsLimits,
+    ids: &[PropertyId; 21],
+    per_target: RuleBatchLimits,
+    receipt: &mut ClearanceBoxFactsReceipt,
+    rows: &mut [ClearanceBoxFact],
+) -> Result<(), ClearanceBoxFactsError> {
+    use ClearanceBoxFactsError as E;
+    let snapshot = projection.snapshot();
+    let nodes = snapshot.construction().nodes();
+    let count = projection.nodes().len();
+    if rows.len() != count {
+        return Err(E::Nodes);
+    }
+    let bundle = display.bundle();
+    let source = snapshot
+        .selector_source(limits.selectors)
+        .map_err(E::Source)?;
+    for projected in 0..count {
+        let original = projection
+            .original_index(projected)
+            .ok_or(E::SourceJoin { projected })?;
         let parent = nodes[original]
             .parent()
             .map(|index| {
                 projection
                     .projected_index(index)
                     .filter(|&p| p < projected)
-                    .map(|p| (index, rows.as_slice()[p]))
+                    .map(|p| (index, rows[p]))
                     .ok_or(E::SourceJoin { projected })
             })
             .transpose()?;
@@ -367,7 +426,7 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
         })?;
         let mut row = resolve::element(
             &winners,
-            &ids,
+            ids,
             original,
             parent,
             limits.numeric,
@@ -401,14 +460,9 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
                 BoxFactTarget::Element => unreachable!(),
             }
         }
-        rows.as_mut_slice()[projected] = row;
+        rows[projected] = row;
     }
-    Ok(ClearanceBoxFacts {
-        projection,
-        display,
-        rows,
-        receipt,
-    })
+    Ok(())
 }
 fn charge(remaining: &mut usize, amount: usize) -> Result<(), ClearanceBoxFactsError> {
     *remaining = remaining

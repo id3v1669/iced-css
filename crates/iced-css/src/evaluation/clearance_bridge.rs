@@ -6,8 +6,10 @@
 //! The height entry also derives bounded P content height from those results.
 //! These entries do not compute O placement, clipping or native geometry.
 use super::{
-    clearance_box_facts::{BoxLengthFact, BoxOverflow, ClearanceBoxFacts},
+    clearance_box_facts::{BoxLengthFact, BoxOverflow, ClearanceBoxFact, ClearanceBoxFacts},
+    clearance_profile::ProjectionView,
     clearance_source_projection::ClearanceProjectionShape,
+    source_display::SourceDisplay,
 };
 use iced_css_core::{
     formatting::{
@@ -80,7 +82,7 @@ impl std::error::Error for CapturedClearanceError {
         }
     }
 }
-fn unsupported(
+pub(super) fn unsupported(
     projected: usize,
     property: &'static str,
     reason: CapturedClearanceUnsupported,
@@ -91,7 +93,7 @@ fn unsupported(
         reason,
     }
 }
-fn edges([top, right, bottom, left]: [f32; 4]) -> OwnerEdges {
+pub(super) fn edges([top, right, bottom, left]: [f32; 4]) -> OwnerEdges {
     OwnerEdges {
         top,
         right,
@@ -133,7 +135,7 @@ fn shape_preflight(
     }
     Ok(())
 }
-fn same_source(supplied: &SourceNode, actual: &SourceNode) -> bool {
+pub(super) fn same_source(supplied: &SourceNode, actual: &SourceNode) -> bool {
     std::ptr::eq(supplied, actual) && supplied.instance == actual.instance
 }
 /// Copied admitted style data and actual sources, with no provisional geometry.
@@ -185,11 +187,90 @@ impl<'p> AdmittedRegion<'p> {
         .map_err(CapturedClearanceError::Core)
     }
 }
-fn auto_length(value: BoxLengthFact) -> AutoLength {
+pub(super) fn auto_length(value: BoxLengthFact) -> AutoLength {
     match value {
         BoxLengthFact::Auto { .. } => AutoLength::Auto,
         BoxLengthFact::Absolute(value) => AutoLength::Value(value.pixels),
     }
+}
+
+pub(super) fn joined_display<'h>(
+    projection: &impl ProjectionView<'h>,
+    display: &SourceDisplay<'_, '_, '_>,
+    projected: usize,
+) -> Result<DisplayResolution, CapturedClearanceError> {
+    let error = CapturedClearanceError::Join { projected };
+    let original = projection.original_index(projected).ok_or(error)?;
+    if projection.projected_index(original) != Some(projected) {
+        return Err(error);
+    }
+    let projected_token = projection.token(projected).ok_or(error)?;
+    let display_token = display.token(original).ok_or(error)?;
+    if !std::ptr::eq(projected_token, display_token) {
+        return Err(error);
+    }
+    display.resolution(original).copied().ok_or(error)
+}
+
+pub(super) fn joined_direction<'h>(
+    projection: &impl ProjectionView<'h>,
+    display: &SourceDisplay<'_, '_, '_>,
+    projected: usize,
+) -> Result<Direction, CapturedClearanceError> {
+    let error = CapturedClearanceError::Join { projected };
+    let original = projection.original_index(projected).ok_or(error)?;
+    if projection.projected_index(original) != Some(projected) {
+        return Err(error);
+    }
+    let projected_token = projection.token(projected).ok_or(error)?;
+    let display_token = display.token(original).ok_or(error)?;
+    if !std::ptr::eq(projected_token, display_token) {
+        return Err(error);
+    }
+    let bidi = display.bidi_style(original).ok_or(error)?;
+    Ok(match bidi.direction() {
+        ComputedDirection::LeftToRight => Direction::Ltr,
+        ComputedDirection::RightToLeft => Direction::Rtl,
+    })
+}
+
+pub(super) fn child_facts_from_row<'p>(
+    nodes: &'p [SourceNode],
+    display: DisplayResolution,
+    row: &ClearanceBoxFact,
+    projected: usize,
+    height: OwnerHeight,
+) -> Result<ChildFacts<'p>, CapturedClearanceError> {
+    use CapturedClearanceError as E;
+    use CapturedClearanceUnsupported as U;
+    let mut margin = [0.; 4];
+    for (edge, property) in ["margin-top", "margin-right", "margin-bottom", "margin-left"]
+        .into_iter()
+        .enumerate()
+    {
+        margin[edge] = match row.margin[edge] {
+            BoxLengthFact::Absolute(value) => value.pixels,
+            BoxLengthFact::Auto { .. } => {
+                return Err(unsupported(projected, property, U::AutoMargin));
+            }
+        };
+    }
+    Ok(ChildFacts {
+        source: nodes.get(projected).ok_or(E::Join { projected })?,
+        display,
+        context: if projected == 3 {
+            ChildContext::FloatBfc
+        } else {
+            ChildContext::OrdinaryNonBfc
+        },
+        content: OwnerContent::NoOwnContentNonReplaced,
+        generated: OwnerGenerated::None,
+        height,
+        margin: edges(margin),
+        border: edges(row.border_widths()),
+        padding: edges(row.padding.map(|value| value.pixels)),
+        clear: row.clear.value,
+    })
 }
 fn admit_captured_region<'p>(
     facts: &ClearanceBoxFacts<'p, '_, '_, '_, '_, '_>,
@@ -255,36 +336,13 @@ fn admit_captured_region<'p>(
     };
     let child = |projected: usize| {
         let r = row(projected)?;
-        let mut margin = [0.; 4];
-        for (edge, property) in ["margin-top", "margin-right", "margin-bottom", "margin-left"]
-            .into_iter()
-            .enumerate()
-        {
-            margin[edge] = match r.margin[edge] {
-                BoxLengthFact::Absolute(value) => value.pixels,
-                BoxLengthFact::Auto { .. } => {
-                    return Err(unsupported(projected, property, U::AutoMargin));
-                }
-            };
-        }
-        Ok(ChildFacts {
-            source: &nodes[projected],
-            display: display(projected)?,
-            context: if projected == 3 {
-                ChildContext::FloatBfc
-            } else {
-                ChildContext::OrdinaryNonBfc
-            },
-            // Projection admits only Row/Column own-content capabilities; the
-            // private batch has resolved both pseudos absent on all five sources.
-            content: OwnerContent::NoOwnContentNonReplaced,
-            generated: OwnerGenerated::None,
-            height: heights[projected - 2],
-            margin: edges(margin),
-            border: edges(r.border_widths()),
-            padding: edges(r.padding.map(|v| v.pixels)),
-            clear: r.clear.value,
-        })
+        child_facts_from_row(
+            nodes,
+            display(projected)?,
+            r,
+            projected,
+            heights[projected - 2],
+        )
     };
     Ok(AdmittedRegion {
         nodes,
@@ -395,18 +453,8 @@ fn place_admitted_horizontal(
     content_width: f32,
 ) -> Result<BlockHorizontalPlacement, HorizontalClearanceError> {
     use HorizontalClearanceError as E;
-    let projection = facts.projection();
-    let original = projection
-        .original_index(0)
-        .ok_or(E::Captured(CapturedClearanceError::Join { projected: 0 }))?;
-    let bidi = facts
-        .display()
-        .bidi_style(original)
-        .ok_or(E::Captured(CapturedClearanceError::Join { projected: 0 }))?;
-    let direction = match bidi.direction() {
-        ComputedDirection::LeftToRight => Direction::Ltr,
-        ComputedDirection::RightToLeft => Direction::Rtl,
-    };
+    let direction =
+        joined_direction(facts.projection(), facts.display(), 0).map_err(E::Captured)?;
     place_block_horizontal(
         content_left,
         BlockWidthInput {
