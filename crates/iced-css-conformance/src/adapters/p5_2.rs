@@ -1,5 +1,6 @@
 use iced_css_core::formatting::{
     block::AutoLength,
+    clearance::{ClearanceState, solve_clearance},
     floats::{Band, FloatRequest, FloatSide, PlacedFloat, exclusion_band, place_float},
     shrink::{ShrinkWidthInput, solve_shrink_width},
 };
@@ -13,6 +14,22 @@ enum Scenario {
     ShrinkToFit(ShrinkToFit),
     ExclusionBand(Exclusion),
     PlaceFloat(Placement),
+    Clearance(ClearanceInput),
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClearanceInput {
+    hypothetical_top: f32,
+    state: ClearancePresence,
+}
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ClearancePresence {
+    Absent {},
+    Required {
+        zero_clearance_border_top: f32,
+        lowest_float_bottom: f32,
+    },
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,12 +89,26 @@ fn floats(values: &[Float]) -> Result<Vec<PlacedFloat>, String> {
         })
         .collect()
 }
-/// Float placement and exclusion bands, plus the shrink-to-fit width the float category
-/// feeds them. Every scenario calls product code; none returns a constant. Expectations
-/// are compared as raw JSON numbers rather than the bit encoding `p5_1` uses, which is
-/// safe only because every value these scenarios produce is exactly representable.
+/// Float placement, exclusion bands, shrink-to-fit width and explicit clearance
+/// amounts. Every scenario calls product code. Outputs serialize the resulting f32
+/// values as ordinary JSON numbers; core tests cover bit-sensitive rounding cases.
 pub fn run(input: &Value) -> crate::CaseResult {
     match serde_json::from_value(input.clone()).map_err(|e| e.to_string())? {
+        Scenario::Clearance(input) => {
+            let state = match input.state {
+                ClearancePresence::Absent {} => ClearanceState::Absent,
+                ClearancePresence::Required {
+                    zero_clearance_border_top,
+                    lowest_float_bottom,
+                } => ClearanceState::Required {
+                    zero_clearance_border_top,
+                    lowest_float_bottom,
+                },
+            };
+            let result =
+                solve_clearance(input.hypothetical_top, state).map_err(|e| e.to_string())?;
+            Ok(json!({"border_top": result.border_top, "clearance": result.clearance}))
+        }
         Scenario::ShrinkToFit(input) => {
             // The float category's auto width is exactly the containing-block
             // arithmetic of CSS 2.2 §10.3.5 with no margins, borders or padding.

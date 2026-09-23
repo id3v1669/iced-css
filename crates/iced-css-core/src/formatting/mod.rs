@@ -47,3 +47,5 @@ pub mod table_repair_stage2;
 pub mod table_repair_stage3;
 
 pub mod table_row_inventory;
+
+pub mod clearance;

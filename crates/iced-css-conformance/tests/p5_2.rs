@@ -213,3 +213,37 @@ fn a_band_reflects_only_the_floats_that_actually_occupy_it() {
     );
     assert_eq!(zero_width["left"], json!(0.0));
 }
+
+#[test]
+fn clearance_amount_preserves_signed_presence_through_product_code() {
+    let run = iced_css_conformance::registry::lookup("p5_2").unwrap();
+    for (baseline, amount) in [(5.0, 1.0), (6.0, 0.0), (7.0, -1.0)] {
+        let input = json!({"scenario":"clearance", "hypothetical_top":4.0,
+            "state":{"kind":"required", "zero_clearance_border_top":baseline,
+                "lowest_float_bottom":6.0}});
+        assert_eq!(
+            run(&input).unwrap(),
+            json!({"border_top":6.0,"clearance":amount})
+        );
+    }
+    assert_eq!(
+        run(&json!({"scenario":"clearance","hypothetical_top":4.0,
+        "state":{"kind":"absent"}}))
+        .unwrap(),
+        json!({"border_top":4.0,"clearance":null})
+    );
+}
+
+#[test]
+fn clearance_adapter_rejects_unknown_or_incomplete_state() {
+    let run = iced_css_conformance::registry::lookup("p5_2").unwrap();
+    for state in [
+        json!({"kind":"unknown"}),
+        json!({"kind":"required"}),
+        json!({"kind":"absent","zero_clearance_border_top":0.0}),
+    ] {
+        assert!(
+            run(&json!({"scenario":"clearance","hypothetical_top":0.0,"state":state})).is_err()
+        );
+    }
+}
