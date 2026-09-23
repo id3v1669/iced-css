@@ -167,3 +167,75 @@ pub fn solve_block_width(input: BlockWidthInput) -> Result<BlockWidthResult, Blo
         passes,
     })
 }
+
+/// Checked finite publication boundaries for a block's content edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockCoordinateStage {
+    ContentLeft,
+    ContentRight,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockHorizontalError {
+    InvalidOrigin,
+    Width(BlockWidthError),
+    Unrepresentable { stage: BlockCoordinateStage },
+}
+impl std::fmt::Display for BlockHorizontalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "normal block horizontal placement: {self:?}")
+    }
+}
+impl std::error::Error for BlockHorizontalError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Width(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+/// Independently published used dimensions and content endpoints. Their rounded
+/// values need not satisfy exact width closure; even positive width may collapse.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockHorizontalPlacement {
+    pub used: BlockWidthResult,
+    pub content: super::floats::Band,
+}
+impl BlockHorizontalPlacement {
+    pub fn collapsed_positive_width(&self) -> bool {
+        self.used.width > 0. && self.content.left == self.content.right
+    }
+}
+/// Solve width once, then publish the exact four-term left sum as nearest/ties-even
+/// f32. Publish right from that published left plus published used width. These
+/// bounded representation stages are engineering policy, not CSS rounding rules.
+/// Finite ordered collapsed bands are admitted without changing used dimensions.
+/// # Errors
+/// Rejects nonfinite origin before width validation, preserves width errors, and
+/// names the coordinate stage when its final conversion cannot remain finite.
+pub fn place_block_horizontal(
+    containing_left: f32,
+    input: BlockWidthInput,
+) -> Result<BlockHorizontalPlacement, BlockHorizontalError> {
+    if !containing_left.is_finite() {
+        return Err(BlockHorizontalError::InvalidOrigin);
+    }
+    let used = solve_block_width(input).map_err(BlockHorizontalError::Width)?;
+    let left = Exact::from_f32(containing_left)
+        .add(Exact::from_f32(used.margin_left))
+        .add(Exact::from_f32(input.border_left))
+        .add(Exact::from_f32(input.padding_left))
+        .to_f32()
+        .map_err(|_| BlockHorizontalError::Unrepresentable {
+            stage: BlockCoordinateStage::ContentLeft,
+        })?;
+    let right = Exact::from_f32(left)
+        .add(Exact::from_f32(used.width))
+        .to_f32()
+        .map_err(|_| BlockHorizontalError::Unrepresentable {
+            stage: BlockCoordinateStage::ContentRight,
+        })?;
+    Ok(BlockHorizontalPlacement {
+        used,
+        content: super::floats::Band { left, right },
+    })
+}
