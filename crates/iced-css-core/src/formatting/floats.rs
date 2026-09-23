@@ -61,6 +61,8 @@ pub struct FloatPlacement {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatError {
     InvalidInput(&'static str),
+    /// A computed margin-box edge cannot be represented as a finite f32.
+    Unrepresentable,
     /// The band budget was exhausted. Candidates are bounded by the float count plus
     /// one, so a budget of `floats.len() + 1` can never hit this; it is a resource
     /// guard rather than a layout outcome.
@@ -72,6 +74,23 @@ impl std::fmt::Display for FloatError {
     }
 }
 impl std::error::Error for FloatError {}
+fn checked_placement(
+    placed: PlacedFloat,
+    bands: usize,
+    overflows: bool,
+) -> Result<FloatPlacement, FloatError> {
+    if ![placed.left, placed.right, placed.top, placed.bottom]
+        .iter()
+        .all(|edge| edge.is_finite())
+    {
+        return Err(FloatError::Unrepresentable);
+    }
+    Ok(FloatPlacement {
+        placed,
+        bands,
+        overflows,
+    })
+}
 fn finite(value: f32, field: &'static str) -> Result<(), FloatError> {
     if value.is_finite() {
         Ok(())
@@ -173,7 +192,9 @@ pub fn next_band_edge(floats: &[PlacedFloat], y: f32) -> Result<Option<f32>, Flo
 ///
 /// # Errors
 /// Returns [`FloatError::InvalidInput`] for a nonfinite or negative measurement and
-/// [`FloatError::Work`] when the band budget is exhausted.
+/// [`FloatError::Work`] when the band budget is exhausted. Computed nonfinite edges
+/// return [`FloatError::Unrepresentable`]; finite overflow outside the containing
+/// block is still a successful placement with `overflows` set.
 pub fn place_float(
     floats: &[PlacedFloat],
     containing: Band,
@@ -213,8 +234,8 @@ pub fn place_float(
                 FloatSide::Left => (available_left, available_left + request.width),
                 FloatSide::Right => (available_right - request.width, available_right),
             };
-            return Ok(FloatPlacement {
-                placed: PlacedFloat {
+            return checked_placement(
+                PlacedFloat {
                     side: request.side,
                     left,
                     right,
@@ -222,8 +243,8 @@ pub fn place_float(
                     bottom: y + request.height,
                 },
                 bands,
-                overflows: false,
-            });
+                false,
+            );
         }
         match next_band_edge(floats, y)? {
             Some(next) => y = next,
@@ -238,8 +259,8 @@ pub fn place_float(
                     FloatSide::Left => (containing.left, containing.left + request.width),
                     FloatSide::Right => (containing.right - request.width, containing.right),
                 };
-                return Ok(FloatPlacement {
-                    placed: PlacedFloat {
+                return checked_placement(
+                    PlacedFloat {
                         side: request.side,
                         left,
                         right,
@@ -247,8 +268,8 @@ pub fn place_float(
                         bottom: y + request.height,
                     },
                     bands,
-                    overflows: true,
-                });
+                    true,
+                );
             }
         }
     }
