@@ -124,8 +124,24 @@ impl PrincipalChildBox {
     pub fn used_width(&self) -> f32 {
         self.used_width
     }
+    /// Returns the ordinary block-width result for every normal child.
+    /// `None` identifies the admitted float; no normal child has an absent result.
     pub fn normal_width(&self) -> Option<BlockWidthResult> {
         self.normal_width
+    }
+    /// Returns the retained normal solver margin, or the float category's used zero.
+    pub fn used_margin_left(&self) -> f32 {
+        match self.normal_width {
+            Some(used) => used.margin_left,
+            None => 0.0,
+        }
+    }
+    /// Returns the retained normal solver margin, or the float category's used zero.
+    pub fn used_margin_right(&self) -> f32 {
+        match self.normal_width {
+            Some(used) => used.margin_right,
+            None => 0.0,
+        }
     }
     pub fn used_height(&self) -> f32 {
         self.used_height
@@ -309,9 +325,10 @@ impl std::error::Error for SiblingLayoutError {
 /// proportional join, profile scan, or allocation. Nineteen constant-size actions
 /// per child cover typed conversion and retained horizontal facts; 64 actions per
 /// normal cover Auto categories and a possible minimum-width category rerun. Each
-/// normal still has one horizontal producer invocation. The core is invoked
-/// exactly once. Temporary child facts are released before the source-only output
-/// is published.
+/// normal still has one horizontal producer invocation. The core is invoked exactly
+/// once, with computed horizontal Auto preserved for floats, whose admitted used
+/// margins are zero; computed margin observations remain unchanged. Temporary child
+/// facts are released before the source-only output is published.
 ///
 /// # Errors
 /// Returns the first failure in the documented facade order and never publishes a
@@ -429,7 +446,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 row,
                 source,
                 height,
-                ChildMarginMode::SequenceNormals,
+                ChildMarginMode::SequenceHorizontal,
             )
             .map_err(E::Captured)?,
         );

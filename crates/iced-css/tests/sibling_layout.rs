@@ -2,8 +2,8 @@
 mod support;
 
 use iced_css::evaluation::sibling_layout::{
-    PrincipalChildKind, PrincipalEdges, SiblingLayoutError, SiblingLayoutLimits,
-    build_captured_sibling_layout,
+    CapturedSiblingLayout, PrincipalChildKind, PrincipalEdges, SiblingLayoutError,
+    SiblingLayoutLimits, build_captured_sibling_layout,
 };
 use iced_css::evaluation::{
     clearance_box_facts::{
@@ -26,6 +26,7 @@ use iced_css_core::formatting::{
     },
     clearance_sequence::{ClearanceSequenceError, ClearanceSequenceLimits},
     first_child_origin::{FirstChildOriginError, OriginCoordinateStage},
+    floats::PlacedFloat,
 };
 use support::*;
 
@@ -60,6 +61,67 @@ fn baseline_css() -> &'static str {
         #b2 { height: 1px; margin-top: 3px; margin-bottom: 3px; clear: both; }
         #b3 { height: 1px; margin-top: 2px; margin-bottom: 4px; clear: both; }
     "
+}
+
+fn assert_float_auto_case(rule: &str, left: f32, right: f32) {
+    let css = format!("{} #f {{ {rule} }}", baseline_css());
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: 0.0,
+                content_width: 100.0,
+                content_top: 10.0,
+            },
+            layout_limits(),
+        )
+        .unwrap();
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!(child.normal_width(), None);
+        assert_eq!(child.used_margin_left().to_bits(), 0.0f32.to_bits());
+        assert_eq!(child.used_margin_right().to_bits(), 0.0f32.to_bits());
+        assert_eq!(child.used_width(), 10.0);
+        assert_eq!(
+            child.content(),
+            PrincipalEdges {
+                left,
+                right,
+                top: 16.0,
+                bottom: 18.0
+            }
+        );
+        assert_eq!(
+            child.computed_margin_left(),
+            facts.row(3).unwrap().margin[3]
+        );
+        assert_eq!(
+            child.computed_margin_right(),
+            facts.row(3).unwrap().margin[1]
+        );
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+    });
+}
+
+#[test]
+fn float_paired_auto_margins_use_zero_in_actual_css() {
+    assert_float_auto_case("margin-left:auto; margin-right:auto;", 0.0, 10.0);
+}
+
+#[test]
+fn right_float_single_auto_margin_stays_flush_right() {
+    assert_float_auto_case(
+        "float:right; margin-left:auto; margin-right:0;",
+        90.0,
+        100.0,
+    );
 }
 
 fn assert_authored_margin_case(rule: &str, expected: BlockWidthResult, left: f32, right: f32) {
@@ -513,12 +575,122 @@ struct TailVerticalObservation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+struct PrincipalObservation {
+    source: usize,
+    kind: PrincipalChildKind,
+    normal_width: Option<BlockWidthResult>,
+    used_margin_left: f32,
+    used_margin_right: f32,
+    used_width: f32,
+    content: PrincipalEdges,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct VerticalObservation {
     children: Vec<(usize, f32, f32)>,
+    principals: Vec<PrincipalObservation>,
     before: (f32, f32),
     float: (f32, f32),
     tail: Vec<TailVerticalObservation>,
+    parent_horizontal: (f32, f32, f32),
     parent: (f32, f32, f32),
+}
+
+fn observe_layout(layout: &CapturedSiblingLayout<'_>) -> VerticalObservation {
+    VerticalObservation {
+        children: layout
+            .children()
+            .iter()
+            .map(|child| {
+                (
+                    child.source_index(),
+                    child.content().top,
+                    child.content().bottom,
+                )
+            })
+            .collect(),
+        principals: layout
+            .children()
+            .iter()
+            .map(|child| {
+                let normal_width = child.normal_width();
+                match child.kind() {
+                    PrincipalChildKind::Normal => {
+                        let width = normal_width.unwrap();
+                        assert_eq!(
+                            child.used_margin_left().to_bits(),
+                            width.margin_left.to_bits()
+                        );
+                        assert_eq!(
+                            child.used_margin_right().to_bits(),
+                            width.margin_right.to_bits()
+                        );
+                        assert_eq!(child.used_width().to_bits(), width.width.to_bits());
+                    }
+                    PrincipalChildKind::Float => {
+                        assert_eq!(normal_width, None);
+                        assert_eq!(child.used_margin_left().to_bits(), 0.0f32.to_bits());
+                        assert_eq!(child.used_margin_right().to_bits(), 0.0f32.to_bits());
+                    }
+                }
+                PrincipalObservation {
+                    source: child.source_index(),
+                    kind: child.kind(),
+                    normal_width,
+                    used_margin_left: child.used_margin_left(),
+                    used_margin_right: child.used_margin_right(),
+                    used_width: child.used_width(),
+                    content: child.content(),
+                }
+            })
+            .collect(),
+        before: (
+            layout.sequence().before().top,
+            layout.sequence().before().bottom,
+        ),
+        float: (
+            layout.sequence().placed_float().top,
+            layout.sequence().placed_float().bottom,
+        ),
+        tail: layout
+            .sequence()
+            .tail()
+            .iter()
+            .map(|record| TailVerticalObservation {
+                source: record.source_index(),
+                top: record.vertical().top,
+                bottom: record.vertical().bottom,
+                hypothetical_top: record.hypothetical_top(),
+                zero_clearance_top: record.zero_clearance_top(),
+                clearance: record.clearance(),
+                barrier_source: record.barrier_source_index(),
+                hypothetical_group: observe_margin_group(record.hypothetical_group()),
+                actual_groups: record
+                    .actual_groups()
+                    .iter()
+                    .map(observe_margin_group)
+                    .collect(),
+            })
+            .collect(),
+        parent_horizontal: (
+            layout.parent().content().left,
+            layout.parent().content().right,
+            layout.parent().horizontal().used.width,
+        ),
+        parent: (
+            layout.parent().height().content_bottom,
+            layout.parent().height().used_height,
+            layout.parent().bottom().padding_bottom,
+        ),
+    }
+}
+
+fn assert_same_vertical(actual: &VerticalObservation, expected: &VerticalObservation) {
+    assert_eq!(actual.children, expected.children);
+    assert_eq!(actual.before, expected.before);
+    assert_eq!(actual.float, expected.float);
+    assert_eq!(actual.tail, expected.tail);
+    assert_eq!(actual.parent, expected.parent);
 }
 
 fn actual_horizontal_observation(
@@ -591,52 +763,7 @@ fn actual_horizontal_observation(
             computed_right,
             facts.row(selected_source).unwrap().margin[1]
         );
-        let vertical = VerticalObservation {
-            children: layout
-                .children()
-                .iter()
-                .map(|child| {
-                    (
-                        child.source_index(),
-                        child.content().top,
-                        child.content().bottom,
-                    )
-                })
-                .collect(),
-            before: (
-                layout.sequence().before().top,
-                layout.sequence().before().bottom,
-            ),
-            float: (
-                layout.sequence().placed_float().top,
-                layout.sequence().placed_float().bottom,
-            ),
-            tail: layout
-                .sequence()
-                .tail()
-                .iter()
-                .map(|record| TailVerticalObservation {
-                    source: record.source_index(),
-                    top: record.vertical().top,
-                    bottom: record.vertical().bottom,
-                    hypothetical_top: record.hypothetical_top(),
-                    zero_clearance_top: record.zero_clearance_top(),
-                    clearance: record.clearance(),
-                    barrier_source: record.barrier_source_index(),
-                    hypothetical_group: observe_margin_group(record.hypothetical_group()),
-                    actual_groups: record
-                        .actual_groups()
-                        .iter()
-                        .map(observe_margin_group)
-                        .collect(),
-                })
-                .collect(),
-            parent: (
-                layout.parent().height().content_bottom,
-                layout.parent().height().used_height,
-                layout.parent().bottom().padding_bottom,
-            ),
-        };
+        let vertical = observe_layout(&layout);
         observed = Some((
             width,
             child.content(),
@@ -672,6 +799,508 @@ fn actual_margin_observation(
         &format!("{right_margin}px"),
         parent_direction,
     )
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FloatObservation {
+    computed_left: BoxLengthFact,
+    computed_right: BoxLengthFact,
+    used_left: f32,
+    used_right: f32,
+    normal_width: Option<BlockWidthResult>,
+    used_width: f32,
+    content: PrincipalEdges,
+    placed: PlacedFloat,
+    layout: VerticalObservation,
+    original_parent: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn actual_float_observation(
+    source_count: usize,
+    side: &str,
+    width_css: &str,
+    height_css: &str,
+    left_margin: &str,
+    right_margin: &str,
+    parent_direction: &str,
+    extra_css: &str,
+    content_left: f32,
+    content_width: f32,
+) -> FloatObservation {
+    let opposite = if parent_direction == "ltr" {
+        "rtl"
+    } else {
+        "ltr"
+    };
+    let b4 = if source_count == 7 {
+        "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
+    } else {
+        ""
+    };
+    let left_declaration = if left_margin.is_empty() {
+        String::new()
+    } else {
+        format!("margin-left:{left_margin};")
+    };
+    let right_declaration = if right_margin.is_empty() {
+        String::new()
+    } else {
+        format!("margin-right:{right_margin};")
+    };
+    let css = format!(
+        "{} {b4} #o {{ direction:{opposite}; width:{content_width}px; }} \
+         #p {{ direction:{parent_direction}; }} #f {{ direction:{opposite}; float:{side}; \
+         width:{width_css}; height:{height_css}; {left_declaration} \
+         {right_declaration} }} {extra_css}",
+        baseline_css()
+    );
+    let mut observed = None;
+    sibling_fixture(source_count, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left,
+                content_width,
+                content_top: 10.0,
+            },
+            layout_limits(),
+        )
+        .unwrap();
+        let receipt = layout.receipt();
+        assert_eq!(layout.sources().len(), source_count);
+        for (source, node) in projection.nodes().iter().enumerate() {
+            assert!(std::ptr::eq(layout.source(source).unwrap(), node));
+        }
+        let child = &layout.children()[1];
+        let row = facts.row(3).unwrap();
+        let computed_left = child.computed_margin_left();
+        let computed_right = child.computed_margin_right();
+        assert_eq!(computed_left, row.margin[3]);
+        assert_eq!(computed_right, row.margin[1]);
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!(child.normal_width(), None);
+        for _ in 0..2 {
+            assert_eq!(child.used_margin_left().to_bits(), 0.0f32.to_bits());
+            assert_eq!(child.used_margin_right().to_bits(), 0.0f32.to_bits());
+            assert_eq!(child.normal_width(), None);
+        }
+        let result = FloatObservation {
+            computed_left,
+            computed_right,
+            used_left: child.used_margin_left(),
+            used_right: child.used_margin_right(),
+            normal_width: child.normal_width(),
+            used_width: child.used_width(),
+            content: child.content(),
+            placed: layout.sequence().placed_float(),
+            layout: observe_layout(&layout),
+            original_parent: projection.original_index(1).unwrap(),
+        };
+        assert_eq!(layout.receipt(), receipt);
+        observed = Some(result);
+    });
+    observed.unwrap()
+}
+
+#[test]
+fn float_auto_matrix_uses_zero_and_matches_absolute_zero_layouts() {
+    for source_count in [5, 6, 7] {
+        for side in ["left", "right"] {
+            for direction in ["ltr", "rtl"] {
+                for width in [0, 10, 100] {
+                    for height in [2, 40] {
+                        for (left, right) in [("auto", "0"), ("0", "auto"), ("auto", "auto")] {
+                            let auto = actual_float_observation(
+                                source_count,
+                                side,
+                                &format!("{width}px"),
+                                &format!("{height}px"),
+                                left,
+                                right,
+                                direction,
+                                "",
+                                0.0,
+                                100.0,
+                            );
+                            let zero = actual_float_observation(
+                                source_count,
+                                side,
+                                &format!("{width}px"),
+                                &format!("{height}px"),
+                                "0",
+                                "0",
+                                direction,
+                                "",
+                                0.0,
+                                100.0,
+                            );
+                            let expected_x = if side == "left" {
+                                (0.0, width as f32)
+                            } else {
+                                (100.0 - width as f32, 100.0)
+                            };
+                            assert_eq!(
+                                auto.content,
+                                PrincipalEdges {
+                                    left: expected_x.0,
+                                    right: expected_x.1,
+                                    top: 16.0,
+                                    bottom: 16.0 + height as f32,
+                                }
+                            );
+                            assert_eq!(auto.used_width, width as f32);
+                            assert_eq!(auto.used_left.to_bits(), 0.0f32.to_bits());
+                            assert_eq!(auto.used_right.to_bits(), 0.0f32.to_bits());
+                            assert_eq!(auto.normal_width, None);
+                            assert_eq!(auto.content, zero.content);
+                            assert_eq!(auto.placed, zero.placed);
+                            assert_eq!(auto.layout, zero.layout);
+                            assert_eq!(auto.original_parent, zero.original_parent);
+                            for principal in &auto.layout.principals {
+                                if principal.kind == PrincipalChildKind::Normal {
+                                    assert_eq!(principal.normal_width.unwrap().width, 100.0);
+                                    assert_eq!(
+                                        (principal.content.left, principal.content.right),
+                                        (0.0, 100.0)
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn float_auto_and_normal_auto_keep_their_distinct_width_categories() {
+    for side in ["left", "right"] {
+        let float = actual_float_observation(
+            6, side, "10px", "2px", "auto", "auto", "ltr", "", 0.0, 100.0,
+        );
+        assert_eq!(
+            (float.content.left, float.content.right),
+            if side == "left" {
+                (0.0, 10.0)
+            } else {
+                (90.0, 100.0)
+            }
+        );
+    }
+
+    for (source_count, selector, source, width, left, right, direction, expected) in [
+        (
+            6,
+            "#b1",
+            2,
+            "40px",
+            "auto",
+            "auto",
+            "ltr",
+            (40.0, 30.0, 30.0, 1, 30.0, 70.0),
+        ),
+        (
+            6,
+            "#b2",
+            4,
+            "40px",
+            "-10px",
+            "auto",
+            "ltr",
+            (40.0, -10.0, 70.0, 1, -10.0, 30.0),
+        ),
+        (
+            6,
+            "#b3",
+            5,
+            "120px",
+            "auto",
+            "auto",
+            "ltr",
+            (120.0, 0.0, -20.0, 1, 0.0, 120.0),
+        ),
+        (
+            6,
+            "#b3",
+            5,
+            "120px",
+            "auto",
+            "auto",
+            "rtl",
+            (120.0, -20.0, 0.0, 1, -20.0, 100.0),
+        ),
+        (
+            7,
+            "#b4",
+            6,
+            "auto",
+            "120px",
+            "auto",
+            "ltr",
+            (0.0, 120.0, -20.0, 2, 120.0, 120.0),
+        ),
+        (
+            7,
+            "#b4",
+            6,
+            "auto",
+            "120px",
+            "auto",
+            "rtl",
+            (0.0, 100.0, 0.0, 2, 100.0, 100.0),
+        ),
+    ] {
+        let (used, content, _, _, observation) = actual_horizontal_observation(
+            source_count,
+            selector,
+            source,
+            width,
+            left,
+            right,
+            direction,
+        );
+        assert_eq!(
+            used,
+            BlockWidthResult {
+                width: expected.0,
+                margin_left: expected.1,
+                margin_right: expected.2,
+                passes: expected.3,
+            }
+        );
+        assert_eq!((content.left, content.right), (expected.4, expected.5));
+        let principal = observation
+            .principals
+            .iter()
+            .find(|principal| principal.source == source)
+            .unwrap();
+        assert_eq!(principal.normal_width, Some(used));
+        assert_eq!(
+            principal.used_margin_left.to_bits(),
+            used.margin_left.to_bits()
+        );
+        assert_eq!(
+            principal.used_margin_right.to_bits(),
+            used.margin_right.to_bits()
+        );
+    }
+}
+
+#[test]
+fn float_computed_provenance_remains_distinct_from_used_zero() {
+    let specified_auto = BoxLengthFact::Auto {
+        origin: BoxFactOrigin::Specified,
+    };
+    let absolute = |origin, rounded_to_zero| {
+        BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels: 0.0,
+            rounded_to_zero,
+            origin,
+        })
+    };
+    for (left, right, extra, inherited, expected_left, expected_right) in [
+        ("auto", "auto", "", false, specified_auto, specified_auto),
+        (
+            "inherit",
+            "inherit",
+            "#p { margin-left:auto; margin-right:auto; }",
+            true,
+            specified_auto,
+            specified_auto,
+        ),
+        (
+            "",
+            "",
+            "",
+            false,
+            absolute(BoxFactOrigin::Initial, false),
+            absolute(BoxFactOrigin::Initial, false),
+        ),
+        (
+            "0",
+            "0",
+            "",
+            false,
+            absolute(BoxFactOrigin::Specified, false),
+            absolute(BoxFactOrigin::Specified, false),
+        ),
+        (
+            "0.0000000000000000000000000000000000000000000000000001px",
+            "-0.0000000000000000000000000000000000000000000000000001px",
+            "",
+            false,
+            absolute(BoxFactOrigin::Specified, true),
+            absolute(BoxFactOrigin::Specified, true),
+        ),
+        (
+            "0; margin-left:auto",
+            "0",
+            "",
+            false,
+            specified_auto,
+            absolute(BoxFactOrigin::Specified, false),
+        ),
+        (
+            "auto; margin-left:0",
+            "auto",
+            "",
+            false,
+            absolute(BoxFactOrigin::Specified, false),
+            specified_auto,
+        ),
+        (
+            "0",
+            "0; margin-right:auto",
+            "",
+            false,
+            absolute(BoxFactOrigin::Specified, false),
+            specified_auto,
+        ),
+        (
+            "auto",
+            "auto; margin-right:0",
+            "",
+            false,
+            specified_auto,
+            absolute(BoxFactOrigin::Specified, false),
+        ),
+    ] {
+        let observed = actual_float_observation(
+            6, "left", "10px", "2px", left, right, "ltr", extra, 0.0, 100.0,
+        );
+        let expected_left = if inherited {
+            BoxLengthFact::Auto {
+                origin: BoxFactOrigin::Inherited {
+                    original_parent: observed.original_parent,
+                },
+            }
+        } else {
+            expected_left
+        };
+        let expected_right = if inherited {
+            BoxLengthFact::Auto {
+                origin: BoxFactOrigin::Inherited {
+                    original_parent: observed.original_parent,
+                },
+            }
+        } else {
+            expected_right
+        };
+        assert_eq!(observed.computed_left, expected_left);
+        assert_eq!(observed.computed_right, expected_right);
+        assert_eq!(observed.used_left.to_bits(), 0.0f32.to_bits());
+        assert_eq!(observed.used_right.to_bits(), 0.0f32.to_bits());
+        assert_eq!(observed.normal_width, None);
+    }
+}
+
+#[test]
+fn float_auto_uses_published_staged_bands_and_existing_fit_guard() {
+    const LEFT: f32 = 16_777_216.0;
+    let auto = BoxLengthFact::Auto {
+        origin: BoxFactOrigin::Specified,
+    };
+    for source_count in [5, 6, 7] {
+        for side in ["left", "right"] {
+            for (left_margin, right_margin) in [("auto", "0"), ("0", "auto"), ("auto", "auto")] {
+                let staged = actual_float_observation(
+                    source_count,
+                    side,
+                    "1px",
+                    "2px",
+                    left_margin,
+                    right_margin,
+                    "ltr",
+                    "",
+                    LEFT,
+                    3.0,
+                );
+                assert_eq!(staged.used_width, 1.0);
+                assert_eq!(staged.used_left.to_bits(), 0.0f32.to_bits());
+                assert_eq!(staged.used_right.to_bits(), 0.0f32.to_bits());
+                assert_eq!(
+                    (staged.content.left, staged.content.right),
+                    if side == "left" {
+                        (LEFT, LEFT)
+                    } else {
+                        (LEFT + 4.0, LEFT + 4.0)
+                    }
+                );
+                assert_eq!(staged.layout.float, (16.0, 18.0));
+                assert_eq!(staged.layout.parent_horizontal, (LEFT, LEFT + 4.0, 3.0));
+                assert_eq!(staged.computed_left == auto, left_margin == "auto");
+                assert_eq!(staged.computed_right == auto, right_margin == "auto");
+
+                let collapsed = actual_float_observation(
+                    source_count,
+                    side,
+                    "0",
+                    "2px",
+                    left_margin,
+                    right_margin,
+                    "ltr",
+                    "",
+                    LEFT,
+                    1.0,
+                );
+                assert_eq!(collapsed.used_width.to_bits(), 0.0f32.to_bits());
+                assert_eq!(
+                    (collapsed.content.left, collapsed.content.right),
+                    (LEFT, LEFT)
+                );
+                assert_eq!(collapsed.layout.parent_horizontal, (LEFT, LEFT, 1.0));
+
+                let b4 = if source_count == 7 {
+                    "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
+                } else {
+                    ""
+                };
+                let css = format!(
+                    "{} {b4} #o {{ direction:rtl; width:1px; }} #p {{ direction:ltr; }} \
+                     #f {{ direction:rtl; float:{side}; width:1px; height:2px; \
+                     margin-left:{left_margin}; margin-right:{right_margin}; }}",
+                    baseline_css()
+                );
+                sibling_fixture(source_count, &css, |projection, display| {
+                    let facts =
+                        evaluate_sibling_box_facts(projection, display, sibling_fact_limits())
+                            .unwrap();
+                    assert_eq!(
+                        facts.row(3).unwrap().margin[3] == auto,
+                        left_margin == "auto"
+                    );
+                    assert_eq!(
+                        facts.row(3).unwrap().margin[1] == auto,
+                        right_margin == "auto"
+                    );
+                    assert!(matches!(
+                        build_captured_sibling_layout(
+                            &facts,
+                            ClearanceOuterContentGeometry {
+                                outer: &projection.nodes()[0],
+                                content_left: LEFT,
+                                content_width: 1.0,
+                                content_top: 10.0,
+                            },
+                            layout_limits(),
+                        ),
+                        Err(SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+                            ClearanceOwnerError::Unsupported {
+                                source: 3,
+                                reason: OwnerProfileReason::FloatTooWide,
+                            }
+                        )))
+                    ));
+                });
+            }
+        }
+    }
 }
 
 #[test]
@@ -739,7 +1368,7 @@ fn signed_horizontal_margin_matrix_uses_parent_direction_and_preserves_vertical_
                 0,
                 direction,
             );
-            assert_eq!(vertical, zero_vertical);
+            assert_same_vertical(&vertical, &zero_vertical);
             assert_eq!(
                 (edges.top, edges.bottom),
                 (zero_edges.top, zero_edges.bottom)
@@ -1150,7 +1779,7 @@ fn auto_horizontal_margins_follow_all_normal_width_branches() {
             );
             assert_eq!(zero_left, absolute(0.0));
             assert_eq!(zero_right, absolute(0.0));
-            assert_eq!(vertical, zero_vertical);
+            assert_same_vertical(&vertical, &zero_vertical);
         }
     }
 }
@@ -2061,7 +2690,7 @@ fn explicit_parent_height_is_lazy_but_all_children_are_still_laid_out() {
 #[test]
 fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
     let css = format!(
-        "{} #b1 {{ margin-left:auto; }} \
+        "{} #f {{ margin-left:auto; margin-right:auto; }} #b1 {{ margin-left:auto; }} \
          #b3 {{ margin-right:auto; overflow:hidden; }}",
         baseline_css()
     );
@@ -2100,10 +2729,14 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
 #[test]
 fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
     for (source_count, suffix, work) in [
-        (5, "#b1 { margin-left:auto; }", 377),
+        (
+            5,
+            "#f { margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
+            377,
+        ),
         (
             7,
-            "#b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
+            "#f { margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
             607,
         ),
     ] {
@@ -2143,11 +2776,21 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
     use std::mem::size_of;
 
     for (source_count, suffix, facade_work, core_work) in [
-        (5, "#b1 { margin-left:auto; }", 377, 197),
-        (6, "#b3 { margin-left:auto; }", 492, 259),
+        (
+            5,
+            "#f { margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
+            377,
+            197,
+        ),
+        (
+            6,
+            "#f { margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
+            492,
+            259,
+        ),
         (
             7,
-            "#b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
+            "#f { margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
             607,
             322,
         ),
@@ -2236,7 +2879,11 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
 
 #[test]
 fn exact_outer_pointer_binding_precedes_facade_prepayment() {
-    sibling_fixture(6, baseline_css(), |projection, display| {
+    let css = format!(
+        "{} #f {{ margin-left:auto; margin-right:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         let actual = &projection.nodes()[0];
         let foreign = iced_css_core::source::SourceNode {
@@ -2272,7 +2919,7 @@ fn auto_multi_faults_preserve_phase_dominance() {
 
     const MAX: &str = "340282346638528859811704183484516925440px";
     let conversion_css = format!(
-        "{} #p {{ margin-top:{MAX}; }} \
+        "{} #f {{ margin-left:auto; margin-right:auto; }} #p {{ margin-top:{MAX}; }} \
          #b1 {{ margin-left:auto; margin-bottom:auto; }}",
         baseline_css()
     );
@@ -2315,7 +2962,8 @@ fn auto_multi_faults_preserve_phase_dominance() {
     });
 
     let conversion_control_css = format!(
-        "{} #p {{ margin-top:{MAX}; }} #b1 {{ margin-left:auto; }}",
+        "{} #f {{ margin-left:auto; margin-right:auto; }} \
+         #p {{ margin-top:{MAX}; }} #b1 {{ margin-left:auto; }}",
         baseline_css()
     );
     sibling_fixture(6, &conversion_control_css, |projection, display| {
@@ -2340,7 +2988,8 @@ fn auto_multi_faults_preserve_phase_dominance() {
     });
 
     let horizontal_css = format!(
-        "{} #p {{ width:{MAX}; margin-left:{MAX}; margin-right:auto; }} \
+        "{} #f {{ margin-left:auto; margin-right:auto; }} \
+         #p {{ width:{MAX}; margin-left:{MAX}; margin-right:auto; }} \
          #b1 {{ margin-left:auto; }} #b3 {{ padding-left:1px; }}",
         baseline_css()
     );
@@ -2362,7 +3011,8 @@ fn auto_multi_faults_preserve_phase_dominance() {
     });
 
     let origin_css = format!(
-        "{} #p {{ margin-top:{MAX}; }} #b1 {{ margin-left:auto; }} \
+        "{} #f {{ margin-left:auto; margin-right:auto; }} \
+         #p {{ margin-top:{MAX}; }} #b1 {{ margin-left:auto; }} \
          #b3 {{ padding-left:1px; }}",
         baseline_css()
     );
@@ -2408,7 +3058,10 @@ fn parent_and_child_profile_errors_preserve_causes_and_source_indices() {
             OwnerProfileReason::ChildDecoration,
         ),
     ] {
-        let css = format!("{} {suffix}", baseline_css());
+        let css = format!(
+            "{} #f {{ margin-left:auto; margin-right:auto; }} {suffix}",
+            baseline_css()
+        );
         sibling_fixture(6, &css, |projection, display| {
             let facts =
                 evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
@@ -2453,7 +3106,10 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
         ),
         ("#f { width:auto; }", 3, "width", Unsupported::FloatWidth),
     ] {
-        let css = format!("{} {suffix}", baseline_css());
+        let css = format!(
+            "{} #f {{ margin-left:auto; margin-right:auto; }} {suffix}",
+            baseline_css()
+        );
         sibling_fixture(6, &css, |projection, display| {
             let facts =
                 evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
@@ -2495,7 +3151,10 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
         ),
         ("#f { width:101px; }", 3, OwnerProfileReason::FloatTooWide),
     ] {
-        let css = format!("{} {suffix}", baseline_css());
+        let css = format!(
+            "{} #f {{ margin-left:auto; margin-right:auto; }} {suffix}",
+            baseline_css()
+        );
         sibling_fixture(6, &css, |projection, display| {
             let facts =
                 evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
@@ -2591,7 +3250,13 @@ fn remaining_auto_margin_errors_keep_source_and_edge_order() {
             "#f",
             3,
             "margin-right:auto; margin-bottom:auto; margin-left:auto;",
-            "margin-right",
+            "margin-bottom",
+        ),
+        (
+            "#f",
+            3,
+            "margin-top:auto; margin-right:auto; margin-left:auto;",
+            "margin-top",
         ),
     ] {
         let css = format!("{} {selector} {{ {margins} }}", baseline_css());
@@ -2674,6 +3339,42 @@ fn remaining_auto_margin_errors_keep_source_and_edge_order() {
             ))
         ));
     });
+
+    for (rule, property, reason) in [
+        (
+            "height:2px; width:auto; margin-left:auto; margin-right:auto;",
+            "width",
+            U::FloatWidth,
+        ),
+        (
+            "height:auto; width:auto; margin-left:auto; margin-right:auto;",
+            "height",
+            U::HeightKind,
+        ),
+    ] {
+        let css = format!("{} #f {{ {rule} }}", baseline_css());
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            assert!(matches!(
+                build_captured_sibling_layout(
+                    &facts,
+                    ClearanceOuterContentGeometry {
+                        outer: &projection.nodes()[0],
+                        content_left: 0.0,
+                        content_width: 100.0,
+                        content_top: 10.0,
+                    },
+                    layout_limits(),
+                ),
+                Err(SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
+                    projected: 3,
+                    property: actual_property,
+                    reason: actual_reason,
+                })) if actual_property == property && actual_reason == reason
+            ));
+        });
+    }
 }
 
 #[test]
@@ -2684,7 +3385,10 @@ fn clear_side_selection_and_equality_remain_core_owned() {
         ("#f {float:right;} #b2 {clear:right;}", Some(-1.0)),
         ("#b2 {clear:left;}", Some(-1.0)),
     ] {
-        let css = format!("{} {suffix}", baseline_css());
+        let css = format!(
+            "{} #f {{ margin-left:auto; margin-right:auto; }} {suffix}",
+            baseline_css()
+        );
         sibling_fixture(6, &css, |projection, display| {
             let facts =
                 evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
@@ -2703,7 +3407,10 @@ fn clear_side_selection_and_equality_remain_core_owned() {
         });
     }
 
-    let css = format!("{} #b2 {{margin-top:6px;}}", baseline_css());
+    let css = format!(
+        "{} #f {{ margin-left:auto; margin-right:auto; }} #b2 {{margin-top:6px;}}",
+        baseline_css()
+    );
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         let error = build_captured_sibling_layout(
@@ -2725,6 +3432,43 @@ fn clear_side_selection_and_equality_remain_core_owned() {
             })
         ));
     });
+
+    for (tail_rule, succeeds) in [("clear:both", false), ("clear:none", true)] {
+        let css = format!(
+            "{} #f {{ height:0; margin-left:auto; margin-right:auto; }} \
+             #b2 {{ {tail_rule}; }}",
+            baseline_css()
+        );
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let result = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            );
+            if succeeds {
+                let layout = result.unwrap();
+                assert_eq!(layout.sequence().placed_float().bottom, 16.0);
+                assert_eq!(layout.sequence().tail()[0].hypothetical_top(), 16.0);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(SiblingLayoutError::Core(
+                        ClearanceSequenceError::Placement {
+                            source: 4,
+                            error: ClearanceOwnerError::UnsupportedEquality,
+                        }
+                    ))
+                ));
+            }
+        });
+    }
 }
 
 #[test]
@@ -2860,7 +3604,7 @@ fn finite_child_endpoint_overflow_and_vertical_error_phase_remain_typed() {
     }
 
     let competing_css = format!(
-        "{} #f {{ width:0; height:0; }} \
+        "{} #f {{ width:0; height:0; margin-left:auto; margin-right:auto; }} \
          #b1 {{ width:auto; margin-left:-{MAX}; margin-right:-{MAX}; }} \
          #b2 {{ clear:both; }} #b3 {{ margin-left:auto; }}",
         baseline_css()

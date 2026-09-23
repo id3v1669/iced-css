@@ -399,9 +399,9 @@ fn parent(f: ParentFacts<'_>, source: usize) -> Result<(), ClearanceOwnerError> 
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum NormalHorizontalMargins {
-    Zero,
-    SignedOrAuto,
+enum ChildMarginPolicy {
+    Legacy,
+    Sequence,
 }
 
 fn child(
@@ -409,7 +409,7 @@ fn child(
     source: usize,
     floating: bool,
     after: bool,
-    horizontal_margins: NormalHorizontalMargins,
+    margin_policy: ChildMarginPolicy,
 ) -> Result<f32, ClearanceOwnerError> {
     display(f.display, source, floating)?;
     if f.context
@@ -445,7 +445,7 @@ fn child(
             finite(value, source, "margin")?;
         }
     }
-    if !floating && horizontal_margins == NormalHorizontalMargins::SignedOrAuto {
+    if !floating && margin_policy == ChildMarginPolicy::Sequence {
         if f.margin.top < 0.0 || f.margin.bottom < 0.0 {
             return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
         }
@@ -456,7 +456,9 @@ fn child(
         {
             return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
         }
-        if values.into_iter().any(|v| matches!(v, AutoLength::Auto)) {
+        if margin_policy == ChildMarginPolicy::Legacy
+            && values.into_iter().any(|v| matches!(v, AutoLength::Auto))
+        {
             return Err(unsupported(
                 source,
                 OwnerProfileReason::AutoHorizontalMargin,
@@ -543,13 +545,7 @@ pub(super) fn validate_child(
     floating: bool,
     after: bool,
 ) -> Result<f32, ClearanceOwnerError> {
-    child(
-        facts,
-        source,
-        floating,
-        after,
-        NormalHorizontalMargins::Zero,
-    )
+    child(facts, source, floating, after, ChildMarginPolicy::Legacy)
 }
 
 pub(super) fn validate_sequence_child(
@@ -558,12 +554,7 @@ pub(super) fn validate_sequence_child(
     floating: bool,
     after: bool,
 ) -> Result<f32, ClearanceOwnerError> {
-    let margins = if floating {
-        NormalHorizontalMargins::Zero
-    } else {
-        NormalHorizontalMargins::SignedOrAuto
-    };
-    child(facts, source, floating, after, margins)
+    child(facts, source, floating, after, ChildMarginPolicy::Sequence)
 }
 
 pub(super) fn validate_float_width(
@@ -638,6 +629,9 @@ pub(super) fn place_first_float(
     let placed_float = place_float(
         &[],
         input.parent.containing,
+        // A float admitted here has zero absolute or horizontal Auto margins;
+        // both categories have used-zero margins, so content dimensions remain
+        // the unchanged margin-box dimensions for this zero-decoration profile.
         FloatRequest {
             side: match input.float.display.float {
                 Float::Right => FloatSide::Right,

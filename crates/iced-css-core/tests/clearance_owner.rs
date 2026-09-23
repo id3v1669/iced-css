@@ -816,6 +816,61 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
         }
     }
 }
+
+#[test]
+fn strict_float_auto_precedes_positive_margin_decoration_and_clear() {
+    for nested in [false, true] {
+        let flat_sources = sources();
+        let nested_sources = nested_sources();
+        let source_slice = if nested {
+            &nested_sources[1..]
+        } else {
+            &flat_sources[..]
+        };
+        let float_source = if nested { 3 } else { 2 };
+        for competing in 0..3 {
+            let mut facts = input(source_slice);
+            facts.float.margin.left = AutoLength::Auto;
+            match competing {
+                0 => facts.float.margin.right = AutoLength::Value(1.0),
+                1 => facts.float.border.left = 1.0,
+                _ => facts.float.clear = ClearSide::Left,
+            }
+            let error = if nested {
+                build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts)
+                    .unwrap_err()
+            } else {
+                build_clearance_owner(&flat_sources, facts).unwrap_err()
+            };
+            assert_eq!(
+                error,
+                ClearanceOwnerError::Unsupported {
+                    source: float_source,
+                    reason: OwnerProfileReason::AutoHorizontalMargin,
+                }
+            );
+        }
+
+        let mut facts = input(source_slice);
+        facts.float.margin.left = AutoLength::Auto;
+        facts.float.margin.right = AutoLength::Value(-1.0);
+        facts.float.border.left = 1.0;
+        facts.float.clear = ClearSide::Left;
+        let error = if nested {
+            build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts)
+                .unwrap_err()
+        } else {
+            build_clearance_owner(&flat_sources, facts).unwrap_err()
+        };
+        assert_eq!(
+            error,
+            ClearanceOwnerError::Unsupported {
+                source: float_source,
+                reason: OwnerProfileReason::NegativeMargin,
+            }
+        );
+    }
+}
 #[test]
 fn exact_stages_preserve_subnormals_and_rounding_created_equality() {
     let s = sources();

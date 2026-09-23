@@ -259,13 +259,13 @@ fn dynamic_sequence_admits_signed_horizontal_margins_while_legacy_stays_strict()
         }
     }
 
-    let sources = sources(5);
-    let (outer, parent, mut children) = facts(&sources);
+    let source_nodes = sources(5);
+    let (outer, parent, mut children) = facts(&source_nodes);
     children[0].margin.left = AutoLength::Auto;
-    assert!(build(&sources, outer, parent, &children, limits(5)).is_ok());
+    assert!(build(&source_nodes, outer, parent, &children, limits(5)).is_ok());
     assert_eq!(
         iced_css_core::formatting::clearance_owner::build_nested_clearance_owner(
-            &sources,
+            &source_nodes,
             outer,
             ClearanceOwnerInput {
                 parent,
@@ -278,6 +278,30 @@ fn dynamic_sequence_admits_signed_horizontal_margins_while_legacy_stays_strict()
         .unwrap_err(),
         ClearanceOwnerError::Unsupported {
             source: 2,
+            reason: OwnerProfileReason::AutoHorizontalMargin,
+        }
+    );
+
+    let source_nodes = sources(5);
+    let (outer, parent, mut children) = facts(&source_nodes);
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
+    assert!(build(&source_nodes, outer, parent, &children, limits(5)).is_ok());
+    assert_eq!(
+        iced_css_core::formatting::clearance_owner::build_nested_clearance_owner(
+            &source_nodes,
+            outer,
+            ClearanceOwnerInput {
+                parent,
+                before: children[0],
+                float: children[1],
+                after: children[2],
+                float_width: 10.0,
+            },
+        )
+        .unwrap_err(),
+        ClearanceOwnerError::Unsupported {
+            source: 3,
             reason: OwnerProfileReason::AutoHorizontalMargin,
         }
     );
@@ -374,6 +398,29 @@ fn real_auto_horizontal_facts_preserve_vertical_sequence() {
 }
 
 #[test]
+fn genuine_float_auto_facts_preserve_vertical_sequence() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
+    let owner = build(&sources, outer, parent, &children, limits(6)).unwrap();
+    let placed = owner.placed_float();
+    assert_eq!(
+        (placed.left, placed.right, placed.top, placed.bottom),
+        (0.0, 10.0, 16.0, 18.0)
+    );
+    assert_eq!(
+        (
+            owner.tail()[1].vertical().top,
+            owner.tail()[1].vertical().bottom
+        ),
+        (22.0, 23.0)
+    );
+    assert_eq!(children[1].margin.left, AutoLength::Auto);
+    assert_eq!(children[1].margin.right, AutoLength::Auto);
+}
+
+#[test]
 fn strict_auto_margin_errors_preserve_numeric_precedence() {
     for source in [2, 5] {
         for (left, right) in [
@@ -463,7 +510,6 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
         ));
     }
     for (value, reason) in [
-        (AutoLength::Auto, OwnerProfileReason::AutoHorizontalMargin),
         (AutoLength::Value(1.0), OwnerProfileReason::FloatMargin),
         (AutoLength::Value(-1.0), OwnerProfileReason::NegativeMargin),
     ] {
@@ -477,6 +523,127 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
                     reason: actual_reason,
                 }
             )) if actual_reason == reason
+        ));
+    }
+}
+
+#[test]
+fn float_auto_error_table_preserves_dynamic_profile_precedence() {
+    let source_nodes = sources(6);
+    for (left, right) in [
+        (AutoLength::Auto, AutoLength::Value(0.0)),
+        (AutoLength::Value(0.0), AutoLength::Auto),
+        (AutoLength::Auto, AutoLength::Auto),
+    ] {
+        let (outer, parent, mut children) = facts(&source_nodes);
+        children[1].margin.left = left;
+        children[1].margin.right = right;
+        assert!(build(&source_nodes, outer, parent, &children, limits(6)).is_ok());
+    }
+
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        for edge in 0..4 {
+            let (outer, parent, mut children) = facts(&source_nodes);
+            let float = &mut children[1];
+            if edge == 3 {
+                float.margin.right = AutoLength::Auto;
+            } else {
+                float.margin.left = AutoLength::Auto;
+            }
+            match edge {
+                0 => float.margin.top = bad,
+                1 => float.margin.right = AutoLength::Value(bad),
+                2 => float.margin.bottom = bad,
+                _ => float.margin.left = AutoLength::Value(bad),
+            }
+            assert!(matches!(
+                build(&source_nodes, outer, parent, &children, limits(6)),
+                Err(ClearanceSequenceError::Profile(
+                    ClearanceOwnerError::InvalidNumber {
+                        source: 3,
+                        field: "margin",
+                    }
+                ))
+            ));
+        }
+    }
+
+    for (value, reason) in [
+        (-1.0, OwnerProfileReason::NegativeMargin),
+        (1.0, OwnerProfileReason::FloatMargin),
+    ] {
+        for edge in 0..4 {
+            let (outer, parent, mut children) = facts(&source_nodes);
+            let float = &mut children[1];
+            if edge != 3 {
+                float.margin.left = AutoLength::Auto;
+            } else {
+                float.margin.right = AutoLength::Auto;
+            }
+            match edge {
+                0 => float.margin.top = value,
+                1 => float.margin.right = AutoLength::Value(value),
+                2 => float.margin.bottom = value,
+                _ => float.margin.left = AutoLength::Value(value),
+            }
+            assert!(matches!(
+                build(&source_nodes, outer, parent, &children, limits(6)),
+                Err(ClearanceSequenceError::Profile(
+                    ClearanceOwnerError::Unsupported {
+                        source: 3,
+                        reason: actual,
+                    }
+                )) if actual == reason
+            ));
+        }
+    }
+
+    for (fault, reason) in [
+        (0, OwnerProfileReason::ChildDecoration),
+        (1, OwnerProfileReason::ClearOnBeforeOrFloat),
+    ] {
+        let (outer, parent, mut children) = facts(&source_nodes);
+        children[1].margin.left = AutoLength::Auto;
+        if fault == 0 {
+            children[1].border.left = 1.0;
+        } else {
+            children[1].clear = ClearSide::Left;
+        }
+        assert!(matches!(
+            build(&source_nodes, outer, parent, &children, limits(6)),
+            Err(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 3,
+                    reason: actual,
+                }
+            )) if actual == reason
+        ));
+    }
+
+    for (fault, reason) in [
+        (0, OwnerProfileReason::HeightKind),
+        (1, OwnerProfileReason::ChildContext),
+        (2, OwnerProfileReason::DisplayOrFlow),
+        (3, OwnerProfileReason::Content),
+    ] {
+        let (outer, parent, mut children) = facts(&source_nodes);
+        let float = &mut children[1];
+        float.margin.left = AutoLength::Auto;
+        float.margin.right = AutoLength::Value(1.0);
+        match fault {
+            0 => float.height = OwnerHeight::Auto,
+            1 => float.context = ChildContext::Unknown,
+            2 => float.display.display = Display::Inline,
+            _ => float.content = OwnerContent::TextOrRichText,
+        }
+        assert!(matches!(
+            build(&source_nodes, outer, parent, &children, limits(6)),
+            Err(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 3,
+                    reason: actual,
+                }
+            )) if actual == reason
         ));
     }
 }
@@ -665,6 +832,8 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
         let mut limit = limits(count);
         limit.work = NonZeroUsize::new(work - 1).unwrap();
         assert!(matches!(
@@ -710,6 +879,8 @@ fn placement_errors_identify_first_float_and_actual_tail_sources() {
     let (outer, mut parent, mut children) = facts(&sources);
     parent.content_top = f32::MAX;
     children[0].margin.top = f32::MAX;
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
     assert!(matches!(
         build(&sources, outer, parent, &children, limits(6)),
         Err(ClearanceSequenceError::Placement {
@@ -723,6 +894,8 @@ fn placement_errors_identify_first_float_and_actual_tail_sources() {
     let (outer, mut parent, mut children) = facts(&sources);
     parent.content_top = f32::MAX;
     children[0].margin.bottom = f32::MAX;
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
     assert!(matches!(
         build(&sources, outer, parent, &children, limits(6)),
         Err(ClearanceSequenceError::Placement {
@@ -748,7 +921,9 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     let mut malformed = sources(6);
     let unrelated = malformed[0].instance;
     malformed[5].children.push(unrelated);
-    let (outer, parent, children) = facts(&malformed);
+    let (outer, parent, mut children) = facts(&malformed);
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
     short.work = NonZeroUsize::new(258).unwrap();
     assert!(matches!(
@@ -767,6 +942,8 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     outer.content = OwnerContent::TextOrRichText;
     parent.bfc = ParentBfc::OtherOrUnknown;
     children[0].height = OwnerHeight::Auto;
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
     assert!(matches!(
         build(&sources, outer, parent, &children, limits(6)),
         Err(ClearanceSequenceError::Profile(
@@ -779,6 +956,8 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
 
     let (outer, parent, mut children) = facts(&sources);
     children[0].height = OwnerHeight::Auto;
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
     children[3].margin.top = f32::NAN;
     assert!(matches!(
         build(&sources, outer, parent, &children, limits(6)),
@@ -815,12 +994,16 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
 fn floating_zero_height_remains_admitted_and_equality_remains_unsupported() {
     let sources = sources(5);
     let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
     children[1].height = OwnerHeight::Explicit(0.);
     children[2].clear = ClearSide::None;
     assert!(build(&sources, outer, parent, &children, limits(5)).is_ok());
 
     let (outer, parent, mut children) = facts(&sources);
-    children[2].margin.top = 6.;
+    children[1].margin.left = AutoLength::Auto;
+    children[1].margin.right = AutoLength::Auto;
+    children[1].height = OwnerHeight::Explicit(0.);
     assert!(matches!(
         build(&sources, outer, parent, &children, limits(5)),
         Err(ClearanceSequenceError::Placement {

@@ -145,9 +145,9 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// Source/count/work checks precede the complete graph and profile scan. All
 /// profile checks, including the last child and float endpoint fit, precede the
 /// fallible record allocation; allocation precedes every numerical kernel.
-/// Sequence normals admit genuine finite signed absolute or Auto horizontal margins;
-/// floats retain zero margins, and this vertical solve does not publish a new
-/// horizontal placement. Work
+/// Sequence normals admit genuine finite signed absolute or Auto horizontal margins.
+/// Floats admit computed horizontal Auto or absolute zero; both have used value zero,
+/// and this vertical solve does not publish a new horizontal placement. Work
 /// `32 + 8*N + N*(N-1)/2 + 16*(N-4) + 33*(N-2)` is prepaid, including
 /// constant-size typed margin validation for each child.
 ///
@@ -482,6 +482,8 @@ mod tests {
         parent.content_top = f32::MAX;
         children[0].margin.top = f32::MAX;
         children[0].margin.left = AutoLength::Auto;
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
         let expected = Vec::<u8>::new()
             .try_reserve_exact(usize::MAX)
             .unwrap_err()
@@ -509,6 +511,8 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         children[0].margin.left = AutoLength::Auto;
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
         limits.retained_bytes =
             NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
         let error = build_with_reserve(
@@ -528,6 +532,8 @@ mod tests {
         let (sources, limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         children[0].margin.left = AutoLength::Auto;
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -550,6 +556,8 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         children[0].margin.left = AutoLength::Auto;
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
         children[2].padding.left = 1.0;
         limits.work = NonZeroUsize::new(196).unwrap();
         let error = build_with_reserve(
@@ -572,6 +580,8 @@ mod tests {
         let (sources, limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         children[0].margin.left = AutoLength::Auto;
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
         children[2].height = OwnerHeight::Auto;
         let error = build_with_reserve(
             &sources,
@@ -596,6 +606,8 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         children[0].margin.left = AutoLength::Auto;
+        children[1].margin.left = AutoLength::Auto;
+        children[1].margin.right = AutoLength::Auto;
         limits.retained_bytes =
             NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
         let error = build_with_reserve(

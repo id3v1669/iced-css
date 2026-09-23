@@ -281,6 +281,11 @@ fn remaining_auto_margin_errors_keep_source_and_edge_order() {
             "margin-right",
         ),
         ("#b1 { width:auto; margin-left:auto; }", 2, "margin-left"),
+        (
+            "#b1, #b2 { width:auto; } #f { height:2px; margin-right:auto; margin-bottom:auto; }",
+            3,
+            "margin-right",
+        ),
     ] {
         fixture(&format!("{CSS} {suffix}"), |projection, display| {
             let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
@@ -305,6 +310,21 @@ fn remaining_auto_margin_errors_keep_source_and_edge_order() {
                     projected: 4,
                     property: "height",
                     reason: U::HeightKind,
+                }
+            );
+        },
+    );
+
+    fixture(
+        &format!("{CSS} #f {{ width:auto; height:2px; margin-right:auto; }}"),
+        |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                CapturedClearanceError::Unsupported {
+                    projected: 3,
+                    property: "width",
+                    reason: U::FloatWidth,
                 }
             );
         },

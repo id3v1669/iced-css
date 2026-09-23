@@ -237,9 +237,12 @@ pub(super) fn joined_direction<'h>(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ChildMarginMode {
     AbsoluteOnly,
-    SequenceNormals,
+    SequenceHorizontal,
 }
 
+/// Convert captured computed child facts without replacing their margin categories.
+/// `SequenceHorizontal` preserves horizontal `Auto`; sequence float admission gives
+/// that computed category used value zero. Vertical `Auto` remains unsupported.
 pub(super) fn child_facts_from_row<'p>(
     nodes: &'p [SourceNode],
     display: DisplayResolution,
@@ -250,7 +253,7 @@ pub(super) fn child_facts_from_row<'p>(
 ) -> Result<ChildFacts<'p>, CapturedClearanceError> {
     use CapturedClearanceError as E;
     use CapturedClearanceUnsupported as U;
-    let allow_horizontal_auto = mode == ChildMarginMode::SequenceNormals && projected != 3;
+    let allow_horizontal_auto = mode == ChildMarginMode::SequenceHorizontal;
     let vertical = |edge: usize, property: &'static str| match row.margin[edge] {
         BoxLengthFact::Absolute(value) => Ok(value.pixels),
         BoxLengthFact::Auto { .. } => Err(unsupported(projected, property, U::AutoMargin)),
