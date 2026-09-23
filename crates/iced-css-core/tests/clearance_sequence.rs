@@ -224,6 +224,42 @@ fn five_source_sequence_matches_the_legacy_nested_owner() {
 }
 
 #[test]
+fn dynamic_sequence_admits_signed_horizontal_margins_while_legacy_stays_strict() {
+    for (child_index, source) in [(0, 2), (2, 4)] {
+        for edge in ["left", "right"] {
+            for (value, reason) in [
+                (1.0, OwnerProfileReason::HorizontalMargin),
+                (-1.0, OwnerProfileReason::NegativeMargin),
+            ] {
+                let sources = sources(5);
+                let (outer, parent, mut children) = facts(&sources);
+                if edge == "left" {
+                    children[child_index].margin.left = value;
+                } else {
+                    children[child_index].margin.right = value;
+                }
+                assert!(build(&sources, outer, parent, &children, limits(5)).is_ok());
+                assert_eq!(
+                    iced_css_core::formatting::clearance_owner::build_nested_clearance_owner(
+                        &sources,
+                        outer,
+                        ClearanceOwnerInput {
+                            parent,
+                            before: children[0],
+                            float: children[1],
+                            after: children[2],
+                            float_width: 10.0,
+                        },
+                    )
+                    .unwrap_err(),
+                    ClearanceOwnerError::Unsupported { source, reason }
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn every_tail_record_owns_local_pair_membership_and_barrier_identity() {
     let sources = sources(7);
     let (outer, parent, children) = facts(&sources);
@@ -259,6 +295,163 @@ fn every_tail_record_owns_local_pair_membership_and_barrier_identity() {
             assert_eq!(record.actual_groups().len(), 1);
             assert_eq!(record.actual_groups()[0].id(), MarginGroupId::ActualPair);
         }
+    }
+}
+
+#[test]
+fn signed_normal_horizontal_facts_preserve_vertical_sequence() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].margin.left = -10.0;
+    children[0].margin.right = 20.0;
+    children[3].margin.left = 80.0;
+    children[3].margin.right = 30.0;
+    let owner = build(&sources, outer, parent, &children, limits(6)).unwrap();
+    assert_eq!((owner.before().top, owner.before().bottom), (11.0, 12.0));
+    assert_eq!(
+        (owner.placed_float().top, owner.placed_float().bottom),
+        (16.0, 18.0)
+    );
+    assert_eq!(owner.tail()[1].source_index(), 5);
+    assert_eq!(
+        (
+            owner.tail()[1].vertical().top,
+            owner.tail()[1].vertical().bottom
+        ),
+        (22.0, 23.0)
+    );
+    assert_eq!(children[0].margin.left, -10.0);
+    assert_eq!(children[3].margin.right, 30.0);
+}
+
+#[test]
+fn signed_normal_margin_validation_is_finite_ordered_and_source_typed() {
+    for source in [2, 5] {
+        for edge in ["left", "right"] {
+            for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let sources = sources(6);
+                let (outer, parent, mut children) = facts(&sources);
+                let margin = &mut children[source - 2].margin;
+                if edge == "left" {
+                    margin.left = bad;
+                } else {
+                    margin.right = bad;
+                }
+                assert!(matches!(
+                    build(&sources, outer, parent, &children, limits(6)),
+                    Err(ClearanceSequenceError::Profile(
+                        ClearanceOwnerError::InvalidNumber {
+                            source: actual_source,
+                            field: "margin",
+                        }
+                    )) if actual_source == source
+                ));
+            }
+        }
+
+        let source_nodes = sources(6);
+        let (outer, parent, mut children) = facts(&source_nodes);
+        children[source - 2].margin.left = -f32::MAX;
+        children[source - 2].margin.right = f32::MAX;
+        assert!(build(&source_nodes, outer, parent, &children, limits(6)).is_ok());
+
+        for edge in ["top", "bottom"] {
+            let source_nodes = sources(6);
+            let (outer, parent, mut children) = facts(&source_nodes);
+            if edge == "top" {
+                children[source - 2].margin.top = -1.0;
+            } else {
+                children[source - 2].margin.bottom = -1.0;
+            }
+            assert!(matches!(
+                build(&source_nodes, outer, parent, &children, limits(6)),
+                Err(ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
+                    source: actual_source,
+                    reason: OwnerProfileReason::NegativeMargin,
+                })) if actual_source == source
+            ));
+        }
+    }
+
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].margin.top = -1.0;
+    children[0].margin.right = f32::INFINITY;
+    assert!(matches!(
+        build(&sources, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::InvalidNumber {
+                source: 2,
+                field: "margin",
+            }
+        ))
+    ));
+
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].context = ChildContext::Unknown;
+    children[0].margin.left = f32::NAN;
+    assert!(matches!(
+        build(&sources, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported {
+                source: 2,
+                reason: OwnerProfileReason::ChildContext,
+            }
+        ))
+    ));
+
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Auto;
+    children[0].margin.left = f32::NAN;
+    assert!(matches!(
+        build(&sources, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported {
+                source: 2,
+                reason: OwnerProfileReason::HeightKind,
+            }
+        ))
+    ));
+
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].margin.left = f32::NAN;
+    children[0].padding.left = 1.0;
+    assert!(matches!(
+        build(&sources, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::InvalidNumber {
+                source: 2,
+                field: "margin",
+            }
+        ))
+    ));
+
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].margin.left = f32::NAN;
+    children[0].clear = ClearSide::Left;
+    assert!(matches!(
+        build(&sources, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::InvalidNumber {
+                source: 2,
+                field: "margin",
+            }
+        ))
+    ));
+
+    for (value, reason) in [
+        (1.0, OwnerProfileReason::FloatMargin),
+        (-1.0, OwnerProfileReason::NegativeMargin),
+    ] {
+        let (outer, parent, mut children) = facts(&sources);
+        children[1].margin.left = value;
+        assert!(matches!(
+            build(&sources, outer, parent, &children, limits(6)),
+            Err(ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
+                source: 3,
+                reason: actual_reason,
+            })) if actual_reason == reason
+        ));
     }
 }
 
@@ -301,36 +494,40 @@ fn source_pointer_checks_reject_equal_ids_from_unrelated_storage() {
 
 #[test]
 fn source_fact_work_and_requested_byte_boundaries_are_exact() {
-    let sources = sources(6);
-    let (outer, parent, children) = facts(&sources);
+    let sources6 = sources(6);
+    let (outer, parent, children) = facts(&sources6);
     let mut limit = limits(6);
     limit.sources = NonZeroUsize::new(5).unwrap();
     assert!(matches!(
-        build(&sources, outer, parent, &children, limit),
+        build(&sources6, outer, parent, &children, limit),
         Err(ClearanceSequenceError::Sources)
     ));
 
-    let mut limit = limits(6);
-    limit.work = NonZeroUsize::new(126).unwrap();
-    assert!(matches!(
-        build(&sources, outer, parent, &children, limit),
-        Err(ClearanceSequenceError::Work)
-    ));
-    limit.work = NonZeroUsize::new(127).unwrap();
-    let owner = build(&sources, outer, parent, &children, limit).unwrap();
-    assert_eq!(owner.receipt().work, 127);
+    for (count, work) in [(5, 101), (6, 131), (7, 162)] {
+        let sources = sources(count);
+        let (outer, parent, children) = facts(&sources);
+        let mut limit = limits(count);
+        limit.work = NonZeroUsize::new(work - 1).unwrap();
+        assert!(matches!(
+            build(&sources, outer, parent, &children, limit),
+            Err(ClearanceSequenceError::Work)
+        ));
+        limit.work = NonZeroUsize::new(work).unwrap();
+        let owner = build(&sources, outer, parent, &children, limit).unwrap();
+        assert_eq!(owner.receipt().work, work);
+    }
 
     let floor = 2 * size_of::<SequenceNormalPlacement>();
     let mut limit = limits(6);
     limit.retained_bytes = NonZeroUsize::new(floor - 1).unwrap();
     assert!(matches!(
-        build(&sources, outer, parent, &children, limit),
+        build(&sources6, outer, parent, &children, limit),
         Err(ClearanceSequenceError::Bytes)
     ));
     let mut wrong = children.clone();
     wrong.pop();
     assert!(matches!(
-        build(&sources, outer, parent, &wrong, limits(6)),
+        build(&sources6, outer, parent, &wrong, limits(6)),
         Err(ClearanceSequenceError::Facts)
     ));
 }
@@ -381,7 +578,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     malformed[5].children.push(unrelated);
     let (outer, parent, children) = facts(&malformed);
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(126).unwrap();
+    short.work = NonZeroUsize::new(130).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -417,6 +614,26 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
             ClearanceOwnerError::Unsupported {
                 source: 2,
                 reason: OwnerProfileReason::HeightKind,
+            }
+        ))
+    ));
+
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].margin.left = -10.0;
+    children[3].margin.right = 20.0;
+    children[3].padding.left = 1.0;
+    let mut one_short = limits(6);
+    one_short.work = NonZeroUsize::new(130).unwrap();
+    assert!(matches!(
+        build(&sources, outer, parent, &children, one_short),
+        Err(ClearanceSequenceError::Work)
+    ));
+    assert!(matches!(
+        build(&sources, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported {
+                source: 5,
+                reason: OwnerProfileReason::ChildDecoration,
             }
         ))
     ));

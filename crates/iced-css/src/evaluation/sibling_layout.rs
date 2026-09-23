@@ -95,6 +95,8 @@ pub struct PrincipalChildBox {
     used_height: f32,
     computed_width: BoxLengthFact,
     computed_height: BoxLengthFact,
+    computed_margin_left: BoxLengthFact,
+    computed_margin_right: BoxLengthFact,
     margin_top: BoxLengthFact,
     margin_bottom: BoxLengthFact,
     clear: KeywordBoxFact<ClearSide>,
@@ -133,6 +135,12 @@ impl PrincipalChildBox {
     }
     pub fn computed_height(&self) -> BoxLengthFact {
         self.computed_height
+    }
+    pub fn computed_margin_left(&self) -> BoxLengthFact {
+        self.computed_margin_left
+    }
+    pub fn computed_margin_right(&self) -> BoxLengthFact {
+        self.computed_margin_right
     }
     pub fn margin_top(&self) -> BoxLengthFact {
         self.margin_top
@@ -297,11 +305,13 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `32 + 32*N + (N-2)` is prepaid before any proportional join, profile
-/// scan, or allocation. The additional `N-2` constant-size actions retain each
-/// child’s existing horizontal solver result without triggering another solve.
-/// The core is invoked exactly once. Temporary child facts are released before
-/// the source-only output is published.
+/// Facade work `32 + 32*N + 3*(N-2) + 32*(N-3)` is prepaid before any
+/// proportional join, profile scan, or allocation. Three constant-size actions
+/// per child retain the existing horizontal result and two computed margin facts;
+/// 32 actions per normal cover its possible minimum-width category rerun. Each
+/// normal still has one horizontal producer invocation. The core is invoked
+/// exactly once. Temporary child facts are released before the source-only output
+/// is published.
 ///
 /// # Errors
 /// Returns the first failure in the documented facade order and never publishes a
@@ -583,6 +593,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             used_height,
             computed_width: row.width,
             computed_height: row.height,
+            computed_margin_left: row.margin[3],
+            computed_margin_right: row.margin[1],
             margin_top: row.margin[0],
             margin_bottom: row.margin[2],
             clear: row.clear,
@@ -723,10 +735,14 @@ fn place_child_horizontal(
 
 fn facade_work(nodes: usize) -> Option<usize> {
     let children = nodes.checked_sub(2)?;
+    let normals = nodes.checked_sub(3)?;
+    let retained_actions = children.checked_mul(3)?;
+    let extra_category_actions = normals.checked_mul(32)?;
     nodes
         .checked_mul(32)?
         .checked_add(32)?
-        .checked_add(children)
+        .checked_add(retained_actions)?
+        .checked_add(extra_category_actions)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -813,5 +829,18 @@ mod tests {
         assert!(matches!(error, SiblingLayoutError::Allocation(_)));
         assert!(error.source().unwrap().is::<TryReserveError>());
         assert_eq!(error.source().unwrap().to_string(), real.to_string());
+
+        let error = allocate_children(4, 0, NonZeroUsize::MAX, |children, _| {
+            children.try_reserve_exact(usize::MAX)
+        })
+        .unwrap_err();
+        assert!(matches!(error, SiblingLayoutError::Allocation(_)));
+        assert!(error.source().unwrap().is::<TryReserveError>());
+        assert_eq!(error.source().unwrap().to_string(), real.to_string());
+    }
+
+    #[test]
+    fn facade_work_overflow_is_rejected() {
+        assert_eq!(facade_work(usize::MAX), None);
     }
 }

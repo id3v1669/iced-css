@@ -623,6 +623,35 @@ fn invalid_measurements_are_rejected_by_source_and_field() {
         }
     );
 }
+
+#[test]
+fn strict_owner_rejects_signed_horizontal_margins_for_both_normal_roles() {
+    let s = sources();
+    for source in [1, 3] {
+        for edge in ["left", "right"] {
+            for (value, reason) in [
+                (1.0, OwnerProfileReason::HorizontalMargin),
+                (-1.0, OwnerProfileReason::NegativeMargin),
+            ] {
+                let mut facts = input(&s);
+                let child = if source == 1 {
+                    &mut facts.before
+                } else {
+                    &mut facts.after
+                };
+                if edge == "left" {
+                    child.margin.left = value;
+                } else {
+                    child.margin.right = value;
+                }
+                assert_eq!(
+                    build_clearance_owner(&s, facts).unwrap_err(),
+                    ClearanceOwnerError::Unsupported { source, reason }
+                );
+            }
+        }
+    }
+}
 #[test]
 fn exact_stages_preserve_subnormals_and_rounding_created_equality() {
     let s = sources();

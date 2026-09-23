@@ -374,11 +374,19 @@ fn parent(f: ParentFacts<'_>, source: usize) -> Result<(), ClearanceOwnerError> 
     }
     Ok(())
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NormalHorizontalMargins {
+    Zero,
+    SignedAbsolute,
+}
+
 fn child(
     f: ChildFacts<'_>,
     source: usize,
     floating: bool,
     after: bool,
+    horizontal_margins: NormalHorizontalMargins,
 ) -> Result<f32, ClearanceOwnerError> {
     display(f.display, source, floating)?;
     if f.context
@@ -403,13 +411,22 @@ fn child(
             OwnerProfileReason::NonpositiveBlockHeight,
         ));
     }
-    check_edges(f.margin, source, "margin", false)?;
-    if floating {
-        if edge_values(f.margin).into_iter().any(|v| v != 0.) {
-            return Err(unsupported(source, OwnerProfileReason::FloatMargin));
+    if !floating && horizontal_margins == NormalHorizontalMargins::SignedAbsolute {
+        for value in edge_values(f.margin) {
+            finite(value, source, "margin")?;
         }
-    } else if f.margin.left != 0. || f.margin.right != 0. {
-        return Err(unsupported(source, OwnerProfileReason::HorizontalMargin));
+        if f.margin.top < 0.0 || f.margin.bottom < 0.0 {
+            return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
+        }
+    } else {
+        check_edges(f.margin, source, "margin", false)?;
+        if floating {
+            if edge_values(f.margin).into_iter().any(|v| v != 0.0) {
+                return Err(unsupported(source, OwnerProfileReason::FloatMargin));
+            }
+        } else if f.margin.left != 0.0 || f.margin.right != 0.0 {
+            return Err(unsupported(source, OwnerProfileReason::HorizontalMargin));
+        }
     }
     for (edges, field) in [(f.border, "border"), (f.padding, "padding")] {
         check_edges(edges, source, field, true)?;
@@ -479,7 +496,27 @@ pub(super) fn validate_child(
     floating: bool,
     after: bool,
 ) -> Result<f32, ClearanceOwnerError> {
-    child(facts, source, floating, after)
+    child(
+        facts,
+        source,
+        floating,
+        after,
+        NormalHorizontalMargins::Zero,
+    )
+}
+
+pub(super) fn validate_sequence_child(
+    facts: ChildFacts<'_>,
+    source: usize,
+    floating: bool,
+    after: bool,
+) -> Result<f32, ClearanceOwnerError> {
+    let margins = if floating {
+        NormalHorizontalMargins::Zero
+    } else {
+        NormalHorizontalMargins::SignedAbsolute
+    };
+    child(facts, source, floating, after, margins)
 }
 
 pub(super) fn validate_float_width(
