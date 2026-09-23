@@ -1,14 +1,78 @@
-//! CSS 2.2 §9.5.2 float-bottom selection and first clearance amount algorithm.
+//! CSS 2.2 §9.5.2 float selection, strict-case presence and first amount algorithm.
 //!
-//! The caller establishes earlier same-BFC membership, determines presence, and
-//! recomputes margin adjacency. These primitives select sides/bottoms and compute
-//! a nonfloating block's amount, without classifying equal edges or rebuilding
-//! margin groups. Coordinates increase downward and share one origin.
+//! The caller establishes earlier same-BFC membership and recomputes margin
+//! adjacency after presence classification. Equal-edge introduction remains
+//! unsupported; the explicit amount API can also consume caller-supplied presence.
+//! Coordinates increase downward and share one origin.
 use super::{
     arithmetic::Exact,
     floats::{FloatSide, PlacedFloat},
 };
 use std::num::NonZeroUsize;
+
+/// Whether the owner must rebuild clearance-affected margin adjacency.
+/// `Required` does not supply the recomputed baseline for the amount solver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearanceRequirement {
+    Absent,
+    Required,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearancePresenceError {
+    InvalidInput(&'static str),
+    /// Equal hypothetical and relevant float edges remain unsupported pending
+    /// stronger specification evidence. This is not absence or zero clearance.
+    UnsupportedEquality,
+}
+impl std::fmt::Display for ClearancePresenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "clearance presence: {self:?}")
+    }
+}
+impl std::error::Error for ClearancePresenceError {}
+
+/// Classify a nonfloating block's clearance requirement before rebuilding margins.
+///
+/// `hypothetical_top` is the border top as if `clear` were `none`.
+/// `lowest_float_bottom` is the selector's result over caller-established eligible
+/// floats. Propagate selection errors rather than turning them into `None`.
+/// Coordinates share one downward-increasing origin. Finite strict comparisons
+/// use no tolerance or subtraction; signed zeros compare equal. If upstream
+/// rounding produces equality, this API reports the unsupported case.
+/// A hypothetical top below the bottom numerically (`H < F`) returns `Required`;
+/// `H > F`, or no selected bottom, returns `Absent`.
+///
+/// `Required` means the caller must derive the post-barrier zero-clearance baseline
+/// before invoking [`solve_clearance`]. This fixed-cost function does not own the
+/// formatting tree, rebuild adjacency, or manufacture that baseline.
+///
+/// # Errors
+/// Validates the hypothetical top first (even with no selected bottom), then any
+/// bottom, rejecting nonfinite values. Equal finite coordinates return
+/// [`ClearancePresenceError::UnsupportedEquality`]; callers must not silently
+/// convert this into either requirement state.
+pub fn classify_clearance(
+    hypothetical_top: f32,
+    lowest_float_bottom: Option<f32>,
+) -> Result<ClearanceRequirement, ClearancePresenceError> {
+    if !hypothetical_top.is_finite() {
+        return Err(ClearancePresenceError::InvalidInput("hypothetical_top"));
+    }
+    let Some(bottom) = lowest_float_bottom else {
+        return Ok(ClearanceRequirement::Absent);
+    };
+    if !bottom.is_finite() {
+        return Err(ClearancePresenceError::InvalidInput("lowest_float_bottom"));
+    }
+    if hypothetical_top < bottom {
+        Ok(ClearanceRequirement::Required)
+    } else if hypothetical_top > bottom {
+        Ok(ClearanceRequirement::Absent)
+    } else {
+        Err(ClearancePresenceError::UnsupportedEquality)
+    }
+}
 
 /// The side constraint supplied by the caller's resolved `clear` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
