@@ -17,3 +17,5 @@ pub mod source_analysis_input;
 mod source_presentation_join;
 
 pub mod source_control_input;
+
+pub mod clearance_source_projection;
