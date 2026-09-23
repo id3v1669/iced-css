@@ -1,9 +1,82 @@
-//! CSS 2.2 §9.5.2's first clearance amount algorithm for a nonfloating block.
+//! CSS 2.2 §9.5.2 float-bottom selection and first clearance amount algorithm.
 //!
-//! The caller determines presence, selects relevant earlier same-BFC floats, and
-//! recomputes margin adjacency. This primitive neither classifies equal edges nor
-//! rebuilds margin groups. Coordinates increase downward and share one origin.
-use super::arithmetic::Exact;
+//! The caller establishes earlier same-BFC membership, determines presence, and
+//! recomputes margin adjacency. These primitives select sides/bottoms and compute
+//! a nonfloating block's amount, without classifying equal edges or rebuilding
+//! margin groups. Coordinates increase downward and share one origin.
+use super::{
+    arithmetic::Exact,
+    floats::{FloatSide, PlacedFloat},
+};
+use std::num::NonZeroUsize;
+
+/// The side constraint supplied by the caller's resolved `clear` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearSide {
+    None,
+    Left,
+    Right,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearanceFloatError {
+    /// The entire supplied slice exceeds the prepaid record allowance.
+    Work,
+    /// A bottom is nonfinite, including on an unselected side.
+    InvalidBottom { index: usize },
+}
+impl std::fmt::Display for ClearanceFloatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "clearance float selection: {self:?}")
+    }
+}
+impl std::error::Error for ClearanceFloatError {}
+
+/// Select the lowest matching outer bottom from caller-established eligible floats.
+///
+/// The caller must supply only earlier source floats in the same block formatting
+/// context, excluding the clearing element's descendants. Coordinates share one
+/// origin and increase downward. This function cannot verify source membership.
+/// Zero-height and zero-width floats remain eligible; no occupancy test is applied.
+/// Only sides and bottoms are consumed, so other geometry is not validated.
+///
+/// `None` means no selected constraint, not a decision about clearance presence.
+/// `Some(0.0)` is a real bottom and is normalized to positive zero. `ClearSide::None`
+/// returns without inspecting floats. Other sides prepay one complete scan before
+/// validation. This function allocates no storage and performs no coordinate sums.
+///
+/// # Errors
+/// For `clear != ClearSide::None`, returns [`ClearanceFloatError::Work`] before
+/// traversal if `floats.len()` exceeds `work`. Otherwise returns the index of the
+/// first nonfinite bottom in slice order, even on the unselected side.
+pub fn lowest_clearance_float_bottom(
+    floats: &[PlacedFloat],
+    clear: ClearSide,
+    work: NonZeroUsize,
+) -> Result<Option<f32>, ClearanceFloatError> {
+    if clear == ClearSide::None {
+        return Ok(None);
+    }
+    if floats.len() > work.get() {
+        return Err(ClearanceFloatError::Work);
+    }
+    let mut bottom: Option<f32> = None;
+    for (index, float) in floats.iter().enumerate() {
+        if !float.bottom.is_finite() {
+            return Err(ClearanceFloatError::InvalidBottom { index });
+        }
+        if matches!(
+            (clear, float.side),
+            (ClearSide::Both, _)
+                | (ClearSide::Left, FloatSide::Left)
+                | (ClearSide::Right, FloatSide::Right)
+        ) {
+            bottom = Some(bottom.map_or(float.bottom, |current| current.max(float.bottom)));
+        }
+    }
+    Ok(bottom.map(zero))
+}
 
 /// Presence is supplied by the formatting owner, never inferred from the amount.
 #[derive(Debug, Clone, Copy, PartialEq)]
