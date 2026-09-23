@@ -19,8 +19,8 @@ use iced_css_core::{
             BfcHeightError, BfcHeightInput, BfcHeightMode, BfcHeightPlacement, solve_bfc_height,
         },
         block::{
-            BlockHorizontalError, BlockHorizontalPlacement, BlockWidthInput, Direction,
-            place_block_horizontal,
+            BlockHorizontalError, BlockHorizontalPlacement, BlockWidthInput, BlockWidthResult,
+            Direction, place_block_horizontal,
         },
         block_bottom::{
             BlockBottomError, BlockBottomInput, BlockBottomPlacement, place_block_bottom,
@@ -91,6 +91,7 @@ pub struct PrincipalChildBox {
     kind: PrincipalChildKind,
     content: PrincipalEdges,
     used_width: f32,
+    normal_width: Option<BlockWidthResult>,
     used_height: f32,
     computed_width: BoxLengthFact,
     computed_height: BoxLengthFact,
@@ -120,6 +121,9 @@ impl PrincipalChildBox {
     }
     pub fn used_width(&self) -> f32 {
         self.used_width
+    }
+    pub fn normal_width(&self) -> Option<BlockWidthResult> {
+        self.normal_width
     }
     pub fn used_height(&self) -> f32 {
         self.used_height
@@ -293,9 +297,11 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `32 + 32*N` is prepaid before any proportional join, profile scan,
-/// or allocation. The core is invoked exactly once. Temporary child facts are
-/// released before the source-only output is published.
+/// Facade work `32 + 32*N + (N-2)` is prepaid before any proportional join, profile
+/// scan, or allocation. The additional `N-2` constant-size actions retain each
+/// child’s existing horizontal solver result without triggering another solve.
+/// The core is invoked exactly once. Temporary child facts are released before
+/// the source-only output is published.
 ///
 /// # Errors
 /// Returns the first failure in the documented facade order and never publishes a
@@ -393,13 +399,6 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 source,
                 "overflow",
                 CapturedClearanceUnsupported::ChildOverflow,
-            )));
-        }
-        if source != 3 && !matches!(row.width, BoxLengthFact::Auto { .. }) {
-            return Err(E::Captured(unsupported(
-                source,
-                "width",
-                CapturedClearanceUnsupported::BlockWidth,
             )));
         }
         let height = match row.height {
@@ -531,7 +530,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 property: "child-facts",
             })?;
         let used_height = explicit_height(child, source)?;
-        let (kind, content, used_width) = if source == 3 {
+        let (kind, content, used_width, normal_width) = if source == 3 {
             let placed = sequence.placed_float();
             (
                 PrincipalChildKind::Float,
@@ -542,6 +541,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     bottom: placed.bottom,
                 },
                 float_width,
+                None,
             )
         } else {
             let vertical = if source == 2 {
@@ -570,6 +570,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     bottom: vertical.bottom,
                 },
                 placed.used.width,
+                Some(placed.used),
             )
         };
         children.push(PrincipalChildBox {
@@ -578,6 +579,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             kind,
             content,
             used_width,
+            normal_width,
             used_height,
             computed_width: row.width,
             computed_height: row.height,
@@ -720,7 +722,11 @@ fn place_child_horizontal(
 }
 
 fn facade_work(nodes: usize) -> Option<usize> {
-    nodes.checked_mul(32)?.checked_add(32)
+    let children = nodes.checked_sub(2)?;
+    nodes
+        .checked_mul(32)?
+        .checked_add(32)?
+        .checked_add(children)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
