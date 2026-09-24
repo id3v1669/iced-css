@@ -1092,6 +1092,36 @@ fn legacy_zero_margin_kernel_identity_keeps_negative_zero_edges() {
     }
 }
 #[test]
+fn legacy_zero_vertical_margin_kernel_identity_keeps_negative_zero_height() {
+    for nested in [false, true] {
+        let flat_sources = sources();
+        let nested_sources = nested_sources();
+        let source_slice = if nested {
+            &nested_sources[1..]
+        } else {
+            &flat_sources[..]
+        };
+        let mut facts = input(source_slice);
+        facts.float.margin.top = AutoLength::Value(-0.0);
+        facts.float.margin.bottom = AutoLength::Value(-0.0);
+        facts.float.height = OwnerHeight::Explicit(-0.0);
+        // A zero-height float would put the clearing after-child's hypothetical top
+        // exactly at the float bottom (UnsupportedEquality); as in the existing
+        // zero-height Legacy control, the after child does not clear.
+        facts.after.clear = ClearSide::None;
+        let owner = if nested {
+            build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts)
+        } else {
+            build_clearance_owner(&flat_sources, facts)
+        }
+        .unwrap();
+        assert_eq!(
+            owner.placed_float().bottom.to_bits(),
+            owner.placed_float().top.to_bits()
+        );
+    }
+}
+#[test]
 fn nested_owner_retains_outer_and_maps_shared_solver_indices() {
     let nested = nested_sources();
     let root = sources();

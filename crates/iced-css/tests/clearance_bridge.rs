@@ -225,6 +225,12 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
         ("#f {width:101px;}", 3, OwnerProfileReason::FloatTooWide),
         ("#f {margin-left:5px;}", 3, OwnerProfileReason::FloatMargin),
         ("#f {margin-right:7px;}", 3, OwnerProfileReason::FloatMargin),
+        ("#f {margin-top:3px;}", 3, OwnerProfileReason::FloatMargin),
+        (
+            "#f {margin-bottom:4px;}",
+            3,
+            OwnerProfileReason::FloatMargin,
+        ),
         (
             "#b2 {margin-top:-1px;}",
             4,

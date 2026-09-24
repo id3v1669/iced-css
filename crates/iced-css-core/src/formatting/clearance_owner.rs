@@ -186,9 +186,8 @@ pub enum OwnerProfileReason {
     AutoHorizontalMargin,
     HorizontalMargin,
     ChildDecoration,
-    /// Under `ChildMarginPolicy::Sequence`: a nonzero absolute vertical float
-    /// margin (top or bottom). Under `ChildMarginPolicy::Legacy`: any nonzero
-    /// absolute float margin on any edge.
+    /// Under `ChildMarginPolicy::Legacy`: any nonzero absolute float margin on any
+    /// edge. Not produced under `ChildMarginPolicy::Sequence`.
     FloatMargin,
     ClearOnBeforeOrFloat,
     FloatTooWide,
@@ -512,12 +511,11 @@ fn child(
             }
         }
         if floating {
-            let nonzero = |value: AutoLength| matches!(value, AutoLength::Value(v) if v != 0.0);
-            let restricted = match margin_policy {
-                ChildMarginPolicy::Sequence => nonzero(f.margin.top) || nonzero(f.margin.bottom),
-                ChildMarginPolicy::Legacy => values.into_iter().any(nonzero),
-            };
-            if restricted {
+            if margin_policy == ChildMarginPolicy::Legacy
+                && values
+                    .into_iter()
+                    .any(|value| matches!(value, AutoLength::Value(v) if v != 0.0))
+            {
                 return Err(unsupported(source, OwnerProfileReason::FloatMargin));
             }
         } else if f.margin.left != AutoLength::Value(0.0)
@@ -637,6 +635,7 @@ pub(super) struct FirstFloatKernel {
     pub before: BlockVertical,
     pub placed_float: PlacedFloat,
     pub float_content: Band,
+    pub float_content_vertical: BlockVertical,
 }
 
 pub(super) struct FirstFloatInput<'s> {
@@ -696,21 +695,28 @@ pub(super) fn place_first_float(
     } else {
         sum(&[ml, input.float_width, mr], "float_outer_width").map_err(tagged)?
     };
+    let mt = input.float.margin.used_top();
+    let mb = input.float.margin.used_bottom();
+    let vertical_identity = mt == 0.0 && mb == 0.0;
+    let outer_height = if vertical_identity {
+        input.float_height
+    } else {
+        sum(&[mt, input.float_height, mb], "float_outer_height").map_err(tagged)?
+    };
     let placed_float = place_float(
         &[],
         input.parent.containing,
-        // The request is the float's margin box. Vertical float margins are used
-        // zero here, so its top/bottom are the content top/bottom. Horizontally
-        // the width is the content width plus both used horizontal margins; with
-        // both used margins zero (Auto or ±0) the content width is passed
-        // unchanged, so every zero-margin input keeps its predecessor bits.
+        // The request is the float's margin box: each extent is the content extent
+        // plus both used margins on that axis. With both used margins on an axis
+        // zero (Auto or ±0) the content extent is passed unchanged, so every
+        // zero-margin input keeps its predecessor bits.
         FloatRequest {
             side: match input.float.display.float {
                 Float::Right => FloatSide::Right,
                 _ => FloatSide::Left,
             },
             width: outer_width,
-            height: input.float_height,
+            height: outer_height,
             containing_top: input.parent.content_top,
             hypothetical_top: float_top,
         },
@@ -727,9 +733,10 @@ pub(super) fn place_first_float(
             right: placed_float.right,
         }
     } else {
+        // The near-edge sum of either arm (left for a left F, right for a right F)
+        // cannot fail after a successful placement (NFH design r1, NFH-D-003); it
+        // stays as a documented defensive branch.
         match placed_float.side {
-            // The near-edge stage cannot fail after a successful placement
-            // (design r1, NFH-D-003); it stays as a documented defensive branch.
             FloatSide::Left => {
                 let left = sum(&[placed_float.left, ml], "float_content_left").map_err(tagged)?;
                 let right =
@@ -745,6 +752,19 @@ pub(super) fn place_first_float(
             }
         }
     };
+    // The near (top) edge cannot fail after a successful placement: placed.top = y
+    // exactly and y <= RN(y + mt) <= RN(y + outer) = placed.bottom (design,
+    // "Near-edge unreachability"); it stays a documented defensive branch.
+    let float_content_vertical = if vertical_identity {
+        BlockVertical {
+            top: placed_float.top,
+            bottom: placed_float.bottom,
+        }
+    } else {
+        let top = sum(&[placed_float.top, mt], "float_content_top").map_err(tagged)?;
+        let bottom = sum(&[top, input.float_height], "float_content_bottom").map_err(tagged)?;
+        BlockVertical { top, bottom }
+    };
     Ok(FirstFloatKernel {
         before: BlockVertical {
             top: before_top,
@@ -752,6 +772,7 @@ pub(super) fn place_first_float(
         },
         placed_float,
         float_content,
+        float_content_vertical,
     })
 }
 
@@ -1000,7 +1021,8 @@ fn solve_region<'s>(
     })
     .map_err(|failure| failure.error)?;
     // Legacy float margins are validated all zero, so only the identity path is
-    // reachable here and `first.float_content` equals the placed margin box.
+    // reachable on both axes here, and `first.float_content` and
+    // `first.float_content_vertical` equal the placed margin box.
     let after = place_next_normal(
         first.before.bottom,
         input.before.margin.used_bottom(),

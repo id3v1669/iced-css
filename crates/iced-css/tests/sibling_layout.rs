@@ -511,7 +511,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            54 + 32 * 6 + 43 * (6 - 2) + 66 * (6 - 3)
+            60 + 32 * 6 + 43 * (6 - 2) + 66 * (6 - 3)
         );
     });
 }
@@ -3342,8 +3342,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 616;
-        for short in [1, 615] {
+        let work = 622;
+        for short in [1, 621] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3372,12 +3372,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            475,
+            481,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            757,
+            763,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3403,14 +3403,14 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             assert_eq!(layout.receipt().work, work);
             let children = source_count - 2;
             let normals = source_count - 3;
-            assert_eq!(work, 54 + 32 * source_count + 43 * children + 66 * normals);
+            assert_eq!(work, 60 + 32 * source_count + 43 * children + 66 * normals);
         });
     }
 }
 
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
-    for (source_count, facade_work, core_work) in [(5, 475, 337), (6, 616, 419), (7, 757, 502)] {
+    for (source_count, facade_work, core_work) in [(5, 481, 399), (6, 622, 481), (7, 763, 564)] {
         let mut receipts = Vec::new();
         for width in [10, 140] {
             let b4 = if source_count == 7 {
@@ -3459,23 +3459,23 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            475,
+            481,
+            399,
             337,
-            269,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            616,
+            622,
+            481,
             419,
-            351,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            757,
+            763,
+            564,
             502,
-            434,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3911,11 +3911,6 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
 
     for (suffix, source, reason) in [
         (
-            "#f { width:101px; margin-top:1px; }",
-            3,
-            OwnerProfileReason::FloatMargin,
-        ),
-        (
             "#b3 { padding-left:1px; }",
             5,
             OwnerProfileReason::ChildDecoration,
@@ -3953,6 +3948,32 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
             ));
         });
     }
+
+    // A nonzero vertical float margin on an oversized float is admitted: margin box
+    // 0..101 x 16..19, content 0..101 x 17..19.
+    let vertical_css = format!(
+        "{} #f {{ margin-left:auto; margin-right:auto; }} #f {{ width:101px; margin-top:1px; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &vertical_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        let placed = layout.sequence().placed_float();
+        assert_eq!(
+            (placed.left, placed.right, placed.top, placed.bottom),
+            (0.0, 101.0, 16.0, 19.0)
+        );
+        let c = layout.children()[1].content();
+        assert_eq!((c.left, c.right, c.top, c.bottom), (0.0, 101.0, 17.0, 19.0));
+    });
 
     // A nonzero horizontal float margin is admitted; with Auto right (used zero)
     // it makes the float oversized through its margin alone.
@@ -5629,12 +5650,12 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [475, 616, 757][case.nodes - 5],
+        [481, 622, 763][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
         layout.receipt().core.work,
-        [337, 419, 502][case.nodes - 5],
+        [399, 481, 564][case.nodes - 5],
         "{id}"
     );
 }
@@ -6366,7 +6387,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 475, "#b2"), (6, 616, "#b3"), (7, 757, "#b4")] {
+    for (source_count, work, selector) in [(5, 481, "#b2"), (6, 622, "#b3"), (7, 763, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6630,9 +6651,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 475, 451, 337, 269),
-        (6, 616, 588, 419, 351),
-        (7, 757, 725, 502, 434),
+        (5, 481, 475, 399, 337),
+        (6, 622, 616, 481, 419),
+        (7, 763, 757, 564, 502),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -6747,20 +6768,8 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             profile(3, OwnerProfileReason::NegativeMargin),
         ),
         (
-            "#f { margin-top:auto; margin-bottom:1px; }",
-            profile(3, OwnerProfileReason::FloatMargin),
-        ),
-        (
-            "#f { margin-top:1px; margin-bottom:auto; }",
-            profile(3, OwnerProfileReason::FloatMargin),
-        ),
-        (
             "#f { margin-top:auto; margin-left:-1px; }",
             profile(3, OwnerProfileReason::NegativeMargin),
-        ),
-        (
-            "#f { margin-bottom:auto; margin-right:1px; margin-top:2px; }",
-            profile(3, OwnerProfileReason::FloatMargin),
         ),
         (
             "#b3 { margin-top:auto; height:auto; }",
@@ -6809,6 +6818,49 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             )
             .unwrap_err();
             assert_eq!(format!("{error:?}"), format!("{expected:?}"), "{rule}");
+        });
+    }
+
+    // Nonzero vertical float margins beside a vertical Auto are admitted:
+    // (rule, margin box, F content), each as (left, right, top, bottom).
+    for (rule, margin_box, content) in [
+        (
+            "#f { margin-top:auto; margin-bottom:1px; }",
+            (0.0, 10.0, 16.0, 19.0),
+            (0.0, 10.0, 16.0, 18.0),
+        ),
+        (
+            "#f { margin-top:1px; margin-bottom:auto; }",
+            (0.0, 10.0, 16.0, 19.0),
+            (0.0, 10.0, 17.0, 19.0),
+        ),
+        (
+            "#f { margin-bottom:auto; margin-right:1px; margin-top:2px; }",
+            (0.0, 11.0, 16.0, 20.0),
+            (0.0, 10.0, 18.0, 20.0),
+        ),
+    ] {
+        let css = format!("{} {rule}", baseline_css());
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let layout = default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits(),
+            )
+            .unwrap_or_else(|e| panic!("{rule}: {e:?}"));
+            let placed = layout.sequence().placed_float();
+            assert_eq!(
+                (placed.left, placed.right, placed.top, placed.bottom),
+                margin_box,
+                "{rule}"
+            );
+            let c = layout.children()[1].content();
+            assert_eq!((c.left, c.right, c.top, c.bottom), content, "{rule}");
         });
     }
 
@@ -7440,9 +7492,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 475, 451, 337, 269),
-        (6, 616, 588, 419, 351),
-        (7, 757, 725, 502, 434),
+        (5, 481, 475, 399, 337),
+        (6, 622, 616, 481, 419),
+        (7, 763, 757, 564, 502),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -7499,6 +7551,1092 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
             assert_eq!((float.content().left, float.content().right), (5.0, 15.0));
             assert_eq!(float.used_margin_left().to_bits(), 0x40a0_0000);
             assert_eq!(float.used_margin_right().to_bits(), 0x40e0_0000);
+        });
+    }
+}
+
+// Everything except F's content top/bottom, used height, used/computed vertical
+// margins and computed height. The F tuple has 12 elements, the std Debug limit.
+fn float_vertical_view(layout: &CapturedSiblingLayout<'_>) -> Vec<String> {
+    let sequence = layout.sequence();
+    let mut view = vec![
+        format!("{:?}", sequence.before()),
+        format!("{:?}", sequence.tail()),
+        format!("{:?}", sequence.placed_float()),
+        format!("{:?}", sequence.float_content()),
+        format!("{:?}", layout.parent()),
+        format!("{:?}", layout.receipt()),
+    ];
+    for child in layout.children() {
+        if child.source_index() == 3 {
+            let content = child.content();
+            view.push(format!(
+                "{:?}",
+                (
+                    child.kind(),
+                    child.containing_source_index(),
+                    content.left,
+                    content.right,
+                    child.used_width(),
+                    child.normal_width(),
+                    child.used_margin_left(),
+                    child.used_margin_right(),
+                    child.computed_width(),
+                    child.computed_margin_left(),
+                    child.computed_margin_right(),
+                    child.clear(),
+                )
+            ));
+        } else {
+            view.push(format!("{child:?}"));
+        }
+    }
+    view
+}
+
+fn assert_float_vertical_case(
+    source_count: usize,
+    rule: &str,
+    equivalent_rule: &str,
+    margin_box: (f32, f32, f32, f32),
+    content: (f32, f32, f32, f32),
+    used_vertical: (u32, u32),
+    parent: (f32, f32, bool),
+) {
+    let bits =
+        |v: (f32, f32, f32, f32)| (v.0.to_bits(), v.1.to_bits(), v.2.to_bits(), v.3.to_bits());
+    let control_css = format!("{} {rule} {equivalent_rule}", baseline_css());
+    let mut control = None;
+    sibling_fixture(source_count, &control_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        control = Some(float_vertical_view(&layout));
+    });
+    let css = format!("{} {rule}", baseline_css());
+    sibling_fixture(source_count, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap_or_else(|e| panic!("{rule}: {e:?}"));
+        let placed = layout.sequence().placed_float();
+        assert_eq!(
+            bits((placed.left, placed.right, placed.top, placed.bottom)),
+            bits(margin_box),
+            "{rule}"
+        );
+        let span = layout.sequence().float_content_vertical();
+        assert_eq!(
+            (span.top.to_bits(), span.bottom.to_bits()),
+            (content.2.to_bits(), content.3.to_bits()),
+            "{rule}"
+        );
+        let float = &layout.children()[1];
+        assert_eq!(float.source_index(), 3, "{rule}");
+        let c = float.content();
+        assert_eq!(
+            bits((c.left, c.right, c.top, c.bottom)),
+            bits(content),
+            "{rule}"
+        );
+        assert_eq!(
+            (
+                float.used_margin_top().to_bits(),
+                float.used_margin_bottom().to_bits()
+            ),
+            used_vertical,
+            "{rule}"
+        );
+        assert_eq!(float.used_height().to_bits(), 2.0_f32.to_bits(), "{rule}");
+        let height = layout.parent().height();
+        let extent = height.auto_extent.unwrap();
+        assert_eq!(
+            (
+                height.content_bottom.to_bits(),
+                height.used_height.to_bits(),
+                extent.float_extended
+            ),
+            (parent.0.to_bits(), parent.1.to_bits(), parent.2),
+            "{rule}"
+        );
+        assert_eq!(Some(float_vertical_view(&layout)), control, "{rule}");
+    });
+}
+
+#[test]
+fn nonzero_left_float_vertical_margins_publish_the_content_span() {
+    assert_float_vertical_case(
+        6,
+        "#f { margin-top:3px; margin-bottom:4px; }",
+        "#f { margin-top:0; margin-bottom:0; height:9px; }",
+        (0.0, 10.0, 16.0, 25.0),
+        (0.0, 10.0, 19.0, 21.0),
+        (0x4040_0000, 0x4080_0000),
+        (34.0, 23.0, false),
+    );
+}
+
+#[test]
+fn nonzero_right_float_vertical_margins_publish_the_content_span() {
+    assert_float_vertical_case(
+        6,
+        "#f { float:right; margin-top:3px; margin-bottom:4px; }",
+        "#f { margin-top:0; margin-bottom:0; height:9px; }",
+        (90.0, 100.0, 16.0, 25.0),
+        (90.0, 100.0, 19.0, 21.0),
+        (0x4040_0000, 0x4080_0000),
+        (34.0, 23.0, false),
+    );
+}
+
+#[test]
+fn left_float_bottom_margin_alone_extends_parent_auto_height() {
+    assert_float_vertical_case(
+        5,
+        "#b2 { clear:none; } #f { margin-bottom:20px; }",
+        "#f { margin-bottom:0; height:22px; }",
+        (0.0, 10.0, 16.0, 38.0),
+        (0.0, 10.0, 16.0, 18.0),
+        (0x0000_0000, 0x41a0_0000),
+        (38.0, 27.0, true),
+    );
+}
+
+#[test]
+fn right_float_bottom_margin_alone_extends_parent_auto_height() {
+    assert_float_vertical_case(
+        5,
+        "#b2 { clear:none; } #f { float:right; margin-bottom:20px; }",
+        "#f { margin-bottom:0; height:22px; }",
+        (90.0, 100.0, 16.0, 38.0),
+        (90.0, 100.0, 16.0, 18.0),
+        (0x0000_0000, 0x41a0_0000),
+        (38.0, 27.0, true),
+    );
+}
+
+/// One targeted FVM success row: expected exact bits from the design model.
+struct FvmSuccess {
+    nodes: usize,
+    rule: &'static str,
+    control: &'static str,
+    /// F computed height, margin-top and margin-bottom facts.
+    facts: [NfhFact; 3],
+    /// Margin box and F content as left, right, top, bottom.
+    margin_box: [u32; 4],
+    content: [u32; 4],
+    used_vertical: [u32; 2],
+    used_height: u32,
+    /// P content bottom, used height and float extension.
+    parent: (u32, u32, bool),
+}
+
+/// One targeted FVM failure row: typed source-tagged placement failure.
+struct FvmFailure {
+    nodes: usize,
+    rule: &'static str,
+    outer: (f32, f32),
+    facts: [NfhFact; 3],
+    source: usize,
+    error: &'static str,
+}
+
+fn assert_fvm_facts(
+    facts: &iced_css::evaluation::sibling_box_facts::SiblingBoxFacts<'_, '_, '_, '_, '_, '_>,
+    original_parent: usize,
+    rule: &str,
+    expected: [NfhFact; 3],
+) {
+    let row = facts.row(3).unwrap();
+    let [height, top, bottom] =
+        expected.map(|fact| format!("{:?}", nfh_fact(fact, original_parent)));
+    assert_eq!(format!("{:?}", row.height), height, "{rule}");
+    assert_eq!(format!("{:?}", row.margin[0]), top, "{rule}");
+    assert_eq!(format!("{:?}", row.margin[2]), bottom, "{rule}");
+}
+
+fn assert_fvm_targeted_success(case: FvmSuccess) {
+    let rule = case.rule;
+    let control_css = format!("{} {rule} {}", baseline_css(), case.control);
+    let mut control = None;
+    sibling_fixture(case.nodes, &control_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap_or_else(|e| panic!("control {rule}: {e:?}"));
+        control = Some(float_vertical_view(&layout));
+    });
+    let css = format!("{} {rule}", baseline_css());
+    sibling_fixture(case.nodes, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let original_parent = projection.original_index(1).unwrap();
+        assert_fvm_facts(&facts, original_parent, rule, case.facts);
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap_or_else(|e| panic!("{rule}: {e:?}"));
+        let placed = layout.sequence().placed_float();
+        assert_eq!(
+            [placed.left, placed.right, placed.top, placed.bottom].map(f32::to_bits),
+            case.margin_box,
+            "{rule}"
+        );
+        let float = &layout.children()[1];
+        assert_eq!(float.source_index(), 3, "{rule}");
+        let c = float.content();
+        assert_eq!(
+            [c.left, c.right, c.top, c.bottom].map(f32::to_bits),
+            case.content,
+            "{rule}"
+        );
+        let span = layout.sequence().float_content_vertical();
+        assert_eq!(
+            [span.top.to_bits(), span.bottom.to_bits()],
+            [case.content[2], case.content[3]],
+            "{rule}"
+        );
+        assert_eq!(
+            [
+                float.used_margin_top().to_bits(),
+                float.used_margin_bottom().to_bits()
+            ],
+            case.used_vertical,
+            "{rule}"
+        );
+        assert_eq!(float.used_height().to_bits(), case.used_height, "{rule}");
+        let row = facts.row(3).unwrap();
+        assert_eq!(float.computed_height(), row.height, "{rule}");
+        assert_eq!(
+            format!("{:?}", (float.margin_top(), float.margin_bottom())),
+            format!("{:?}", (row.margin[0], row.margin[2])),
+            "{rule}"
+        );
+        let height = layout.parent().height();
+        let extent = height.auto_extent.unwrap();
+        assert_eq!(
+            (
+                height.content_bottom.to_bits(),
+                height.used_height.to_bits(),
+                extent.float_extended
+            ),
+            case.parent,
+            "{rule}"
+        );
+        assert_eq!(Some(float_vertical_view(&layout)), control, "{rule}");
+    });
+}
+
+fn assert_fvm_targeted_failure(case: FvmFailure) {
+    let rule = case.rule;
+    let css = format!("{} {rule}", baseline_css());
+    sibling_fixture(case.nodes, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let original_parent = projection.original_index(1).unwrap();
+        assert_fvm_facts(&facts, original_parent, rule, case.facts);
+        match default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            case.outer.0,
+            case.outer.1,
+            10.0,
+            layout_limits(),
+        ) {
+            Err(SiblingLayoutError::Core(ClearanceSequenceError::Placement { source, error })) => {
+                assert_eq!(
+                    (source, format!("{error:?}")),
+                    (case.source, case.error.to_string()),
+                    "{rule}"
+                );
+            }
+            other => panic!("{rule}: expected a placement failure, got {other:?}"),
+        }
+    });
+}
+
+// FVM targeted inputs, generated by targeted_gen.py from targeted-inputs.json
+// (sha256 9b5e5e94ace5e0c9a89303d9005e98e9e219e2c23f912389876582df1a8a345b).
+
+#[test]
+fn fvm_targeted_00_clearance_boundary_b2mt10_mt1_mb2_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{margin-top:10px;margin-bottom:0px;} #f{margin-top:1px;margin-bottom:2px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:5px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x40000000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41800000, 0x41a80000],
+        content: [0x00000000, 0x41200000, 0x41880000, 0x41980000],
+        used_vertical: [0x3f800000, 0x40000000],
+        used_height: 0x40000000,
+        parent: (0x41b80000, 0x41400000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_01_clearance_boundary_b2mt10_mt1_mb3_left() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 5,
+        rule: "#b2{margin-top:10px;margin-bottom:0px;} #f{margin-top:1px;margin-bottom:3px;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x40400000, false, NfhOrigin::Specified),
+        ],
+        source: 4,
+        error: "UnsupportedEquality",
+    });
+}
+
+#[test]
+fn fvm_targeted_02_clearance_boundary_b2mt10_mt1_mb4_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{margin-top:10px;margin-bottom:0px;} #f{margin-top:1px;margin-bottom:4px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:7px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x40800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41800000, 0x41b80000],
+        content: [0x00000000, 0x41200000, 0x41880000, 0x41980000],
+        used_vertical: [0x3f800000, 0x40800000],
+        used_height: 0x40000000,
+        parent: (0x41c00000, 0x41500000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_03_clearance_boundary_b2mt10_mt1_mb2_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{margin-top:10px;margin-bottom:0px;} #f{margin-top:1px;margin-bottom:2px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:5px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x40000000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41800000, 0x41a80000],
+        content: [0x42b40000, 0x42c80000, 0x41880000, 0x41980000],
+        used_vertical: [0x3f800000, 0x40000000],
+        used_height: 0x40000000,
+        parent: (0x41b80000, 0x41400000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_04_clearance_boundary_b2mt10_mt1_mb3_right() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 5,
+        rule: "#b2{margin-top:10px;margin-bottom:0px;} #f{margin-top:1px;margin-bottom:3px;} #f{float:right;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x40400000, false, NfhOrigin::Specified),
+        ],
+        source: 4,
+        error: "UnsupportedEquality",
+    });
+}
+
+#[test]
+fn fvm_targeted_05_clearance_boundary_b2mt10_mt1_mb4_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{margin-top:10px;margin-bottom:0px;} #f{margin-top:1px;margin-bottom:4px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:7px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x40800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41800000, 0x41b80000],
+        content: [0x42b40000, 0x42c80000, 0x41880000, 0x41980000],
+        used_vertical: [0x3f800000, 0x40800000],
+        used_height: 0x40000000,
+        parent: (0x41c00000, 0x41500000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_06_zero_height_h0_mt1_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{margin-bottom:0px;} #f{height:0px;margin-top:1px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:1px;}",
+        facts: [
+            (0x00000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41800000, 0x41880000],
+        content: [0x00000000, 0x41200000, 0x41880000, 0x41880000],
+        used_vertical: [0x3f800000, 0x00000000],
+        used_height: 0x00000000,
+        parent: (0x41900000, 0x40e00000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_07_zero_height_h0_mt1_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{margin-bottom:0px;} #f{height:0px;margin-top:1px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:1px;}",
+        facts: [
+            (0x00000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41800000, 0x41880000],
+        content: [0x42b40000, 0x42c80000, 0x41880000, 0x41880000],
+        used_vertical: [0x3f800000, 0x00000000],
+        used_height: 0x00000000,
+        parent: (0x41900000, 0x40e00000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_08_float_extension_mb20_clear_none_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{clear:none;margin-bottom:0px;} #f{margin-bottom:20px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:22px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+            (0x41a00000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41800000, 0x42180000],
+        content: [0x00000000, 0x41200000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x41a00000],
+        used_height: 0x40000000,
+        parent: (0x42180000, 0x41d80000, true),
+    });
+}
+
+#[test]
+fn fvm_targeted_09_float_extension_mb20_clear_none_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{clear:none;margin-bottom:0px;} #f{margin-bottom:20px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:22px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+            (0x41a00000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41800000, 0x42180000],
+        content: [0x42b40000, 0x42c80000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x41a00000],
+        used_height: 0x40000000,
+        parent: (0x42180000, 0x41d80000, true),
+    });
+}
+
+#[test]
+fn fvm_targeted_10_clear_mismatch_left_f_b2_clear_right_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{clear:right;margin-bottom:0px;} #f{margin-bottom:20px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:22px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+            (0x41a00000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41800000, 0x42180000],
+        content: [0x00000000, 0x41200000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x41a00000],
+        used_height: 0x40000000,
+        parent: (0x42180000, 0x41d80000, true),
+    });
+}
+
+#[test]
+fn fvm_targeted_11_clear_mismatch_right_f_b2_clear_left_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 5,
+        rule: "#b2{clear:left;margin-bottom:0px;} #f{margin-bottom:20px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:22px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+            (0x41a00000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41800000, 0x42180000],
+        content: [0x42b40000, 0x42c80000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x41a00000],
+        used_height: 0x40000000,
+        parent: (0x42180000, 0x41d80000, true),
+    });
+}
+
+#[test]
+fn fvm_targeted_12_2p24_collapsed_1_1_1_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#b1{margin-bottom:16777204px;} #f{margin-top:1px;height:1px;margin-bottom:1px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:3px;}",
+        facts: [
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x4b800000, 0x4b800002],
+        content: [0x00000000, 0x41200000, 0x4b800000, 0x4b800000],
+        used_vertical: [0x3f800000, 0x3f800000],
+        used_height: 0x3f800000,
+        parent: (0x4b800006, 0x4b800000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_13_2p24_rounded_1_5_1_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#b1{margin-bottom:16777204px;} #f{margin-top:1px;height:5px;margin-bottom:1px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:7px;}",
+        facts: [
+            (0x40a00000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x4b800000, 0x4b800004],
+        content: [0x00000000, 0x41200000, 0x4b800000, 0x4b800002],
+        used_vertical: [0x3f800000, 0x3f800000],
+        used_height: 0x40a00000,
+        parent: (0x4b800008, 0x4b800002, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_14_2p24_non_containment_1_5_1_0_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#b1{margin-bottom:16777204px;} #f{margin-top:1.5px;height:1px;margin-bottom:0px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:2.5px;}",
+        facts: [
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x3fc00000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x4b800000, 0x4b800001],
+        content: [0x00000000, 0x41200000, 0x4b800001, 0x4b800002],
+        used_vertical: [0x3fc00000, 0x00000000],
+        used_height: 0x3f800000,
+        parent: (0x4b800006, 0x4b800000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_15_2p24_collapsed_1_1_1_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#b1{margin-bottom:16777204px;} #f{margin-top:1px;height:1px;margin-bottom:1px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:3px;}",
+        facts: [
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x4b800000, 0x4b800002],
+        content: [0x42b40000, 0x42c80000, 0x4b800000, 0x4b800000],
+        used_vertical: [0x3f800000, 0x3f800000],
+        used_height: 0x3f800000,
+        parent: (0x4b800006, 0x4b800000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_16_2p24_rounded_1_5_1_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#b1{margin-bottom:16777204px;} #f{margin-top:1px;height:5px;margin-bottom:1px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:7px;}",
+        facts: [
+            (0x40a00000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x4b800000, 0x4b800004],
+        content: [0x42b40000, 0x42c80000, 0x4b800000, 0x4b800002],
+        used_vertical: [0x3f800000, 0x3f800000],
+        used_height: 0x40a00000,
+        parent: (0x4b800008, 0x4b800002, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_17_2p24_non_containment_1_5_1_0_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#b1{margin-bottom:16777204px;} #f{margin-top:1.5px;height:1px;margin-bottom:0px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:2.5px;}",
+        facts: [
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x3fc00000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x4b800000, 0x4b800001],
+        content: [0x42b40000, 0x42c80000, 0x4b800001, 0x4b800002],
+        used_vertical: [0x3fc00000, 0x00000000],
+        used_height: 0x3f800000,
+        parent: (0x4b800006, 0x4b800000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_18_provenance_inherited_3_4_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#p{margin-top:3px;margin-bottom:4px;} #f{margin-top:inherit;margin-bottom:inherit;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:9px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x40400000, false, NfhOrigin::Inherited),
+            (0x40800000, false, NfhOrigin::Inherited),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41980000, 0x41e00000],
+        content: [0x00000000, 0x41200000, 0x41b00000, 0x41c00000],
+        used_vertical: [0x40400000, 0x40800000],
+        used_height: 0x40000000,
+        parent: (0x42140000, 0x41b80000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_19_provenance_rounded_to_zero_top_4_bottom_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#f{margin-top:0.0000000000000000000000000000000000000000000000000001px;margin-bottom:4px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:6px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, true, NfhOrigin::Specified),
+            (0x40800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41800000, 0x41b00000],
+        content: [0x00000000, 0x41200000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x40800000],
+        used_height: 0x40000000,
+        parent: (0x41f80000, 0x41a00000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_20_provenance_initial_top_4_bottom_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#f{margin-bottom:4px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:6px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+            (0x40800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41800000, 0x41b00000],
+        content: [0x00000000, 0x41200000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x40800000],
+        used_height: 0x40000000,
+        parent: (0x41f80000, 0x41a00000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_21_provenance_inherited_3_4_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#p{margin-top:3px;margin-bottom:4px;} #f{margin-top:inherit;margin-bottom:inherit;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:9px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x40400000, false, NfhOrigin::Inherited),
+            (0x40800000, false, NfhOrigin::Inherited),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41980000, 0x41e00000],
+        content: [0x42b40000, 0x42c80000, 0x41b00000, 0x41c00000],
+        used_vertical: [0x40400000, 0x40800000],
+        used_height: 0x40000000,
+        parent: (0x42140000, 0x41b80000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_22_provenance_rounded_to_zero_top_4_bottom_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#f{margin-top:0.0000000000000000000000000000000000000000000000000001px;margin-bottom:4px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:6px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, true, NfhOrigin::Specified),
+            (0x40800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41800000, 0x41b00000],
+        content: [0x42b40000, 0x42c80000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x40800000],
+        used_height: 0x40000000,
+        parent: (0x41f80000, 0x41a00000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_23_provenance_initial_top_4_bottom_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#f{margin-bottom:4px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:6px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+            (0x40800000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41800000, 0x41b00000],
+        content: [0x42b40000, 0x42c80000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x40800000],
+        used_height: 0x40000000,
+        parent: (0x41f80000, 0x41a00000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_24_extreme_outer_height_overflow_left() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#f{height:340282346638528859811704183484516925440px;margin-top:10141204801825835211973625643008px;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x7f7fffff, false, NfhOrigin::Specified),
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_outer_height\" }",
+    });
+}
+
+#[test]
+fn fvm_targeted_25_extreme_2_102_absorption_left() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#f{height:340282346638528859811704183484516925440px;margin-top:5070602400912917605986812821504px;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x7f7fffff, false, NfhOrigin::Specified),
+            (0x72800000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 5,
+        error: "UnsupportedEquality",
+    });
+}
+
+#[test]
+fn fvm_targeted_26_extreme_margin_box_overflow_left() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#b1{margin-bottom:340282346638528859811704183484516925440px;} #f{height:0px;margin-top:10141204801825835211973625643008px;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x00000000, false, NfhOrigin::Specified),
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "FloatPlacement(Unrepresentable)",
+    });
+}
+
+#[test]
+fn fvm_targeted_27_extreme_far_edge_overflow_left() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#b1{margin-bottom:340282326356119256160033759537265639424px;} #f{height:10141204801825835211973625643008px;margin-top:10141206010751654826602800349184px;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x73000001, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_content_bottom\" }",
+    });
+}
+
+#[test]
+fn fvm_targeted_28_extreme_outer_height_overflow_right() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#f{height:340282346638528859811704183484516925440px;margin-top:10141204801825835211973625643008px;} #f{float:right;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x7f7fffff, false, NfhOrigin::Specified),
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_outer_height\" }",
+    });
+}
+
+#[test]
+fn fvm_targeted_29_extreme_2_102_absorption_right() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#f{height:340282346638528859811704183484516925440px;margin-top:5070602400912917605986812821504px;} #f{float:right;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x7f7fffff, false, NfhOrigin::Specified),
+            (0x72800000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 5,
+        error: "UnsupportedEquality",
+    });
+}
+
+#[test]
+fn fvm_targeted_30_extreme_margin_box_overflow_right() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#b1{margin-bottom:340282346638528859811704183484516925440px;} #f{height:0px;margin-top:10141204801825835211973625643008px;} #f{float:right;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x00000000, false, NfhOrigin::Specified),
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "FloatPlacement(Unrepresentable)",
+    });
+}
+
+#[test]
+fn fvm_targeted_31_extreme_far_edge_overflow_right() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#b1{margin-bottom:340282326356119256160033759537265639424px;} #f{height:10141204801825835211973625643008px;margin-top:10141206010751654826602800349184px;} #f{float:right;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x73000001, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_content_bottom\" }",
+    });
+}
+
+#[test]
+fn fvm_targeted_32_negative_zero_0px_top_bottom_left() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#f{margin-top:-0px;margin-bottom:-0px;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:2px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x00000000, 0x41200000, 0x41800000, 0x41900000],
+        content: [0x00000000, 0x41200000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x00000000],
+        used_height: 0x40000000,
+        parent: (0x41d80000, 0x41800000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_33_negative_zero_0px_top_bottom_right() {
+    assert_fvm_targeted_success(FvmSuccess {
+        nodes: 6,
+        rule: "#f{margin-top:-0px;margin-bottom:-0px;} #f{float:right;}",
+        control: "#f{margin-top:0;margin-bottom:0;height:2px;}",
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Specified),
+        ],
+        margin_box: [0x42b40000, 0x42c80000, 0x41800000, 0x41900000],
+        content: [0x42b40000, 0x42c80000, 0x41800000, 0x41900000],
+        used_vertical: [0x00000000, 0x00000000],
+        used_height: 0x40000000,
+        parent: (0x41d80000, 0x41800000, false),
+    });
+}
+
+#[test]
+fn fvm_targeted_34_precedence_both_outer_extents_overflow_left() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#f{width:340282346638528859811704183484516925440px;margin-left:10141204801825835211973625643008px;height:340282346638528859811704183484516925440px;margin-top:10141204801825835211973625643008px;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x7f7fffff, false, NfhOrigin::Specified),
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_outer_width\" }",
+    });
+}
+
+#[test]
+fn fvm_targeted_35_precedence_both_outer_extents_overflow_right() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#f{width:340282346638528859811704183484516925440px;margin-left:10141204801825835211973625643008px;height:340282346638528859811704183484516925440px;margin-top:10141204801825835211973625643008px;} #f{float:right;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x7f7fffff, false, NfhOrigin::Specified),
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_outer_width\" }",
+    });
+}
+
+#[test]
+fn fvm_targeted_36_precedence_both_far_edges_overflow_left() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#b1{margin-bottom:340282326356119256160033759537265639424px;} #f{width:10141204801825835211973625643008px;margin-left:10141206010751654826602800349184px;height:10141204801825835211973625643008px;margin-top:10141206010751654826602800349184px;}",
+        outer: (f32::from_bits(0x7f7ffffe), f32::from_bits(0x00000000)),
+        facts: [
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x73000001, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_content_right\" }",
+    });
+}
+
+#[test]
+fn fvm_targeted_37_precedence_both_far_edges_overflow_right() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#b1{margin-bottom:340282326356119256160033759537265639424px;} #f{width:10141204801825835211973625643008px;margin-right:10141206010751654826602800349184px;height:10141204801825835211973625643008px;margin-top:10141206010751654826602800349184px;} #f{float:right;}",
+        outer: (f32::from_bits(0xff7ffffe), f32::from_bits(0x00000000)),
+        facts: [
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x73000001, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_content_left\" }",
+    });
+}
+
+#[test]
+fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() {
+    use iced_css::evaluation::sibling_layout::PrincipalChildBox;
+    use iced_css_core::formatting::{
+        clearance_owner::ChildFacts, clearance_sequence::SequenceNormalPlacement,
+    };
+    use std::mem::size_of;
+
+    for (source_count, facade_work, old_facade, core_work, old_core) in [
+        (5, 481, 475, 399, 337),
+        (6, 622, 616, 481, 419),
+        (7, 763, 757, 564, 502),
+    ] {
+        let b4 = if source_count == 7 {
+            "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
+        } else {
+            ""
+        };
+        let css = format!(
+            "{} {b4} #f {{ margin-top:3px; margin-bottom:4px; }}",
+            baseline_css()
+        );
+        sibling_fixture(source_count, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let build = |limits| {
+                default_outer_layout(&facts, &projection.nodes()[0], 0.0, 100.0, 10.0, limits)
+            };
+            let child_count = source_count - 2;
+            let tail_count = source_count - 4;
+            let scratch_floor = child_count * size_of::<ChildFacts<'_>>();
+            let core_floor = tail_count * size_of::<SequenceNormalPlacement>();
+            let retained_floor = core_floor + child_count * size_of::<PrincipalChildBox>();
+
+            // One short and the predecessor bound fail before the scratch scan.
+            for short in [facade_work - 1, old_facade] {
+                let mut limits = layout_limits();
+                limits.work = nz(short);
+                limits.scratch_bytes = nz(1);
+                assert!(matches!(build(limits), Err(SiblingLayoutError::Work)));
+            }
+            // Positive control: the exact bound passes work and reaches the scratch
+            // floor (NFH-T2Q-008).
+            let mut limits = layout_limits();
+            limits.work = nz(facade_work);
+            limits.scratch_bytes = nz(1);
+            assert!(matches!(
+                build(limits),
+                Err(SiblingLayoutError::ScratchBytes)
+            ));
+            for short in [core_work - 1, old_core] {
+                let mut limits = layout_limits();
+                limits.core.work = nz(short);
+                assert!(matches!(
+                    build(limits),
+                    Err(SiblingLayoutError::Core(ClearanceSequenceError::Work))
+                ));
+            }
+            let mut exact = layout_limits();
+            exact.work = nz(facade_work);
+            exact.core.work = nz(core_work);
+            exact.scratch_bytes = nz(scratch_floor);
+            exact.retained_bytes = nz(retained_floor);
+            exact.core.retained_bytes = nz(core_floor);
+            let layout = build(exact).unwrap();
+            let receipt = layout.receipt();
+            assert_eq!(receipt.work, facade_work);
+            assert_eq!(receipt.scratch_bytes, scratch_floor);
+            assert_eq!(receipt.retained_bytes, retained_floor);
+            assert_eq!(receipt.core.work, core_work);
+            assert_eq!(receipt.core.retained_bytes, core_floor);
+            let placed = layout.sequence().placed_float();
+            assert_eq!((placed.top, placed.bottom), (16.0, 25.0));
+            let float = &layout.children()[1];
+            assert_eq!((float.content().top, float.content().bottom), (19.0, 21.0));
+            assert_eq!(float.used_margin_top().to_bits(), 0x4040_0000);
+            assert_eq!(float.used_margin_bottom().to_bits(), 0x4080_0000);
         });
     }
 }

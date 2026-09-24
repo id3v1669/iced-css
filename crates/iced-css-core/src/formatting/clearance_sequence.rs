@@ -119,6 +119,7 @@ pub struct ClearanceSequenceOwner<'s> {
     before: BlockVertical,
     placed_float: PlacedFloat,
     float_content: Band,
+    float_content_vertical: BlockVertical,
     tail: Vec<SequenceNormalPlacement>,
     receipt: ClearanceSequenceReceipt,
 }
@@ -145,6 +146,15 @@ impl<'s> ClearanceSequenceOwner<'s> {
     pub fn float_content(&self) -> Band {
         self.float_content
     }
+    /// Content top/bottom of the float. With both used vertical margins zero it equals
+    /// `placed_float()` top/bottom. Otherwise the top is the margin top plus the used top
+    /// margin, and the bottom is published from that top plus the used height, each
+    /// rounded once. The top never lies outside `placed_float()` top..bottom. The bottom
+    /// may lie below `placed_float().bottom` after rounding. Nothing is clamped, and
+    /// `top <= bottom` always holds.
+    pub fn float_content_vertical(&self) -> BlockVertical {
+        self.float_content_vertical
+    }
     pub fn tail(&self) -> &[SequenceNormalPlacement] {
         &self.tail
     }
@@ -159,14 +169,13 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// profile checks, including the last child and float-width domain, precede the
 /// fallible record allocation; allocation precedes every numerical kernel.
 /// Sequence normals admit genuine finite signed horizontal margins and nonnegative
-/// absolute or Auto vertical margins. Floats admit computed Auto or absolute zero
-/// vertical margins (used value zero) and computed Auto or finite nonnegative
-/// absolute horizontal margins (CSS2.2 §10.3.5: Auto is used zero). The float is
-/// placed by its margin box, formed from the content width and both used
-/// horizontal margins, and its content band is published separately. Work
-/// `128 + 8*N + N*(N-1)/2 + 24*(N-4) + 45*(N-2)` is prepaid, including
-/// constant-size typed margin validation and used-value service for each child and
-/// the float's outer-width and content-band stages.
+/// absolute or Auto vertical margins. Floats admit computed Auto or finite
+/// nonnegative absolute margins on all four edges (Auto is used zero). The float is
+/// placed by its margin box, formed from the content extents and all four used
+/// margins, and its content band and vertical content span are published
+/// separately. Work `190 + 8*N + N*(N-1)/2 + 24*(N-4) + 45*(N-2)` is prepaid,
+/// including constant-size typed margin validation and used-value service for each
+/// child and the float's outer-extent, content-band and vertical content stages.
 ///
 /// # Errors
 /// Returns bounded admission/allocation failures, complete-profile failures, or a
@@ -317,6 +326,7 @@ fn build_with_reserve<'s>(
         before: first.before,
         placed_float: first.placed_float,
         float_content: first.float_content,
+        float_content_vertical: first.float_content_vertical,
         receipt: ClearanceSequenceReceipt {
             nodes,
             tail: tail_count,
@@ -364,19 +374,21 @@ fn record(source_index: usize, placement: NormalKernel) -> SequenceNormalPlaceme
 }
 
 fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
-    // 128 fixed actions: sixty admission/kernel and vertical used-value actions plus
-    // 68 for the float's horizontal margins (policy restriction 4, two float used
+    // 190 fixed actions: sixty admission/kernel and vertical used-value actions; 68
+    // for the float's horizontal margins (policy restriction 4, two float used
     // getters 8, identity test 4, three-term outer sum 16, near content edge 16, far
-    // content edge 16, band/kernel/owner transfers 4), charged unconditionally.
-    // Then eight bounded per-node actions, every duplicate comparison, 24
-    // arithmetic/group and vertical used-value actions per tail, and 45
-    // constant-size typed margin actions per child.
+    // content edge 16, band/kernel/owner transfers 4); and 62 for its vertical
+    // margins (two used getters 8, identity test 4, three-term outer height 16,
+    // content top 16, content bottom 14, span/kernel/owner transfers 4), all charged
+    // unconditionally. Then eight bounded per-node actions, every duplicate
+    // comparison, 24 arithmetic/group and vertical used-value actions per tail, and
+    // 45 constant-size typed margin actions per child.
     let children = nodes.checked_sub(2)?;
     let linear = nodes.checked_mul(8)?;
     let pairs = nodes.checked_mul(nodes.checked_sub(1)?)?.checked_div(2)?;
     let kernels = tail.checked_mul(24)?;
     let margin_actions = children.checked_mul(45)?;
-    128usize
+    190usize
         .checked_add(linear)?
         .checked_add(pairs)?
         .checked_add(kernels)?
@@ -426,7 +438,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(337).unwrap(),
+            work: NonZeroUsize::new(399).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -581,7 +593,7 @@ mod tests {
         children[1].margin.left = AutoLength::Auto;
         children[1].margin.right = AutoLength::Auto;
         children[2].padding.left = 1.0;
-        limits.work = NonZeroUsize::new(336).unwrap();
+        limits.work = NonZeroUsize::new(398).unwrap();
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -821,7 +833,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [336, 269, 213] {
+        for short in [398, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -837,7 +849,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(337).unwrap();
+        limits.work = NonZeroUsize::new(399).unwrap();
         let mut calls = 0;
         let owner = build_with_reserve(
             &sources,
@@ -856,7 +868,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 337);
+        assert_eq!(owner.receipt().work, 399);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -883,9 +895,9 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(337));
-        assert_eq!(sequence_work(6, 2), Some(419));
-        assert_eq!(sequence_work(7, 3), Some(502));
+        assert_eq!(sequence_work(5, 1), Some(399));
+        assert_eq!(sequence_work(6, 2), Some(481));
+        assert_eq!(sequence_work(7, 3), Some(564));
         assert_eq!(sequence_work(1, 0), None);
     }
 }

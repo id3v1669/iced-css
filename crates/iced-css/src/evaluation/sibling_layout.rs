@@ -325,17 +325,19 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `54 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
-/// proportional join, profile scan, or allocation. Fourteen fixed actions cover the
-/// float content band read and the float's used horizontal margins. Forty-three
+/// Facade work `60 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
+/// proportional join, profile scan, or allocation. Twenty fixed actions cover the
+/// float content band and vertical content span reads and the float's used
+/// horizontal margins. Forty-three
 /// constant-size actions per child cover typed conversion and retained computed/used
 /// margin facts, including the two retained used horizontal margins; 66 actions per
 /// normal cover Auto width categories, a possible minimum-width category rerun and
 /// the two solver-margin reads. Each normal still has one horizontal producer
 /// invocation. The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. The float's
-/// content box is the core's published content band horizontally and its placed
-/// top/bottom vertically; its margin box stays `sequence().placed_float()`.
+/// content box is the core's published content band horizontally and its published
+/// vertical content span (`sequence().float_content_vertical()`) vertically; its
+/// margin box stays `sequence().placed_float()`.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -574,64 +576,72 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 property: "child-facts",
             })?;
         let used_height = explicit_height(child, source)?;
-        let (kind, content, used_width, normal_width, used_margin_left, used_margin_right) =
-            if source == 3 {
-                let placed = sequence.placed_float();
-                let band = sequence.float_content();
-                (
-                    PrincipalChildKind::Float,
-                    PrincipalEdges {
-                        left: band.left,
-                        right: band.right,
-                        top: placed.top,
-                        bottom: placed.bottom,
-                    },
-                    float_width,
-                    None,
-                    child.margin.float_used_left(),
-                    child.margin.float_used_right(),
-                )
+        // Named fields instead of a positional tuple (NFH-T2Q-002).
+        struct Principal {
+            kind: PrincipalChildKind,
+            content: PrincipalEdges,
+            used_width: f32,
+            normal_width: Option<BlockWidthResult>,
+            used_margin_left: f32,
+            used_margin_right: f32,
+        }
+        let principal = if source == 3 {
+            let band = sequence.float_content();
+            let span = sequence.float_content_vertical();
+            Principal {
+                kind: PrincipalChildKind::Float,
+                content: PrincipalEdges {
+                    left: band.left,
+                    right: band.right,
+                    top: span.top,
+                    bottom: span.bottom,
+                },
+                used_width: float_width,
+                normal_width: None,
+                used_margin_left: child.margin.float_used_left(),
+                used_margin_right: child.margin.float_used_right(),
+            }
+        } else {
+            let vertical = if source == 2 {
+                sequence.before()
             } else {
-                let vertical = if source == 2 {
-                    sequence.before()
-                } else {
-                    let record = sequence.tail().get(source - 4).ok_or(E::FactInvariant {
+                let record = sequence.tail().get(source - 4).ok_or(E::FactInvariant {
+                    source,
+                    property: "sequence-tail",
+                })?;
+                if record.source_index() != source {
+                    return Err(E::FactInvariant {
                         source,
-                        property: "sequence-tail",
-                    })?;
-                    if record.source_index() != source {
-                        return Err(E::FactInvariant {
-                            source,
-                            property: "sequence-source",
-                        });
-                    }
-                    record.vertical()
-                };
-                let placed = place_child_horizontal(horizontal, parent_direction, row)
-                    .map_err(|error| E::ChildHorizontal { source, error })?;
-                (
-                    PrincipalChildKind::Normal,
-                    PrincipalEdges {
-                        left: placed.content.left,
-                        right: placed.content.right,
-                        top: vertical.top,
-                        bottom: vertical.bottom,
-                    },
-                    placed.used.width,
-                    Some(placed.used),
-                    placed.used.margin_left,
-                    placed.used.margin_right,
-                )
+                        property: "sequence-source",
+                    });
+                }
+                record.vertical()
             };
+            let placed = place_child_horizontal(horizontal, parent_direction, row)
+                .map_err(|error| E::ChildHorizontal { source, error })?;
+            Principal {
+                kind: PrincipalChildKind::Normal,
+                content: PrincipalEdges {
+                    left: placed.content.left,
+                    right: placed.content.right,
+                    top: vertical.top,
+                    bottom: vertical.bottom,
+                },
+                used_width: placed.used.width,
+                normal_width: Some(placed.used),
+                used_margin_left: placed.used.margin_left,
+                used_margin_right: placed.used.margin_right,
+            }
+        };
         children.push(PrincipalChildBox {
             source_index: source,
             containing_source_index: 1,
-            kind,
-            content,
-            used_width,
-            normal_width,
-            used_margin_left,
-            used_margin_right,
+            kind: principal.kind,
+            content: principal.content,
+            used_width: principal.used_width,
+            normal_width: principal.normal_width,
+            used_margin_left: principal.used_margin_left,
+            used_margin_right: principal.used_margin_right,
             used_height,
             used_margin_top: child.margin.used_top(),
             used_margin_bottom: child.margin.used_bottom(),
@@ -788,7 +798,7 @@ fn facade_work(nodes: usize) -> Option<usize> {
     let category_actions = normals.checked_mul(66)?;
     nodes
         .checked_mul(32)?
-        .checked_add(54)?
+        .checked_add(60)?
         .checked_add(child_actions)?
         .checked_add(category_actions)
 }
@@ -894,9 +904,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(475));
-        assert_eq!(facade_work(6), Some(616));
-        assert_eq!(facade_work(7), Some(757));
+        assert_eq!(facade_work(5), Some(481));
+        assert_eq!(facade_work(6), Some(622));
+        assert_eq!(facade_work(7), Some(763));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
