@@ -65,8 +65,10 @@ pub struct OwnerEdges {
 }
 /// Computed child margins for the bounded clearance inputs.
 /// Auto remains a category, never a substituted computed zero. The explicit
-/// used-value methods resolve only the bounded vertical category; admission and
-/// validation remain separate.
+/// used-value methods resolve the bounded vertical category (`used_top`,
+/// `used_bottom`) and the floating nonreplaced horizontal category
+/// (`float_used_left`, `float_used_right`); admission and validation remain
+/// separate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChildMargins {
     pub top: AutoLength,
@@ -85,6 +87,26 @@ impl ChildMargins {
 
     pub fn used_bottom(self) -> f32 {
         match self.bottom {
+            AutoLength::Auto => 0.0,
+            AutoLength::Value(value) => value,
+        }
+    }
+
+    /// Used value for the floating nonreplaced category only (CSS2.2 §10.3.5):
+    /// Auto is +0; an absolute payload keeps its bits. Normal children use the
+    /// block width solver instead. This does not validate or extend admission.
+    pub fn float_used_left(self) -> f32 {
+        match self.left {
+            AutoLength::Auto => 0.0,
+            AutoLength::Value(value) => value,
+        }
+    }
+
+    /// Used value for the floating nonreplaced category only (CSS2.2 §10.3.5):
+    /// Auto is +0; an absolute payload keeps its bits. Normal children use the
+    /// block width solver instead. This does not validate or extend admission.
+    pub fn float_used_right(self) -> f32 {
+        match self.right {
             AutoLength::Auto => 0.0,
             AutoLength::Value(value) => value,
         }
@@ -164,6 +186,9 @@ pub enum OwnerProfileReason {
     AutoHorizontalMargin,
     HorizontalMargin,
     ChildDecoration,
+    /// Under `ChildMarginPolicy::Sequence`: a nonzero absolute vertical float
+    /// margin (top or bottom). Under `ChildMarginPolicy::Legacy`: any nonzero
+    /// absolute float margin on any edge.
     FloatMargin,
     ClearOnBeforeOrFloat,
     FloatTooWide,
@@ -487,10 +512,12 @@ fn child(
             }
         }
         if floating {
-            if values
-                .into_iter()
-                .any(|v| matches!(v, AutoLength::Value(v) if v != 0.0))
-            {
+            let nonzero = |value: AutoLength| matches!(value, AutoLength::Value(v) if v != 0.0);
+            let restricted = match margin_policy {
+                ChildMarginPolicy::Sequence => nonzero(f.margin.top) || nonzero(f.margin.bottom),
+                ChildMarginPolicy::Legacy => values.into_iter().any(nonzero),
+            };
+            if restricted {
                 return Err(unsupported(source, OwnerProfileReason::FloatMargin));
             }
         } else if f.margin.left != AutoLength::Value(0.0)
@@ -609,6 +636,7 @@ pub(super) struct KernelError {
 pub(super) struct FirstFloatKernel {
     pub before: BlockVertical,
     pub placed_float: PlacedFloat,
+    pub float_content: Band,
 }
 
 pub(super) struct FirstFloatInput<'s> {
@@ -656,18 +684,32 @@ pub(super) fn place_first_float(
         source: input.float_source,
         error,
     })?;
+    let ml = input.float.margin.float_used_left();
+    let mr = input.float.margin.float_used_right();
+    let identity = ml == 0.0 && mr == 0.0;
+    let tagged = |error| KernelError {
+        source: input.float_source,
+        error,
+    };
+    let outer_width = if identity {
+        input.float_width
+    } else {
+        sum(&[ml, input.float_width, mr], "float_outer_width").map_err(tagged)?
+    };
     let placed_float = place_float(
         &[],
         input.parent.containing,
-        // A float admitted here has zero absolute or Auto margins. Both
-        // categories have used-zero margins, so content dimensions remain the
-        // unchanged margin-box dimensions for this zero-decoration profile.
+        // The request is the float's margin box. Vertical float margins are used
+        // zero here, so its top/bottom are the content top/bottom. Horizontally
+        // the width is the content width plus both used horizontal margins; with
+        // both used margins zero (Auto or ±0) the content width is passed
+        // unchanged, so every zero-margin input keeps its predecessor bits.
         FloatRequest {
             side: match input.float.display.float {
                 Float::Right => FloatSide::Right,
                 _ => FloatSide::Left,
             },
-            width: input.float_width,
+            width: outer_width,
             height: input.float_height,
             containing_top: input.parent.content_top,
             hypothetical_top: float_top,
@@ -679,12 +721,37 @@ pub(super) fn place_first_float(
         error: ClearanceOwnerError::FloatPlacement(error),
     })?
     .placed;
+    let float_content = if identity {
+        Band {
+            left: placed_float.left,
+            right: placed_float.right,
+        }
+    } else {
+        match placed_float.side {
+            // The near-edge stage cannot fail after a successful placement
+            // (design r1, NFH-D-003); it stays as a documented defensive branch.
+            FloatSide::Left => {
+                let left = sum(&[placed_float.left, ml], "float_content_left").map_err(tagged)?;
+                let right =
+                    sum(&[left, input.float_width], "float_content_right").map_err(tagged)?;
+                Band { left, right }
+            }
+            FloatSide::Right => {
+                let right =
+                    sum(&[placed_float.right, -mr], "float_content_right").map_err(tagged)?;
+                let left =
+                    sum(&[right, -input.float_width], "float_content_left").map_err(tagged)?;
+                Band { left, right }
+            }
+        }
+    };
     Ok(FirstFloatKernel {
         before: BlockVertical {
             top: before_top,
             bottom: before_bottom,
         },
         placed_float,
+        float_content,
     })
 }
 
@@ -932,6 +999,8 @@ fn solve_region<'s>(
         float_source: indices.float,
     })
     .map_err(|failure| failure.error)?;
+    // Legacy float margins are validated all zero, so only the identity path is
+    // reachable here and `first.float_content` equals the placed margin box.
     let after = place_next_normal(
         first.before.bottom,
         input.before.margin.used_bottom(),

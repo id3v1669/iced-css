@@ -674,12 +674,21 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
             ))
         ));
     }
-    for (value, reason) in [
-        (AutoLength::Value(1.0), OwnerProfileReason::FloatMargin),
-        (AutoLength::Value(-1.0), OwnerProfileReason::NegativeMargin),
+    for (top, left, reason) in [
+        (
+            AutoLength::Value(1.0),
+            AutoLength::Value(0.0),
+            OwnerProfileReason::FloatMargin,
+        ),
+        (
+            AutoLength::Value(0.0),
+            AutoLength::Value(-1.0),
+            OwnerProfileReason::NegativeMargin,
+        ),
     ] {
         let (outer, parent, mut children) = facts(&source_nodes);
-        children[1].margin.left = value;
+        children[1].margin.top = top;
+        children[1].margin.left = left;
         assert!(matches!(
             build(&source_nodes, outer, parent, &children, limits(6)),
             Err(ClearanceSequenceError::Profile(
@@ -690,6 +699,20 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
             )) if actual_reason == reason
         ));
     }
+    let (outer, parent, mut children) = facts(&source_nodes);
+    children[1].margin.left = AutoLength::Value(1.0);
+    let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+    assert_eq!(
+        (owner.placed_float().left, owner.placed_float().right),
+        (0.0, 11.0)
+    );
+    assert_eq!(
+        owner.float_content(),
+        Band {
+            left: 1.0,
+            right: 11.0
+        }
+    );
 }
 
 #[test]
@@ -751,8 +774,24 @@ fn float_auto_error_table_preserves_dynamic_profile_precedence() {
                 2 => float.margin.bottom = AutoLength::Value(value),
                 _ => float.margin.left = AutoLength::Value(value),
             }
+            let result = build(&source_nodes, outer, parent, &children, limits(6));
+            if value > 0.0 && (edge == 1 || edge == 3) {
+                // A positive horizontal float margin is admitted; the other
+                // horizontal edge is Auto (used zero).
+                let owner = result.unwrap();
+                let content = if edge == 3 { (1.0, 11.0) } else { (0.0, 10.0) };
+                assert_eq!(
+                    (owner.placed_float().left, owner.placed_float().right),
+                    (0.0, 11.0)
+                );
+                assert_eq!(
+                    (owner.float_content().left, owner.float_content().right),
+                    content
+                );
+                continue;
+            }
             assert!(matches!(
-                build(&source_nodes, outer, parent, &children, limits(6)),
+                result,
                 Err(ClearanceSequenceError::Profile(
                     ClearanceOwnerError::Unsupported {
                         source: 3,
@@ -928,12 +967,21 @@ fn signed_normal_margin_validation_is_finite_ordered_and_source_typed() {
         ))
     ));
 
-    for (value, reason) in [
-        (1.0, OwnerProfileReason::FloatMargin),
-        (-1.0, OwnerProfileReason::NegativeMargin),
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(1.0);
+    let owner = build(&sources, outer, parent, &children, limits(6)).unwrap();
+    assert_eq!(
+        (owner.placed_float().left, owner.placed_float().right),
+        (0.0, 11.0)
+    );
+
+    for (top, left, reason) in [
+        (1.0, 0.0, OwnerProfileReason::FloatMargin),
+        (0.0, -1.0, OwnerProfileReason::NegativeMargin),
     ] {
         let (outer, parent, mut children) = facts(&sources);
-        children[1].margin.left = AutoLength::Value(value);
+        children[1].margin.top = AutoLength::Value(top);
+        children[1].margin.left = AutoLength::Value(left);
         assert!(matches!(
             build(&sources, outer, parent, &children, limits(6)),
             Err(ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
@@ -1071,7 +1119,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 269, 213), (6, 351, 275), (7, 434, 338)] {
+    for (count, work, old_work) in [(5, 337, 269), (6, 419, 351), (7, 502, 434)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1099,7 +1147,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            60 + 8 * count + count * (count - 1) / 2 + 24 * tail_count + 45 * child_count
+            128 + 8 * count + count * (count - 1) / 2 + 24 * tail_count + 45 * child_count
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert_eq!(
@@ -1175,7 +1223,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(350).unwrap();
+    short.work = NonZeroUsize::new(418).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1224,7 +1272,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].padding.left = 1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(350).unwrap();
+    one_short.work = NonZeroUsize::new(418).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -1705,6 +1753,24 @@ fn negative_zero_absolute_margins_keep_bits_and_are_not_relabelled() {
 }
 
 #[test]
+fn float_used_horizontal_getters_keep_negative_zero_bits_and_resolve_auto() {
+    use iced_css_core::formatting::clearance_owner::ChildMargins;
+    let mut margins: ChildMargins = edges().into();
+    margins.left = AutoLength::Value(-0.0);
+    margins.right = AutoLength::Value(-0.0);
+    assert_eq!(margins.float_used_left().to_bits(), 0x8000_0000);
+    assert_eq!(margins.float_used_right().to_bits(), 0x8000_0000);
+    margins.left = AutoLength::Auto;
+    margins.right = AutoLength::Auto;
+    assert_eq!(margins.float_used_left().to_bits(), 0x0000_0000);
+    assert_eq!(margins.float_used_right().to_bits(), 0x0000_0000);
+    margins.left = AutoLength::Value(5.0);
+    margins.right = AutoLength::Value(7.0);
+    assert_eq!(margins.float_used_left().to_bits(), 0x40a0_0000);
+    assert_eq!(margins.float_used_right().to_bits(), 0x40e0_0000);
+}
+
+#[test]
 fn vertical_auto_keeps_every_sequence_exclusion() {
     use OwnerProfileReason as R;
     let source_nodes = sources(6);
@@ -1735,9 +1801,32 @@ fn vertical_auto_keeps_every_sequence_exclusion() {
         2,
         R::NegativeMargin,
     );
-    // Any float negative is NegativeMargin; any float positive is FloatMargin.
+    // Any float negative is NegativeMargin; a positive vertical float margin is
+    // FloatMargin; a positive horizontal float margin is admitted.
     for edge in 0..4 {
         for (value, reason) in [(-1.0, R::NegativeMargin), (1.0, R::FloatMargin)] {
+            if value > 0.0 && (edge == 1 || edge == 3) {
+                let (outer, parent, mut children) = facts(&source_nodes);
+                for child in &mut children {
+                    child.margin.top = AutoLength::Auto;
+                }
+                if edge == 1 {
+                    children[1].margin.right = AutoLength::Value(value);
+                } else {
+                    children[1].margin.left = AutoLength::Value(value);
+                }
+                let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+                let content = if edge == 3 { (1.0, 11.0) } else { (0.0, 10.0) };
+                assert_eq!(
+                    (owner.placed_float().left, owner.placed_float().right),
+                    (0.0, 11.0)
+                );
+                assert_eq!(
+                    (owner.float_content().left, owner.float_content().right),
+                    content
+                );
+                continue;
+            }
             rejected(
                 &|c| {
                     let value = AutoLength::Value(value);
@@ -1983,7 +2072,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 269, 213), (6, 351, 275), (7, 434, 338)] {
+    for (count, work, old_work) in [(5, 337, 269), (6, 419, 351), (7, 502, 434)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2038,6 +2127,412 @@ fn vertical_auto_work_and_storage_boundaries_are_exact() {
         assert_eq!(
             (owner.placed_float().left, owner.placed_float().right),
             (0.0, 140.0)
+        );
+    }
+}
+
+#[test]
+fn nonzero_float_horizontal_margins_place_the_margin_box() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(5.0);
+    children[1].margin.right = AutoLength::Value(7.0);
+    let owner = build_width(&sources, outer, parent, &children, 30.0, limits(6)).unwrap();
+    let placed = owner.placed_float();
+    assert_eq!(
+        (placed.left, placed.right, placed.top, placed.bottom),
+        (0.0, 42.0, 16.0, 18.0)
+    );
+    assert_eq!(
+        owner.float_content(),
+        Band {
+            left: 5.0,
+            right: 35.0
+        }
+    );
+    assert_eq!(children[1].margin.float_used_left().to_bits(), 0x40a0_0000);
+    assert_eq!(children[1].margin.float_used_right().to_bits(), 0x40e0_0000);
+    let (outer, parent, control) = facts(&sources);
+    let control = build_width(&sources, outer, parent, &control, 30.0, limits(6)).unwrap();
+    assert_eq!(owner.before(), control.before());
+    assert_eq!(owner.tail().len(), control.tail().len());
+    for (actual, expected) in owner.tail().iter().zip(control.tail()) {
+        assert_eq!(actual.vertical(), expected.vertical());
+        assert_eq!(
+            actual.hypothetical_top().to_bits(),
+            expected.hypothetical_top().to_bits()
+        );
+        assert_eq!(actual.zero_clearance_top(), expected.zero_clearance_top());
+        assert_eq!(actual.clearance(), expected.clearance());
+        assert_eq!(actual.hypothetical_group(), expected.hypothetical_group());
+        assert_eq!(actual.actual_groups(), expected.actual_groups());
+    }
+}
+
+const F32_2P102: u32 = 0x7280_0000;
+const F32_2P103: u32 = 0x7300_0000;
+const F32_2P103_PLUS_2P80: u32 = 0x7300_0001;
+const F32_MAX_BITS: u32 = 0x7f7f_ffff;
+const F32_MAX_MINUS_ULP: u32 = 0x7f7f_fffe;
+
+/// Direct-core first-float observation on the N6 fixture with a chosen containing
+/// band, float side, content width and horizontal float margins.
+fn nfh_first_float(
+    containing: Band,
+    side: Float,
+    width: f32,
+    left: AutoLength,
+    right: AutoLength,
+) -> Result<(iced_css_core::formatting::floats::PlacedFloat, Band), ClearanceSequenceError> {
+    let sources = sources(6);
+    let (outer, mut parent, mut children) = facts(&sources);
+    parent.containing = containing;
+    children[1].display.float = side;
+    children[1].margin.left = left;
+    children[1].margin.right = right;
+    build_width(&sources, outer, parent, &children, width, limits(6))
+        .map(|owner| (owner.placed_float(), owner.float_content()))
+}
+
+fn bits(band: (f32, f32)) -> (u32, u32) {
+    (band.0.to_bits(), band.1.to_bits())
+}
+
+fn placement_stage(
+    result: Result<(iced_css_core::formatting::floats::PlacedFloat, Band), ClearanceSequenceError>,
+) -> String {
+    match result {
+        Err(ClearanceSequenceError::Placement { source: 3, error }) => format!("{error:?}"),
+        other => panic!("expected a source3 placement failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn zero_margin_identity_path_keeps_negative_zero_band_bits() {
+    for (left, right) in [
+        (AutoLength::Value(0.0), AutoLength::Value(0.0)),
+        (AutoLength::Value(-0.0), AutoLength::Value(-0.0)),
+        (AutoLength::Auto, AutoLength::Auto),
+        (AutoLength::Value(-0.0), AutoLength::Auto),
+    ] {
+        let (placed, content) = nfh_first_float(
+            Band {
+                left: -0.0,
+                right: 100.0,
+            },
+            Float::Left,
+            10.0,
+            left,
+            right,
+        )
+        .unwrap();
+        assert_eq!(placed.left.to_bits(), 0x8000_0000);
+        assert_eq!(content.left.to_bits(), 0x8000_0000);
+        assert_eq!(content.right.to_bits(), placed.right.to_bits());
+
+        let (placed, content) = nfh_first_float(
+            Band {
+                left: -100.0,
+                right: -0.0,
+            },
+            Float::Right,
+            10.0,
+            left,
+            right,
+        )
+        .unwrap();
+        assert_eq!(placed.right.to_bits(), 0x8000_0000);
+        assert_eq!(content.right.to_bits(), 0x8000_0000);
+        assert_eq!(content.left.to_bits(), placed.left.to_bits());
+    }
+}
+
+#[test]
+fn nonzero_float_margin_stages_publish_or_fail_with_named_stages() {
+    let v = |value: u32| AutoLength::Value(f32::from_bits(value));
+    let band = |left: u32, right: u32| Band {
+        left: f32::from_bits(left),
+        right: f32::from_bits(right),
+    };
+    let zero_hundred = Band {
+        left: 0.0,
+        right: 100.0,
+    };
+    // float_outer_width: MAX + 2^103 rounds to infinity on both sides.
+    for side in [Float::Left, Float::Right] {
+        let result = nfh_first_float(zero_hundred, side, f32::MAX, v(F32_2P103), AutoLength::Auto);
+        assert_eq!(
+            placement_stage(result),
+            "Unrepresentable { stage: \"float_outer_width\" }"
+        );
+    }
+    // 2^102 is absorbed into MAX: left content 2^102..MAX; right content -MAX..100.
+    let (placed, content) = nfh_first_float(
+        zero_hundred,
+        Float::Left,
+        f32::MAX,
+        v(F32_2P102),
+        AutoLength::Auto,
+    )
+    .unwrap();
+    assert_eq!(
+        bits((placed.left, placed.right)),
+        (0x0000_0000, F32_MAX_BITS)
+    );
+    assert_eq!(
+        bits((content.left, content.right)),
+        (F32_2P102, F32_MAX_BITS)
+    );
+    let (placed, content) = nfh_first_float(
+        zero_hundred,
+        Float::Right,
+        f32::MAX,
+        v(F32_2P102),
+        AutoLength::Auto,
+    )
+    .unwrap();
+    assert_eq!(
+        bits((placed.left, placed.right)),
+        (0xff7f_ffff, 0x42c8_0000)
+    );
+    assert_eq!(
+        bits((content.left, content.right)),
+        (0xff7f_ffff, 0x42c8_0000)
+    );
+    // Margin box: a left F on band MAX..MAX with outer 2^103 fails placement; the
+    // right F succeeds with its own-side edge anchored.
+    let max_band = band(F32_MAX_BITS, F32_MAX_BITS);
+    let result = nfh_first_float(
+        max_band,
+        Float::Left,
+        f32::from_bits(F32_2P103),
+        AutoLength::Value(1.0),
+        AutoLength::Auto,
+    );
+    assert_eq!(placement_stage(result), "FloatPlacement(Unrepresentable)");
+    let (placed, content) = nfh_first_float(
+        max_band,
+        Float::Right,
+        f32::from_bits(F32_2P103),
+        AutoLength::Value(1.0),
+        AutoLength::Auto,
+    )
+    .unwrap();
+    assert_eq!(
+        bits((placed.left, placed.right)),
+        (F32_MAX_MINUS_ULP, F32_MAX_BITS)
+    );
+    assert_eq!(
+        bits((content.left, content.right)),
+        (F32_MAX_MINUS_ULP, F32_MAX_BITS)
+    );
+    // Far content edge: the margin box is finite but the far edge published from
+    // the rounded near edge overflows.
+    let result = nfh_first_float(
+        band(F32_MAX_MINUS_ULP, F32_MAX_MINUS_ULP),
+        Float::Left,
+        f32::from_bits(F32_2P103),
+        v(F32_2P103_PLUS_2P80),
+        AutoLength::Auto,
+    );
+    assert_eq!(
+        placement_stage(result),
+        "Unrepresentable { stage: \"float_content_right\" }"
+    );
+    let negative = 0x8000_0000 | F32_MAX_MINUS_ULP;
+    let result = nfh_first_float(
+        band(negative, negative),
+        Float::Right,
+        f32::from_bits(F32_2P103),
+        AutoLength::Auto,
+        v(F32_2P103_PLUS_2P80),
+    );
+    assert_eq!(
+        placement_stage(result),
+        "Unrepresentable { stage: \"float_content_left\" }"
+    );
+}
+
+fn profile<'s>(
+    result: Result<
+        iced_css_core::formatting::clearance_sequence::ClearanceSequenceOwner<'s>,
+        ClearanceSequenceError,
+    >,
+) -> String {
+    match result {
+        Err(ClearanceSequenceError::Profile(error)) => format!("{error:?}"),
+        other => panic!("expected a profile failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn nonzero_float_margin_admission_keeps_fault_precedence() {
+    let sources = sources(6);
+    // A negative horizontal edge is NegativeMargin on either edge.
+    for right in [false, true] {
+        let (outer, parent, mut children) = facts(&sources);
+        if right {
+            children[1].margin.right = AutoLength::Value(-1.0);
+        } else {
+            children[1].margin.left = AutoLength::Value(-1.0);
+        }
+        assert_eq!(
+            profile(build(&sources, outer, parent, &children, limits(6))),
+            "Unsupported { source: 3, reason: NegativeMargin }"
+        );
+    }
+    // A negative horizontal edge beats a nonzero vertical edge; the vertical edge
+    // alone is FloatMargin, also beside an admitted nonzero horizontal edge.
+    for (left, top, bottom, right, expected) in [
+        (-1.0, 1.0, 0.0, 0.0, "NegativeMargin"),
+        (0.0, 1.0, 0.0, 0.0, "FloatMargin"),
+        (0.0, 0.0, 1.0, 0.0, "FloatMargin"),
+        (5.0, 1.0, 0.0, 7.0, "FloatMargin"),
+    ] {
+        let (outer, parent, mut children) = facts(&sources);
+        children[1].margin.left = AutoLength::Value(left);
+        children[1].margin.top = AutoLength::Value(top);
+        children[1].margin.bottom = AutoLength::Value(bottom);
+        children[1].margin.right = AutoLength::Value(right);
+        assert_eq!(
+            profile(build(&sources, outer, parent, &children, limits(6))),
+            format!("Unsupported {{ source: 3, reason: {expected} }}")
+        );
+    }
+    // A nonfinite horizontal edge is InvalidNumber before any sign check.
+    for right in [false, true] {
+        let (outer, parent, mut children) = facts(&sources);
+        if right {
+            children[1].margin.right = AutoLength::Value(f32::NAN);
+            children[1].margin.left = AutoLength::Value(-1.0);
+        } else {
+            children[1].margin.left = AutoLength::Value(f32::NAN);
+            children[1].margin.right = AutoLength::Value(-1.0);
+        }
+        assert_eq!(
+            profile(build(&sources, outer, parent, &children, limits(6))),
+            "InvalidNumber { source: 3, field: \"margin\" }"
+        );
+    }
+    // A later child's profile fault precedes the float-width domain check, which
+    // precedes nothing numeric.
+    for later_fault in [true, false] {
+        let (outer, parent, mut children) = facts(&sources);
+        children[1].margin.left = AutoLength::Value(5.0);
+        children[1].margin.right = AutoLength::Value(7.0);
+        if later_fault {
+            children[3].padding.left = 1.0;
+        }
+        let result = build_width(&sources, outer, parent, &children, -1.0, limits(6));
+        let expected = if later_fault {
+            "Unsupported { source: 5, reason: ChildDecoration }"
+        } else {
+            "InvalidNumber { source: 3, field: \"float_width\" }"
+        };
+        assert_eq!(profile(result), expected);
+    }
+    // Valid nonzero margins whose kernel would fail: the byte floor fails first.
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(f32::from_bits(F32_2P103));
+    let floor = 2 * size_of::<SequenceNormalPlacement>();
+    let mut limit = limits(6);
+    limit.retained_bytes = NonZeroUsize::new(floor - 1).unwrap();
+    assert!(matches!(
+        build_width(&sources, outer, parent, &children, f32::MAX, limit),
+        Err(ClearanceSequenceError::Bytes)
+    ));
+    assert!(matches!(
+        build_width(&sources, outer, parent, &children, f32::MAX, limits(6)),
+        Err(ClearanceSequenceError::Placement {
+            source: 3,
+            error: ClearanceOwnerError::Unrepresentable {
+                stage: "float_outer_width"
+            },
+        })
+    ));
+}
+
+#[test]
+fn float_outer_width_failure_precedes_later_unsupported_equality() {
+    let sources = sources(5);
+    let equality = |left: f32, width: f32| {
+        let (outer, parent, mut children) = facts(&sources);
+        children[1].margin.left = AutoLength::Value(left);
+        children[1].margin.right = AutoLength::Auto;
+        children[1].height = OwnerHeight::Explicit(0.);
+        build_width(&sources, outer, parent, &children, width, limits(5)).map(|_| ())
+    };
+    // Controls: zero and admitted nonzero horizontal margins both reach source4
+    // UnsupportedEquality, so horizontal margins do not change the vertical result.
+    for left in [0.0, 5.0] {
+        assert!(matches!(
+            equality(left, 10.0),
+            Err(ClearanceSequenceError::Placement {
+                source: 4,
+                error: ClearanceOwnerError::UnsupportedEquality,
+            })
+        ));
+    }
+    assert!(matches!(
+        equality(f32::from_bits(F32_2P103), f32::MAX),
+        Err(ClearanceSequenceError::Placement {
+            source: 3,
+            error: ClearanceOwnerError::Unrepresentable {
+                stage: "float_outer_width"
+            },
+        })
+    ));
+}
+
+#[test]
+fn nonzero_float_margin_work_bounds_are_exact() {
+    for (count, work, old_work) in [(5, 337, 269), (6, 419, 351), (7, 502, 434)] {
+        let margins = |children: &mut Vec<ChildFacts<'_>>| {
+            children[1].margin.left = AutoLength::Value(5.0);
+            children[1].margin.right = AutoLength::Value(7.0);
+        };
+        // One-short and predecessor bounds fail before the graph scan would report
+        // the malformed child count; the exact bound reaches that scan.
+        let mut malformed = sources(count);
+        let unrelated = malformed[0].instance;
+        malformed[count - 1].children.push(unrelated);
+        let (outer, parent, mut children) = facts(&malformed);
+        margins(&mut children);
+        for short in [work - 1, old_work] {
+            let mut limit = limits(count);
+            limit.work = NonZeroUsize::new(short).unwrap();
+            assert!(matches!(
+                build(&malformed, outer, parent, &children, limit),
+                Err(ClearanceSequenceError::Work)
+            ));
+        }
+        let mut exact = limits(count);
+        exact.work = NonZeroUsize::new(work).unwrap();
+        assert!(matches!(
+            build(&malformed, outer, parent, &children, exact),
+            Err(ClearanceSequenceError::Profile(ClearanceOwnerError::ChildCount { source }))
+                if source == count - 1
+        ));
+
+        let sources = sources(count);
+        let (outer, parent, mut children) = facts(&sources);
+        margins(&mut children);
+        let tail_count = count - 4;
+        let floor = tail_count * size_of::<SequenceNormalPlacement>();
+        let mut limit = limits(count);
+        limit.work = NonZeroUsize::new(work).unwrap();
+        limit.retained_bytes = NonZeroUsize::new(floor).unwrap();
+        let owner = build(&sources, outer, parent, &children, limit).unwrap();
+        assert_eq!(owner.receipt().work, work);
+        assert_eq!(owner.receipt().record_capacity, tail_count);
+        assert_eq!(owner.receipt().retained_bytes, floor);
+        assert_eq!(
+            (owner.placed_float().left, owner.placed_float().right),
+            (0.0, 22.0)
+        );
+        assert_eq!(
+            (owner.float_content().left, owner.float_content().right),
+            (5.0, 15.0)
         );
     }
 }

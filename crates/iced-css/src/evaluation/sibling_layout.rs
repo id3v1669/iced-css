@@ -92,6 +92,8 @@ pub struct PrincipalChildBox {
     content: PrincipalEdges,
     used_width: f32,
     normal_width: Option<BlockWidthResult>,
+    used_margin_left: f32,
+    used_margin_right: f32,
     used_height: f32,
     used_margin_top: f32,
     used_margin_bottom: f32,
@@ -131,19 +133,13 @@ impl PrincipalChildBox {
     pub fn normal_width(&self) -> Option<BlockWidthResult> {
         self.normal_width
     }
-    /// Returns the retained normal solver margin, or the float category's used zero.
+    /// Returns the retained normal solver margin, or the float category's used value.
     pub fn used_margin_left(&self) -> f32 {
-        match self.normal_width {
-            Some(used) => used.margin_left,
-            None => 0.0,
-        }
+        self.used_margin_left
     }
-    /// Returns the retained normal solver margin, or the float category's used zero.
+    /// Returns the retained normal solver margin, or the float category's used value.
     pub fn used_margin_right(&self) -> f32 {
-        match self.normal_width {
-            Some(used) => used.margin_right,
-            None => 0.0,
-        }
+        self.used_margin_right
     }
     pub fn used_height(&self) -> f32 {
         self.used_height
@@ -329,14 +325,18 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `40 + 32*N + 41*(N-2) + 64*(N-3)` is prepaid before any
-/// proportional join, profile scan, or allocation. Forty-one constant-size actions
-/// per child cover typed conversion and retained computed/used margin facts; 64
-/// actions per normal cover Auto width categories and a possible minimum-width
-/// category rerun. Each normal still has one horizontal producer invocation. The
-/// core is invoked exactly once, with computed Auto preserved and bounded vertical
-/// and float Auto margins given used value zero. Temporary child facts are released
-/// before the source-only output is published.
+/// Facade work `54 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
+/// proportional join, profile scan, or allocation. Fourteen fixed actions cover the
+/// float content band read and the float's used horizontal margins. Forty-three
+/// constant-size actions per child cover typed conversion and retained computed/used
+/// margin facts, including the two retained used horizontal margins; 66 actions per
+/// normal cover Auto width categories, a possible minimum-width category rerun and
+/// the two solver-margin reads. Each normal still has one horizontal producer
+/// invocation. The core is invoked exactly once, with computed Auto preserved and
+/// bounded vertical and float Auto margins given used value zero. The float's
+/// content box is the core's published content band horizontally and its placed
+/// top/bottom vertically; its margin box stays `sequence().placed_float()`.
+/// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
 /// Returns the first failure in the documented facade order and never publishes a
@@ -574,49 +574,55 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 property: "child-facts",
             })?;
         let used_height = explicit_height(child, source)?;
-        let (kind, content, used_width, normal_width) = if source == 3 {
-            let placed = sequence.placed_float();
-            (
-                PrincipalChildKind::Float,
-                PrincipalEdges {
-                    left: placed.left,
-                    right: placed.right,
-                    top: placed.top,
-                    bottom: placed.bottom,
-                },
-                float_width,
-                None,
-            )
-        } else {
-            let vertical = if source == 2 {
-                sequence.before()
+        let (kind, content, used_width, normal_width, used_margin_left, used_margin_right) =
+            if source == 3 {
+                let placed = sequence.placed_float();
+                let band = sequence.float_content();
+                (
+                    PrincipalChildKind::Float,
+                    PrincipalEdges {
+                        left: band.left,
+                        right: band.right,
+                        top: placed.top,
+                        bottom: placed.bottom,
+                    },
+                    float_width,
+                    None,
+                    child.margin.float_used_left(),
+                    child.margin.float_used_right(),
+                )
             } else {
-                let record = sequence.tail().get(source - 4).ok_or(E::FactInvariant {
-                    source,
-                    property: "sequence-tail",
-                })?;
-                if record.source_index() != source {
-                    return Err(E::FactInvariant {
+                let vertical = if source == 2 {
+                    sequence.before()
+                } else {
+                    let record = sequence.tail().get(source - 4).ok_or(E::FactInvariant {
                         source,
-                        property: "sequence-source",
-                    });
-                }
-                record.vertical()
+                        property: "sequence-tail",
+                    })?;
+                    if record.source_index() != source {
+                        return Err(E::FactInvariant {
+                            source,
+                            property: "sequence-source",
+                        });
+                    }
+                    record.vertical()
+                };
+                let placed = place_child_horizontal(horizontal, parent_direction, row)
+                    .map_err(|error| E::ChildHorizontal { source, error })?;
+                (
+                    PrincipalChildKind::Normal,
+                    PrincipalEdges {
+                        left: placed.content.left,
+                        right: placed.content.right,
+                        top: vertical.top,
+                        bottom: vertical.bottom,
+                    },
+                    placed.used.width,
+                    Some(placed.used),
+                    placed.used.margin_left,
+                    placed.used.margin_right,
+                )
             };
-            let placed = place_child_horizontal(horizontal, parent_direction, row)
-                .map_err(|error| E::ChildHorizontal { source, error })?;
-            (
-                PrincipalChildKind::Normal,
-                PrincipalEdges {
-                    left: placed.content.left,
-                    right: placed.content.right,
-                    top: vertical.top,
-                    bottom: vertical.bottom,
-                },
-                placed.used.width,
-                Some(placed.used),
-            )
-        };
         children.push(PrincipalChildBox {
             source_index: source,
             containing_source_index: 1,
@@ -624,6 +630,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             content,
             used_width,
             normal_width,
+            used_margin_left,
+            used_margin_right,
             used_height,
             used_margin_top: child.margin.used_top(),
             used_margin_bottom: child.margin.used_bottom(),
@@ -776,11 +784,11 @@ fn place_child_horizontal(
 fn facade_work(nodes: usize) -> Option<usize> {
     let children = nodes.checked_sub(2)?;
     let normals = nodes.checked_sub(3)?;
-    let child_actions = children.checked_mul(41)?;
-    let category_actions = normals.checked_mul(64)?;
+    let child_actions = children.checked_mul(43)?;
+    let category_actions = normals.checked_mul(66)?;
     nodes
         .checked_mul(32)?
-        .checked_add(40)?
+        .checked_add(54)?
         .checked_add(child_actions)?
         .checked_add(category_actions)
 }
@@ -886,9 +894,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(451));
-        assert_eq!(facade_work(6), Some(588));
-        assert_eq!(facade_work(7), Some(725));
+        assert_eq!(facade_work(5), Some(475));
+        assert_eq!(facade_work(6), Some(616));
+        assert_eq!(facade_work(7), Some(757));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

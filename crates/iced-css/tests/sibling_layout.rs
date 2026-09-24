@@ -511,7 +511,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            40 + 32 * 6 + 41 * (6 - 2) + 64 * (6 - 3)
+            54 + 32 * 6 + 43 * (6 - 2) + 66 * (6 - 3)
         );
     });
 }
@@ -3342,8 +3342,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 588;
-        for short in [1, 587] {
+        let work = 616;
+        for short in [1, 615] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3372,12 +3372,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            451,
+            475,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            725,
+            757,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3403,14 +3403,14 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             assert_eq!(layout.receipt().work, work);
             let children = source_count - 2;
             let normals = source_count - 3;
-            assert_eq!(work, 40 + 32 * source_count + 41 * children + 64 * normals);
+            assert_eq!(work, 54 + 32 * source_count + 43 * children + 66 * normals);
         });
     }
 }
 
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
-    for (source_count, facade_work, core_work) in [(5, 451, 269), (6, 588, 351), (7, 725, 434)] {
+    for (source_count, facade_work, core_work) in [(5, 475, 337), (6, 616, 419), (7, 757, 502)] {
         let mut receipts = Vec::new();
         for width in [10, 140] {
             let b4 = if source_count == 7 {
@@ -3459,23 +3459,23 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            451,
+            475,
+            337,
             269,
-            213,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            588,
+            616,
+            419,
             351,
-            275,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            725,
+            757,
+            502,
             434,
-            338,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3911,7 +3911,7 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
 
     for (suffix, source, reason) in [
         (
-            "#f { width:101px; margin-left:1px; }",
+            "#f { width:101px; margin-top:1px; }",
             3,
             OwnerProfileReason::FloatMargin,
         ),
@@ -3953,6 +3953,33 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
             ));
         });
     }
+
+    // A nonzero horizontal float margin is admitted; with Auto right (used zero)
+    // it makes the float oversized through its margin alone.
+    let margin_css = format!(
+        "{} #f {{ margin-left:auto; margin-right:auto; }} #f {{ width:101px; margin-left:1px; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &margin_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        let placed = layout.sequence().placed_float();
+        assert_eq!((placed.left, placed.right), (0.0, 102.0));
+        let band = layout.sequence().float_content();
+        assert_eq!((band.left, band.right), (1.0, 102.0));
+        let float = &layout.children()[1];
+        assert_eq!((float.content().left, float.content().right), (1.0, 102.0));
+        assert_eq!(float.used_margin_left().to_bits(), 1.0_f32.to_bits());
+        assert_eq!(float.used_margin_right().to_bits(), 0.0_f32.to_bits());
+    });
 
     let overwide_css = format!("{} #b3 {{ width:140px; }}", baseline_css());
     sibling_fixture(6, &overwide_css, |projection, display| {
@@ -5602,12 +5629,12 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [451, 588, 725][case.nodes - 5],
+        [475, 616, 757][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
         layout.receipt().core.work,
-        [269, 351, 434][case.nodes - 5],
+        [337, 419, 502][case.nodes - 5],
         "{id}"
     );
 }
@@ -6339,7 +6366,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 451, "#b2"), (6, 588, "#b3"), (7, 725, "#b4")] {
+    for (source_count, work, selector) in [(5, 475, "#b2"), (6, 616, "#b3"), (7, 757, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6603,9 +6630,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 451, 377, 269, 213),
-        (6, 588, 492, 351, 275),
-        (7, 725, 607, 434, 338),
+        (5, 475, 451, 337, 269),
+        (6, 616, 588, 419, 351),
+        (7, 757, 725, 502, 434),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -6732,7 +6759,7 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             profile(3, OwnerProfileReason::NegativeMargin),
         ),
         (
-            "#f { margin-bottom:auto; margin-right:1px; }",
+            "#f { margin-bottom:auto; margin-right:1px; margin-top:2px; }",
             profile(3, OwnerProfileReason::FloatMargin),
         ),
         (
@@ -6784,6 +6811,29 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             assert_eq!(format!("{error:?}"), format!("{expected:?}"), "{rule}");
         });
     }
+
+    // A nonzero horizontal float margin beside a vertical Auto is admitted.
+    let css = format!(
+        "{} #f {{ margin-bottom:auto; margin-right:1px; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        let placed = layout.sequence().placed_float();
+        assert_eq!((placed.left, placed.right), (0.0, 11.0));
+        let float = &layout.children()[1];
+        assert_eq!((float.content().left, float.content().right), (0.0, 10.0));
+        assert_eq!(float.used_margin_right().to_bits(), 0x3f80_0000);
+    });
 
     // Signed and Auto normal horizontal categories plus F horizontal Auto remain
     // admitted beside every vertical Auto; F never receives a normal solver.
@@ -6840,4 +6890,615 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
         );
         assert_eq!(layout.parent().height().content_bottom, 16.0);
     });
+}
+
+fn zero_margin_control_view(layout: &CapturedSiblingLayout<'_>) -> Vec<String> {
+    let sequence = layout.sequence();
+    let placed = sequence.placed_float();
+    let mut view = vec![
+        format!("{:?}", sequence.before()),
+        format!("{:?}", sequence.tail()),
+        format!("{:?}", (placed.side, placed.top, placed.bottom)),
+        format!("{:?}", layout.parent()),
+    ];
+    for child in layout.children() {
+        if child.source_index() == 3 {
+            let content = child.content();
+            // Two tuples: std implements Debug for tuples of at most 12 elements.
+            view.push(format!(
+                "{:?}",
+                (
+                    child.kind(),
+                    content.top,
+                    content.bottom,
+                    child.used_width(),
+                    child.normal_width(),
+                    child.used_height(),
+                    child.used_margin_top(),
+                ),
+            ));
+            view.push(format!(
+                "{:?}",
+                (
+                    child.used_margin_bottom(),
+                    child.computed_width(),
+                    child.computed_height(),
+                    child.margin_top(),
+                    child.margin_bottom(),
+                    child.clear(),
+                ),
+            ));
+        } else {
+            view.push(format!("{child:?}"));
+        }
+    }
+    view
+}
+
+fn assert_nonzero_float_case(
+    rule: &str,
+    outer: (f32, f32),
+    margin_box: (u32, u32),
+    content: (u32, u32),
+    used_margins: (u32, u32),
+) {
+    let control_css = format!(
+        "{} {rule} #f {{ margin-left:0; margin-right:0; }}",
+        baseline_css()
+    );
+    let mut control = None;
+    sibling_fixture(6, &control_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            outer.0,
+            outer.1,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        control = Some(zero_margin_control_view(&layout));
+    });
+    let css = format!("{} {rule}", baseline_css());
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            outer.0,
+            outer.1,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        let placed = layout.sequence().placed_float();
+        assert_eq!((placed.left.to_bits(), placed.right.to_bits()), margin_box);
+        let band = layout.sequence().float_content();
+        assert_eq!((band.left.to_bits(), band.right.to_bits()), content);
+        let float = &layout.children()[1];
+        assert_eq!(float.source_index(), 3);
+        assert_eq!(
+            (
+                float.content().left.to_bits(),
+                float.content().right.to_bits()
+            ),
+            content
+        );
+        assert_eq!(
+            (
+                float.used_margin_left().to_bits(),
+                float.used_margin_right().to_bits()
+            ),
+            used_margins,
+        );
+        assert!(float.normal_width().is_none());
+        assert_eq!(Some(zero_margin_control_view(&layout)), control);
+    });
+}
+
+#[test]
+fn nonzero_left_float_horizontal_margins_publish_the_content_band() {
+    assert_nonzero_float_case(
+        "#f { width:30px; margin-left:5px; margin-right:7px; }",
+        (0.0, 100.0),
+        (0.0_f32.to_bits(), 42.0_f32.to_bits()),
+        (5.0_f32.to_bits(), 35.0_f32.to_bits()),
+        (0x40a0_0000, 0x40e0_0000),
+    );
+}
+
+#[test]
+fn nonzero_right_float_horizontal_margins_publish_the_content_band() {
+    assert_nonzero_float_case(
+        "#f { float:right; width:30px; margin-left:5px; margin-right:7px; }",
+        (0.0, 100.0),
+        (58.0_f32.to_bits(), 100.0_f32.to_bits()),
+        (63.0_f32.to_bits(), 93.0_f32.to_bits()),
+        (0x40a0_0000, 0x40e0_0000),
+    );
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NfhOrigin {
+    Specified,
+    Initial,
+    Inherited,
+}
+
+/// Expected computed length fact: exact pixel bits, rounded-to-zero flag, origin.
+type NfhFact = (u32, bool, NfhOrigin);
+
+fn nfh_fact(fact: NfhFact, original_parent: usize) -> BoxLengthFact {
+    BoxLengthFact::Absolute(AbsoluteBoxFact {
+        pixels: f32::from_bits(fact.0),
+        rounded_to_zero: fact.1,
+        origin: match fact.2 {
+            NfhOrigin::Specified => BoxFactOrigin::Specified,
+            NfhOrigin::Initial => BoxFactOrigin::Initial,
+            NfhOrigin::Inherited => BoxFactOrigin::Inherited { original_parent },
+        },
+    })
+}
+
+/// Evaluates the targeted input through real CSS and checks F's computed width and
+/// horizontal margin facts (exact bits via Debug), then returns the layout result
+/// as a Debug string for failures or None for successes.
+fn nfh_targeted_facts(
+    rule: &str,
+    outer: (f32, f32),
+    width_bits: u32,
+    left: NfhFact,
+    right: NfhFact,
+) -> Option<String> {
+    let css = format!("{} {rule}", baseline_css());
+    let mut failure = None;
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let original_parent = projection.original_index(1).unwrap();
+        let row = facts.row(3).unwrap();
+        let width = nfh_fact((width_bits, false, NfhOrigin::Specified), original_parent);
+        assert_eq!(format!("{:?}", row.width), format!("{width:?}"), "{rule}");
+        let expected_left = nfh_fact(left, original_parent);
+        let expected_right = nfh_fact(right, original_parent);
+        assert_eq!(
+            format!("{:?}", row.margin[3]),
+            format!("{expected_left:?}"),
+            "{rule}"
+        );
+        assert_eq!(
+            format!("{:?}", row.margin[1]),
+            format!("{expected_right:?}"),
+            "{rule}"
+        );
+        match default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            outer.0,
+            outer.1,
+            10.0,
+            layout_limits(),
+        ) {
+            Ok(layout) => {
+                let float = &layout.children()[1];
+                assert_eq!(float.used_width().to_bits(), width_bits, "{rule}");
+                assert_eq!(
+                    format!("{:?}", float.computed_margin_left()),
+                    format!("{expected_left:?}")
+                );
+                assert_eq!(
+                    format!("{:?}", float.computed_margin_right()),
+                    format!("{expected_right:?}")
+                );
+            }
+            Err(SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 3,
+                error,
+            })) => failure = Some(format!("{error:?}")),
+            Err(other) => panic!("{rule}: unexpected {other:?}"),
+        }
+    });
+    failure
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assert_nfh_targeted_success(
+    rule: &str,
+    outer: (f32, f32),
+    width_bits: u32,
+    left: NfhFact,
+    right: NfhFact,
+    margin_box: (u32, u32),
+    content: (u32, u32),
+    used_margins: (u32, u32),
+) {
+    assert_eq!(
+        nfh_targeted_facts(rule, outer, width_bits, left, right),
+        None
+    );
+    assert_nonzero_float_case(rule, outer, margin_box, content, used_margins);
+}
+
+fn assert_nfh_targeted_failure(
+    rule: &str,
+    outer: (f32, f32),
+    width_bits: u32,
+    left: NfhFact,
+    right: NfhFact,
+    expected: &str,
+) {
+    assert_eq!(
+        nfh_targeted_facts(rule, outer, width_bits, left, right).as_deref(),
+        Some(expected)
+    );
+}
+
+#[test]
+fn nfh_targeted_band_collapsed_left() {
+    assert_nfh_targeted_success(
+        "#f { width:1px; margin-left:1px; margin-right:1px; }",
+        (f32::from_bits(0x4b800000), f32::from_bits(0x00000000)),
+        0x3f800000,
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x4b800000, 0x4b800002),
+        (0x4b800000, 0x4b800000),
+        (0x3f800000, 0x3f800000),
+    );
+}
+
+#[test]
+fn nfh_targeted_band_rounded_left() {
+    assert_nfh_targeted_success(
+        "#f { width:5px; margin-left:1px; margin-right:1px; }",
+        (f32::from_bits(0x4b800000), f32::from_bits(0x40800000)),
+        0x40a00000,
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x4b800000, 0x4b800004),
+        (0x4b800000, 0x4b800002),
+        (0x3f800000, 0x3f800000),
+    );
+}
+
+#[test]
+fn nfh_targeted_band_collapsed_right() {
+    assert_nfh_targeted_success(
+        "#f { float:right; width:1px; margin-left:1px; margin-right:1px; }",
+        (f32::from_bits(0x4b800000), f32::from_bits(0x00000000)),
+        0x3f800000,
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x4b7ffffd, 0x4b800000),
+        (0x4b7ffffe, 0x4b7fffff),
+        (0x3f800000, 0x3f800000),
+    );
+}
+
+#[test]
+fn nfh_targeted_band_rounded_right() {
+    assert_nfh_targeted_success(
+        "#f { float:right; width:5px; margin-left:1px; margin-right:1px; }",
+        (f32::from_bits(0x4b800000), f32::from_bits(0x40800000)),
+        0x40a00000,
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x4b7ffffd, 0x4b800002),
+        (0x4b7fffff, 0x4b800002),
+        (0x3f800000, 0x3f800000),
+    );
+}
+
+#[test]
+fn nfh_targeted_inherited_left() {
+    assert_nfh_targeted_success(
+        "#p { margin-left:5px; } #f { width:30px; margin-left:inherit; margin-right:7px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x41f00000,
+        (0x40a00000, false, NfhOrigin::Inherited),
+        (0x40e00000, false, NfhOrigin::Specified),
+        (0x40a00000, 0x423c0000),
+        (0x41200000, 0x42200000),
+        (0x40a00000, 0x40e00000),
+    );
+}
+
+#[test]
+fn nfh_targeted_inherited_right() {
+    assert_nfh_targeted_success(
+        "#p { margin-right:5px; } #f { float:right; width:30px; margin-left:7px; margin-right:inherit; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x41f00000,
+        (0x40e00000, false, NfhOrigin::Specified),
+        (0x40a00000, false, NfhOrigin::Inherited),
+        (0x42540000, 0x42be0000),
+        (0x42700000, 0x42b40000),
+        (0x40e00000, 0x40a00000),
+    );
+}
+
+#[test]
+fn nfh_targeted_rounded_to_zero_left() {
+    assert_nfh_targeted_success(
+        "#f { width:30px; margin-left:0.0000000000000000000000000000000000000000000000000001px; margin-right:7px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x41f00000,
+        (0x00000000, true, NfhOrigin::Specified),
+        (0x40e00000, false, NfhOrigin::Specified),
+        (0x00000000, 0x42140000),
+        (0x00000000, 0x41f00000),
+        (0x00000000, 0x40e00000),
+    );
+}
+
+#[test]
+fn nfh_targeted_rounded_to_zero_right() {
+    assert_nfh_targeted_success(
+        "#f { float:right; width:30px; margin-left:5px; margin-right:0.0000000000000000000000000000000000000000000000000001px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x41f00000,
+        (0x40a00000, false, NfhOrigin::Specified),
+        (0x00000000, true, NfhOrigin::Specified),
+        (0x42820000, 0x42c80000),
+        (0x428c0000, 0x42c80000),
+        (0x40a00000, 0x00000000),
+    );
+}
+
+#[test]
+fn nfh_targeted_initial_left() {
+    assert_nfh_targeted_success(
+        "#f { width:30px; margin-right:7px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x41f00000,
+        (0x00000000, false, NfhOrigin::Initial),
+        (0x40e00000, false, NfhOrigin::Specified),
+        (0x00000000, 0x42140000),
+        (0x00000000, 0x41f00000),
+        (0x00000000, 0x40e00000),
+    );
+}
+
+#[test]
+fn nfh_targeted_initial_right() {
+    assert_nfh_targeted_success(
+        "#f { float:right; width:30px; margin-left:5px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x41f00000,
+        (0x40a00000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        (0x42820000, 0x42c80000),
+        (0x428c0000, 0x42c80000),
+        (0x40a00000, 0x00000000),
+    );
+}
+
+#[test]
+fn nfh_targeted_outer_width_overflow_left() {
+    assert_nfh_targeted_failure(
+        "#f { width:340282346638528859811704183484516925440px; margin-left:10141204801825835211973625643008px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x7f7fffff,
+        (0x73000000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        "Unrepresentable { stage: \"float_outer_width\" }",
+    );
+}
+
+#[test]
+fn nfh_targeted_outer_absorbs_2p102_left() {
+    assert_nfh_targeted_success(
+        "#f { width:340282346638528859811704183484516925440px; margin-left:5070602400912917605986812821504px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x7f7fffff,
+        (0x72800000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        (0x00000000, 0x7f7fffff),
+        (0x72800000, 0x7f7fffff),
+        (0x72800000, 0x00000000),
+    );
+}
+
+#[test]
+fn nfh_targeted_margin_box_overflow_left() {
+    assert_nfh_targeted_failure(
+        "#f { width:10141204801825835211973625643008px; margin-left:1px; }",
+        (f32::from_bits(0x7f7fffff), f32::from_bits(0x00000000)),
+        0x73000000,
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        "FloatPlacement(Unrepresentable)",
+    );
+}
+
+#[test]
+fn nfh_targeted_outer_width_overflow_right() {
+    assert_nfh_targeted_failure(
+        "#f { float:right; width:340282346638528859811704183484516925440px; margin-left:10141204801825835211973625643008px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x7f7fffff,
+        (0x73000000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        "Unrepresentable { stage: \"float_outer_width\" }",
+    );
+}
+
+#[test]
+fn nfh_targeted_outer_absorbs_2p102_right() {
+    assert_nfh_targeted_success(
+        "#f { float:right; width:340282346638528859811704183484516925440px; margin-left:5070602400912917605986812821504px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x7f7fffff,
+        (0x72800000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        (0xff7fffff, 0x42c80000),
+        (0xff7fffff, 0x42c80000),
+        (0x72800000, 0x00000000),
+    );
+}
+
+#[test]
+fn nfh_targeted_margin_box_anchored_right() {
+    assert_nfh_targeted_success(
+        "#f { float:right; width:10141204801825835211973625643008px; margin-left:1px; }",
+        (f32::from_bits(0x7f7fffff), f32::from_bits(0x00000000)),
+        0x73000000,
+        (0x3f800000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        (0x7f7ffffe, 0x7f7fffff),
+        (0x7f7ffffe, 0x7f7fffff),
+        (0x3f800000, 0x00000000),
+    );
+}
+
+#[test]
+fn nfh_targeted_far_edge_overflow_left() {
+    assert_nfh_targeted_failure(
+        "#f { width:10141204801825835211973625643008px; margin-left:10141206010751654826602800349184px; }",
+        (f32::from_bits(0x7f7ffffe), f32::from_bits(0x00000000)),
+        0x73000000,
+        (0x73000001, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        "Unrepresentable { stage: \"float_content_right\" }",
+    );
+}
+
+#[test]
+fn nfh_targeted_far_edge_overflow_right() {
+    assert_nfh_targeted_failure(
+        "#f { float:right; width:10141204801825835211973625643008px; margin-right:10141206010751654826602800349184px; }",
+        (f32::from_bits(0xff7ffffe), f32::from_bits(0x00000000)),
+        0x73000000,
+        (0x00000000, false, NfhOrigin::Initial),
+        (0x73000001, false, NfhOrigin::Specified),
+        "Unrepresentable { stage: \"float_content_left\" }",
+    );
+}
+
+#[test]
+fn nfh_targeted_negative_zero_left() {
+    assert_nfh_targeted_success(
+        "#f { width:30px; margin-left:-0px; margin-right:-0px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x41f00000,
+        (0x00000000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Specified),
+        (0x00000000, 0x41f00000),
+        (0x00000000, 0x41f00000),
+        (0x00000000, 0x00000000),
+    );
+}
+
+#[test]
+fn nfh_targeted_negative_zero_right() {
+    assert_nfh_targeted_success(
+        "#f { float:right; width:30px; margin-left:-0px; margin-right:-0px; }",
+        (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        0x41f00000,
+        (0x00000000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Specified),
+        (0x428c0000, 0x42c80000),
+        (0x428c0000, 0x42c80000),
+        (0x00000000, 0x00000000),
+    );
+}
+
+#[test]
+fn nfh_targeted_non_containment_right() {
+    assert_nfh_targeted_success(
+        "#f { float:right; width:1px; margin-right:1.5px; }",
+        (f32::from_bits(0x4b7ffffc), f32::from_bits(0x00000000)),
+        0x3f800000,
+        (0x00000000, false, NfhOrigin::Initial),
+        (0x3fc00000, false, NfhOrigin::Specified),
+        (0x4b7ffffa, 0x4b7ffffc),
+        (0x4b7ffff9, 0x4b7ffffa),
+        (0x00000000, 0x3fc00000),
+    );
+}
+
+#[test]
+fn nfh_targeted_non_containment_left() {
+    assert_nfh_targeted_success(
+        "#f { width:1px; margin-left:1.5px; }",
+        (f32::from_bits(0x4b7ffffc), f32::from_bits(0x00000000)),
+        0x3f800000,
+        (0x3fc00000, false, NfhOrigin::Specified),
+        (0x00000000, false, NfhOrigin::Initial),
+        (0x4b7ffffc, 0x4b7ffffe),
+        (0x4b7ffffe, 0x4b7fffff),
+        (0x3fc00000, 0x00000000),
+    );
+}
+
+#[test]
+fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
+    use iced_css::evaluation::sibling_layout::PrincipalChildBox;
+    use iced_css_core::formatting::{
+        clearance_owner::ChildFacts, clearance_sequence::SequenceNormalPlacement,
+    };
+    use std::mem::size_of;
+
+    for (source_count, facade_work, old_facade, core_work, old_core) in [
+        (5, 475, 451, 337, 269),
+        (6, 616, 588, 419, 351),
+        (7, 757, 725, 502, 434),
+    ] {
+        let b4 = if source_count == 7 {
+            "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
+        } else {
+            ""
+        };
+        let css = format!(
+            "{} {b4} #f {{ margin-left:5px; margin-right:7px; }}",
+            baseline_css()
+        );
+        sibling_fixture(source_count, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let build = |limits| {
+                default_outer_layout(&facts, &projection.nodes()[0], 0.0, 100.0, 10.0, limits)
+            };
+            let child_count = source_count - 2;
+            let tail_count = source_count - 4;
+            let scratch_floor = child_count * size_of::<ChildFacts<'_>>();
+            let core_floor = tail_count * size_of::<SequenceNormalPlacement>();
+            let retained_floor = core_floor + child_count * size_of::<PrincipalChildBox>();
+
+            // One short and the predecessor bound fail before the scratch scan.
+            for short in [facade_work - 1, old_facade] {
+                let mut limits = layout_limits();
+                limits.work = nz(short);
+                limits.scratch_bytes = nz(1);
+                assert!(matches!(build(limits), Err(SiblingLayoutError::Work)));
+            }
+            for short in [core_work - 1, old_core] {
+                let mut limits = layout_limits();
+                limits.core.work = nz(short);
+                assert!(matches!(
+                    build(limits),
+                    Err(SiblingLayoutError::Core(ClearanceSequenceError::Work))
+                ));
+            }
+            let mut exact = layout_limits();
+            exact.work = nz(facade_work);
+            exact.core.work = nz(core_work);
+            exact.scratch_bytes = nz(scratch_floor);
+            exact.retained_bytes = nz(retained_floor);
+            exact.core.retained_bytes = nz(core_floor);
+            let layout = build(exact).unwrap();
+            let receipt = layout.receipt();
+            assert_eq!(receipt.work, facade_work);
+            assert_eq!(receipt.scratch_bytes, scratch_floor);
+            assert_eq!(receipt.retained_bytes, retained_floor);
+            assert_eq!(receipt.core.work, core_work);
+            assert_eq!(receipt.core.retained_bytes, core_floor);
+            let placed = layout.sequence().placed_float();
+            assert_eq!((placed.left, placed.right), (0.0, 22.0));
+            let float = &layout.children()[1];
+            assert_eq!((float.content().left, float.content().right), (5.0, 15.0));
+            assert_eq!(float.used_margin_left().to_bits(), 0x40a0_0000);
+            assert_eq!(float.used_margin_right().to_bits(), 0x40e0_0000);
+        });
+    }
 }

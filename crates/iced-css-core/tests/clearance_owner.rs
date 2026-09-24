@@ -1030,6 +1030,68 @@ fn outer(s: &[SourceNode]) -> OuterFacts<'_> {
     }
 }
 #[test]
+fn legacy_float_margin_rejection_covers_both_horizontal_edges() {
+    for nested in [false, true] {
+        let flat_sources = sources();
+        let nested_sources = nested_sources();
+        let source_slice = if nested {
+            &nested_sources[1..]
+        } else {
+            &flat_sources[..]
+        };
+        let float_source = if nested { 3 } else { 2 };
+        for right in [true, false] {
+            let mut facts = input(source_slice);
+            if right {
+                facts.float.margin.right = AutoLength::Value(1.0);
+            } else {
+                facts.float.margin.left = AutoLength::Value(1.0);
+            }
+            let error = if nested {
+                build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts)
+                    .unwrap_err()
+            } else {
+                build_clearance_owner(&flat_sources, facts).unwrap_err()
+            };
+            assert_eq!(
+                error,
+                ClearanceOwnerError::Unsupported {
+                    source: float_source,
+                    reason: OwnerProfileReason::FloatMargin,
+                }
+            );
+        }
+    }
+}
+#[test]
+fn legacy_zero_margin_kernel_identity_keeps_negative_zero_edges() {
+    for nested in [false, true] {
+        let flat_sources = sources();
+        let nested_sources = nested_sources();
+        let source_slice = if nested {
+            &nested_sources[1..]
+        } else {
+            &flat_sources[..]
+        };
+        let mut facts = input(source_slice);
+        facts.parent.containing = Band {
+            left: -0.0,
+            right: 100.0,
+        };
+        facts.float_width = -0.0;
+        facts.float.margin.left = AutoLength::Value(-0.0);
+        facts.float.margin.right = AutoLength::Value(-0.0);
+        let owner = if nested {
+            build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts)
+        } else {
+            build_clearance_owner(&flat_sources, facts)
+        }
+        .unwrap();
+        assert_eq!(owner.placed_float().left.to_bits(), (-0.0_f32).to_bits());
+        assert_eq!(owner.placed_float().right.to_bits(), (-0.0_f32).to_bits());
+    }
+}
+#[test]
 fn nested_owner_retains_outer_and_maps_shared_solver_indices() {
     let nested = nested_sources();
     let root = sources();
