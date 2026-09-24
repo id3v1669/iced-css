@@ -3,12 +3,12 @@ mod support;
 
 use iced_css::evaluation::sibling_layout::{
     CapturedSiblingLayout, PrincipalChildKind, PrincipalEdges, SiblingLayoutError,
-    SiblingLayoutLimits, build_captured_sibling_layout,
+    SiblingLayoutLimits, SiblingLayoutReceipt, build_captured_sibling_layout,
 };
 use iced_css::evaluation::{
     clearance_box_facts::{
         AbsoluteBoxFact, BoxFactOrigin, BoxFactTarget, BoxFactUnsupported, BoxLengthFact,
-        ClearanceBoxFactsError,
+        ClearanceBoxFactsError, KeywordBoxFact,
     },
     clearance_bridge::{
         CapturedClearanceError, CapturedClearanceUnsupported, ClearanceOuterContentGeometry,
@@ -65,6 +65,76 @@ fn baseline_css() -> &'static str {
         #b2 { height: 1px; margin-top: 3px; margin-bottom: 3px; clear: both; }
         #b3 { height: 1px; margin-top: 2px; margin-bottom: 4px; clear: both; }
     "
+}
+
+fn assert_vertical_auto_case(
+    rule: &str,
+    expected_bottom: f32,
+    expected_last_used_bottom: f32,
+    expected_parent: (f32, f32, f32),
+    auto_source: usize,
+) {
+    let css = format!("{} {rule}", baseline_css());
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: 0.0,
+                content_width: 100.0,
+                content_top: 10.0,
+            },
+            layout_limits(),
+        )
+        .unwrap();
+        let children = layout.children();
+        let float = &children[1];
+        let last = children.last().unwrap();
+        assert_eq!(last.content().bottom, expected_bottom);
+        assert_eq!(float.used_margin_top().to_bits(), 0.0_f32.to_bits());
+        assert_eq!(float.used_margin_bottom().to_bits(), 0.0_f32.to_bits());
+        assert_eq!(last.used_margin_top(), 2.0);
+        assert_eq!(
+            last.used_margin_bottom().to_bits(),
+            expected_last_used_bottom.to_bits()
+        );
+        assert_eq!(layout.parent().height().content_bottom, expected_parent.0);
+        assert_eq!(layout.parent().height().used_height, expected_parent.1);
+        assert_eq!(layout.parent().bottom().padding_bottom, expected_parent.2);
+        if auto_source == 3 {
+            assert!(matches!(float.margin_top(), BoxLengthFact::Auto { .. }));
+            assert!(matches!(float.margin_bottom(), BoxLengthFact::Auto { .. }));
+            assert_eq!(float.margin_top(), facts.row(3).unwrap().margin[0]);
+            assert_eq!(float.margin_bottom(), facts.row(3).unwrap().margin[2]);
+        } else {
+            assert_eq!(auto_source, 5);
+            assert!(matches!(last.margin_bottom(), BoxLengthFact::Auto { .. }));
+            assert_eq!(last.margin_bottom(), facts.row(5).unwrap().margin[2]);
+        }
+    });
+}
+
+#[test]
+fn vertical_auto_final_normal_reaches_parent_auto_height() {
+    assert_vertical_auto_case(
+        "#b3 { margin-bottom:auto; }",
+        23.0,
+        0.0,
+        (23.0, 12.0, 24.0),
+        5,
+    );
+}
+
+#[test]
+fn vertical_auto_float_preserves_placement() {
+    assert_vertical_auto_case(
+        "#f { margin-top:auto; margin-bottom:auto; }",
+        23.0,
+        4.0,
+        (27.0, 16.0, 28.0),
+        3,
+    );
 }
 
 fn assert_oversized_float_case(rule: &str, left: f32, right: f32) {
@@ -441,7 +511,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            32 + 32 * 6 + 19 * (6 - 2) + 64 * (6 - 3)
+            40 + 32 * 6 + 41 * (6 - 2) + 64 * (6 - 3)
         );
     });
 }
@@ -656,6 +726,12 @@ struct PrincipalObservation {
     content: PrincipalEdges,
     padding: PrincipalEdges,
     border: PrincipalEdges,
+    computed_height: BoxLengthFact,
+    margin_top: BoxLengthFact,
+    margin_bottom: BoxLengthFact,
+    used_margin_top_bits: u32,
+    used_margin_bottom_bits: u32,
+    clear: KeywordBoxFact<ClearSide>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -670,6 +746,10 @@ struct VerticalObservation {
     parent_origin: FirstChildOriginPlacement,
     parent_height: BfcHeightPlacement,
     parent_bottom: BlockBottomPlacement,
+    parent_computed: [BoxLengthFact; 4],
+    parent_clear: KeywordBoxFact<ClearSide>,
+    parent_clearance: ClearanceRequirement,
+    receipt: SiblingLayoutReceipt,
 }
 
 fn observe_layout(layout: &CapturedSiblingLayout<'_>) -> VerticalObservation {
@@ -724,6 +804,12 @@ fn observe_layout(layout: &CapturedSiblingLayout<'_>) -> VerticalObservation {
                     content: child.content(),
                     padding: child.padding(),
                     border: child.border(),
+                    computed_height: child.computed_height(),
+                    margin_top: child.margin_top(),
+                    margin_bottom: child.margin_bottom(),
+                    used_margin_top_bits: child.used_margin_top().to_bits(),
+                    used_margin_bottom_bits: child.used_margin_bottom().to_bits(),
+                    clear: child.clear(),
                 }
             })
             .collect(),
@@ -763,6 +849,15 @@ fn observe_layout(layout: &CapturedSiblingLayout<'_>) -> VerticalObservation {
         parent_origin: layout.parent().origin(),
         parent_height: layout.parent().height(),
         parent_bottom: layout.parent().bottom(),
+        parent_computed: [
+            layout.parent().computed_width(),
+            layout.parent().computed_height(),
+            layout.parent().computed_margin_top(),
+            layout.parent().computed_margin_bottom(),
+        ],
+        parent_clear: layout.parent().clear(),
+        parent_clearance: layout.parent().clearance(),
+        receipt: layout.receipt(),
     }
 }
 
@@ -776,6 +871,10 @@ fn assert_same_vertical(actual: &VerticalObservation, expected: &VerticalObserva
     assert_eq!(actual.parent_origin, expected.parent_origin);
     assert_eq!(actual.parent_height, expected.parent_height);
     assert_eq!(actual.parent_bottom, expected.parent_bottom);
+    assert_eq!(actual.parent_computed, expected.parent_computed);
+    assert_eq!(actual.parent_clear, expected.parent_clear);
+    assert_eq!(actual.parent_clearance, expected.parent_clearance);
+    assert_eq!(actual.receipt, expected.receipt);
 }
 
 fn actual_horizontal_observation(
@@ -1117,6 +1216,30 @@ fn assert_only_float_horizontal_changes(oversized: &FloatObservation, control: &
     assert_eq!(actual_float.content, oversized.content);
     assert_eq!(actual_float.padding, oversized.content);
     assert_eq!(actual_float.border, oversized.content);
+    assert_eq!(actual_float.computed_height, control_float.computed_height);
+    assert_eq!(actual_float.margin_top, control_float.margin_top);
+    assert_eq!(actual_float.margin_bottom, control_float.margin_bottom);
+    assert_eq!(
+        actual_float.used_margin_top_bits,
+        control_float.used_margin_top_bits
+    );
+    assert_eq!(
+        actual_float.used_margin_bottom_bits,
+        control_float.used_margin_bottom_bits
+    );
+    assert_eq!(actual_float.used_margin_top_bits, 0.0f32.to_bits());
+    assert_eq!(actual_float.used_margin_bottom_bits, 0.0f32.to_bits());
+    assert_eq!(actual_float.clear, control_float.clear);
+    assert_eq!(
+        oversized.layout.parent_computed,
+        control.layout.parent_computed
+    );
+    assert_eq!(oversized.layout.parent_clear, control.layout.parent_clear);
+    assert_eq!(
+        oversized.layout.parent_clearance,
+        control.layout.parent_clearance
+    );
+    assert_eq!(oversized.layout.receipt, control.layout.receipt);
 }
 
 fn assert_same_layout_except_float_computed_margins(
@@ -1148,6 +1271,15 @@ fn assert_same_layout_except_float_computed_margins(
         assert_eq!(actual.content, expected.content);
         assert_eq!(actual.padding, expected.padding);
         assert_eq!(actual.border, expected.border);
+        assert_eq!(actual.computed_height, expected.computed_height);
+        assert_eq!(actual.margin_top, expected.margin_top);
+        assert_eq!(actual.margin_bottom, expected.margin_bottom);
+        assert_eq!(actual.used_margin_top_bits, expected.used_margin_top_bits);
+        assert_eq!(
+            actual.used_margin_bottom_bits,
+            expected.used_margin_bottom_bits
+        );
+        assert_eq!(actual.clear, expected.clear);
     }
 }
 
@@ -3210,8 +3342,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 492;
-        for short in [1, 491] {
+        let work = 588;
+        for short in [1, 587] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3240,12 +3372,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            377,
+            451,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            607,
+            725,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3271,14 +3403,14 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             assert_eq!(layout.receipt().work, work);
             let children = source_count - 2;
             let normals = source_count - 3;
-            assert_eq!(work, 32 + 32 * source_count + 19 * children + 64 * normals);
+            assert_eq!(work, 40 + 32 * source_count + 41 * children + 64 * normals);
         });
     }
 }
 
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
-    for (source_count, facade_work, core_work) in [(5, 377, 213), (6, 492, 275), (7, 607, 338)] {
+    for (source_count, facade_work, core_work) in [(5, 451, 269), (6, 588, 351), (7, 725, 434)] {
         let mut receipts = Vec::new();
         for width in [10, 140] {
             let b4 = if source_count == 7 {
@@ -3327,23 +3459,23 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            377,
+            451,
+            269,
             213,
-            197,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            492,
+            588,
+            351,
             275,
-            259,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            607,
+            725,
+            434,
             338,
-            322,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3553,13 +3685,7 @@ fn auto_multi_faults_preserve_phase_dominance() {
                 },
                 layout_limits(),
             ),
-            Err(SiblingLayoutError::Captured(
-                CapturedClearanceError::Unsupported {
-                    projected: 4,
-                    property: "margin-bottom",
-                    reason: CapturedClearanceUnsupported::AutoMargin,
-                }
-            ))
+            Err(SiblingLayoutError::ParentOrigin(_))
         ));
     });
 
@@ -3747,12 +3873,6 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
     use CapturedClearanceUnsupported as Unsupported;
 
     for (suffix, source, property, reason) in [
-        (
-            "#b1 { margin-top:auto; }",
-            2,
-            "margin-top",
-            Unsupported::AutoMargin,
-        ),
         ("#b3 { height:auto; }", 5, "height", Unsupported::HeightKind),
         (
             "#b3 { overflow:hidden; }",
@@ -3873,98 +3993,116 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
 }
 
 #[test]
-fn remaining_auto_margin_errors_keep_source_and_edge_order() {
+fn auto_vertical_margins_advance_to_later_profile_faults() {
     use CapturedClearanceUnsupported as U;
 
-    for (selector, projected, margins, property) in [
+    for (selector, projected, margins, used_top, used_bottom) in [
         (
             "#b1",
             2,
             "margin-right:auto; margin-bottom:auto; margin-left:auto;",
-            "margin-bottom",
+            0.0,
+            0.0,
         ),
         (
             "#b3",
             5,
             "margin-right:auto; margin-bottom:auto; margin-left:auto;",
-            "margin-bottom",
+            2.0,
+            0.0,
         ),
         (
             "#b1",
             2,
             "margin-top:auto; margin-right:auto; margin-bottom:auto; margin-left:auto;",
-            "margin-top",
+            0.0,
+            0.0,
         ),
         (
             "#b3",
             5,
             "margin-top:auto; margin-right:auto; margin-bottom:auto; margin-left:auto;",
-            "margin-top",
+            0.0,
+            0.0,
         ),
         (
             "#f",
             3,
             "margin-right:auto; margin-bottom:auto; margin-left:auto;",
-            "margin-bottom",
+            0.0,
+            0.0,
         ),
         (
             "#f",
             3,
             "margin-top:auto; margin-right:auto; margin-left:auto;",
-            "margin-top",
+            0.0,
+            0.0,
         ),
     ] {
         let css = format!("{} {selector} {{ {margins} }}", baseline_css());
         sibling_fixture(6, &css, |projection, display| {
             let facts =
                 evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
-            assert!(matches!(
-                build_captured_sibling_layout(
-                    &facts,
-                    ClearanceOuterContentGeometry {
-                        outer: &projection.nodes()[0],
-                        content_left: 0.0,
-                        content_width: 100.0,
-                        content_top: 10.0,
-                    },
-                    layout_limits(),
-                ),
-                Err(SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
-                    projected: actual_projected,
-                    property: actual_property,
-                    reason: U::AutoMargin,
-                })) if actual_projected == projected && actual_property == property
-            ));
+            let layout = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            )
+            .unwrap();
+            let child = &layout.children()[projected - 2];
+            assert_eq!(child.used_margin_top(), used_top);
+            assert_eq!(child.used_margin_bottom(), used_bottom);
         });
     }
 
-    for suffix in [
-        "#b1 { margin-bottom:auto; } #b3 { height:auto; }",
-        "#b1 { margin-bottom:auto; } #b3 { padding-left:1px; }",
+    for (suffix, captured) in [
+        ("#b1 { margin-bottom:auto; } #b3 { height:auto; }", true),
+        (
+            "#b1 { margin-bottom:auto; } #b3 { padding-left:1px; }",
+            false,
+        ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
         sibling_fixture(6, &css, |projection, display| {
             let facts =
                 evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
-            assert!(matches!(
-                build_captured_sibling_layout(
-                    &facts,
-                    ClearanceOuterContentGeometry {
-                        outer: &projection.nodes()[0],
-                        content_left: 0.0,
-                        content_width: 100.0,
-                        content_top: 10.0,
-                    },
-                    layout_limits(),
-                ),
-                Err(SiblingLayoutError::Captured(
-                    CapturedClearanceError::Unsupported {
-                        projected: 2,
-                        property: "margin-bottom",
-                        reason: U::AutoMargin,
-                    }
-                ))
-            ));
+            let error = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            )
+            .unwrap_err();
+            if captured {
+                assert!(matches!(
+                    error,
+                    SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
+                        projected: 5,
+                        property: "height",
+                        reason: U::HeightKind,
+                    })
+                ));
+            } else {
+                assert!(matches!(
+                    error,
+                    SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+                        ClearanceOwnerError::Unsupported {
+                            source: 5,
+                            reason: OwnerProfileReason::ChildDecoration,
+                        }
+                    ))
+                ));
+            }
         });
     }
 
@@ -4608,5 +4746,2098 @@ fn actual_defaulting_inheritance_and_cascade_provenance_reach_layout_records() {
                 }
             )))
         ));
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Vertical Auto Task 2: complete observations over the planned 284-case inventory.
+// ---------------------------------------------------------------------------
+
+const TINY_PX: &str = "0.0000000000000000000000000000000000000000000000000001px";
+const MAX_NUMBER: &str = "340282346638528859811704183484516925440";
+const INVENTORY_CSS_FNV1A64: u64 = 0x0f59_2eef_51c0_efb7;
+const INVENTORY_SEED_FNV1A64: u64 = 0x8702_70b4_3e59_570b;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ProvenanceKind {
+    Initial,
+    InheritedAuto,
+    InheritedZero,
+    Rounded,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ExtremeCase {
+    content_left: f32,
+    parent_width: f32,
+    parent_width_css: &'static str,
+    float_width: f32,
+    float_width_css: &'static str,
+    overflow: bool,
+}
+
+#[derive(Clone, Debug)]
+struct InventoryCase {
+    id: String,
+    family: &'static str,
+    nodes: usize,
+    side: &'static str,
+    parent_height: &'static str,
+    auto: Vec<[bool; 2]>,
+    used: Vec<[i64; 2]>,
+    float_height: i64,
+    clear: &'static str,
+    origin: Option<(usize, ProvenanceKind)>,
+    direction: &'static str,
+    extreme: Option<ExtremeCase>,
+    target: Option<usize>,
+    css: String,
+}
+
+struct InventoryOptions {
+    change: Option<(usize, [bool; 2])>,
+    all_auto: bool,
+    float_height: i64,
+    clear: &'static str,
+    origin: Option<(usize, ProvenanceKind)>,
+    direction: &'static str,
+    extreme: Option<ExtremeCase>,
+}
+
+impl Default for InventoryOptions {
+    fn default() -> Self {
+        Self {
+            change: None,
+            all_auto: false,
+            float_height: 2,
+            clear: "both",
+            origin: None,
+            direction: "ltr",
+            extreme: None,
+        }
+    }
+}
+
+fn add_inventory_case(
+    cases: &mut Vec<InventoryCase>,
+    family: &'static str,
+    nodes: usize,
+    side: &'static str,
+    parent_height: &'static str,
+    options: InventoryOptions,
+) {
+    let base = [[0, 4], [0, 0], [3, 3], [2, 4], [1, 2]];
+    let mut used = base[..nodes - 2].to_vec();
+    let mut auto = vec![[false, false]; nodes - 2];
+    if options.all_auto {
+        used = vec![[0, 0]; nodes - 2];
+        auto = vec![[true, true]; nodes - 2];
+    }
+    if let Some((source, pair)) = options.change {
+        used[source - 2] = [0, 0];
+        auto[source - 2] = pair;
+    }
+    let mut css = vec![
+        "#o { width:100px; }".to_string(),
+        format!(
+            "#p {{ overflow:hidden; padding-top:1px; padding-bottom:1px; height:{parent_height}; direction:{}; }}",
+            options.direction
+        ),
+    ];
+    for source in 2..nodes {
+        let selector = match source {
+            2 => "#b1".to_string(),
+            3 => "#f".to_string(),
+            _ => format!("#b{}", source - 2),
+        };
+        let height = match source {
+            3 => options.float_height,
+            6 => 2,
+            _ => 1,
+        };
+        let mut rules = vec![format!("height:{height}px")];
+        if source == 3 {
+            rules.push(format!("float:{side}"));
+            rules.push("width:10px".to_string());
+        } else if source >= 4 {
+            rules.push(format!("clear:{}", options.clear));
+        }
+        for (edge, index) in [("top", 0), ("bottom", 1)] {
+            let mut value = if auto[source - 2][index] {
+                "auto".to_string()
+            } else {
+                format!("{}px", used[source - 2][index])
+            };
+            if let Some((origin_source, kind)) = options.origin
+                && origin_source == source
+            {
+                match kind {
+                    ProvenanceKind::Initial => continue,
+                    ProvenanceKind::InheritedAuto | ProvenanceKind::InheritedZero => {
+                        value = "inherit".to_string();
+                    }
+                    ProvenanceKind::Rounded => value = TINY_PX.to_string(),
+                }
+            }
+            rules.push(format!("margin-{edge}:{value}"));
+        }
+        css.push(format!("{selector} {{{};}}", rules.join(";")));
+    }
+    if let Some((_, kind)) = options.origin
+        && matches!(
+            kind,
+            ProvenanceKind::InheritedAuto | ProvenanceKind::InheritedZero
+        )
+    {
+        let value = if kind == ProvenanceKind::InheritedAuto {
+            "auto"
+        } else {
+            "0px"
+        };
+        css.push(format!(
+            "#p {{ margin-top:{value}; margin-bottom:{value}; }}"
+        ));
+    }
+    if family == "horizontal-contrast" {
+        let opposite = if options.direction == "ltr" {
+            "rtl"
+        } else {
+            "ltr"
+        };
+        css.push(format!("#o {{ direction:{opposite}; }}"));
+        css.push("#f {width:140px;margin-left:auto;margin-right:auto;}".to_string());
+        css.push("#b1 {width:40px;margin-left:auto;margin-right:auto;}".to_string());
+        css.push("#b2 {width:40px;margin-left:-10px;margin-right:auto;}".to_string());
+        if nodes > 5 {
+            css.push("#b3 {width:120px;margin-left:auto;margin-right:auto;}".to_string());
+        }
+        if nodes > 6 {
+            css.push("#b4 {width:auto;margin-left:120px;margin-right:auto;}".to_string());
+        }
+    }
+    if let Some(extreme) = options.extreme {
+        css.push(format!("#o {{width:{}px;}}", extreme.parent_width_css));
+        css.push(format!("#p {{width:{}px;}}", extreme.parent_width_css));
+        css.push(format!(
+            "#f {{width:{}px;margin-left:auto;margin-right:auto;}}",
+            extreme.float_width_css
+        ));
+    }
+    cases.push(InventoryCase {
+        id: format!("va-{:03}", cases.len()),
+        family,
+        nodes,
+        side,
+        parent_height,
+        auto,
+        used,
+        float_height: options.float_height,
+        clear: options.clear,
+        origin: options.origin,
+        direction: options.direction,
+        extreme: options.extreme,
+        target: options.change.map(|(source, _)| source),
+        css: css.join("\n"),
+    });
+}
+
+/// Regenerates the sealed plan inventory in its exact enumeration order.
+fn inventory_cases() -> Vec<InventoryCase> {
+    let mut cases = Vec::new();
+    let pairs = [[false, false], [true, false], [false, true], [true, true]];
+    for nodes in [5, 6, 7] {
+        for target in 2..nodes {
+            for side in ["left", "right"] {
+                for parent_height in ["auto", "20px"] {
+                    for pair in pairs {
+                        add_inventory_case(
+                            &mut cases,
+                            "single-target",
+                            nodes,
+                            side,
+                            parent_height,
+                            InventoryOptions {
+                                change: Some((target, pair)),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+    for nodes in [5, 6, 7] {
+        for side in ["left", "right"] {
+            for parent_height in ["auto", "20px"] {
+                for float_height in [2, 40] {
+                    for clear in ["none", "both"] {
+                        add_inventory_case(
+                            &mut cases,
+                            "all-auto",
+                            nodes,
+                            side,
+                            parent_height,
+                            InventoryOptions {
+                                all_auto: true,
+                                float_height,
+                                clear,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+    for nodes in [5, 6, 7] {
+        for side in ["left", "right"] {
+            for parent_height in ["auto", "20px"] {
+                add_inventory_case(
+                    &mut cases,
+                    "equality",
+                    nodes,
+                    side,
+                    parent_height,
+                    InventoryOptions {
+                        all_auto: true,
+                        float_height: 0,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+    for source in [2, 3, 6] {
+        for kind in [
+            ProvenanceKind::Initial,
+            ProvenanceKind::InheritedAuto,
+            ProvenanceKind::InheritedZero,
+            ProvenanceKind::Rounded,
+        ] {
+            let pair = if kind == ProvenanceKind::InheritedAuto {
+                [true, true]
+            } else {
+                [false, false]
+            };
+            add_inventory_case(
+                &mut cases,
+                "provenance",
+                7,
+                if source == 3 { "right" } else { "left" },
+                "auto",
+                InventoryOptions {
+                    change: Some((source, pair)),
+                    origin: Some((source, kind)),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    for nodes in [5, 6, 7] {
+        for side in ["left", "right"] {
+            for direction in ["ltr", "rtl"] {
+                add_inventory_case(
+                    &mut cases,
+                    "horizontal-contrast",
+                    nodes,
+                    side,
+                    "auto",
+                    InventoryOptions {
+                        all_auto: true,
+                        direction,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+    for (parent_width, parent_width_css) in [(1.0, "1"), (3.0, "3")] {
+        for side in ["left", "right"] {
+            add_inventory_case(
+                &mut cases,
+                "extreme",
+                6,
+                side,
+                "auto",
+                InventoryOptions {
+                    all_auto: true,
+                    extreme: Some(ExtremeCase {
+                        content_left: 16_777_216.0,
+                        parent_width,
+                        parent_width_css,
+                        float_width: 140.0,
+                        float_width_css: "140",
+                        overflow: false,
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    for sign in [1.0f32, -1.0] {
+        for side in ["left", "right"] {
+            add_inventory_case(
+                &mut cases,
+                "extreme",
+                6,
+                side,
+                "auto",
+                InventoryOptions {
+                    all_auto: true,
+                    extreme: Some(ExtremeCase {
+                        content_left: sign * f32::MAX,
+                        parent_width: 0.0,
+                        parent_width_css: "0",
+                        float_width: f32::MAX,
+                        float_width_css: MAX_NUMBER,
+                        overflow: (sign > 0.0 && side == "left") || (sign < 0.0 && side == "right"),
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    cases
+}
+
+#[derive(Debug)]
+struct InventoryTail {
+    source: usize,
+    hypothetical_top: i64,
+    zero_clearance_top: Option<i64>,
+    clearance: Option<i64>,
+    top: i64,
+    bottom: i64,
+    previous: (usize, i64),
+    own_top: i64,
+}
+
+#[derive(Debug)]
+struct InventoryLayout {
+    before: (i64, i64),
+    float: (i64, i64),
+    tail: Vec<InventoryTail>,
+    content_bottom: i64,
+    used_height: i64,
+    padding_bottom: i64,
+    extent: Option<(i64, i64, bool)>,
+}
+
+#[derive(Debug)]
+enum InventorySeed {
+    Layout(InventoryLayout),
+    Equality(usize),
+    FloatPlacement,
+}
+
+/// Independent integer model: every published stage is an exact f32 integer.
+fn inventory_seed(case: &InventoryCase) -> InventorySeed {
+    if case.extreme.is_some_and(|extreme| extreme.overflow) {
+        return InventorySeed::FloatPlacement;
+    }
+    let used = &case.used;
+    let clear = case.clear == "both";
+    let before_top = 11 + used[0][0];
+    let before_bottom = before_top + 1;
+    let float_top = before_bottom + used[0][1];
+    let float_bottom = float_top + case.float_height;
+    let mut bottom = before_bottom;
+    let mut previous = (2, used[0][1]);
+    let mut tail = Vec::new();
+    for source in 4..case.nodes {
+        let own_top = used[source - 2][0];
+        let hypothetical_top = bottom + previous.1.max(own_top);
+        if clear && hypothetical_top == float_bottom {
+            return InventorySeed::Equality(source);
+        }
+        let required = clear && hypothetical_top < float_bottom;
+        let zero = required.then_some(bottom + previous.1 + own_top);
+        let top = if required {
+            float_bottom
+        } else {
+            hypothetical_top
+        };
+        let height = if source == 6 { 2 } else { 1 };
+        bottom = top + height;
+        tail.push(InventoryTail {
+            source,
+            hypothetical_top,
+            zero_clearance_top: zero,
+            clearance: zero.map(|zero| float_bottom - zero),
+            top,
+            bottom,
+            previous,
+            own_top,
+        });
+        previous = (source, used[source - 2][1]);
+    }
+    let normal_edge = bottom + previous.1;
+    let selected = normal_edge.max(float_bottom);
+    let explicit = case.parent_height == "20px";
+    InventorySeed::Layout(InventoryLayout {
+        before: (before_top, before_bottom),
+        float: (float_top, float_bottom),
+        tail,
+        content_bottom: if explicit { 31 } else { selected },
+        used_height: if explicit { 20 } else { selected - 11 },
+        padding_bottom: if explicit { 32 } else { selected + 1 },
+        extent: (!explicit).then_some((normal_edge, selected, float_bottom > normal_edge)),
+    })
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+fn seed_line(case: &InventoryCase, seed: &InventorySeed) -> String {
+    let optional = |value: Option<i64>| value.map_or("-".to_string(), |value| value.to_string());
+    match seed {
+        InventorySeed::Layout(layout) => {
+            let tail = layout
+                .tail
+                .iter()
+                .map(|tail| {
+                    format!(
+                        "{},{},{},{},{},{}",
+                        tail.source,
+                        tail.hypothetical_top,
+                        optional(tail.zero_clearance_top),
+                        optional(tail.clearance),
+                        tail.top,
+                        tail.bottom
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(";");
+            let extent = layout
+                .extent
+                .map_or("-".to_string(), |(normal, selected, extended)| {
+                    format!("{normal},{selected},{}", u8::from(extended))
+                });
+            format!(
+                "{}|layout|{},{}|{},{}|{tail}|{},{},{}|{extent}",
+                case.id,
+                layout.before.0,
+                layout.before.1,
+                layout.float.0,
+                layout.float.1,
+                layout.content_bottom,
+                layout.used_height,
+                layout.padding_bottom
+            )
+        }
+        InventorySeed::Equality(source) => format!("{}|UnsupportedEquality|{source}", case.id),
+        InventorySeed::FloatPlacement => format!("{}|FloatPlacement/Unrepresentable|3", case.id),
+    }
+}
+
+fn expected_child_margin(
+    case: &InventoryCase,
+    source: usize,
+    edge: usize,
+    original_parent: usize,
+) -> BoxLengthFact {
+    let absolute = |pixels: f32, rounded_to_zero, origin| {
+        BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels,
+            rounded_to_zero,
+            origin,
+        })
+    };
+    let inherited = BoxFactOrigin::Inherited { original_parent };
+    if let Some((origin_source, kind)) = case.origin
+        && origin_source == source
+    {
+        return match kind {
+            ProvenanceKind::Initial => absolute(0.0, false, BoxFactOrigin::Initial),
+            ProvenanceKind::InheritedAuto => BoxLengthFact::Auto { origin: inherited },
+            ProvenanceKind::InheritedZero => absolute(0.0, false, inherited),
+            ProvenanceKind::Rounded => absolute(0.0, true, BoxFactOrigin::Specified),
+        };
+    }
+    if case.auto[source - 2][edge] {
+        BoxLengthFact::Auto {
+            origin: BoxFactOrigin::Specified,
+        }
+    } else {
+        absolute(
+            case.used[source - 2][edge] as f32,
+            false,
+            BoxFactOrigin::Specified,
+        )
+    }
+}
+
+/// Literal normal width equations for the horizontal contrast family.
+fn contrast_width(source: usize, direction: &str) -> (BlockWidthResult, (f32, f32)) {
+    let rtl = direction == "rtl";
+    let result = |width, margin_left, margin_right, passes| BlockWidthResult {
+        width,
+        margin_left,
+        margin_right,
+        passes,
+    };
+    match source {
+        2 => (result(40.0, 30.0, 30.0, 1), (30.0, 70.0)),
+        4 => (result(40.0, -10.0, 70.0, 1), (-10.0, 30.0)),
+        5 if rtl => (result(120.0, -20.0, 0.0, 1), (-20.0, 100.0)),
+        5 => (result(120.0, 0.0, -20.0, 1), (0.0, 120.0)),
+        6 if rtl => (result(0.0, 100.0, 0.0, 2), (100.0, 100.0)),
+        6 => (result(0.0, 120.0, -20.0, 2), (120.0, 120.0)),
+        _ => unreachable!(),
+    }
+}
+
+fn assert_inventory_layout(
+    case: &InventoryCase,
+    expected: &InventoryLayout,
+    layout: &CapturedSiblingLayout<'_>,
+    original_parent: usize,
+) {
+    let id = &case.id;
+    let f = |value: i64| value as f32;
+    let auto_specified = BoxLengthFact::Auto {
+        origin: BoxFactOrigin::Specified,
+    };
+    let initial_zero = BoxLengthFact::Absolute(AbsoluteBoxFact {
+        pixels: 0.0,
+        rounded_to_zero: false,
+        origin: BoxFactOrigin::Initial,
+    });
+
+    // Parent horizontal band, computed provenance and vertical results.
+    let parent = layout.parent();
+    let (band, parent_width) = match case.extreme {
+        None => ((0.0, 100.0), 100.0),
+        Some(extreme) if extreme.content_left == 16_777_216.0 => (
+            if extreme.parent_width == 3.0 {
+                (16_777_216.0, 16_777_220.0)
+            } else {
+                (16_777_216.0, 16_777_216.0)
+            },
+            extreme.parent_width,
+        ),
+        Some(extreme) => ((extreme.content_left, extreme.content_left), 0.0),
+    };
+    assert_eq!(parent.source_index(), 1, "{id}");
+    assert_eq!(parent.containing_source_index(), 0, "{id}");
+    assert_eq!(
+        (parent.content().left, parent.content().right),
+        band,
+        "{id}"
+    );
+    assert_eq!(parent.horizontal().used.width, parent_width, "{id}");
+    assert_eq!(parent.origin().border_top, 10.0, "{id}");
+    assert_eq!(parent.origin().content_top, 11.0, "{id}");
+    assert_eq!(
+        parent.origin().used_margin_top.to_bits(),
+        0.0f32.to_bits(),
+        "{id}"
+    );
+    let parent_margin = match case.origin {
+        Some((_, ProvenanceKind::InheritedAuto)) => auto_specified,
+        Some((_, ProvenanceKind::InheritedZero)) => BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels: 0.0,
+            rounded_to_zero: false,
+            origin: BoxFactOrigin::Specified,
+        }),
+        _ => initial_zero,
+    };
+    assert_eq!(parent.computed_margin_top(), parent_margin, "{id}");
+    assert_eq!(parent.computed_margin_bottom(), parent_margin, "{id}");
+    assert_eq!(
+        parent.computed_height(),
+        if case.parent_height == "auto" {
+            auto_specified
+        } else {
+            BoxLengthFact::Absolute(AbsoluteBoxFact {
+                pixels: 20.0,
+                rounded_to_zero: false,
+                origin: BoxFactOrigin::Specified,
+            })
+        },
+        "{id}"
+    );
+    assert_eq!(parent.clearance(), ClearanceRequirement::Absent, "{id}");
+    assert_eq!(
+        parent.height().content_bottom,
+        f(expected.content_bottom),
+        "{id}"
+    );
+    assert_eq!(parent.height().used_height, f(expected.used_height), "{id}");
+    assert_eq!(
+        parent.height().auto_extent,
+        expected.extent.map(|(normal, selected, float_extended)| {
+            iced_css_core::formatting::bfc_height::AutoHeightExtent {
+                normal_margin_bottom: f(normal),
+                selected_bottom: f(selected),
+                float_extended,
+            }
+        }),
+        "{id}"
+    );
+    assert_eq!(parent.content().top, 11.0, "{id}");
+    assert_eq!(parent.content().bottom, f(expected.content_bottom), "{id}");
+    let bottom = parent.bottom();
+    assert_eq!(bottom.padding_bottom, f(expected.padding_bottom), "{id}");
+    assert_eq!(bottom.border_bottom, f(expected.padding_bottom), "{id}");
+    assert_eq!(bottom.margin_bottom, f(expected.padding_bottom), "{id}");
+    assert_eq!(
+        bottom.used_margin_bottom.to_bits(),
+        0.0f32.to_bits(),
+        "{id}"
+    );
+
+    // Every principal: source joins, geometry, widths, computed and used margins.
+    let children = layout.children();
+    assert_eq!(children.len(), case.nodes - 2, "{id}");
+    for (index, child) in children.iter().enumerate() {
+        let source = index + 2;
+        assert_eq!(child.source_index(), source, "{id}");
+        assert_eq!(child.containing_source_index(), 1, "{id}");
+        assert!(std::ptr::eq(
+            layout.source(source).unwrap(),
+            &layout.sources()[source]
+        ));
+        let (top, bottom) = match source {
+            2 => expected.before,
+            3 => expected.float,
+            _ => {
+                let tail = &expected.tail[source - 4];
+                (tail.top, tail.bottom)
+            }
+        };
+        assert_eq!(
+            (child.content().top, child.content().bottom),
+            (f(top), f(bottom)),
+            "{id} source {source}"
+        );
+        assert_eq!(child.padding(), child.content(), "{id}");
+        assert_eq!(child.border(), child.content(), "{id}");
+        let height = match source {
+            3 => case.float_height,
+            6 => 2,
+            _ => 1,
+        };
+        assert_eq!(child.used_height(), f(height), "{id}");
+        for (edge, computed, used) in [
+            (0, child.margin_top(), child.used_margin_top()),
+            (1, child.margin_bottom(), child.used_margin_bottom()),
+        ] {
+            let expected_fact = expected_child_margin(case, source, edge, original_parent);
+            assert_eq!(computed, expected_fact, "{id} source {source} edge {edge}");
+            if let BoxLengthFact::Absolute(value) = computed {
+                assert_eq!(
+                    value.pixels.to_bits(),
+                    f(case.used[source - 2][edge]).to_bits(),
+                    "{id}"
+                );
+            }
+            assert_eq!(
+                used.to_bits(),
+                f(case.used[source - 2][edge]).to_bits(),
+                "{id} source {source} edge {edge}"
+            );
+        }
+        let expected_clear = if source >= 4 {
+            KeywordBoxFact {
+                value: if case.clear == "both" {
+                    ClearSide::Both
+                } else {
+                    ClearSide::None
+                },
+                origin: BoxFactOrigin::Specified,
+            }
+        } else {
+            KeywordBoxFact {
+                value: ClearSide::None,
+                origin: BoxFactOrigin::Initial,
+            }
+        };
+        assert_eq!(child.clear(), expected_clear, "{id}");
+        if source == 3 {
+            assert_eq!(child.kind(), PrincipalChildKind::Float, "{id}");
+            assert_eq!(child.normal_width(), None, "{id}");
+            assert_eq!(child.used_margin_left().to_bits(), 0.0f32.to_bits());
+            assert_eq!(child.used_margin_right().to_bits(), 0.0f32.to_bits());
+            let (width, edges) = match (case.family, case.extreme) {
+                ("horizontal-contrast", _) => (
+                    140.0,
+                    if case.side == "left" {
+                        (0.0, 140.0)
+                    } else {
+                        (-40.0, 100.0)
+                    },
+                ),
+                (_, Some(extreme)) if extreme.content_left == 16_777_216.0 => (
+                    extreme.float_width,
+                    match (case.side, extreme.parent_width == 3.0) {
+                        ("left", _) => (16_777_216.0, 16_777_356.0),
+                        (_, true) => (16_777_080.0, 16_777_220.0),
+                        (_, false) => (16_777_076.0, 16_777_216.0),
+                    },
+                ),
+                (_, Some(extreme)) => (
+                    extreme.float_width,
+                    if extreme.content_left > 0.0 {
+                        (0.0, f32::MAX)
+                    } else {
+                        (-f32::MAX, 0.0)
+                    },
+                ),
+                _ => (
+                    10.0,
+                    if case.side == "left" {
+                        (0.0, 10.0)
+                    } else {
+                        (90.0, 100.0)
+                    },
+                ),
+            };
+            assert_eq!(child.used_width(), width, "{id}");
+            assert_eq!((child.content().left, child.content().right), edges, "{id}");
+        } else {
+            assert_eq!(child.kind(), PrincipalChildKind::Normal, "{id}");
+            let (width, edges) = if case.family == "horizontal-contrast" {
+                contrast_width(source, case.direction)
+            } else {
+                (
+                    BlockWidthResult {
+                        width: parent_width,
+                        margin_left: 0.0,
+                        margin_right: 0.0,
+                        passes: 1,
+                    },
+                    band,
+                )
+            };
+            assert_eq!(child.normal_width(), Some(width), "{id} source {source}");
+            assert_eq!(child.used_width().to_bits(), width.width.to_bits(), "{id}");
+            assert_eq!((child.content().left, child.content().right), edges, "{id}");
+        }
+    }
+
+    // The retained core: before, placed float, every tail record and group.
+    let sequence = layout.sequence();
+    assert_eq!(
+        (sequence.before().top, sequence.before().bottom),
+        (f(expected.before.0), f(expected.before.1)),
+        "{id}"
+    );
+    assert_eq!(
+        (sequence.placed_float().top, sequence.placed_float().bottom),
+        (f(expected.float.0), f(expected.float.1)),
+        "{id}"
+    );
+    assert_eq!(sequence.tail().len(), expected.tail.len(), "{id}");
+    for (record, tail) in sequence.tail().iter().zip(&expected.tail) {
+        assert_eq!(record.source_index(), tail.source, "{id}");
+        assert_eq!(
+            (record.vertical().top, record.vertical().bottom),
+            (f(tail.top), f(tail.bottom)),
+            "{id}"
+        );
+        assert_eq!(record.hypothetical_top(), f(tail.hypothetical_top), "{id}");
+        assert_eq!(
+            record.zero_clearance_top(),
+            tail.zero_clearance_top.map(f),
+            "{id}"
+        );
+        assert_eq!(record.clearance(), tail.clearance.map(f), "{id}");
+        let members = vec![
+            MarginMember {
+                source_index: tail.previous.0,
+                side: MarginSide::Bottom,
+                value: f(tail.previous.1),
+            },
+            MarginMember {
+                source_index: tail.source,
+                side: MarginSide::Top,
+                value: f(tail.own_top),
+            },
+        ];
+        let positive = f(tail.previous.1.max(tail.own_top));
+        assert_eq!(
+            observe_margin_group(record.hypothetical_group()),
+            observed_group(MarginGroupId::HypotheticalPair, members.clone(), positive),
+            "{id}"
+        );
+        for (actual, literal) in record.hypothetical_group().members().iter().zip(&members) {
+            assert_eq!(actual.value.to_bits(), literal.value.to_bits(), "{id}");
+        }
+        let actual_groups: Vec<_> = record
+            .actual_groups()
+            .iter()
+            .map(observe_margin_group)
+            .collect();
+        if tail.clearance.is_some() {
+            assert_eq!(record.barrier_source_index(), Some(tail.source), "{id}");
+            assert_eq!(
+                actual_groups,
+                vec![
+                    observed_group(
+                        MarginGroupId::BeforeBarrier,
+                        vec![members[0]],
+                        f(tail.previous.1)
+                    ),
+                    observed_group(
+                        MarginGroupId::AfterBarrier,
+                        vec![members[1]],
+                        f(tail.own_top)
+                    ),
+                ],
+                "{id}"
+            );
+        } else {
+            assert_eq!(record.barrier_source_index(), None, "{id}");
+            assert_eq!(
+                actual_groups,
+                vec![observed_group(MarginGroupId::ActualPair, members, positive)],
+                "{id}"
+            );
+        }
+    }
+    assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
+    assert_eq!(
+        layout.receipt().work,
+        [451, 588, 725][case.nodes - 5],
+        "{id}"
+    );
+    assert_eq!(
+        layout.receipt().core.work,
+        [269, 351, 434][case.nodes - 5],
+        "{id}"
+    );
+}
+
+/// Replace only the intentionally changed computed facts after asserting both
+/// sides, then require full equality of every other retained observation.
+fn assert_same_except_changed_vertical_facts(
+    id: &str,
+    actual: &VerticalObservation,
+    control: &VerticalObservation,
+    target: usize,
+    expected_changed: [Option<BoxLengthFact>; 2],
+    parent_margin: Option<BoxLengthFact>,
+) {
+    let mut patched = actual.clone();
+    let principal = &mut patched.principals[target - 2];
+    let control_principal = &control.principals[target - 2];
+    assert_eq!(principal.source, target, "{id}");
+    let zero_specified = BoxLengthFact::Absolute(AbsoluteBoxFact {
+        pixels: 0.0,
+        rounded_to_zero: false,
+        origin: BoxFactOrigin::Specified,
+    });
+    for (edge, expected) in expected_changed.into_iter().enumerate() {
+        let (actual_fact, control_fact) = if edge == 0 {
+            (&mut principal.margin_top, control_principal.margin_top)
+        } else {
+            (
+                &mut principal.margin_bottom,
+                control_principal.margin_bottom,
+            )
+        };
+        assert_eq!(control_fact, zero_specified, "{id} control edge {edge}");
+        if let Some(expected) = expected {
+            assert_eq!(*actual_fact, expected, "{id} edge {edge}");
+            assert_ne!(*actual_fact, control_fact, "{id} edge {edge}");
+            *actual_fact = control_fact;
+        }
+    }
+    assert_eq!(principal.used_margin_top_bits, 0.0f32.to_bits(), "{id}");
+    assert_eq!(principal.used_margin_bottom_bits, 0.0f32.to_bits(), "{id}");
+    if let Some(parent_margin) = parent_margin {
+        assert_eq!(patched.parent_computed[2], parent_margin, "{id}");
+        assert_eq!(patched.parent_computed[3], parent_margin, "{id}");
+        patched.parent_computed[2] = control.parent_computed[2];
+        patched.parent_computed[3] = control.parent_computed[3];
+        patched.parent_origin.margin_resolution = control.parent_origin.margin_resolution;
+        patched.parent_bottom.margin_resolution = control.parent_bottom.margin_resolution;
+    }
+    assert_eq!(&patched, control, "{id}");
+}
+
+#[test]
+fn vertical_auto_inventory_cases_reach_complete_outputs() {
+    use std::collections::HashMap;
+    let cases = inventory_cases();
+    assert_eq!(cases.len(), 284);
+    let extreme_widths: Vec<_> = cases
+        .iter()
+        .filter_map(|case| case.extreme.map(|extreme| extreme.float_width.to_bits()))
+        .collect();
+    assert_eq!(
+        extreme_widths,
+        [
+            140.0f32,
+            140.0,
+            140.0,
+            140.0,
+            f32::MAX,
+            f32::MAX,
+            f32::MAX,
+            f32::MAX
+        ]
+        .map(f32::to_bits)
+    );
+    let mut families: HashMap<&str, usize> = HashMap::new();
+    for case in &cases {
+        *families.entry(case.family).or_default() += 1;
+    }
+    assert_eq!(
+        families,
+        HashMap::from([
+            ("single-target", 192),
+            ("all-auto", 48),
+            ("equality", 12),
+            ("provenance", 12),
+            ("horizontal-contrast", 12),
+            ("extreme", 8),
+        ])
+    );
+    let css_bytes: Vec<u8> = cases
+        .iter()
+        .flat_map(|case| {
+            let mut bytes = case.id.as_bytes().to_vec();
+            bytes.push(0);
+            bytes.extend_from_slice(case.css.as_bytes());
+            bytes.push(0);
+            bytes
+        })
+        .collect();
+    assert_eq!(fnv1a64(&css_bytes), INVENTORY_CSS_FNV1A64);
+    let seeds: Vec<_> = cases.iter().map(inventory_seed).collect();
+    let lines = cases
+        .iter()
+        .zip(&seeds)
+        .map(|(case, seed)| seed_line(case, seed))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(fnv1a64(lines.as_bytes()), INVENTORY_SEED_FNV1A64);
+
+    let mut counts = [0usize; 3];
+    let mut compared = 0usize;
+    let mut controls: HashMap<(usize, usize, &str, &str), VerticalObservation> = HashMap::new();
+    for (case, seed) in cases.iter().zip(&seeds) {
+        let (content_left, content_width) = case.extreme.map_or((0.0, 100.0), |extreme| {
+            (extreme.content_left, extreme.parent_width)
+        });
+        let mut observed = None;
+        sibling_fixture(case.nodes, &case.css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let original_parent = projection.original_index(1).unwrap();
+            assert_eq!(original_parent, case.nodes - 2);
+            let result = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left,
+                    content_width,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            );
+            match seed {
+                InventorySeed::Layout(expected) => {
+                    let layout = result.unwrap_or_else(|error| panic!("{}: {error:?}", case.id));
+                    assert_inventory_layout(case, expected, &layout, original_parent);
+                    for child in layout.children() {
+                        let row = facts.row(child.source_index()).unwrap();
+                        assert_eq!(child.margin_top(), row.margin[0], "{}", case.id);
+                        assert_eq!(child.margin_bottom(), row.margin[2], "{}", case.id);
+                        assert_eq!(child.computed_margin_left(), row.margin[3]);
+                        assert_eq!(child.computed_margin_right(), row.margin[1]);
+                        assert_eq!(child.computed_width(), row.width);
+                        assert_eq!(child.computed_height(), row.height);
+                        assert!(std::ptr::eq(
+                            layout.source(child.source_index()).unwrap(),
+                            &projection.nodes()[child.source_index()]
+                        ));
+                    }
+                    counts[0] += 1;
+                    observed = Some(observe_layout(&layout));
+                }
+                InventorySeed::Equality(source) => {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                                source: actual,
+                                error: ClearanceOwnerError::UnsupportedEquality,
+                            })) if actual == *source
+                        ),
+                        "{}: {result:?}",
+                        case.id
+                    );
+                    counts[1] += 1;
+                }
+                InventorySeed::FloatPlacement => {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                                source: 3,
+                                error: ClearanceOwnerError::FloatPlacement(
+                                    iced_css_core::formatting::floats::FloatError::Unrepresentable
+                                ),
+                            }))
+                        ),
+                        "{}: {result:?}",
+                        case.id
+                    );
+                    counts[2] += 1;
+                }
+            }
+        });
+
+        let Some(observed) = observed else { continue };
+        let Some(target) = case.target else { continue };
+        let key = (case.nodes, target, case.side, case.parent_height);
+        let auto_specified = BoxLengthFact::Auto {
+            origin: BoxFactOrigin::Specified,
+        };
+        match (case.family, case.origin) {
+            ("single-target", _) if case.auto[target - 2] == [false, false] => {
+                controls.insert(key, observed);
+            }
+            ("single-target", _) => {
+                let control = &controls[&key];
+                let changed = case.auto[target - 2].map(|auto| auto.then_some(auto_specified));
+                assert_same_except_changed_vertical_facts(
+                    &case.id, &observed, control, target, changed, None,
+                );
+                compared += 1;
+            }
+            ("provenance", Some((source, kind))) => {
+                let control = &controls[&key];
+                let original_parent = case.nodes - 2;
+                let fact = expected_child_margin(case, source, 0, original_parent);
+                let parent_margin = match kind {
+                    ProvenanceKind::InheritedAuto => Some(auto_specified),
+                    ProvenanceKind::InheritedZero => {
+                        Some(BoxLengthFact::Absolute(AbsoluteBoxFact {
+                            pixels: 0.0,
+                            rounded_to_zero: false,
+                            origin: BoxFactOrigin::Specified,
+                        }))
+                    }
+                    _ => None,
+                };
+                assert_same_except_changed_vertical_facts(
+                    &case.id,
+                    &observed,
+                    control,
+                    target,
+                    [Some(fact), Some(fact)],
+                    parent_margin,
+                );
+                compared += 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+    assert_eq!(counts, [270, 12, 2]);
+    // 144 single-target Auto variants plus 12 provenance witnesses.
+    assert_eq!(compared, 156);
+    assert_eq!(controls.len(), 48);
+}
+
+fn default_outer_layout<'p>(
+    facts: &iced_css::evaluation::sibling_box_facts::SiblingBoxFacts<'p, '_, '_, '_, '_, '_>,
+    outer: &'p iced_css_core::source::SourceNode,
+    content_left: f32,
+    content_width: f32,
+    content_top: f32,
+    limits: SiblingLayoutLimits,
+) -> Result<CapturedSiblingLayout<'p>, SiblingLayoutError> {
+    build_captured_sibling_layout(
+        facts,
+        ClearanceOuterContentGeometry {
+            outer,
+            content_left,
+            content_width,
+            content_top,
+        },
+        limits,
+    )
+}
+
+fn vertical_spans(layout: &CapturedSiblingLayout<'_>) -> Vec<(usize, f32, f32)> {
+    layout
+        .children()
+        .iter()
+        .map(|child| {
+            (
+                child.source_index(),
+                child.content().top,
+                child.content().bottom,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn explicit_vertical_auto_seeds_reach_real_outputs() {
+    use iced_css_core::formatting::bfc_height::AutoHeightExtent;
+    let extent = |normal, selected, float_extended| {
+        Some(AutoHeightExtent {
+            normal_margin_bottom: normal,
+            selected_bottom: selected,
+            float_extended,
+        })
+    };
+    let all_auto = "#b1, #f, #b2, #b3 { margin-top:auto; margin-bottom:auto; }";
+    for (rule, spans, parent, auto_extent) in [
+        (
+            String::new(),
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (22.0, 23.0)],
+            (27.0, 16.0, 28.0),
+            extent(27.0, 27.0, false),
+        ),
+        (
+            "#b3 { margin-bottom:auto; }".to_string(),
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (22.0, 23.0)],
+            (23.0, 12.0, 24.0),
+            extent(23.0, 23.0, false),
+        ),
+        (
+            "#b1 { margin-bottom:auto; }".to_string(),
+            [(11.0, 12.0), (12.0, 14.0), (15.0, 16.0), (19.0, 20.0)],
+            (24.0, 13.0, 25.0),
+            extent(24.0, 24.0, false),
+        ),
+        (
+            "#b2 { margin-top:auto; }".to_string(),
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (22.0, 23.0)],
+            (27.0, 16.0, 28.0),
+            extent(27.0, 27.0, false),
+        ),
+        (
+            format!("{all_auto} #f {{ height:40px; }} #b2, #b3 {{ clear:none; }}"),
+            [(11.0, 12.0), (12.0, 52.0), (12.0, 13.0), (13.0, 14.0)],
+            (52.0, 41.0, 53.0),
+            extent(14.0, 52.0, true),
+        ),
+        (
+            format!(
+                "{all_auto} #f {{ height:40px; }} #b2, #b3 {{ clear:none; }} #p {{ height:20px; }}"
+            ),
+            [(11.0, 12.0), (12.0, 52.0), (12.0, 13.0), (13.0, 14.0)],
+            (31.0, 20.0, 32.0),
+            None,
+        ),
+    ] {
+        let css = format!("{} {rule}", baseline_css());
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let layout = default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits(),
+            )
+            .unwrap();
+            assert_eq!(
+                vertical_spans(&layout),
+                (2..6)
+                    .zip(spans)
+                    .map(|(source, (top, bottom))| (source, top, bottom))
+                    .collect::<Vec<_>>(),
+                "{rule}"
+            );
+            assert_eq!(layout.parent().height().content_bottom, parent.0, "{rule}");
+            assert_eq!(layout.parent().height().used_height, parent.1, "{rule}");
+            assert_eq!(layout.parent().bottom().padding_bottom, parent.2, "{rule}");
+            assert_eq!(layout.parent().height().auto_extent, auto_extent, "{rule}");
+        });
+    }
+
+    // B2 top Auto alone: exact hypothetical/zero-clearance/clearance values and the
+    // same ordered barrier split with a zero AfterBarrier member.
+    let css = format!("{} #b2 {{ margin-top:auto; }}", baseline_css());
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        let observation = observe_layout(&layout);
+        let b2 = &observation.tail[0];
+        assert_eq!(b2.source, 4);
+        assert_eq!(
+            (b2.hypothetical_top, b2.zero_clearance_top, b2.clearance),
+            (16.0, Some(16.0), Some(2.0))
+        );
+        assert_eq!((b2.top, b2.bottom), (18.0, 19.0));
+        assert_eq!(b2.barrier_source, Some(4));
+        let pair = [
+            MarginMember {
+                source_index: 2,
+                side: MarginSide::Bottom,
+                value: 4.0,
+            },
+            MarginMember {
+                source_index: 4,
+                side: MarginSide::Top,
+                value: 0.0,
+            },
+        ];
+        assert_eq!(
+            b2.hypothetical_group,
+            observed_group(MarginGroupId::HypotheticalPair, pair.to_vec(), 4.0)
+        );
+        assert_eq!(
+            b2.actual_groups,
+            vec![
+                observed_group(MarginGroupId::BeforeBarrier, vec![pair[0]], 4.0),
+                observed_group(MarginGroupId::AfterBarrier, vec![pair[1]], 0.0),
+            ]
+        );
+        assert_eq!(
+            layout.children()[2].margin_top(),
+            BoxLengthFact::Auto {
+                origin: BoxFactOrigin::Specified
+            }
+        );
+        assert_eq!(
+            layout.children()[2].used_margin_top().to_bits(),
+            0.0f32.to_bits()
+        );
+        assert_eq!(layout.children()[2].used_margin_bottom(), 3.0);
+    });
+
+    // All children Auto with F height 0 and clear both is source 4 equality.
+    let css = format!("{} {all_auto} #f {{ height:0; }}", baseline_css());
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(matches!(
+            default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits()
+            ),
+            Err(SiblingLayoutError::Core(
+                ClearanceSequenceError::Placement {
+                    source: 4,
+                    error: ClearanceOwnerError::UnsupportedEquality,
+                }
+            ))
+        ));
+    });
+
+    // Horizontal-contrast and extreme representatives with all vertical Auto.
+    let css = format!(
+        "{} {all_auto} #o {{ direction:rtl; }} #p {{ direction:ltr; }} \
+         #f {{ float:right; width:140px; margin-left:auto; margin-right:auto; }} \
+         #b1 {{ width:40px; margin-left:auto; margin-right:auto; }} \
+         #b3 {{ width:120px; margin-left:auto; margin-right:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        let children = layout.children();
+        assert_eq!(
+            (children[1].content().left, children[1].content().right),
+            (-40.0, 100.0)
+        );
+        assert_eq!(children[1].normal_width(), None);
+        assert_eq!(
+            children[0].normal_width(),
+            Some(BlockWidthResult {
+                width: 40.0,
+                margin_left: 30.0,
+                margin_right: 30.0,
+                passes: 1,
+            })
+        );
+        assert_eq!(
+            children[3].normal_width(),
+            Some(BlockWidthResult {
+                width: 120.0,
+                margin_left: 0.0,
+                margin_right: -20.0,
+                passes: 1,
+            })
+        );
+        assert_eq!(
+            vertical_spans(&layout),
+            [
+                (2, 11.0, 12.0),
+                (3, 12.0, 14.0),
+                (4, 14.0, 15.0),
+                (5, 15.0, 16.0)
+            ]
+        );
+        for child in children {
+            assert_eq!(child.used_margin_top().to_bits(), 0.0f32.to_bits());
+            assert_eq!(child.used_margin_bottom().to_bits(), 0.0f32.to_bits());
+        }
+    });
+    let css = format!(
+        "{} {all_auto} #o {{ width:3px; }} #p {{ width:3px; }} \
+         #f {{ width:140px; margin-left:auto; margin-right:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            16_777_216.0,
+            3.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                layout.parent().content().left,
+                layout.parent().content().right
+            ),
+            (16_777_216.0, 16_777_220.0)
+        );
+        assert_eq!(
+            (
+                layout.children()[1].content().left,
+                layout.children()[1].content().right
+            ),
+            (16_777_216.0, 16_777_356.0)
+        );
+        assert_eq!(layout.children()[0].used_width(), 3.0);
+        assert_eq!(
+            vertical_spans(&layout),
+            [
+                (2, 11.0, 12.0),
+                (3, 12.0, 14.0),
+                (4, 14.0, 15.0),
+                (5, 15.0, 16.0)
+            ]
+        );
+    });
+}
+
+#[test]
+fn vertical_auto_provenance_is_actual_css_and_used_values_are_copied() {
+    let initial_css = "
+        #o { width: 100px; }
+        #p { overflow: hidden; padding-top: 1px; padding-bottom: 1px; }
+        #b1 { height: 1px; margin-bottom: 4px; }
+        #f { float: left; width: 10px; height: 2px; }
+        #b2 { height: 1px; margin-top: 3px; margin-bottom: 3px; clear: both; }
+        #b3 { height: 1px; clear: both; }
+    ";
+    assert!(!initial_css.contains("#b3 { height: 1px; margin"));
+    let absolute = |pixels: f32, rounded_to_zero, origin| {
+        BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels,
+            rounded_to_zero,
+            origin,
+        })
+    };
+    let inherited = BoxFactOrigin::Inherited { original_parent: 4 };
+    let specified_zero_css = format!(
+        "{} #b3 {{ margin-top:0; margin-bottom:0; }}",
+        baseline_css()
+    );
+    let cases = [
+        (
+            initial_css.to_string(),
+            absolute(0.0, false, BoxFactOrigin::Initial),
+            None,
+        ),
+        (
+            format!(
+                "{} #p {{ margin-top:auto; margin-bottom:auto; }} \
+                 #b3 {{ margin-top:inherit; margin-bottom:inherit; }}",
+                baseline_css()
+            ),
+            BoxLengthFact::Auto { origin: inherited },
+            Some(BoxLengthFact::Auto {
+                origin: BoxFactOrigin::Specified,
+            }),
+        ),
+        (
+            format!(
+                "{} #p {{ margin-top:0; margin-bottom:0; }} \
+                 #b3 {{ margin-top:inherit; margin-bottom:inherit; }}",
+                baseline_css()
+            ),
+            absolute(0.0, false, inherited),
+            Some(absolute(0.0, false, BoxFactOrigin::Specified)),
+        ),
+        (
+            format!(
+                "{} #b3 {{ margin-top:{TINY_PX}; margin-bottom:{TINY_PX}; }}",
+                baseline_css()
+            ),
+            absolute(0.0, true, BoxFactOrigin::Specified),
+            None,
+        ),
+        (
+            format!(
+                "{} #b3 {{ margin-top:-{TINY_PX}; margin-bottom:-{TINY_PX}; }}",
+                baseline_css()
+            ),
+            absolute(0.0, true, BoxFactOrigin::Specified),
+            None,
+        ),
+        (
+            format!(
+                "{} #b3 {{ margin-top:auto; margin-bottom:auto; }}",
+                baseline_css()
+            ),
+            BoxLengthFact::Auto {
+                origin: BoxFactOrigin::Specified,
+            },
+            None,
+        ),
+    ];
+    let mut control = None;
+    sibling_fixture(6, &specified_zero_css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        control = Some(observe_layout(&layout));
+    });
+    let control = control.unwrap();
+    for (css, expected, parent_margin) in cases {
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            assert_eq!(projection.original_index(1), Some(4));
+            let layout = default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits(),
+            )
+            .unwrap();
+            let b3 = &layout.children()[3];
+            assert_eq!(b3.source_index(), 5);
+            let copied = (
+                b3.margin_top(),
+                b3.margin_bottom(),
+                b3.used_margin_top(),
+                b3.used_margin_bottom(),
+                layout.children()[2].margin_top(),
+                layout.children()[2].used_margin_top(),
+            );
+            assert_eq!(copied.0, facts.row(5).unwrap().margin[0]);
+            assert_eq!(copied.1, facts.row(5).unwrap().margin[2]);
+            let observation = observe_layout(&layout);
+            drop(layout);
+            // Copied observations remain valid after the layout owner is dropped.
+            assert_eq!(copied.0, expected, "{css}");
+            assert_eq!(copied.1, expected, "{css}");
+            if let BoxLengthFact::Absolute(value) = copied.0 {
+                assert_eq!(value.pixels.to_bits(), 0.0f32.to_bits(), "{css}");
+            }
+            assert_eq!(copied.2.to_bits(), 0.0f32.to_bits(), "{css}");
+            assert_eq!(copied.3.to_bits(), 0.0f32.to_bits(), "{css}");
+            // Nonzero normal vertical absolutes remain literal controls.
+            assert_eq!(copied.4, absolute(3.0, false, BoxFactOrigin::Specified));
+            assert_eq!(copied.5, 3.0);
+            assert_same_except_changed_vertical_facts(
+                &css,
+                &observation,
+                &control,
+                5,
+                [Some(expected), Some(expected)],
+                parent_margin,
+            );
+        });
+    }
+}
+
+#[test]
+fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
+    use CapturedClearanceUnsupported as U;
+    use iced_css_core::formatting::clearance_owner::ChildFacts;
+    use std::mem::size_of;
+    const MAX: &str = "340282346638528859811704183484516925440px";
+    let vertical = "#b1 { margin-bottom:auto; } #f { margin-top:auto; margin-bottom:auto; } \
+                    #b2 { margin-top:auto; } #b3 { margin-bottom:auto; }";
+    let run_with =
+        |with_auto: bool,
+         source_count: usize,
+         rule: &str,
+         outer: (f32, f32, f32),
+         limits: SiblingLayoutLimits,
+         check: &dyn Fn(Result<CapturedSiblingLayout<'_>, SiblingLayoutError>)| {
+            let b4 = if source_count == 7 {
+                "#b4 { height:2px; margin-top:auto; margin-bottom:2px; clear:none; }"
+            } else {
+                ""
+            };
+            let vertical = if with_auto { vertical } else { "" };
+            let css = format!("{} {b4} {vertical} {rule}", baseline_css());
+            sibling_fixture(source_count, &css, |projection, display| {
+                let facts =
+                    evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+                check(default_outer_layout(
+                    &facts,
+                    &projection.nodes()[0],
+                    outer.0,
+                    outer.1,
+                    outer.2,
+                    limits,
+                ));
+            });
+        };
+    let run =
+        |source_count: usize,
+         rule: &str,
+         outer: (f32, f32, f32),
+         limits: SiblingLayoutLimits,
+         check: &dyn Fn(Result<CapturedSiblingLayout<'_>, SiblingLayoutError>)| {
+            run_with(true, source_count, rule, outer, limits, check)
+        };
+    let normal = (0.0, 100.0, 10.0);
+
+    // Source preflight precedes every Auto-bearing profile.
+    let mut limits = layout_limits();
+    limits.sources = nz(5);
+    run(6, "", normal, limits, &|result| {
+        assert!(matches!(result, Err(SiblingLayoutError::Sources)))
+    });
+    run(6, "", normal, layout_limits(), &|result| {
+        assert!(result.is_ok())
+    });
+
+    // One-short facade work beside a later child overflow: Work first; the exact
+    // bound reaches ChildOverflow on the actual last source.
+    for (source_count, work, selector) in [(5, 451, "#b2"), (6, 588, "#b3"), (7, 725, "#b4")] {
+        for (bound, overflow) in [(work - 1, false), (work, true)] {
+            let mut limits = layout_limits();
+            limits.work = nz(bound);
+            let rule = format!("{selector} {{ overflow:hidden; }}");
+            run(source_count, &rule, normal, limits, &|result| {
+                if overflow {
+                    assert!(matches!(
+                        result,
+                        Err(SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
+                            projected,
+                            property: "overflow",
+                            reason: U::ChildOverflow,
+                        })) if projected == source_count - 1
+                    ));
+                } else {
+                    assert!(matches!(result, Err(SiblingLayoutError::Work)));
+                }
+            });
+        }
+    }
+
+    // One-short scratch with supported Auto and a later invalid height.
+    for enough in [false, true] {
+        let mut limits = layout_limits();
+        if !enough {
+            limits.scratch_bytes = nz(4 * size_of::<ChildFacts<'_>>() - 1);
+        }
+        run(6, "#b3 { height:auto; }", normal, limits, &|result| {
+            if enough {
+                assert!(matches!(
+                    result,
+                    Err(SiblingLayoutError::Captured(
+                        CapturedClearanceError::Unsupported {
+                            projected: 5,
+                            property: "height",
+                            reason: U::HeightKind,
+                        }
+                    ))
+                ));
+            } else {
+                assert!(matches!(result, Err(SiblingLayoutError::ScratchBytes)));
+            }
+        });
+    }
+
+    // F vertical Auto, later source 5 height:auto and F width:auto: complete
+    // conversion reports source 5 height; removing it reaches source 3 width.
+    run(
+        6,
+        "#f { width:auto; } #b3 { height:auto; }",
+        normal,
+        layout_limits(),
+        &|result| {
+            assert!(matches!(
+                result,
+                Err(SiblingLayoutError::Captured(
+                    CapturedClearanceError::Unsupported {
+                        projected: 5,
+                        property: "height",
+                        reason: U::HeightKind,
+                    }
+                ))
+            ));
+        },
+    );
+    run(
+        6,
+        "#f { width:auto; }",
+        normal,
+        layout_limits(),
+        &|result| {
+            assert!(matches!(
+                result,
+                Err(SiblingLayoutError::Captured(
+                    CapturedClearanceError::Unsupported {
+                        projected: 3,
+                        property: "width",
+                        reason: U::FloatWidth,
+                    }
+                ))
+            ));
+        },
+    );
+
+    // F vertical Auto plus parent top MAX+MAX: ParentOrigin BorderTop, since Auto no
+    // longer blocks conversion; without the MAX origin the same CSS succeeds.
+    let parent_max = format!("#p {{ margin-top:{MAX}; }}");
+    for with_auto in [true, false] {
+        run_with(
+            with_auto,
+            6,
+            &parent_max,
+            (0.0, 100.0, f32::MAX),
+            layout_limits(),
+            &|result| {
+                assert!(matches!(
+                    result,
+                    Err(SiblingLayoutError::ParentOrigin(
+                        FirstChildOriginError::Unrepresentable {
+                            stage: OriginCoordinateStage::BorderTop,
+                        }
+                    ))
+                ));
+            },
+        );
+    }
+    run(6, "", normal, layout_limits(), &|result| {
+        let layout = result.unwrap();
+        assert!(matches!(
+            layout.children()[1].margin_top(),
+            BoxLengthFact::Auto { .. }
+        ));
+        assert_eq!(
+            layout.children()[1].used_margin_top().to_bits(),
+            0.0f32.to_bits()
+        );
+    });
+
+    // Insufficient facade/core retained bytes with Auto profiles and width 140,
+    // then the paired sufficient control succeeds with the oversized float.
+    for (facade_short, core_short) in [(true, false), (false, true), (false, false)] {
+        let mut limits = layout_limits();
+        let floor =
+            2 * size_of::<iced_css_core::formatting::clearance_sequence::SequenceNormalPlacement>();
+        if facade_short {
+            limits.retained_bytes = nz(floor
+                + 4 * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>()
+                - 1);
+        }
+        if core_short {
+            limits.core.retained_bytes = nz(floor - 1);
+        }
+        run(6, "#f { width:140px; }", normal, limits, &|result| {
+            if facade_short {
+                assert!(matches!(result, Err(SiblingLayoutError::Bytes)));
+            } else if core_short {
+                assert!(matches!(
+                    result,
+                    Err(SiblingLayoutError::Core(ClearanceSequenceError::Bytes))
+                ));
+            } else {
+                let layout = result.unwrap();
+                assert_eq!(
+                    (
+                        layout.children()[1].content().left,
+                        layout.children()[1].content().right
+                    ),
+                    (0.0, 140.0)
+                );
+            }
+        });
+    }
+
+    // Finite float publication overflow at source 3 precedes source 4 equality.
+    let all_auto = "#b1, #f, #b2, #b3, #b4 { margin-top:auto; margin-bottom:auto; }";
+    for (side, float_failure) in [("left", true), ("right", false)] {
+        let rule =
+            format!("{all_auto} #o {{ width:0; }} #f {{ float:{side}; width:{MAX}; height:0; }}");
+        run(
+            6,
+            &rule,
+            (f32::MAX, 0.0, 10.0),
+            layout_limits(),
+            &|result| {
+                if float_failure {
+                    assert!(matches!(
+                        result,
+                        Err(SiblingLayoutError::Core(
+                            ClearanceSequenceError::Placement {
+                                source: 3,
+                                error: ClearanceOwnerError::FloatPlacement(
+                                    iced_css_core::formatting::floats::FloatError::Unrepresentable
+                                ),
+                            }
+                        ))
+                    ));
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(SiblingLayoutError::Core(
+                            ClearanceSequenceError::Placement {
+                                source: 4,
+                                error: ClearanceOwnerError::UnsupportedEquality,
+                            }
+                        ))
+                    ));
+                }
+            },
+        );
+    }
+
+    // All-Auto F height 0 with a prospective normal horizontal overflow: equality
+    // precedes principal assembly; the clear:none control reaches the overflow.
+    for (clear, equality) in [("both", true), ("none", false)] {
+        let rule = format!(
+            "{all_auto} #o {{ width:0; }} #f {{ float:right; width:140px; height:0; }} \
+             #b2 {{ clear:{clear}; width:{MAX}; }}"
+        );
+        run(
+            6,
+            &rule,
+            (f32::MAX, 0.0, 10.0),
+            layout_limits(),
+            &|result| {
+                if equality {
+                    assert!(matches!(
+                        result,
+                        Err(SiblingLayoutError::Core(
+                            ClearanceSequenceError::Placement {
+                                source: 4,
+                                error: ClearanceOwnerError::UnsupportedEquality,
+                            }
+                        ))
+                    ));
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(SiblingLayoutError::ChildHorizontal {
+                            source: 4,
+                            error: BlockHorizontalError::Unrepresentable {
+                                stage: BlockCoordinateStage::ContentRight,
+                            },
+                        })
+                    ));
+                }
+            },
+        );
+    }
+
+    // Final normal bottom Auto plus P height:auto succeeds with used zero at every
+    // N; the explicit-height control is independent of that margin.
+    // With the shared vertical rules: N5 B2 14..15, N6 B3 18..19, N7 B4 19..21.
+    for (source_count, selector, content_bottom) in
+        [(5, "#b2", 15.0), (6, "#b3", 19.0), (7, "#b4", 21.0)]
+    {
+        for (parent_height, expected_bottom) in [("auto", content_bottom), ("20px", 31.0)] {
+            let rule =
+                format!("{selector} {{ margin-bottom:auto; }} #p {{ height:{parent_height}; }}");
+            run(source_count, &rule, normal, layout_limits(), &|result| {
+                let layout = result.unwrap();
+                let last = layout.children().last().unwrap();
+                assert_eq!(last.source_index(), source_count - 1);
+                assert!(matches!(last.margin_bottom(), BoxLengthFact::Auto { .. }));
+                assert_eq!(last.used_margin_bottom().to_bits(), 0.0f32.to_bits());
+                assert_eq!(layout.parent().height().content_bottom, expected_bottom);
+                assert_eq!(
+                    layout.parent().height().auto_extent.is_some(),
+                    parent_height == "auto"
+                );
+            });
+        }
+    }
+}
+
+#[test]
+fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
+    use iced_css::evaluation::sibling_layout::PrincipalChildBox;
+    use iced_css_core::formatting::{
+        clearance_owner::ChildFacts, clearance_sequence::SequenceNormalPlacement,
+    };
+    use std::mem::size_of;
+
+    for (source_count, facade_work, old_facade, core_work, old_core) in [
+        (5, 451, 377, 269, 213),
+        (6, 588, 492, 351, 275),
+        (7, 725, 607, 434, 338),
+    ] {
+        let b4 = if source_count == 7 {
+            "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
+        } else {
+            ""
+        };
+        let css = format!(
+            "{} {b4} #b1, #f, #b2, #b3 {{ margin-top:auto; margin-bottom:auto; }} \
+             #f {{ width:140px; margin-left:auto; margin-right:auto; }}",
+            baseline_css()
+        );
+        sibling_fixture(source_count, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let build = |limits| {
+                default_outer_layout(&facts, &projection.nodes()[0], 0.0, 100.0, 10.0, limits)
+            };
+            let child_count = source_count - 2;
+            let tail_count = source_count - 4;
+            let scratch_floor = child_count * size_of::<ChildFacts<'_>>();
+            let core_floor = tail_count * size_of::<SequenceNormalPlacement>();
+            let retained_floor = core_floor + child_count * size_of::<PrincipalChildBox>();
+
+            for short in [facade_work - 1, old_facade] {
+                let mut limits = layout_limits();
+                limits.work = nz(short);
+                limits.scratch_bytes = nz(1);
+                assert!(matches!(build(limits), Err(SiblingLayoutError::Work)));
+            }
+            for short in [core_work - 1, old_core] {
+                let mut limits = layout_limits();
+                limits.core.work = nz(short);
+                assert!(matches!(
+                    build(limits),
+                    Err(SiblingLayoutError::Core(ClearanceSequenceError::Work))
+                ));
+            }
+            let mut limits = layout_limits();
+            limits.scratch_bytes = nz(scratch_floor - 1);
+            assert!(matches!(
+                build(limits),
+                Err(SiblingLayoutError::ScratchBytes)
+            ));
+            let mut limits = layout_limits();
+            limits.retained_bytes = nz(retained_floor - 1);
+            assert!(matches!(build(limits), Err(SiblingLayoutError::Bytes)));
+            let mut limits = layout_limits();
+            limits.core.retained_bytes = nz(core_floor - 1);
+            assert!(matches!(
+                build(limits),
+                Err(SiblingLayoutError::Core(ClearanceSequenceError::Bytes))
+            ));
+
+            let mut exact = layout_limits();
+            exact.work = nz(facade_work);
+            exact.core.work = nz(core_work);
+            exact.scratch_bytes = nz(scratch_floor);
+            exact.retained_bytes = nz(retained_floor);
+            exact.core.retained_bytes = nz(core_floor);
+            let layout = build(exact).unwrap();
+            let receipt = layout.receipt();
+            assert_eq!(receipt.nodes, source_count);
+            assert_eq!(receipt.work, facade_work);
+            assert_eq!(receipt.scratch_bytes, scratch_floor);
+            assert_eq!(receipt.child_capacity, child_count);
+            assert_eq!(receipt.retained_bytes, retained_floor);
+            assert_eq!(receipt.core.work, core_work);
+            assert_eq!(receipt.core.tail, tail_count);
+            assert_eq!(receipt.core.record_capacity, tail_count);
+            assert_eq!(receipt.core.retained_bytes, core_floor);
+            for child in layout.children() {
+                assert_eq!(child.used_margin_top().to_bits(), 0.0f32.to_bits());
+                assert_eq!(child.used_margin_bottom().to_bits(), 0.0f32.to_bits());
+            }
+            assert_eq!(
+                (
+                    layout.children()[1].content().left,
+                    layout.children()[1].content().right
+                ),
+                (0.0, 140.0)
+            );
+        });
+    }
+}
+
+#[test]
+fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
+    use CapturedClearanceUnsupported as U;
+    let captured = |projected, property, reason| {
+        SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
+            projected,
+            property,
+            reason,
+        })
+    };
+    let profile = |source, reason| {
+        SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported { source, reason },
+        ))
+    };
+    for (rule, expected) in [
+        (
+            "#b3 { margin-top:auto; margin-bottom:-1px; }",
+            profile(5, OwnerProfileReason::NegativeMargin),
+        ),
+        (
+            "#b1 { margin-top:-1px; margin-bottom:auto; }",
+            profile(2, OwnerProfileReason::NegativeMargin),
+        ),
+        (
+            "#f { margin-top:auto; margin-bottom:-1px; }",
+            profile(3, OwnerProfileReason::NegativeMargin),
+        ),
+        (
+            "#f { margin-top:auto; margin-bottom:1px; }",
+            profile(3, OwnerProfileReason::FloatMargin),
+        ),
+        (
+            "#f { margin-top:1px; margin-bottom:auto; }",
+            profile(3, OwnerProfileReason::FloatMargin),
+        ),
+        (
+            "#f { margin-top:auto; margin-left:-1px; }",
+            profile(3, OwnerProfileReason::NegativeMargin),
+        ),
+        (
+            "#f { margin-bottom:auto; margin-right:1px; }",
+            profile(3, OwnerProfileReason::FloatMargin),
+        ),
+        (
+            "#b3 { margin-top:auto; height:auto; }",
+            captured(5, "height", U::HeightKind),
+        ),
+        (
+            "#b2 { margin-bottom:auto; overflow:hidden; }",
+            captured(4, "overflow", U::ChildOverflow),
+        ),
+        (
+            "#f { margin-top:auto; width:auto; }",
+            captured(3, "width", U::FloatWidth),
+        ),
+        (
+            "#b3 { margin-top:auto; padding-top:1px; }",
+            profile(5, OwnerProfileReason::ChildDecoration),
+        ),
+        (
+            "#f { margin-bottom:auto; padding-bottom:1px; }",
+            profile(3, OwnerProfileReason::ChildDecoration),
+        ),
+        (
+            "#b1 { margin-top:auto; clear:left; }",
+            profile(2, OwnerProfileReason::ClearOnBeforeOrFloat),
+        ),
+        (
+            "#f { margin-bottom:auto; clear:both; }",
+            profile(3, OwnerProfileReason::ClearOnBeforeOrFloat),
+        ),
+        (
+            "#b1 { margin-bottom:auto; height:0; }",
+            profile(2, OwnerProfileReason::NonpositiveBlockHeight),
+        ),
+    ] {
+        let css = format!("{} {rule}", baseline_css());
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let error = default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits(),
+            )
+            .unwrap_err();
+            assert_eq!(format!("{error:?}"), format!("{expected:?}"), "{rule}");
+        });
+    }
+
+    // Signed and Auto normal horizontal categories plus F horizontal Auto remain
+    // admitted beside every vertical Auto; F never receives a normal solver.
+    let css = format!(
+        "{} #b1, #f, #b2, #b3 {{ margin-top:auto; margin-bottom:auto; }} \
+         #b1 {{ margin-left:-10px; margin-right:auto; }} \
+         #f {{ margin-left:auto; margin-right:auto; }} \
+         #b3 {{ width:40px; margin-left:auto; margin-right:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        let children = layout.children();
+        assert_eq!(
+            children[0].normal_width(),
+            Some(BlockWidthResult {
+                width: 110.0,
+                margin_left: -10.0,
+                margin_right: 0.0,
+                passes: 1,
+            })
+        );
+        assert_eq!(children[1].normal_width(), None);
+        assert_eq!(
+            (children[1].content().left, children[1].content().right),
+            (0.0, 10.0)
+        );
+        assert_eq!(
+            children[3].normal_width(),
+            Some(BlockWidthResult {
+                width: 40.0,
+                margin_left: 30.0,
+                margin_right: 30.0,
+                passes: 1,
+            })
+        );
+        assert_eq!(
+            vertical_spans(&layout),
+            [
+                (2, 11.0, 12.0),
+                (3, 12.0, 14.0),
+                (4, 14.0, 15.0),
+                (5, 15.0, 16.0)
+            ]
+        );
+        assert_eq!(layout.parent().height().content_bottom, 16.0);
     });
 }

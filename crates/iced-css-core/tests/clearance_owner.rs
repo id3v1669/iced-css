@@ -78,12 +78,12 @@ fn input(s: &[SourceNode]) -> ClearanceOwnerInput<'_> {
         after: child(3),
         float_width: 10.,
     };
-    result.before.margin.bottom = 4.;
+    result.before.margin.bottom = AutoLength::Value(4.);
     result.float.display.float = Float::Left;
     result.float.display.flow = Flow::Floating;
     result.float.context = ChildContext::FloatBfc;
     result.float.height = OwnerHeight::Explicit(2.);
-    result.after.margin.top = 3.;
+    result.after.margin.top = AutoLength::Value(3.);
     result.after.clear = ClearSide::Both;
     result
 }
@@ -165,7 +165,7 @@ fn signed_amounts_and_absence_preserve_the_right_groups() {
         (7., ClearSide::Both, None, 8.),
     ] {
         let mut f = input(&s);
-        f.after.margin.top = m2;
+        f.after.margin.top = AutoLength::Value(m2);
         f.after.clear = clear;
         let o = build_clearance_owner(&s, f).unwrap();
         assert_eq!(o.clearance(), amount);
@@ -186,7 +186,7 @@ fn signed_amounts_and_absence_preserve_the_right_groups() {
         }
     }
     let mut f = input(&s);
-    f.after.margin.top = 6.;
+    f.after.margin.top = AutoLength::Value(6.);
     assert_eq!(
         build_clearance_owner(&s, f).unwrap_err(),
         ClearanceOwnerError::UnsupportedEquality
@@ -361,10 +361,10 @@ fn profile_rejections_are_typed() {
             1 => f.parent.border.top = 0.,
             2 => f.parent.border.bottom = 0.,
             3 => f.before.height = OwnerHeight::Explicit(0.),
-            4 => f.after.margin.top = -1.,
+            4 => f.after.margin.top = AutoLength::Value(-1.),
             5 => f.before.margin.left = AutoLength::Value(1.),
             6 => f.after.padding.top = 1.,
-            7 => f.float.margin.bottom = 1.,
+            7 => f.float.margin.bottom = AutoLength::Value(1.),
             8 => f.before.clear = ClearSide::Left,
             9 => f.float.clear = ClearSide::Both,
             _ => f.float_width = 101.,
@@ -474,7 +474,7 @@ fn stages_and_checked_float_producer_report_the_actual_failure() {
         match case {
             0 => {
                 f.parent.content_top = f32::MAX;
-                f.before.margin.top = f32::MAX;
+                f.before.margin.top = AutoLength::Value(f32::MAX);
             }
             1 => {
                 f.parent.content_top = f32::MAX;
@@ -482,18 +482,18 @@ fn stages_and_checked_float_producer_report_the_actual_failure() {
             }
             2 => {
                 f.parent.content_top = f32::MAX;
-                f.before.margin.bottom = f32::MAX;
+                f.before.margin.bottom = AutoLength::Value(f32::MAX);
             }
             3 => {
                 f.parent.content_top = f32::MAX;
-                f.before.margin.bottom = 0.;
+                f.before.margin.bottom = AutoLength::Value(0.);
                 f.float.height = OwnerHeight::Explicit(0.);
-                f.after.margin.top = f32::MAX;
+                f.after.margin.top = AutoLength::Value(f32::MAX);
             }
             4 => {
                 // Baseline overflows while strict H < F reaches required clearance.
-                f.before.margin.bottom = f32::MAX * 0.75;
-                f.after.margin.top = f32::MAX * 0.75;
+                f.before.margin.bottom = AutoLength::Value(f32::MAX * 0.75);
+                f.after.margin.top = AutoLength::Value(f32::MAX * 0.75);
                 f.float.height = OwnerHeight::Explicit(f32::MAX * 0.125);
             }
             _ => {
@@ -509,7 +509,7 @@ fn stages_and_checked_float_producer_report_the_actual_failure() {
     }
     let mut f = input(&s);
     f.parent.content_top = f32::MAX;
-    f.before.margin.bottom = 0.;
+    f.before.margin.bottom = AutoLength::Value(0.);
     f.float.height = OwnerHeight::Explicit(f32::MAX);
     assert_eq!(
         build_clearance_owner(&s, f).unwrap_err(),
@@ -540,8 +540,8 @@ fn degenerate_float_and_signed_origins_use_real_placement() {
         );
     }
     let mut f = input(&s);
-    f.before.margin.bottom = f32::MAX * 0.75;
-    f.after.margin.top = f32::MAX * 0.75;
+    f.before.margin.bottom = AutoLength::Value(f32::MAX * 0.75);
+    f.after.margin.top = AutoLength::Value(f32::MAX * 0.75);
     f.float.height = OwnerHeight::Explicit(0.);
     f.after.clear = ClearSide::None;
     let o = build_clearance_owner(&s, f).unwrap();
@@ -597,9 +597,9 @@ fn invalid_measurements_are_rejected_by_source_and_field() {
                             _ => &mut f.after,
                         };
                         match edge {
-                            0 => c.margin.top = bad,
+                            0 => c.margin.top = AutoLength::Value(bad),
                             1 => c.margin.right = AutoLength::Value(bad),
-                            2 => c.margin.bottom = bad,
+                            2 => c.margin.bottom = AutoLength::Value(bad),
                             _ => c.margin.left = AutoLength::Value(bad),
                         }
                     } else {
@@ -663,7 +663,7 @@ fn invalid_measurements_are_rejected_by_source_and_field() {
     }
     // Within an edge record finiteness precedes range, then profile checks.
     let mut f = input(&s);
-    f.before.margin.top = -1.;
+    f.before.margin.top = AutoLength::Value(-1.);
     f.before.margin.left = AutoLength::Value(f32::NAN);
     assert_eq!(
         build_clearance_owner(&s, f).unwrap_err(),
@@ -715,6 +715,9 @@ fn strict_owner_rejects_signed_horizontal_margins_for_both_normal_roles() {
 
 #[derive(Clone, Copy)]
 enum StrictAutoCase {
+    TopAuto,
+    BottomAuto,
+    VerticalAndHorizontalAuto,
     LeftAuto,
     RightAuto,
     BothAuto,
@@ -734,6 +737,12 @@ fn strict_auto_error(nested: bool, case: StrictAutoCase) -> ClearanceOwnerError 
     };
     let mut facts = input(source_slice);
     match case {
+        StrictAutoCase::TopAuto => facts.before.margin.top = AutoLength::Auto,
+        StrictAutoCase::BottomAuto => facts.before.margin.bottom = AutoLength::Auto,
+        StrictAutoCase::VerticalAndHorizontalAuto => {
+            facts.before.margin.top = AutoLength::Auto;
+            facts.before.margin.left = AutoLength::Auto;
+        }
         StrictAutoCase::LeftAuto => facts.before.margin.left = AutoLength::Auto,
         StrictAutoCase::RightAuto => facts.before.margin.right = AutoLength::Auto,
         StrictAutoCase::BothAuto => {
@@ -746,7 +755,7 @@ fn strict_auto_error(nested: bool, case: StrictAutoCase) -> ClearanceOwnerError 
         }
         StrictAutoCase::NegativeTop => {
             facts.before.margin.left = AutoLength::Auto;
-            facts.before.margin.top = -1.0;
+            facts.before.margin.top = AutoLength::Value(-1.0);
         }
         StrictAutoCase::BorderLeft => {
             facts.before.margin.left = AutoLength::Auto;
@@ -768,6 +777,19 @@ fn strict_auto_error(nested: bool, case: StrictAutoCase) -> ClearanceOwnerError 
 fn strict_auto_margin_errors_preserve_numeric_precedence() {
     for nested in [false, true] {
         let source = if nested { 2 } else { 1 };
+        for case in [
+            StrictAutoCase::TopAuto,
+            StrictAutoCase::BottomAuto,
+            StrictAutoCase::VerticalAndHorizontalAuto,
+        ] {
+            assert_eq!(
+                strict_auto_error(nested, case),
+                ClearanceOwnerError::Unsupported {
+                    source,
+                    reason: OwnerProfileReason::AutoVerticalMargin,
+                }
+            );
+        }
         for case in [
             StrictAutoCase::LeftAuto,
             StrictAutoCase::RightAuto,
@@ -922,9 +944,9 @@ fn exact_stages_preserve_subnormals_and_rounding_created_equality() {
     let tiny = f32::from_bits(1);
     let mut f = input(&s);
     f.before.height = OwnerHeight::Explicit(tiny);
-    f.before.margin.bottom = tiny;
+    f.before.margin.bottom = AutoLength::Value(tiny);
     f.float.height = OwnerHeight::Explicit(tiny);
-    f.after.margin.top = 0.;
+    f.after.margin.top = AutoLength::Value(0.);
     f.after.height = OwnerHeight::Explicit(tiny);
     let o = build_clearance_owner(&s, f).unwrap();
     assert_eq!(o.before().bottom.to_bits(), 1);
@@ -943,7 +965,7 @@ fn exact_stages_preserve_subnormals_and_rounding_created_equality() {
     );
     let mut f = input(&s);
     f.parent.content_top = -0.;
-    f.before.margin.top = -0.;
+    f.before.margin.top = AutoLength::Value(-0.);
     f.after.clear = ClearSide::None;
     let o = build_clearance_owner(&s, f).unwrap();
     assert_eq!(o.before().top.to_bits(), 0);
@@ -1132,4 +1154,238 @@ fn nested_gate_reports_full_graph_indices_before_geometry() {
         build_nested_clearance_owner(&s, outer(&s), input(&s[1..])).unwrap_err(),
         ClearanceOwnerError::ChildCount { source: 4 }
     );
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum LegacyRole {
+    Before,
+    Float,
+    After,
+}
+
+fn legacy_error(
+    nested: bool,
+    edit: impl FnOnce(&mut ClearanceOwnerInput<'_>),
+) -> Result<(), ClearanceOwnerError> {
+    let flat_sources = sources();
+    let nested_sources = nested_sources();
+    let source_slice = if nested {
+        &nested_sources[1..]
+    } else {
+        &flat_sources[..]
+    };
+    let mut facts = input(source_slice);
+    edit(&mut facts);
+    let result = if nested {
+        build_nested_clearance_owner(&nested_sources, outer(&nested_sources), facts)
+    } else {
+        build_clearance_owner(&flat_sources, facts)
+    };
+    result.map(|_| ())
+}
+
+fn legacy_role<'a, 's>(
+    facts: &'a mut ClearanceOwnerInput<'s>,
+    role: LegacyRole,
+) -> &'a mut ChildFacts<'s> {
+    match role {
+        LegacyRole::Before => &mut facts.before,
+        LegacyRole::Float => &mut facts.float,
+        LegacyRole::After => &mut facts.after,
+    }
+}
+
+#[test]
+fn legacy_vertical_auto_is_rejected_for_every_role_in_fixed_and_nested_owners() {
+    use OwnerProfileReason as R;
+    for nested in [false, true] {
+        let offset = usize::from(nested);
+        for (role, source) in [
+            (LegacyRole::Before, 1 + offset),
+            (LegacyRole::Float, 2 + offset),
+            (LegacyRole::After, 3 + offset),
+        ] {
+            let unsupported = |reason| Err(ClearanceOwnerError::Unsupported { source, reason });
+            // The unmodified fixture is admitted, so every rejection below is caused
+            // by the edited computed category rather than an unrelated fixture fault.
+            assert_eq!(legacy_error(nested, |_| {}), Ok(()));
+
+            for top in [true, false] {
+                assert_eq!(
+                    legacy_error(nested, |facts| {
+                        let child = legacy_role(facts, role);
+                        if top {
+                            child.margin.top = AutoLength::Auto;
+                        } else {
+                            child.margin.bottom = AutoLength::Auto;
+                        }
+                    }),
+                    unsupported(R::AutoVerticalMargin)
+                );
+            }
+            assert_eq!(
+                legacy_error(nested, |facts| {
+                    let child = legacy_role(facts, role);
+                    child.margin.top = AutoLength::Auto;
+                    child.margin.bottom = AutoLength::Auto;
+                }),
+                unsupported(R::AutoVerticalMargin)
+            );
+
+            // Horizontal-only Auto keeps its unchanged reason.
+            for left in [true, false] {
+                assert_eq!(
+                    legacy_error(nested, |facts| {
+                        let child = legacy_role(facts, role);
+                        if left {
+                            child.margin.left = AutoLength::Auto;
+                        } else {
+                            child.margin.right = AutoLength::Auto;
+                        }
+                    }),
+                    unsupported(R::AutoHorizontalMargin)
+                );
+            }
+
+            // Combined vertical and horizontal Auto reports the vertical reason; the
+            // paired vertical Value(0) control reaches the horizontal reason.
+            for vertical in [AutoLength::Auto, AutoLength::Value(0.0)] {
+                assert_eq!(
+                    legacy_error(nested, |facts| {
+                        let child = legacy_role(facts, role);
+                        child.margin.bottom = vertical;
+                        child.margin.left = AutoLength::Auto;
+                        child.margin.right = AutoLength::Auto;
+                    }),
+                    unsupported(if vertical == AutoLength::Auto {
+                        R::AutoVerticalMargin
+                    } else {
+                        R::AutoHorizontalMargin
+                    })
+                );
+            }
+
+            // Established finite -> negative -> Auto priority with literal faults.
+            for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                assert_eq!(
+                    legacy_error(nested, |facts| {
+                        let child = legacy_role(facts, role);
+                        child.margin.top = AutoLength::Auto;
+                        child.margin.right = AutoLength::Value(bad);
+                    }),
+                    Err(ClearanceOwnerError::InvalidNumber {
+                        source,
+                        field: "margin",
+                    })
+                );
+                assert_eq!(
+                    legacy_error(nested, |facts| {
+                        let child = legacy_role(facts, role);
+                        child.margin.bottom = AutoLength::Auto;
+                        child.margin.top = AutoLength::Value(bad);
+                    }),
+                    Err(ClearanceOwnerError::InvalidNumber {
+                        source,
+                        field: "margin",
+                    })
+                );
+            }
+            for negative_edge in 0..4 {
+                assert_eq!(
+                    legacy_error(nested, |facts| {
+                        let child = legacy_role(facts, role);
+                        let auto_top = negative_edge != 0;
+                        if auto_top {
+                            child.margin.top = AutoLength::Auto;
+                        } else {
+                            child.margin.bottom = AutoLength::Auto;
+                        }
+                        let negative = AutoLength::Value(-1.0);
+                        match negative_edge {
+                            0 => child.margin.top = negative,
+                            1 => child.margin.right = negative,
+                            2 => child.margin.bottom = negative,
+                            _ => child.margin.left = negative,
+                        }
+                    }),
+                    unsupported(R::NegativeMargin)
+                );
+            }
+            // Auto precedes the later role-specific margin restriction; the paired
+            // Value(0) control reaches that restriction.
+            let later = if role == LegacyRole::Float {
+                R::FloatMargin
+            } else {
+                R::HorizontalMargin
+            };
+            for vertical in [AutoLength::Auto, AutoLength::Value(0.0)] {
+                assert_eq!(
+                    legacy_error(nested, |facts| {
+                        let child = legacy_role(facts, role);
+                        child.margin.top = vertical;
+                        child.margin.right = AutoLength::Value(1.0);
+                    }),
+                    unsupported(if vertical == AutoLength::Auto {
+                        R::AutoVerticalMargin
+                    } else {
+                        later
+                    })
+                );
+            }
+            // Auto also precedes decoration and clear checks.
+            for vertical in [AutoLength::Auto, AutoLength::Value(0.0)] {
+                assert_eq!(
+                    legacy_error(nested, |facts| {
+                        let child = legacy_role(facts, role);
+                        child.margin.bottom = vertical;
+                        child.padding.top = 1.0;
+                    }),
+                    unsupported(if vertical == AutoLength::Auto {
+                        R::AutoVerticalMargin
+                    } else {
+                        R::ChildDecoration
+                    })
+                );
+            }
+            // Earlier height/context faults still precede margin classification.
+            assert_eq!(
+                legacy_error(nested, |facts| {
+                    let child = legacy_role(facts, role);
+                    child.margin.top = AutoLength::Auto;
+                    child.height = OwnerHeight::Auto;
+                }),
+                unsupported(R::HeightKind)
+            );
+        }
+
+        // Strict width fit remains after every child profile, so a float vertical
+        // Auto is reported before FloatTooWide; the Value(0) control reaches it.
+        for vertical in [AutoLength::Auto, AutoLength::Value(0.0)] {
+            assert_eq!(
+                legacy_error(nested, |facts| {
+                    facts.float.margin.top = vertical;
+                    facts.float_width = 101.0;
+                }),
+                Err(ClearanceOwnerError::Unsupported {
+                    source: 2 + offset,
+                    reason: if vertical == AutoLength::Auto {
+                        R::AutoVerticalMargin
+                    } else {
+                        R::FloatTooWide
+                    },
+                })
+            );
+        }
+        // A later role's vertical Auto does not mask an earlier role's fault.
+        assert_eq!(
+            legacy_error(nested, |facts| {
+                facts.before.margin.left = AutoLength::Auto;
+                facts.after.margin.top = AutoLength::Auto;
+            }),
+            Err(ClearanceOwnerError::Unsupported {
+                source: 1 + offset,
+                reason: R::AutoHorizontalMargin,
+            })
+        );
+    }
 }

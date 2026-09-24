@@ -334,6 +334,21 @@ fn remaining_auto_margin_errors_keep_source_and_edge_order() {
 #[test]
 fn legacy_capture_keeps_auto_margin_and_width_extraction_precedence() {
     fixture(
+        &format!("{CSS} #f {{ width:101px; margin-top:auto; margin-left:auto; }}"),
+        |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                CapturedClearanceError::Unsupported {
+                    projected: 3,
+                    property: "margin-top",
+                    reason: CapturedClearanceUnsupported::AutoMargin,
+                }
+            );
+        },
+    );
+
+    fixture(
         &format!("{CSS} #f {{ width:101px; margin-left:auto; }}"),
         |projection, display| {
             let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
@@ -531,6 +546,170 @@ fn tiny_computed_heights_and_upstream_unsupported_values_keep_their_layer() {
                     .unwrap()
                     .clearance(),
                 Some(-1.)
+            );
+        },
+    );
+}
+
+#[test]
+fn captured_legacy_vertical_auto_keeps_property_auto_margin_and_phase_order() {
+    use CapturedClearanceUnsupported as U;
+    let auto_margin = |projected, property| CapturedClearanceError::Unsupported {
+        projected,
+        property,
+        reason: U::AutoMargin,
+    };
+
+    // Every Legacy role keeps the captured property-specific rejection for top
+    // and bottom Auto; the sequence-level admission does not change this entry.
+    for (selector, projected) in [("#b1", 2), ("#f", 3), ("#b2", 4)] {
+        for (edge, property) in [("top", "margin-top"), ("bottom", "margin-bottom")] {
+            fixture(
+                &format!("{CSS} {selector} {{ margin-{edge}:auto; }}"),
+                |projection, display| {
+                    let facts =
+                        evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+                    assert!(matches!(
+                        facts.row(projected).unwrap().margin[if edge == "top" { 0 } else { 2 }],
+                        BoxLengthFact::Auto {
+                            origin: BoxFactOrigin::Specified
+                        }
+                    ));
+                    assert_eq!(
+                        build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                        auto_margin(projected, property)
+                    );
+                },
+            );
+        }
+    }
+
+    // Edge order stays top/right/bottom/left and the first projected source wins.
+    for (suffix, projected, property) in [
+        (
+            "#b1 { margin-top:auto; margin-left:auto; }",
+            2,
+            "margin-top",
+        ),
+        (
+            "#b1 { margin-right:auto; margin-bottom:auto; }",
+            2,
+            "margin-right",
+        ),
+        (
+            "#b1 { margin-bottom:auto; margin-left:auto; }",
+            2,
+            "margin-bottom",
+        ),
+        (
+            "#b1 { margin-bottom:auto; } #f { margin-top:auto; }",
+            2,
+            "margin-bottom",
+        ),
+        (
+            "#f { margin-bottom:auto; } #b2 { margin-top:auto; }",
+            3,
+            "margin-bottom",
+        ),
+    ] {
+        fixture(&format!("{CSS} {suffix}"), |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                auto_margin(projected, property)
+            );
+        });
+    }
+
+    // Competing faults: height and float-width extraction precede child margin
+    // conversion; the paired controls without them reach the vertical AutoMargin.
+    for (suffix, expected) in [
+        (
+            "#b1 { margin-top:auto; } #b2 { height:auto; }",
+            CapturedClearanceError::Unsupported {
+                projected: 4,
+                property: "height",
+                reason: U::HeightKind,
+            },
+        ),
+        ("#b1 { margin-top:auto; }", auto_margin(2, "margin-top")),
+        (
+            "#f { width:auto; margin-bottom:auto; }",
+            CapturedClearanceError::Unsupported {
+                projected: 3,
+                property: "width",
+                reason: U::FloatWidth,
+            },
+        ),
+        (
+            "#f { margin-bottom:auto; }",
+            auto_margin(3, "margin-bottom"),
+        ),
+        (
+            "#b2 { margin-bottom:auto; overflow:hidden; }",
+            CapturedClearanceError::Unsupported {
+                projected: 4,
+                property: "overflow",
+                reason: U::ChildOverflow,
+            },
+        ),
+        (
+            "#b2 { margin-bottom:auto; }",
+            auto_margin(4, "margin-bottom"),
+        ),
+        (
+            "#f { width:101px; margin-top:auto; }",
+            auto_margin(3, "margin-top"),
+        ),
+        (
+            "#f { width:101px; margin-top:0; }",
+            CapturedClearanceError::Core(ClearanceOwnerError::Unsupported {
+                source: 3,
+                reason: OwnerProfileReason::FloatTooWide,
+            }),
+        ),
+        (
+            "#b2 { margin-top:0; margin-bottom:-1px; }",
+            CapturedClearanceError::Core(ClearanceOwnerError::Unsupported {
+                source: 4,
+                reason: OwnerProfileReason::NegativeMargin,
+            }),
+        ),
+        (
+            "#b2 { margin-top:auto; margin-bottom:-1px; }",
+            auto_margin(4, "margin-top"),
+        ),
+    ] {
+        fixture(&format!("{CSS} {suffix}"), |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_owner(&facts, geometry(projection)).unwrap_err(),
+                expected
+            );
+        });
+    }
+
+    // The parent-height Legacy entry also rejects at captured conversion before
+    // any computed-margin height invariant.
+    fixture(
+        &format!("{CSS} #b2 {{ margin-bottom:auto; }}"),
+        |projection, display| {
+            let facts = evaluate_clearance_box_facts(projection, display, fact_limits()).unwrap();
+            assert_eq!(
+                build_captured_clearance_with_parent_height(
+                    &facts,
+                    ClearanceOuterContentGeometry {
+                        outer: &projection.nodes()[0],
+                        content_left: 0.0,
+                        content_width: 100.0,
+                        content_top: 10.0,
+                    },
+                )
+                .unwrap_err(),
+                ParentHeightError::Parent(ParentClearanceError::Captured(auto_margin(
+                    4,
+                    "margin-bottom"
+                )))
             );
         },
     );

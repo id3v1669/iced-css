@@ -237,12 +237,12 @@ pub(super) fn joined_direction<'h>(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ChildMarginMode {
     AbsoluteOnly,
-    SequenceHorizontal,
+    Sequence,
 }
 
 /// Convert captured computed child facts without replacing their margin categories.
-/// `SequenceHorizontal` preserves horizontal `Auto`; sequence float admission gives
-/// that computed category used value zero. Vertical `Auto` remains unsupported.
+/// `Sequence` preserves `Auto`; sequence admission gives the bounded vertical and
+/// float categories used value zero. `AbsoluteOnly` keeps strict captured behavior.
 pub(super) fn child_facts_from_row<'p>(
     nodes: &'p [SourceNode],
     display: DisplayResolution,
@@ -253,20 +253,15 @@ pub(super) fn child_facts_from_row<'p>(
 ) -> Result<ChildFacts<'p>, CapturedClearanceError> {
     use CapturedClearanceError as E;
     use CapturedClearanceUnsupported as U;
-    let allow_horizontal_auto = mode == ChildMarginMode::SequenceHorizontal;
-    let vertical = |edge: usize, property: &'static str| match row.margin[edge] {
-        BoxLengthFact::Absolute(value) => Ok(value.pixels),
-        BoxLengthFact::Auto { .. } => Err(unsupported(projected, property, U::AutoMargin)),
-    };
-    let horizontal = |edge: usize, property: &'static str| match row.margin[edge] {
+    let edge = |index: usize, property: &'static str| match row.margin[index] {
         BoxLengthFact::Absolute(value) => Ok(AutoLength::Value(value.pixels)),
-        BoxLengthFact::Auto { .. } if allow_horizontal_auto => Ok(AutoLength::Auto),
+        BoxLengthFact::Auto { .. } if mode == ChildMarginMode::Sequence => Ok(AutoLength::Auto),
         BoxLengthFact::Auto { .. } => Err(unsupported(projected, property, U::AutoMargin)),
     };
-    let top = vertical(0, "margin-top")?;
-    let right = horizontal(1, "margin-right")?;
-    let bottom = vertical(2, "margin-bottom")?;
-    let left = horizontal(3, "margin-left")?;
+    let top = edge(0, "margin-top")?;
+    let right = edge(1, "margin-right")?;
+    let bottom = edge(2, "margin-bottom")?;
+    let left = edge(3, "margin-left")?;
     let margin = ChildMargins {
         top,
         right,

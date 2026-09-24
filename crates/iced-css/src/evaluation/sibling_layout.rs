@@ -93,6 +93,8 @@ pub struct PrincipalChildBox {
     used_width: f32,
     normal_width: Option<BlockWidthResult>,
     used_height: f32,
+    used_margin_top: f32,
+    used_margin_bottom: f32,
     computed_width: BoxLengthFact,
     computed_height: BoxLengthFact,
     computed_margin_left: BoxLengthFact,
@@ -145,6 +147,12 @@ impl PrincipalChildBox {
     }
     pub fn used_height(&self) -> f32 {
         self.used_height
+    }
+    pub fn used_margin_top(&self) -> f32 {
+        self.used_margin_top
+    }
+    pub fn used_margin_bottom(&self) -> f32 {
+        self.used_margin_bottom
     }
     pub fn computed_width(&self) -> BoxLengthFact {
         self.computed_width
@@ -321,14 +329,14 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `32 + 32*N + 19*(N-2) + 64*(N-3)` is prepaid before any
-/// proportional join, profile scan, or allocation. Nineteen constant-size actions
-/// per child cover typed conversion and retained horizontal facts; 64 actions per
-/// normal cover Auto categories and a possible minimum-width category rerun. Each
-/// normal still has one horizontal producer invocation. The core is invoked exactly
-/// once, with computed horizontal Auto preserved for floats, whose admitted used
-/// margins are zero; computed margin observations remain unchanged. Temporary child
-/// facts are released before the source-only output is published.
+/// Facade work `40 + 32*N + 41*(N-2) + 64*(N-3)` is prepaid before any
+/// proportional join, profile scan, or allocation. Forty-one constant-size actions
+/// per child cover typed conversion and retained computed/used margin facts; 64
+/// actions per normal cover Auto width categories and a possible minimum-width
+/// category rerun. Each normal still has one horizontal producer invocation. The
+/// core is invoked exactly once, with computed Auto preserved and bounded vertical
+/// and float Auto margins given used value zero. Temporary child facts are released
+/// before the source-only output is published.
 ///
 /// # Errors
 /// Returns the first failure in the documented facade order and never publishes a
@@ -446,7 +454,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 row,
                 source,
                 height,
-                ChildMarginMode::SequenceHorizontal,
+                ChildMarginMode::Sequence,
             )
             .map_err(E::Captured)?,
         );
@@ -617,6 +625,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             used_width,
             normal_width,
             used_height,
+            used_margin_top: child.margin.used_top(),
+            used_margin_bottom: child.margin.used_bottom(),
             computed_width: row.width,
             computed_height: row.height,
             computed_margin_left: row.margin[3],
@@ -632,6 +642,17 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         BoxLengthFact::Absolute(value) => BfcHeightMode::Explicit(value.pixels),
         BoxLengthFact::Auto { .. } => {
             let last_source = node_count - 1;
+            let last_child = children.last().ok_or(E::FactInvariant {
+                source: last_source,
+                property: "principal-last",
+            })?;
+            if last_child.source_index() != last_source {
+                return Err(E::FactInvariant {
+                    source: last_source,
+                    property: "principal-source",
+                });
+            }
+            let last_in_flow_margin_bottom = last_child.used_margin_bottom();
             let last = sequence.tail().last().ok_or(E::FactInvariant {
                 source: last_source,
                 property: "sequence-tail-last",
@@ -642,16 +663,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     property: "sequence-source",
                 });
             }
-            let last_row = fact_row(facts, last_source, "margin-bottom")?;
-            let BoxLengthFact::Absolute(margin) = last_row.margin[2] else {
-                return Err(E::FactInvariant {
-                    source: last_source,
-                    property: "margin-bottom",
-                });
-            };
             BfcHeightMode::Auto {
                 last_in_flow_border_bottom: last.vertical().bottom,
-                last_in_flow_margin_bottom: margin.pixels,
+                last_in_flow_margin_bottom,
                 float_bottom: sequence.placed_float().bottom,
             }
         }
@@ -762,11 +776,11 @@ fn place_child_horizontal(
 fn facade_work(nodes: usize) -> Option<usize> {
     let children = nodes.checked_sub(2)?;
     let normals = nodes.checked_sub(3)?;
-    let child_actions = children.checked_mul(19)?;
+    let child_actions = children.checked_mul(41)?;
     let category_actions = normals.checked_mul(64)?;
     nodes
         .checked_mul(32)?
-        .checked_add(32)?
+        .checked_add(40)?
         .checked_add(child_actions)?
         .checked_add(category_actions)
 }
@@ -868,5 +882,68 @@ mod tests {
     #[test]
     fn facade_work_overflow_is_rejected() {
         assert_eq!(facade_work(usize::MAX), None);
+    }
+
+    #[test]
+    fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
+        assert_eq!(facade_work(5), Some(451));
+        assert_eq!(facade_work(6), Some(588));
+        assert_eq!(facade_work(7), Some(725));
+        assert_eq!(facade_work(2), None);
+
+        // Checked byte products reject anything beyond isize::MAX at runtime size.
+        let size = size_of::<PrincipalChildBox>();
+        let largest = isize::MAX as usize / size;
+        assert_eq!(
+            checked_bytes::<PrincipalChildBox>(largest),
+            Some(largest * size)
+        );
+        assert_eq!(checked_bytes::<PrincipalChildBox>(largest + 1), None);
+        let scratch = size_of::<ChildFacts<'_>>();
+        assert_eq!(
+            checked_bytes::<ChildFacts<'_>>(isize::MAX as usize / scratch + 1),
+            None
+        );
+
+        // Exact requested floors succeed and charge the actual capacities.
+        let (children, bytes) = allocate_children(4, 7, nz(7 + 4 * size), |children, count| {
+            children.try_reserve_exact(count)
+        })
+        .unwrap();
+        assert_eq!(children.capacity(), 4);
+        assert_eq!(bytes, 4 * size);
+        let (records, bytes) = allocate_scratch(4, nz(4 * scratch), |records, count| {
+            records.try_reserve_exact(count)
+        })
+        .unwrap();
+        assert_eq!(records.capacity(), 4);
+        assert_eq!(bytes, 4 * scratch);
+
+        // Core bytes plus requested children beyond isize::MAX or the limit fail
+        // before any reserve; the combined surplus includes core bytes.
+        let error = allocate_children(4, isize::MAX as usize, NonZeroUsize::MAX, |_, _| {
+            panic!("reserve reached beyond isize::MAX")
+        })
+        .unwrap_err();
+        assert!(matches!(error, SiblingLayoutError::Bytes));
+        let error = allocate_children(4, 1, nz(4 * size), |_, _| {
+            panic!("reserve reached beyond the combined limit")
+        })
+        .unwrap_err();
+        assert!(matches!(error, SiblingLayoutError::Bytes));
+        let error = allocate_scratch(4, nz(4 * scratch - 1), |_, _| {
+            panic!("reserve reached below the scratch floor")
+        })
+        .unwrap_err();
+        assert!(matches!(error, SiblingLayoutError::ScratchBytes));
+
+        // Real TryReserveError from each seam keeps its source.
+        let real = Vec::<u8>::new().try_reserve_exact(usize::MAX).unwrap_err();
+        let error = allocate_children(4, 7, nz(7 + 4 * size), |children, _| {
+            children.try_reserve_exact(usize::MAX)
+        })
+        .unwrap_err();
+        assert!(error.source().unwrap().is::<TryReserveError>());
+        assert_eq!(error.source().unwrap().to_string(), real.to_string());
     }
 }

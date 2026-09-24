@@ -64,22 +64,39 @@ pub struct OwnerEdges {
     pub left: f32,
 }
 /// Computed child margins for the bounded clearance inputs.
-/// Horizontal Auto remains a category, never a substituted used zero.
-/// Vertical margins retain their existing absolute-only input domain.
+/// Auto remains a category, never a substituted computed zero. The explicit
+/// used-value methods resolve only the bounded vertical category; admission and
+/// validation remain separate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChildMargins {
-    pub top: f32,
+    pub top: AutoLength,
     pub right: AutoLength,
-    pub bottom: f32,
+    pub bottom: AutoLength,
     pub left: AutoLength,
+}
+
+impl ChildMargins {
+    pub fn used_top(self) -> f32 {
+        match self.top {
+            AutoLength::Auto => 0.0,
+            AutoLength::Value(value) => value,
+        }
+    }
+
+    pub fn used_bottom(self) -> f32 {
+        match self.bottom {
+            AutoLength::Auto => 0.0,
+            AutoLength::Value(value) => value,
+        }
+    }
 }
 
 impl From<OwnerEdges> for ChildMargins {
     fn from(edges: OwnerEdges) -> Self {
         Self {
-            top: edges.top,
+            top: AutoLength::Value(edges.top),
             right: AutoLength::Value(edges.right),
-            bottom: edges.bottom,
+            bottom: AutoLength::Value(edges.bottom),
             left: AutoLength::Value(edges.left),
         }
     }
@@ -143,6 +160,7 @@ pub enum OwnerProfileReason {
     HeightKind,
     NonpositiveBlockHeight,
     NegativeMargin,
+    AutoVerticalMargin,
     AutoHorizontalMargin,
     HorizontalMargin,
     ChildDecoration,
@@ -434,19 +452,16 @@ fn child(
             OwnerProfileReason::NonpositiveBlockHeight,
         ));
     }
-    let values = [
-        AutoLength::Value(f.margin.top),
-        f.margin.right,
-        AutoLength::Value(f.margin.bottom),
-        f.margin.left,
-    ];
+    let values = [f.margin.top, f.margin.right, f.margin.bottom, f.margin.left];
     for value in values {
         if let AutoLength::Value(value) = value {
             finite(value, source, "margin")?;
         }
     }
     if !floating && margin_policy == ChildMarginPolicy::Sequence {
-        if f.margin.top < 0.0 || f.margin.bottom < 0.0 {
+        if matches!(f.margin.top, AutoLength::Value(v) if v < 0.0)
+            || matches!(f.margin.bottom, AutoLength::Value(v) if v < 0.0)
+        {
             return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
         }
     } else {
@@ -456,13 +471,20 @@ fn child(
         {
             return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
         }
-        if margin_policy == ChildMarginPolicy::Legacy
-            && values.into_iter().any(|v| matches!(v, AutoLength::Auto))
-        {
-            return Err(unsupported(
-                source,
-                OwnerProfileReason::AutoHorizontalMargin,
-            ));
+        if margin_policy == ChildMarginPolicy::Legacy {
+            if matches!(f.margin.top, AutoLength::Auto)
+                || matches!(f.margin.bottom, AutoLength::Auto)
+            {
+                return Err(unsupported(source, OwnerProfileReason::AutoVerticalMargin));
+            }
+            if matches!(f.margin.right, AutoLength::Auto)
+                || matches!(f.margin.left, AutoLength::Auto)
+            {
+                return Err(unsupported(
+                    source,
+                    OwnerProfileReason::AutoHorizontalMargin,
+                ));
+            }
         }
         if floating {
             if values
@@ -614,7 +636,7 @@ pub(super) fn place_first_float(
     input: FirstFloatInput<'_>,
 ) -> Result<FirstFloatKernel, KernelError> {
     let before_top = sum(
-        &[input.parent.content_top, input.before.margin.top],
+        &[input.parent.content_top, input.before.margin.used_top()],
         "before_top",
     )
     .map_err(|error| KernelError {
@@ -626,19 +648,20 @@ pub(super) fn place_first_float(
             source: input.before_source,
             error,
         })?;
-    let float_top =
-        sum(&[before_bottom, input.before.margin.bottom], "float_top").map_err(|error| {
-            KernelError {
-                source: input.float_source,
-                error,
-            }
-        })?;
+    let float_top = sum(
+        &[before_bottom, input.before.margin.used_bottom()],
+        "float_top",
+    )
+    .map_err(|error| KernelError {
+        source: input.float_source,
+        error,
+    })?;
     let placed_float = place_float(
         &[],
         input.parent.containing,
-        // A float admitted here has zero absolute or horizontal Auto margins;
-        // both categories have used-zero margins, so content dimensions remain
-        // the unchanged margin-box dimensions for this zero-decoration profile.
+        // A float admitted here has zero absolute or Auto margins. Both
+        // categories have used-zero margins, so content dimensions remain the
+        // unchanged margin-box dimensions for this zero-decoration profile.
         FloatRequest {
             side: match input.float.display.float {
                 Float::Right => FloatSide::Right,
@@ -684,7 +707,7 @@ pub(super) fn place_next_normal(
             MarginMember {
                 source_index: next_source,
                 side: MarginSide::Top,
-                value: next.margin.top,
+                value: next.margin.used_top(),
             },
         ];
         let hypothetical_group = group(MarginGroupId::HypotheticalPair, members, 2)?;
@@ -911,7 +934,7 @@ fn solve_region<'s>(
     .map_err(|failure| failure.error)?;
     let after = place_next_normal(
         first.before.bottom,
-        input.before.margin.bottom,
+        input.before.margin.used_bottom(),
         indices.before,
         input.after,
         after_height,
