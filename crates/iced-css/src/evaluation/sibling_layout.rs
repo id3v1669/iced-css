@@ -325,19 +325,23 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `60 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
+/// Facade work `62 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
-/// horizontal margins. Forty-three
-/// constant-size actions per child cover typed conversion and retained computed/used
-/// margin facts, including the two retained used horizontal margins; 66 actions per
-/// normal cover Auto width categories, a possible minimum-width category rerun and
-/// the two solver-margin reads. Each normal still has one horizontal producer
-/// invocation. The core is invoked exactly once, with computed Auto preserved and
-/// bounded vertical and float Auto margins given used value zero. The float's
-/// content box is the core's published content band horizontally and its published
-/// vertical content span (`sequence().float_content_vertical()`) vertically; its
-/// margin box stays `sequence().placed_float()`.
+/// horizontal margins; two more cover the float slot's `overflow: hidden` guard,
+/// which runs at most twice. Forty-three constant-size actions per child cover
+/// typed conversion and retained computed/used margin facts, including the two
+/// retained used horizontal margins; 66 actions per normal cover Auto width
+/// categories, a possible minimum-width category rerun and the two solver-margin
+/// reads. Each normal still has one horizontal producer invocation. The core is
+/// invoked exactly once, with computed Auto preserved and bounded vertical and
+/// float Auto margins given used value zero. The float also admits computed
+/// `overflow: hidden`: it already establishes a block formatting context and has no
+/// content to clip, so the value is not read after admission and no clip is
+/// published; every other child keeps `visible` only. The float's content box is
+/// the core's published content band horizontally and its published vertical
+/// content span (`sequence().float_content_vertical()`) vertically; its margin box
+/// stays `sequence().placed_float()`.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -431,12 +435,18 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
     for source in 2..node_count {
         let row = fact_row(facts, source, "row")?;
-        if row.overflow.value != BoxOverflow::Visible {
-            return Err(E::Captured(unsupported(
-                source,
-                "overflow",
-                CapturedClearanceUnsupported::ChildOverflow,
-            )));
+        // CSS2.2 §9.4.1: the float already establishes a block formatting context,
+        // and it has no content for §11.1.1 `hidden` to clip. Nothing reads it later.
+        match row.overflow.value {
+            BoxOverflow::Visible => {}
+            BoxOverflow::Hidden if source == 3 => {}
+            _ => {
+                return Err(E::Captured(unsupported(
+                    source,
+                    "overflow",
+                    CapturedClearanceUnsupported::ChildOverflow,
+                )));
+            }
         }
         let height = match row.height {
             BoxLengthFact::Absolute(value) => OwnerHeight::Explicit(value.pixels),
@@ -576,15 +586,6 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 property: "child-facts",
             })?;
         let used_height = explicit_height(child, source)?;
-        // Named fields instead of a positional tuple (NFH-T2Q-002).
-        struct Principal {
-            kind: PrincipalChildKind,
-            content: PrincipalEdges,
-            used_width: f32,
-            normal_width: Option<BlockWidthResult>,
-            used_margin_left: f32,
-            used_margin_right: f32,
-        }
         let principal = if source == 3 {
             let band = sequence.float_content();
             let span = sequence.float_content_vertical();
@@ -737,6 +738,16 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     })
 }
 
+// Named fields instead of a positional tuple (NFH-T2Q-002).
+struct Principal {
+    kind: PrincipalChildKind,
+    content: PrincipalEdges,
+    used_width: f32,
+    normal_width: Option<BlockWidthResult>,
+    used_margin_left: f32,
+    used_margin_right: f32,
+}
+
 fn admitted_display(display: DisplayResolution, floating: bool) -> bool {
     display.display == Display::Block
         && display.position == Position::Static
@@ -798,7 +809,7 @@ fn facade_work(nodes: usize) -> Option<usize> {
     let category_actions = normals.checked_mul(66)?;
     nodes
         .checked_mul(32)?
-        .checked_add(60)?
+        .checked_add(62)?
         .checked_add(child_actions)?
         .checked_add(category_actions)
 }
@@ -904,9 +915,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(481));
-        assert_eq!(facade_work(6), Some(622));
-        assert_eq!(facade_work(7), Some(763));
+        assert_eq!(facade_work(5), Some(483));
+        assert_eq!(facade_work(6), Some(624));
+        assert_eq!(facade_work(7), Some(765));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

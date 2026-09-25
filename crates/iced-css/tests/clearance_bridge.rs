@@ -189,6 +189,9 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
         ("#b1 {overflow:hidden;}", 2, "overflow", U::ChildOverflow),
         ("#b2 {overflow:hidden;}", 4, "overflow", U::ChildOverflow),
         ("#f {overflow:scroll;}", 3, "overflow", U::ChildOverflow),
+        ("#f {overflow:hidden;}", 3, "overflow", U::ChildOverflow),
+        ("#f {overflow:auto;}", 3, "overflow", U::ChildOverflow),
+        ("#f {overflow:inherit;}", 3, "overflow", U::ChildOverflow),
         (
             "#b1 {position:relative;}",
             2,
@@ -286,6 +289,27 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
             );
         });
     }
+    // LC-T2Q-001: the Legacy leading-clear restriction holds for every clearing value on B1
+    // and on the float.
+    let mut leading_clear_rows = 0;
+    for side in ["left", "right", "both"] {
+        for (id, source) in [("b1", 2), ("f", 3)] {
+            let suffix = format!("#{id} {{clear:{side};}}");
+            fixture(&format!("{CSS} {suffix}"), |p, d| {
+                let facts = evaluate_clearance_box_facts(p, d, fact_limits()).unwrap();
+                assert_eq!(
+                    build_captured_clearance_owner(&facts, geometry(p)).unwrap_err(),
+                    Core(ClearanceOwnerError::Unsupported {
+                        source,
+                        reason: OwnerProfileReason::ClearOnBeforeOrFloat,
+                    }),
+                    "{suffix}"
+                );
+            });
+            leading_clear_rows += 1;
+        }
+    }
+    assert_eq!(leading_clear_rows, 6);
 }
 
 #[test]
