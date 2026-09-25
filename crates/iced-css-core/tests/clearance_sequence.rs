@@ -820,27 +820,27 @@ fn float_auto_error_table_preserves_dynamic_profile_precedence() {
         }
     }
 
-    for (fault, reason) in [
-        (0, OwnerProfileReason::ChildDecoration),
-        (1, OwnerProfileReason::ClearOnBeforeOrFloat),
-    ] {
-        let (outer, parent, mut children) = facts(&source_nodes);
-        children[1].margin.left = AutoLength::Auto;
-        if fault == 0 {
-            children[1].border.left = 1.0;
-        } else {
-            children[1].clear = ClearSide::Left;
-        }
-        assert!(matches!(
-            build(&source_nodes, outer, parent, &children, limits(6)),
-            Err(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 3,
-                    reason: actual,
-                }
-            )) if actual == reason
-        ));
-    }
+    let (outer, parent, mut children) = facts(&source_nodes);
+    children[1].margin.left = AutoLength::Auto;
+    children[1].border.left = 1.0;
+    assert!(matches!(
+        build(&source_nodes, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported {
+                source: 3,
+                reason: OwnerProfileReason::ChildDecoration,
+            }
+        ))
+    ));
+    // Leading clear on the float is admitted and inert: the owner equals the same
+    // input with `clear: None`.
+    let (outer, parent, mut control) = facts(&source_nodes);
+    control[1].margin.left = AutoLength::Auto;
+    let mut children = control.clone();
+    children[1].clear = ClearSide::Left;
+    let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+    let control = build(&source_nodes, outer, parent, &control, limits(6)).unwrap();
+    assert_eq!(format!("{owner:?}"), format!("{control:?}"));
 
     for (fault, reason) in [
         (0, OwnerProfileReason::HeightKind),
@@ -972,18 +972,28 @@ fn signed_normal_margin_validation_is_finite_ordered_and_source_typed() {
         ))
     ));
 
+    // LC-D-001 (discriminating, LC-P-010): B1 `clear` is no longer a fault, so it
+    // masks nothing; a later source-5 fault is reported (34dbc294 reported source 2
+    // ClearOnBeforeOrFloat).
     let (outer, parent, mut children) = facts(&sources);
-    children[0].margin.left = AutoLength::Value(f32::NAN);
     children[0].clear = ClearSide::Left;
+    children[3].padding.left = 1.0;
     assert!(matches!(
         build(&sources, outer, parent, &children, limits(6)),
         Err(ClearanceSequenceError::Profile(
-            ClearanceOwnerError::InvalidNumber {
-                source: 2,
-                field: "margin",
+            ClearanceOwnerError::Unsupported {
+                source: 5,
+                reason: OwnerProfileReason::ChildDecoration,
             }
         ))
     ));
+    // B1 `clear` alone is admitted: the owner equals the `clear: None` owner.
+    let (outer, parent, control) = facts(&sources);
+    let mut children = control.clone();
+    children[0].clear = ClearSide::Left;
+    let owner = build(&sources, outer, parent, &children, limits(6)).unwrap();
+    let control = build(&sources, outer, parent, &control, limits(6)).unwrap();
+    assert_eq!(format!("{owner:?}"), format!("{control:?}"));
 
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.left = AutoLength::Value(1.0);
@@ -1891,16 +1901,19 @@ fn vertical_auto_keeps_every_sequence_exclusion() {
     );
     rejected(&|c| c[3].padding.bottom = 1.0, 5, R::ChildDecoration);
     rejected(&|c| c[1].border.top = 1.0, 3, R::ChildDecoration);
-    rejected(
-        &|c| c[0].clear = ClearSide::Left,
-        2,
-        R::ClearOnBeforeOrFloat,
-    );
-    rejected(
-        &|c| c[1].clear = ClearSide::Both,
-        3,
-        R::ClearOnBeforeOrFloat,
-    );
+    // Leading clear on B1 or the float is admitted beside every vertical Auto and is
+    // inert: each owner equals the same all-tops-Auto input without `clear`.
+    for (slot, side) in [(0, ClearSide::Left), (1, ClearSide::Both)] {
+        let (outer, parent, mut control) = facts(&source_nodes);
+        for child in &mut control {
+            child.margin.top = AutoLength::Auto;
+        }
+        let mut children = control.clone();
+        children[slot].clear = side;
+        let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+        let control = build(&source_nodes, outer, parent, &control, limits(6)).unwrap();
+        assert_eq!(format!("{owner:?}"), format!("{control:?}"), "slot {slot}");
+    }
     rejected(
         &|c| c[2].height = OwnerHeight::Explicit(0.0),
         4,
@@ -2987,5 +3000,138 @@ fn nonzero_float_vertical_margin_work_bounds_are_exact() {
                 bottom: 21.0
             }
         );
+    }
+}
+
+fn assert_leading_clear_is_inert(slot: usize) {
+    let sources = sources(6);
+    let (outer, parent, control) = facts(&sources);
+    let control = build(&sources, outer, parent, &control, limits(6)).unwrap();
+    for side in [ClearSide::Left, ClearSide::Right, ClearSide::Both] {
+        let (outer, parent, mut children) = facts(&sources);
+        children[slot].clear = side;
+        let owner = build(&sources, outer, parent, &children, limits(6))
+            .unwrap_or_else(|error| panic!("slot {slot} clear {side:?}: {error:?}"));
+        // Debug of the whole owner: sources, before, margin box, both content spans,
+        // every tail record and the receipt; finite f32 Debug is bit-exact.
+        assert_eq!(
+            format!("{owner:?}"),
+            format!("{control:?}"),
+            "slot {slot} clear {side:?}"
+        );
+        let b2 = &owner.tail()[0];
+        assert_eq!(
+            (
+                b2.vertical().top.to_bits(),
+                b2.clearance().map(f32::to_bits)
+            ),
+            (18.0_f32.to_bits(), Some((-1.0_f32).to_bits())),
+            "slot {slot} clear {side:?}"
+        );
+    }
+}
+
+#[test]
+fn leading_clear_on_b1_is_admitted_with_no_effect() {
+    assert_leading_clear_is_inert(0);
+}
+
+#[test]
+fn leading_clear_on_float_is_admitted_with_no_effect() {
+    assert_leading_clear_is_inert(1);
+}
+
+#[test]
+fn float_clear_no_longer_masks_the_float_width_domain() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].clear = ClearSide::Both;
+    let error = build_width(&sources, outer, parent, &children, f32::NAN, limits(6)).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            ClearanceSequenceError::Profile(ClearanceOwnerError::InvalidNumber {
+                source: 3,
+                field: "float_width",
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// The typed profile failure, for `assert_eq!` (NFH-T2Q-004, FVM-T2Q-001).
+fn profile_error<T: std::fmt::Debug>(
+    result: Result<T, ClearanceSequenceError>,
+) -> ClearanceOwnerError {
+    match result {
+        Err(ClearanceSequenceError::Profile(error)) => error,
+        other => panic!("expected a profile failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn leading_clear_masks_no_sequence_profile_fault_bytes_or_kernel() {
+    let sources = sources(6);
+    // B1 `clear` with its own decoration: the decoration is the fault, not the clear.
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].clear = ClearSide::Left;
+    children[0].padding.left = 1.0;
+    assert_eq!(
+        profile_error(build(&sources, outer, parent, &children, limits(6))),
+        ClearanceOwnerError::Unsupported {
+            source: 2,
+            reason: OwnerProfileReason::ChildDecoration,
+        }
+    );
+    // F `clear` with a negative bottom margin: NegativeMargin at the float.
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].clear = ClearSide::Both;
+    children[1].margin.bottom = AutoLength::Value(-1.0);
+    assert_eq!(
+        profile_error(build(&sources, outer, parent, &children, limits(6))),
+        ClearanceOwnerError::Unsupported {
+            source: 3,
+            reason: OwnerProfileReason::NegativeMargin,
+        }
+    );
+    // B1 and F `clear` with too few retained bytes: Bytes, before any kernel.
+    let tiny_bytes = ClearanceSequenceLimits {
+        retained_bytes: NonZeroUsize::MIN,
+        ..limits(6)
+    };
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].clear = ClearSide::Both;
+    children[1].clear = ClearSide::Both;
+    let result = build(&sources, outer, parent, &children, tiny_bytes);
+    assert!(
+        matches!(result, Err(ClearanceSequenceError::Bytes)),
+        "{result:?}"
+    );
+    // The same with a float whose outer-height kernel would fail: still Bytes first,
+    // and the kernel failure with sufficient bytes.
+    children[1].margin.top = AutoLength::Value(f32::from_bits(F32_2P103));
+    children[1].height = OwnerHeight::Explicit(f32::MAX);
+    let result = build(&sources, outer, parent, &children, tiny_bytes);
+    assert!(
+        matches!(result, Err(ClearanceSequenceError::Bytes)),
+        "{result:?}"
+    );
+    assert_eq!(
+        placement_failure(build(&sources, outer, parent, &children, limits(6))),
+        (3, unrepresentable("float_outer_height"))
+    );
+}
+
+#[test]
+fn leading_clear_is_inert_at_five_and_seven_sources() {
+    for count in [5, 7] {
+        let sources = sources(count);
+        let (outer, parent, control) = facts(&sources);
+        let control = build(&sources, outer, parent, &control, limits(count)).unwrap();
+        let (outer, parent, mut children) = facts(&sources);
+        children[0].clear = ClearSide::Right;
+        let owner = build(&sources, outer, parent, &children, limits(count))
+            .unwrap_or_else(|error| panic!("N{count}: {error:?}"));
+        assert_eq!(format!("{owner:?}"), format!("{control:?}"), "N{count}");
     }
 }

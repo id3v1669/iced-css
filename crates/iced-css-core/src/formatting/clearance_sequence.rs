@@ -173,7 +173,10 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// nonnegative absolute margins on all four edges (Auto is used zero). The float is
 /// placed by its margin box, formed from the content extents and all four used
 /// margins, and its content band and vertical content span are published
-/// separately. Work `190 + 8*N + N*(N-1)/2 + 24*(N-4) + 45*(N-2)` is prepaid,
+/// separately. B1 and the float admit any computed `clear`. No float precedes either
+/// of them in the parent's new block formatting context, so CSS2.2 §9.5.2 and float
+/// constraint #10 select nothing; the value is not read after admission. Work
+/// `190 + 8*N + N*(N-1)/2 + 24*(N-4) + 45*(N-2)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent, content-band and vertical content stages.
 ///
@@ -270,7 +273,7 @@ fn build_with_reserve<'s>(
     validate_parent(input.parent, 1).map_err(profile)?;
     for (offset, facts) in input.children.iter().copied().enumerate() {
         let source = offset + 2;
-        validate_sequence_child(facts, source, source == 3, source >= 4).map_err(profile)?;
+        validate_sequence_child(facts, source, source == 3).map_err(profile)?;
     }
     validate_sequence_float_width(input.float_width, 3).map_err(profile)?;
 

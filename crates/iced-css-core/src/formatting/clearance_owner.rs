@@ -189,6 +189,10 @@ pub enum OwnerProfileReason {
     /// Under `ChildMarginPolicy::Legacy`: any nonzero absolute float margin on any
     /// edge. Not produced under `ChildMarginPolicy::Sequence`.
     FloatMargin,
+    /// Legacy fixed and nested owners (and so the captured-Legacy bridge) only:
+    /// `clear` other than none on B1 or the float. Not produced by the Sequence
+    /// owner: no float precedes either box in the parent's new block formatting
+    /// context, so CSS2.2 §9.5.2 gives their `clear` no effect.
     ClearOnBeforeOrFloat,
     FloatTooWide,
 }
@@ -450,7 +454,6 @@ fn child(
     f: ChildFacts<'_>,
     source: usize,
     floating: bool,
-    after: bool,
     margin_policy: ChildMarginPolicy,
 ) -> Result<f32, ClearanceOwnerError> {
     display(f.display, source, floating)?;
@@ -530,12 +533,6 @@ fn child(
             return Err(unsupported(source, OwnerProfileReason::ChildDecoration));
         }
     }
-    if !after && f.clear != ClearSide::None {
-        return Err(unsupported(
-            source,
-            OwnerProfileReason::ClearOnBeforeOrFloat,
-        ));
-    }
     Ok(height)
 }
 fn sum(terms: &[f32], stage: &'static str) -> Result<f32, ClearanceOwnerError> {
@@ -592,16 +589,23 @@ pub(super) fn validate_child(
     floating: bool,
     after: bool,
 ) -> Result<f32, ClearanceOwnerError> {
-    child(facts, source, floating, after, ChildMarginPolicy::Legacy)
+    let height = child(facts, source, floating, ChildMarginPolicy::Legacy)?;
+    // Legacy owners keep the four-source restriction on B1 and the float.
+    if !after && facts.clear != ClearSide::None {
+        return Err(unsupported(
+            source,
+            OwnerProfileReason::ClearOnBeforeOrFloat,
+        ));
+    }
+    Ok(height)
 }
 
 pub(super) fn validate_sequence_child(
     facts: ChildFacts<'_>,
     source: usize,
     floating: bool,
-    after: bool,
 ) -> Result<f32, ClearanceOwnerError> {
-    child(facts, source, floating, after, ChildMarginPolicy::Sequence)
+    child(facts, source, floating, ChildMarginPolicy::Sequence)
 }
 
 pub(super) fn validate_float_width(

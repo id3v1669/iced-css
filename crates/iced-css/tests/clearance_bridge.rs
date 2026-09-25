@@ -266,6 +266,16 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
             1,
             OwnerProfileReason::ParentIsolation,
         ),
+        (
+            "#b1 {clear:left;}",
+            2,
+            OwnerProfileReason::ClearOnBeforeOrFloat,
+        ),
+        (
+            "#f {clear:both;}",
+            3,
+            OwnerProfileReason::ClearOnBeforeOrFloat,
+        ),
     ] {
         fixture(&format!("{CSS} {suffix}"), |p, d| {
             let facts = evaluate_clearance_box_facts(p, d, fact_limits()).unwrap();

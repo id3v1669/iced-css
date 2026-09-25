@@ -1481,3 +1481,71 @@ fn legacy_vertical_auto_is_rejected_for_every_role_in_fixed_and_nested_owners() 
         );
     }
 }
+
+fn legacy_unsupported(
+    source: usize,
+    reason: OwnerProfileReason,
+) -> Result<(), ClearanceOwnerError> {
+    Err(ClearanceOwnerError::Unsupported { source, reason })
+}
+
+#[test]
+fn legacy_nested_owner_keeps_the_leading_clear_restriction() {
+    assert_eq!(
+        legacy_error(true, |facts| facts.before.clear = ClearSide::Left),
+        legacy_unsupported(2, OwnerProfileReason::ClearOnBeforeOrFloat)
+    );
+}
+
+#[test]
+fn legacy_clear_check_follows_the_child_profile_checks() {
+    for nested in [false, true] {
+        let offset = usize::from(nested);
+        assert_eq!(
+            legacy_error(nested, |facts| {
+                facts.before.clear = ClearSide::Left;
+                facts.before.padding.top = 1.0;
+            }),
+            legacy_unsupported(1 + offset, OwnerProfileReason::ChildDecoration),
+            "nested {nested}"
+        );
+    }
+}
+
+#[test]
+fn legacy_clear_check_precedes_later_children() {
+    for nested in [false, true] {
+        let offset = usize::from(nested);
+        assert_eq!(
+            legacy_error(nested, |facts| {
+                facts.before.clear = ClearSide::Left;
+                facts.float.margin.bottom = AutoLength::Value(-1.0);
+            }),
+            legacy_unsupported(1 + offset, OwnerProfileReason::ClearOnBeforeOrFloat),
+            "nested {nested}"
+        );
+        assert_eq!(
+            legacy_error(nested, |facts| {
+                facts.float.clear = ClearSide::Both;
+                facts.after.margin.top = AutoLength::Value(-1.0);
+            }),
+            legacy_unsupported(2 + offset, OwnerProfileReason::ClearOnBeforeOrFloat),
+            "nested {nested}"
+        );
+    }
+}
+
+#[test]
+fn legacy_clear_check_precedes_the_float_width_check() {
+    for nested in [false, true] {
+        let offset = usize::from(nested);
+        assert_eq!(
+            legacy_error(nested, |facts| {
+                facts.float.clear = ClearSide::Both;
+                facts.float_width = 101.0;
+            }),
+            legacy_unsupported(2 + offset, OwnerProfileReason::ClearOnBeforeOrFloat),
+            "nested {nested}"
+        );
+    }
+}

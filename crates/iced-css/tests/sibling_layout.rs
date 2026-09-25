@@ -3820,16 +3820,6 @@ fn dynamic_child_conversion_precedes_float_width_extraction() {
 fn parent_and_child_profile_errors_preserve_causes_and_source_indices() {
     for (suffix, expected_source, expected_reason) in [
         (
-            "#b1 { clear:left; }",
-            2,
-            OwnerProfileReason::ClearOnBeforeOrFloat,
-        ),
-        (
-            "#f { clear:both; }",
-            3,
-            OwnerProfileReason::ClearOnBeforeOrFloat,
-        ),
-        (
             "#b3 { margin-top:-1px; }",
             5,
             OwnerProfileReason::NegativeMargin,
@@ -3865,6 +3855,27 @@ fn parent_and_child_profile_errors_preserve_causes_and_source_indices() {
                 )) if source == expected_source && reason == expected_reason
             ));
         });
+    }
+
+    // Leading clear on B1 or the float is admitted and inert: the layout equals the
+    // same CSS without the `clear` declaration, and only the targeted fact differs.
+    let base = "#f { margin-left:auto; margin-right:auto; }";
+    for (clear_rule, source, value) in [
+        ("#b1 { clear:left; }", 2, ClearSide::Left),
+        ("#f { clear:both; }", 3, ClearSide::Both),
+    ] {
+        assert_leading_clear_case(
+            6,
+            base,
+            &format!("{base} {clear_rule}"),
+            &[(
+                source,
+                KeywordBoxFact {
+                    value,
+                    origin: SPECIFIED,
+                },
+            )],
+        );
     }
 }
 
@@ -6792,14 +6803,6 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             profile(3, OwnerProfileReason::ChildDecoration),
         ),
         (
-            "#b1 { margin-top:auto; clear:left; }",
-            profile(2, OwnerProfileReason::ClearOnBeforeOrFloat),
-        ),
-        (
-            "#f { margin-bottom:auto; clear:both; }",
-            profile(3, OwnerProfileReason::ClearOnBeforeOrFloat),
-        ),
-        (
             "#b1 { margin-bottom:auto; height:0; }",
             profile(2, OwnerProfileReason::NonpositiveBlockHeight),
         ),
@@ -6819,6 +6822,36 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             .unwrap_err();
             assert_eq!(format!("{error:?}"), format!("{expected:?}"), "{rule}");
         });
+    }
+
+    // Leading clear beside a vertical Auto is admitted and inert: the layout equals
+    // the same CSS without the `clear` declaration.
+    for (control_rule, rule, source, value) in [
+        (
+            "#b1 { margin-top:auto; }",
+            "#b1 { margin-top:auto; clear:left; }",
+            2,
+            ClearSide::Left,
+        ),
+        (
+            "#f { margin-bottom:auto; }",
+            "#f { margin-bottom:auto; clear:both; }",
+            3,
+            ClearSide::Both,
+        ),
+    ] {
+        assert_leading_clear_case(
+            6,
+            control_rule,
+            rule,
+            &[(
+                source,
+                KeywordBoxFact {
+                    value,
+                    origin: SPECIFIED,
+                },
+            )],
+        );
     }
 
     // Nonzero vertical float margins beside a vertical Auto are admitted:
@@ -8638,5 +8671,391 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
             assert_eq!(float.used_margin_top().to_bits(), 0x4040_0000);
             assert_eq!(float.used_margin_bottom().to_bits(), 0x4080_0000);
         });
+    }
+}
+
+// Every observation except the children's computed `clear`, which is compared separately.
+fn leading_clear_view(layout: &CapturedSiblingLayout<'_>) -> Vec<String> {
+    let mut view = vec![
+        format!("{:?}", layout.sequence()),
+        format!("{:?}", layout.parent()),
+        format!("{:?}", layout.receipt()),
+    ];
+    for child in layout.children() {
+        view.push(format!(
+            "{:?}",
+            (
+                child.source_index(),
+                child.containing_source_index(),
+                child.kind(),
+                child.content(),
+                child.padding(),
+                child.border(),
+                child.used_width(),
+                child.normal_width(),
+                child.used_margin_left(),
+                child.used_margin_right(),
+                child.used_height(),
+                child.used_margin_top(),
+            )
+        ));
+        view.push(format!(
+            "{:?}",
+            (
+                child.used_margin_bottom(),
+                child.computed_width(),
+                child.computed_height(),
+                child.computed_margin_left(),
+                child.computed_margin_right(),
+                child.margin_top(),
+                child.margin_bottom(),
+            )
+        ));
+    }
+    view
+}
+
+type LeadingClears = Vec<(usize, KeywordBoxFact<ClearSide>)>;
+
+fn leading_clear_layout(nodes: usize, css: &str) -> (Vec<String>, LeadingClears) {
+    let mut out = None;
+    sibling_fixture(nodes, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap_or_else(|error| panic!("{css}: {error:?}"));
+        let clears = layout
+            .children()
+            .iter()
+            .map(|child| (child.source_index(), child.clear()))
+            .collect();
+        out = Some((leading_clear_view(&layout), clears));
+    });
+    out.unwrap()
+}
+
+fn assert_leading_clear_case(
+    nodes: usize,
+    control_rule: &str,
+    rule: &str,
+    expected: &[(usize, KeywordBoxFact<ClearSide>)],
+) {
+    let (control_view, control_clears) =
+        leading_clear_layout(nodes, &format!("{} {control_rule}", baseline_css()));
+    let (view, clears) = leading_clear_layout(nodes, &format!("{} {rule}", baseline_css()));
+    assert_eq!(view, control_view, "{rule}");
+    for ((source, fact), (control_source, control_fact)) in clears.iter().zip(&control_clears) {
+        assert_eq!(source, control_source, "{rule}");
+        match expected.iter().find(|(s, _)| s == source) {
+            Some((_, want)) => assert_eq!(fact, want, "{rule}: source {source}"),
+            None => assert_eq!(fact, control_fact, "{rule}: source {source}"),
+        }
+    }
+}
+
+const SPECIFIED: BoxFactOrigin = BoxFactOrigin::Specified;
+
+#[test]
+fn css_b1_clear_left_matches_the_clear_none_layout() {
+    let rule = "#b1 { clear:left; }";
+    assert_leading_clear_case(
+        6,
+        "",
+        rule,
+        &[(
+            2,
+            KeywordBoxFact {
+                value: ClearSide::Left,
+                origin: SPECIFIED,
+            },
+        )],
+    );
+    // Literal red-model geometry, so the equivalence cannot pass on two equally wrong
+    // layouts.
+    sibling_fixture(
+        6,
+        &format!("{} {rule}", baseline_css()),
+        |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let layout = default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits(),
+            )
+            .unwrap_or_else(|error| panic!("{rule}: {error:?}"));
+            let b1 = layout.children()[0].content();
+            assert_eq!(
+                (b1.top.to_bits(), b1.bottom.to_bits()),
+                (11.0_f32.to_bits(), 12.0_f32.to_bits()),
+                "{rule}"
+            );
+            let placed = layout.sequence().placed_float();
+            assert_eq!(
+                [placed.left, placed.right, placed.top, placed.bottom].map(f32::to_bits),
+                [0.0_f32, 10.0, 16.0, 18.0].map(f32::to_bits),
+                "{rule}"
+            );
+            let tail = layout.sequence().tail();
+            assert_eq!(
+                (
+                    tail[0].vertical().top.to_bits(),
+                    tail[0].vertical().bottom.to_bits(),
+                    tail[0].clearance().map(f32::to_bits),
+                    tail[0].zero_clearance_top().map(f32::to_bits)
+                ),
+                (
+                    18.0_f32.to_bits(),
+                    19.0_f32.to_bits(),
+                    Some(0xbf80_0000),
+                    Some(19.0_f32.to_bits())
+                ),
+                "{rule}"
+            );
+            assert_eq!(
+                (
+                    tail[1].vertical().top.to_bits(),
+                    tail[1].vertical().bottom.to_bits(),
+                    tail[1].clearance()
+                ),
+                (22.0_f32.to_bits(), 23.0_f32.to_bits(), None),
+                "{rule}"
+            );
+            let height = layout.parent().height();
+            assert_eq!(
+                (
+                    height.content_bottom.to_bits(),
+                    height.used_height.to_bits(),
+                    height.auto_extent.unwrap().float_extended
+                ),
+                (27.0_f32.to_bits(), 0x4180_0000, false),
+                "{rule}"
+            );
+        },
+    );
+}
+
+#[test]
+fn css_right_float_clear_right_matches_the_clear_none_layout() {
+    assert_leading_clear_case(
+        6,
+        "#f { float:right; }",
+        "#f { float:right; clear:right; }",
+        &[(
+            3,
+            KeywordBoxFact {
+                value: ClearSide::Right,
+                origin: SPECIFIED,
+            },
+        )],
+    );
+}
+
+#[test]
+fn css_inherited_leading_clear_matches_the_parent_clear_control() {
+    let inherited = KeywordBoxFact {
+        value: ClearSide::Right,
+        origin: BoxFactOrigin::Inherited { original_parent: 4 },
+    };
+    assert_leading_clear_case(
+        6,
+        "#p { clear:right; }",
+        "#p { clear:right; } #b1, #f { clear:inherit; }",
+        &[(2, inherited), (3, inherited)],
+    );
+}
+
+#[test]
+fn css_b1_clear_no_longer_masks_a_later_negative_margin() {
+    let rule = "#b1 { clear:left; } #b3 { margin-top:-1px; }";
+    sibling_fixture(
+        6,
+        &format!("{} {rule}", baseline_css()),
+        |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let error = default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits(),
+            )
+            .unwrap_err();
+            let expected = SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 5,
+                    reason: OwnerProfileReason::NegativeMargin,
+                },
+            ));
+            assert_eq!(format!("{error:?}"), format!("{expected:?}"), "{rule}");
+        },
+    );
+}
+
+// Leading clear Task2: the facade matrix, the stage rows and the receipts control.
+
+/// The source-count rule, identical on both sides of every comparison: N5 matches the
+/// numeric `base_css(5)` and N7 gives B4 its numeric fixture (LC-P-005).
+fn leading_clear_source_rule(nodes: usize) -> &'static str {
+    match nodes {
+        5 => "#b2 { margin-bottom:0px; }",
+        6 => "",
+        7 => "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }",
+        _ => panic!("no leading-clear fixture for N{nodes}"),
+    }
+}
+
+fn clear_keyword(keyword: &str) -> ClearSide {
+    match keyword {
+        "none" => ClearSide::None,
+        "left" => ClearSide::Left,
+        "right" => ClearSide::Right,
+        "both" => ClearSide::Both,
+        _ => panic!("unknown clear keyword {keyword}"),
+    }
+}
+
+/// The 15 (B1, F) `clear` pairs other than (none, none).
+fn leading_clear_pairs() -> Vec<(&'static str, &'static str)> {
+    let keywords = ["none", "left", "right", "both"];
+    let pairs: Vec<_> = keywords
+        .iter()
+        .flat_map(|b1| keywords.iter().map(move |f| (*b1, *f)))
+        .filter(|pair| *pair != ("none", "none"))
+        .collect();
+    assert_eq!(pairs.len(), 15);
+    pairs
+}
+
+/// Every pair against the same control; both declared members, `none` included, are
+/// expected `Specified` facts (LC-P-005). Returns the number of comparisons.
+fn assert_leading_clear_pairs(nodes: usize, control_rule: &str) -> usize {
+    let mut comparisons = 0;
+    for (b1, f) in leading_clear_pairs() {
+        let rule = format!("{control_rule} #b1 {{ clear:{b1}; }} #f {{ clear:{f}; }}");
+        let fact = |keyword| KeywordBoxFact {
+            value: clear_keyword(keyword),
+            origin: SPECIFIED,
+        };
+        assert_leading_clear_case(nodes, control_rule, &rule, &[(2, fact(b1)), (3, fact(f))]);
+        comparisons += 1;
+    }
+    comparisons
+}
+
+/// N × float side × P height, 60 comparisons per N.
+fn assert_leading_clear_matrix(nodes: usize) {
+    let mut comparisons = 0;
+    for side in ["left", "right"] {
+        for height in ["", "#p { height:20px; }"] {
+            let control = format!(
+                "{} #f {{ float:{side}; }} {height}",
+                leading_clear_source_rule(nodes)
+            );
+            comparisons += assert_leading_clear_pairs(nodes, &control);
+        }
+    }
+    assert_eq!(comparisons, 60);
+}
+
+#[test]
+fn leading_clear_matrix_n5_matches_the_clear_none_layouts() {
+    assert_leading_clear_matrix(5);
+}
+
+#[test]
+fn leading_clear_matrix_n6_matches_the_clear_none_layouts() {
+    assert_leading_clear_matrix(6);
+}
+
+#[test]
+fn leading_clear_matrix_n7_matches_the_clear_none_layouts() {
+    assert_leading_clear_matrix(7);
+}
+
+#[test]
+fn leading_clear_beside_a_nonclearing_b2_matches_the_clear_none_layouts() {
+    let mut comparisons = 0;
+    for side in ["left", "right"] {
+        let control = format!("#b2 {{ clear:none; }} #f {{ float:{side}; }}");
+        comparisons += assert_leading_clear_pairs(6, &control);
+    }
+    assert_eq!(comparisons, 30);
+}
+
+#[test]
+fn leading_clear_keeps_fvm_targeted_01_unsupported_equality() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 5,
+        rule: "#b2{margin-top:10px;margin-bottom:0px;} #f{margin-top:1px;margin-bottom:3px;} #b1{clear:both;} #f{clear:left;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x40000000, false, NfhOrigin::Specified),
+            (0x3f800000, false, NfhOrigin::Specified),
+            (0x40400000, false, NfhOrigin::Specified),
+        ],
+        source: 4,
+        error: "UnsupportedEquality",
+    });
+}
+
+#[test]
+fn leading_clear_keeps_fvm_targeted_34_float_outer_width_precedence() {
+    assert_fvm_targeted_failure(FvmFailure {
+        nodes: 6,
+        rule: "#f{width:340282346638528859811704183484516925440px;margin-left:10141204801825835211973625643008px;height:340282346638528859811704183484516925440px;margin-top:10141204801825835211973625643008px;} #b1{clear:right;} #f{clear:both;}",
+        outer: (f32::from_bits(0x00000000), f32::from_bits(0x42c80000)),
+        facts: [
+            (0x7f7fffff, false, NfhOrigin::Specified),
+            (0x73000000, false, NfhOrigin::Specified),
+            (0x00000000, false, NfhOrigin::Initial),
+        ],
+        source: 3,
+        error: "Unrepresentable { stage: \"float_outer_width\" }",
+    });
+}
+
+#[test]
+fn leading_clear_both_keeps_the_none_control_receipts() {
+    for nodes in [5, 6, 7] {
+        let receipts = |rule: &str| {
+            let css = format!("{} {rule}", baseline_css());
+            let mut out = None;
+            sibling_fixture(nodes, &css, |projection, display| {
+                let facts =
+                    evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+                let layout = default_outer_layout(
+                    &facts,
+                    &projection.nodes()[0],
+                    0.0,
+                    100.0,
+                    10.0,
+                    layout_limits(),
+                )
+                .unwrap_or_else(|error| panic!("{rule}: {error:?}"));
+                out = Some((
+                    layout.receipt(),
+                    format!("{:?}", layout.sequence().receipt()),
+                ));
+            });
+            out.unwrap()
+        };
+        let control = leading_clear_source_rule(nodes);
+        assert_eq!(
+            receipts(&format!("{control} #b1, #f {{ clear:both; }}")),
+            receipts(control),
+            "N{nodes}"
+        );
     }
 }
