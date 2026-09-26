@@ -328,7 +328,7 @@ impl std::error::Error for SiblingLayoutError {
 /// Facade work `62 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
-/// horizontal margins; two more cover the float slot's `overflow: hidden` guard,
+/// horizontal margins; two more cover the float slot's `hidden`/`auto` guard,
 /// which runs at most twice. Forty-three constant-size actions per child cover
 /// typed conversion and retained computed/used margin facts, including the two
 /// retained used horizontal margins; 66 actions per normal cover Auto width
@@ -336,9 +336,10 @@ impl std::error::Error for SiblingLayoutError {
 /// reads. Each normal still has one horizontal producer invocation. The core is
 /// invoked exactly once, with computed Auto preserved and bounded vertical and
 /// float Auto margins given used value zero. The float also admits computed
-/// `overflow: hidden`: it already establishes a block formatting context and has no
-/// content to clip, so the value is not read after admission and no clip is
-/// published; every other child keeps `visible` only. The float's content box is
+/// `overflow: hidden` or `auto`: it already establishes a block formatting context
+/// and has no content, so nothing is clipped, nothing overflows and `auto` presents
+/// no scrollbar. The value is not read after admission and no clip or scroll state
+/// is published; every other child keeps `visible` only. The float's content box is
 /// the core's published content band horizontally and its published vertical
 /// content span (`sequence().float_content_vertical()`) vertically; its margin box
 /// stays `sequence().placed_float()`.
@@ -435,11 +436,12 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
     for source in 2..node_count {
         let row = fact_row(facts, source, "row")?;
-        // CSS2.2 §9.4.1: the float already establishes a block formatting context,
-        // and it has no content for §11.1.1 `hidden` to clip. Nothing reads it later.
+        // CSS2.2 §9.4.1: the float already establishes a block formatting context.
+        // It has no content, so §11.1.1 `hidden` clips nothing and `auto` has no
+        // overflow to scroll. Nothing reads the value later.
         match row.overflow.value {
             BoxOverflow::Visible => {}
-            BoxOverflow::Hidden if source == 3 => {}
+            BoxOverflow::Hidden | BoxOverflow::Auto if source == 3 => {}
             _ => {
                 return Err(E::Captured(unsupported(
                     source,
