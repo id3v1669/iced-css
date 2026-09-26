@@ -192,6 +192,7 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
         ("#f {overflow:hidden;}", 3, "overflow", U::ChildOverflow),
         ("#f {overflow:auto;}", 3, "overflow", U::ChildOverflow),
         ("#b1 {overflow:inherit;}", 2, "overflow", U::ChildOverflow),
+        ("#b1 {overflow:auto;}", 2, "overflow", U::ChildOverflow),
         ("#b2 {overflow:inherit;}", 4, "overflow", U::ChildOverflow),
         ("#b2 {overflow:auto;}", 4, "overflow", U::ChildOverflow),
         ("#f {overflow:inherit;}", 3, "overflow", U::ChildOverflow),

@@ -228,6 +228,11 @@ pub enum ClearanceOwnerError {
         stage: &'static str,
     },
     UnsupportedEquality,
+    /// Sequence owner only: B1 establishes a new block formatting context
+    /// (`ChildContext::OtherNewBfc`) and its border box is not strictly above the
+    /// float's margin box (`placed_float().top <= before().bottom`). With admitted
+    /// nonnegative margins this is edge contact, which stays unsupported (CSS2.2 §9.5).
+    NewBfcFloatContact,
     /// The presence classifier required clearance without a selected float.
     /// This indicates an internal primitive contract inconsistency.
     MissingRequiredFloat,
@@ -457,12 +462,18 @@ fn child(
     margin_policy: ChildMarginPolicy,
 ) -> Result<f32, ClearanceOwnerError> {
     display(f.display, source, floating)?;
+    // Sequence B1 (source 2) may establish a new block formatting context (CSS2.2
+    // §9.4.1); the Sequence owner then rejects it unless it lies strictly above the
+    // float. Legacy owners keep the fixed contexts.
     if f.context
         != if floating {
             ChildContext::FloatBfc
         } else {
             ChildContext::OrdinaryNonBfc
         }
+        && !(margin_policy == ChildMarginPolicy::Sequence
+            && source == 2
+            && f.context == ChildContext::OtherNewBfc)
     {
         return Err(unsupported(source, OwnerProfileReason::ChildContext));
     }

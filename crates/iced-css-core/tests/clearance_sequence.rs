@@ -1151,7 +1151,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 399, 337), (6, 481, 419), (7, 564, 502)] {
+    for (count, work, old_work) in [(5, 419, 337), (6, 501, 419), (7, 584, 502)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1179,7 +1179,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            190 + 8 * count + count * (count - 1) / 2 + 24 * tail_count + 45 * child_count
+            210 + 8 * count + count * (count - 1) / 2 + 24 * tail_count + 45 * child_count
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert_eq!(
@@ -1255,7 +1255,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(480).unwrap();
+    short.work = NonZeroUsize::new(500).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1304,7 +1304,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].padding.left = 1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(480).unwrap();
+    one_short.work = NonZeroUsize::new(500).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -2126,7 +2126,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 399, 337), (6, 481, 419), (7, 564, 502)] {
+    for (count, work, old_work) in [(5, 419, 337), (6, 501, 419), (7, 584, 502)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2573,7 +2573,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 399, 337), (6, 481, 419), (7, 564, 502)] {
+    for (count, work, old_work) in [(5, 419, 337), (6, 501, 419), (7, 584, 502)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -2949,7 +2949,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 399, 337), (6, 481, 419), (7, 564, 502)] {
+    for (count, work, old_work) in [(5, 419, 337), (6, 501, 419), (7, 584, 502)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3133,5 +3133,118 @@ fn leading_clear_is_inert_at_five_and_seven_sources() {
         let owner = build(&sources, outer, parent, &children, limits(count))
             .unwrap_or_else(|error| panic!("N{count}: {error:?}"));
         assert_eq!(format!("{owner:?}"), format!("{control:?}"), "N{count}");
+    }
+}
+
+// Leading overflow: a Sequence B1 labelled `OtherNewBfc` is admitted strictly above the float and
+// rejected at edge contact (LO plan).
+
+/// B1's border bottom at exactly 2^24 (content top 11 plus this height), where a 1px bottom margin
+/// rounds away.
+const B1_HEIGHT_TO_2P24: f32 = 16_777_205.0;
+
+#[test]
+fn sequence_b1_other_new_bfc_strictly_above_the_float_matches_ordinary() {
+    for count in [5, 6, 7] {
+        let sources = sources(count);
+        let (outer, parent, control) = facts(&sources);
+        let control = build(&sources, outer, parent, &control, limits(count)).unwrap();
+        let (outer, parent, mut children) = facts(&sources);
+        children[0].context = ChildContext::OtherNewBfc;
+        let owner = build(&sources, outer, parent, &children, limits(count))
+            .unwrap_or_else(|error| panic!("N{count}: {error:?}"));
+        assert_eq!(format!("{owner:?}"), format!("{control:?}"), "N{count}");
+        assert!(owner.placed_float().top > owner.before().bottom, "N{count}");
+    }
+}
+
+#[test]
+fn sequence_b1_other_new_bfc_contact_is_typed() {
+    let sources = sources(6);
+    let mut rows = 0;
+    for (height, bottom) in [
+        (1.0, AutoLength::Value(0.0)),
+        (1.0, AutoLength::Auto),
+        (1.0, AutoLength::Value(-0.0)),
+        (B1_HEIGHT_TO_2P24, AutoLength::Value(1.0)),
+    ] {
+        let (outer, parent, mut children) = facts(&sources);
+        children[0].height = OwnerHeight::Explicit(height);
+        children[0].margin.bottom = bottom;
+        let control = build(&sources, outer, parent, &children, limits(6))
+            .unwrap_or_else(|error| panic!("{bottom:?}: {error:?}"));
+        assert_eq!(
+            control.placed_float().top.to_bits(),
+            control.before().bottom.to_bits(),
+            "{bottom:?}"
+        );
+        children[0].context = ChildContext::OtherNewBfc;
+        assert_eq!(
+            placement_failure(build(&sources, outer, parent, &children, limits(6))),
+            (2, ClearanceOwnerError::NewBfcFloatContact),
+            "{bottom:?}"
+        );
+        rows += 1;
+    }
+    assert_eq!(rows, 4);
+}
+
+#[test]
+fn sequence_b1_contact_precedes_a_tail_equality() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].margin.bottom = AutoLength::Value(0.0);
+    children[2].margin.top = AutoLength::Value(2.0);
+    assert_eq!(
+        placement_failure(build(&sources, outer, parent, &children, limits(6))),
+        (4, ClearanceOwnerError::UnsupportedEquality)
+    );
+    children[0].context = ChildContext::OtherNewBfc;
+    assert_eq!(
+        placement_failure(build(&sources, outer, parent, &children, limits(6))),
+        (2, ClearanceOwnerError::NewBfcFloatContact)
+    );
+}
+
+// Leading overflow Task2: the context exception stays at B1, and the work bound is exact.
+
+#[test]
+fn sequence_other_new_bfc_stays_rejected_off_b1() {
+    let sources = sources(6);
+    let mut rows = 0;
+    for (slot, source) in [(1, 3), (2, 4), (3, 5)] {
+        let (outer, parent, mut children) = facts(&sources);
+        children[slot].context = ChildContext::OtherNewBfc;
+        assert_eq!(
+            profile_error(build(&sources, outer, parent, &children, limits(6))),
+            ClearanceOwnerError::Unsupported {
+                source,
+                reason: OwnerProfileReason::ChildContext,
+            }
+        );
+        rows += 1;
+    }
+    assert_eq!(rows, 3);
+}
+
+#[test]
+fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
+    for (count, work) in [(5, 419), (6, 501), (7, 584)] {
+        let sources = sources(count);
+        let (outer, parent, mut children) = facts(&sources);
+        children[0].context = ChildContext::OtherNewBfc;
+        let mut limit = limits(count);
+        limit.work = NonZeroUsize::new(work - 1).unwrap();
+        assert!(matches!(
+            build(&sources, outer, parent, &children, limit),
+            Err(ClearanceSequenceError::Work)
+        ));
+        limit.work = NonZeroUsize::new(work).unwrap();
+        let owner = build(&sources, outer, parent, &children, limit).unwrap();
+        assert_eq!(owner.receipt().work, work);
+        assert_eq!(
+            work,
+            210 + 8 * count + count * (count - 1) / 2 + 24 * (count - 4) + 45 * (count - 2)
+        );
     }
 }

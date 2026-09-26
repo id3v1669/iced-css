@@ -30,8 +30,8 @@ use iced_css_core::{
             classify_clearance, lowest_clearance_float_bottom,
         },
         clearance_owner::{
-            ChildFacts, OuterFacts, OwnerContent, OwnerGenerated, OwnerHeight, ParentBfc,
-            ParentFacts,
+            ChildContext, ChildFacts, OuterFacts, OwnerContent, OwnerGenerated, OwnerHeight,
+            ParentBfc, ParentFacts,
         },
         clearance_sequence::{
             ClearanceSequenceError, ClearanceSequenceInput, ClearanceSequenceLimits,
@@ -325,21 +325,24 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `62 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
+/// Facade work `68 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
-/// horizontal margins; two more cover the float slot's `hidden`/`auto` guard,
-/// which runs at most twice. Forty-three constant-size actions per child cover
+/// horizontal margins; three more cover the `hidden`/`auto` guard of B1 and the float,
+/// which runs at most three times, and five more cover B1's context relabel after the
+/// guard loop. Forty-three constant-size actions per child cover
 /// typed conversion and retained computed/used margin facts, including the two
 /// retained used horizontal margins; 66 actions per normal cover Auto width
 /// categories, a possible minimum-width category rerun and the two solver-margin
 /// reads. Each normal still has one horizontal producer invocation. The core is
 /// invoked exactly once, with computed Auto preserved and bounded vertical and
-/// float Auto margins given used value zero. The float also admits computed
-/// `overflow: hidden` or `auto`: it already establishes a block formatting context
-/// and has no content, so nothing is clipped, nothing overflows and `auto` presents
-/// no scrollbar. The value is not read after admission and no clip or scroll state
-/// is published; every other child keeps `visible` only. The float's content box is
+/// float Auto margins given used value zero. B1 and the float also admit computed
+/// `overflow: hidden` or `auto`. Each then establishes a block formatting context and
+/// has no content, so nothing is clipped, nothing overflows and `auto` presents no
+/// scrollbar. The facade then labels B1 `ChildContext::OtherNewBfc`, and the core
+/// rejects it unless its border box lies strictly above the float's margin box
+/// (CSS2.2 §9.5). No clip or scroll state is published, and the tails keep `visible`
+/// only. The float's content box is
 /// the core's published content band horizontally and its published vertical
 /// content span (`sequence().float_content_vertical()`) vertically; its margin box
 /// stays `sequence().placed_float()`.
@@ -436,12 +439,14 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
     for source in 2..node_count {
         let row = fact_row(facts, source, "row")?;
-        // CSS2.2 §9.4.1: the float already establishes a block formatting context.
-        // It has no content, so §11.1.1 `hidden` clips nothing and `auto` has no
-        // overflow to scroll. Nothing reads the value later.
+        // CSS2.2 §9.4.1: the float establishes a block formatting context, and so does
+        // B1 (source 2) with `hidden` or `auto`; B1's value is read once more after this
+        // loop to label its context, and the core then requires B1 strictly above the
+        // float (§9.5). Neither has content, so §11.1.1 `hidden` clips nothing and `auto`
+        // has no overflow to scroll.
         match row.overflow.value {
             BoxOverflow::Visible => {}
-            BoxOverflow::Hidden | BoxOverflow::Auto if source == 3 => {}
+            BoxOverflow::Hidden | BoxOverflow::Auto if source <= 3 => {}
             _ => {
                 return Err(E::Captured(unsupported(
                     source,
@@ -472,6 +477,19 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             )
             .map_err(E::Captured)?,
         );
+    }
+
+    // CSS2.2 §9.4.1: a B1 admitted above with `hidden` or `auto` establishes a new block
+    // formatting context. The shared conversion labels normals by position, so the
+    // Sequence facade, which alone admits such a B1, sets its context here.
+    if fact_row(facts, 2, "row")?.overflow.value != BoxOverflow::Visible {
+        child_facts
+            .first_mut()
+            .ok_or(E::FactInvariant {
+                source: 2,
+                property: "child-facts",
+            })?
+            .context = ChildContext::OtherNewBfc;
     }
     let float_width = match fact_row(facts, 3, "width")?.width {
         BoxLengthFact::Absolute(value) => value.pixels,
@@ -811,7 +829,7 @@ fn facade_work(nodes: usize) -> Option<usize> {
     let category_actions = normals.checked_mul(66)?;
     nodes
         .checked_mul(32)?
-        .checked_add(62)?
+        .checked_add(68)?
         .checked_add(child_actions)?
         .checked_add(category_actions)
 }
@@ -917,9 +935,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(483));
-        assert_eq!(facade_work(6), Some(624));
-        assert_eq!(facade_work(7), Some(765));
+        assert_eq!(facade_work(5), Some(489));
+        assert_eq!(facade_work(6), Some(630));
+        assert_eq!(facade_work(7), Some(771));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
