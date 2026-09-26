@@ -3248,3 +3248,137 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
         );
     }
 }
+
+// Contact margin tests (LO-T2Q-001): a positive float top margin moves the float's content top
+// below B1's border bottom; the contact check reads the placed margin box.
+
+#[test]
+fn sequence_b1_contact_reads_the_float_margin_box() {
+    let mut rows = 0;
+    for count in [5, 6, 7] {
+        let sources = sources(count);
+        for (height, bottom, margin_top, margin_box_top, content_top) in [
+            (1.0, AutoLength::Value(0.0), 3.0, 12.0_f32, 15.0_f32),
+            (1.0, AutoLength::Auto, 3.0, 12.0, 15.0),
+            // B1's bottom at 2^24 absorbs its 1px margin; F's 4px top margin survives rounding.
+            (
+                B1_HEIGHT_TO_2P24,
+                AutoLength::Value(1.0),
+                4.0,
+                16_777_216.0,
+                16_777_220.0,
+            ),
+        ] {
+            let (outer, parent, mut children) = facts(&sources);
+            children[0].height = OwnerHeight::Explicit(height);
+            children[0].margin.bottom = bottom;
+            children[1].margin.top = AutoLength::Value(margin_top);
+            let control = build(&sources, outer, parent, &children, limits(count))
+                .unwrap_or_else(|error| panic!("N{count} {bottom:?}: {error:?}"));
+            assert_eq!(
+                [
+                    control.before().bottom,
+                    control.placed_float().top,
+                    control.float_content_vertical().top,
+                ]
+                .map(f32::to_bits),
+                [margin_box_top, margin_box_top, content_top].map(f32::to_bits),
+                "N{count} {bottom:?}"
+            );
+            children[0].context = ChildContext::OtherNewBfc;
+            assert_eq!(
+                placement_failure(build(&sources, outer, parent, &children, limits(count))),
+                (2, ClearanceOwnerError::NewBfcFloatContact),
+                "N{count} {bottom:?}"
+            );
+            rows += 1;
+        }
+    }
+    assert_eq!(rows, 9);
+}
+
+#[test]
+fn sequence_b1_other_new_bfc_above_a_float_top_margin_matches_ordinary() {
+    for count in [5, 6, 7] {
+        let sources = sources(count);
+        let (outer, parent, mut control) = facts(&sources);
+        control[0].margin.bottom = AutoLength::Value(1.0);
+        control[1].margin.top = AutoLength::Value(3.0);
+        let mut children = control.clone();
+        children[0].context = ChildContext::OtherNewBfc;
+        let control = build(&sources, outer, parent, &control, limits(count)).unwrap();
+        assert_eq!(
+            [
+                control.before().bottom,
+                control.placed_float().top,
+                control.float_content_vertical().top,
+            ]
+            .map(f32::to_bits),
+            [12.0_f32, 13.0, 16.0].map(f32::to_bits),
+            "N{count}"
+        );
+        let owner = build(&sources, outer, parent, &children, limits(count))
+            .unwrap_or_else(|error| panic!("N{count}: {error:?}"));
+        assert_eq!(format!("{owner:?}"), format!("{control:?}"), "N{count}");
+    }
+}
+
+/// LO-T2Q-002: a Sequence B1 labelled `FloatBfc`, reachable only through this API, stays a
+/// `ChildContext` profile error; and a negative B1 bottom margin, the only way B1 could cross the
+/// float's margin top, stays `NegativeMargin`.
+#[test]
+fn sequence_b1_float_bfc_and_negative_bottom_margin_stay_profile_errors() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].context = ChildContext::FloatBfc;
+    assert_eq!(
+        profile_error(build(&sources, outer, parent, &children, limits(6))),
+        ClearanceOwnerError::Unsupported {
+            source: 2,
+            reason: OwnerProfileReason::ChildContext,
+        }
+    );
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].context = ChildContext::OtherNewBfc;
+    children[0].margin.bottom = AutoLength::Value(-1.0);
+    children[1].margin.top = AutoLength::Value(3.0);
+    assert_eq!(
+        profile_error(build(&sources, outer, parent, &children, limits(6))),
+        ClearanceOwnerError::Unsupported {
+            source: 2,
+            reason: OwnerProfileReason::NegativeMargin,
+        }
+    );
+}
+
+/// CMT-D-004: with zero height and zero vertical margins, F's margin box is empty (12..12) and
+/// still touches B1's border bottom, so a new-BFC B1 is contact. The `OrdinaryNonBfc` control
+/// lays out.
+#[test]
+fn sequence_b1_contact_with_an_empty_float_margin_box_is_typed() {
+    for count in [5, 6, 7] {
+        let sources = sources(count);
+        let (outer, parent, mut children) = facts(&sources);
+        children[0].margin.bottom = AutoLength::Value(0.0);
+        children[1].height = OwnerHeight::Explicit(0.0);
+        let control = build(&sources, outer, parent, &children, limits(count))
+            .unwrap_or_else(|error| panic!("N{count}: {error:?}"));
+        assert_eq!(
+            [
+                control.before().bottom,
+                control.placed_float().top,
+                control.placed_float().bottom,
+                control.float_content_vertical().top,
+            ]
+            .map(f32::to_bits),
+            [12.0_f32; 4].map(f32::to_bits),
+            "N{count}"
+        );
+        children[0].context = ChildContext::OtherNewBfc;
+        assert_eq!(
+            placement_failure(build(&sources, outer, parent, &children, limits(count))),
+            (2, ClearanceOwnerError::NewBfcFloatContact),
+            "N{count}"
+        );
+    }
+}

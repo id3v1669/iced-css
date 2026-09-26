@@ -10686,3 +10686,168 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
         );
     });
 }
+
+// Contact margin tests (LO-T2Q-001): with a positive F top margin, F's content box starts below
+// B1's border box while its margin box can still touch it. Only the margin-box comparison
+// (CSS2.2 §9.5) rejects that contact.
+
+/// The `visible` control of a margin-box contact: F's margin top equals B1's border bottom, and
+/// F's content top lies strictly below it.
+fn assert_b1_margin_contact_control(nodes: usize, control: &str) {
+    assert_b1_contact_control(nodes, control);
+    sibling_fixture(
+        nodes,
+        &format!("{} {control}", baseline_css()),
+        |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let layout = default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits(),
+            )
+            .unwrap_or_else(|error| panic!("{control}: {error:?}"));
+            assert!(
+                layout.sequence().float_content_vertical().top > layout.sequence().before().bottom,
+                "{control}"
+            );
+        },
+    );
+}
+
+#[test]
+fn css_b1_overflow_contact_reads_the_float_margin_box() {
+    // F's margin box starts on B1's border bottom (12) and its content box 3px lower (15).
+    let control = "#b1 { margin-bottom:0px; } #f { margin-top:3px; }";
+    assert_b1_margin_contact_control(6, control);
+    float_overflow_geometry(control, |layout| {
+        let sequence = layout.sequence();
+        let placed = sequence.placed_float();
+        let span = sequence.float_content_vertical();
+        assert_eq!(
+            [
+                sequence.before().bottom,
+                placed.top,
+                placed.bottom,
+                span.top,
+                span.bottom
+            ]
+            .map(f32::to_bits),
+            [12.0_f32, 12.0, 17.0, 15.0, 17.0].map(f32::to_bits),
+            "{control}"
+        );
+    });
+    assert_b1_contact(float_overflow_error(
+        6,
+        &format!("{control} #b1 {{ overflow:hidden; }}"),
+    ));
+    // A 1px B1 bottom margin separates the boxes: admitted with the `visible` layout.
+    let control = "#b1 { margin-bottom:1px; } #f { margin-top:3px; }";
+    let rule = format!("{control} #b1 {{ overflow:hidden; }}");
+    assert_b1_overflow_case(6, control, &rule, HIDDEN);
+    float_overflow_geometry(&rule, |layout| {
+        let sequence = layout.sequence();
+        let placed = sequence.placed_float();
+        let span = sequence.float_content_vertical();
+        assert_eq!(
+            [
+                sequence.before().bottom,
+                placed.top,
+                placed.bottom,
+                span.top,
+                span.bottom
+            ]
+            .map(f32::to_bits),
+            [12.0_f32, 13.0, 18.0, 16.0, 18.0].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+/// Float side x used-zero B1 bottom margin x B1 form, with F's top margin 3px: each `visible`
+/// control is a margin-box contact, and each B1 form gives the typed contact error. 12 rows per N.
+fn assert_b1_margin_contact_matrix(nodes: usize) -> usize {
+    let mut rows = 0;
+    for side in ["left", "right"] {
+        for bottom in ["0px", "auto"] {
+            let control = format!(
+                "{} #f {{ float:{side}; margin-top:3px; }} #b1 {{ margin-bottom:{bottom}; }}",
+                leading_clear_source_rule(nodes)
+            );
+            assert_b1_margin_contact_control(nodes, &control);
+            for value in ["hidden", "auto", "inherit"] {
+                let rule = format!("{control} #b1 {{ overflow:{value}; }}");
+                assert_b1_contact(float_overflow_error(nodes, &rule));
+                rows += 1;
+            }
+        }
+    }
+    assert_eq!(rows, 12, "N{nodes}");
+    rows
+}
+
+#[test]
+fn b1_overflow_float_top_margin_contact_matrix_is_typed() {
+    let rows: usize = [5, 6, 7]
+        .into_iter()
+        .map(assert_b1_margin_contact_matrix)
+        .sum();
+    assert_eq!(rows, 36);
+}
+
+/// Float side x B1 form, with B1's bottom margin 1px and F's top margin 3px: F's margin top lies
+/// 1px below B1's border bottom, so every form matches the `visible` layout. 6 per N.
+fn assert_b1_float_top_margin_strict_matrix(nodes: usize) -> usize {
+    let mut comparisons = 0;
+    for side in ["left", "right"] {
+        let control = format!(
+            "{} #f {{ float:{side}; margin-top:3px; }} #b1 {{ margin-bottom:1px; }}",
+            leading_clear_source_rule(nodes)
+        );
+        for (value, expected) in [
+            ("hidden", HIDDEN),
+            ("auto", AUTO),
+            ("inherit", b1_inherited(nodes)),
+        ] {
+            let rule = format!("{control} #b1 {{ overflow:{value}; }}");
+            assert_b1_overflow_case(nodes, &control, &rule, expected);
+            comparisons += 1;
+        }
+    }
+    assert_eq!(comparisons, 6, "N{nodes}");
+    comparisons
+}
+
+#[test]
+fn b1_overflow_float_top_margin_strict_matrix_matches_the_visible_layouts() {
+    let comparisons: usize = [5, 6, 7]
+        .into_iter()
+        .map(assert_b1_float_top_margin_strict_matrix)
+        .sum();
+    assert_eq!(comparisons, 18);
+}
+
+/// B1's border box cannot cross F's margin top: the only way down, a negative B1 bottom margin,
+/// is a profile error before placement.
+#[test]
+fn b1_overflow_negative_bottom_margin_under_a_float_top_margin_is_a_profile_error() {
+    let error = float_overflow_error(
+        6,
+        "#b1 { margin-bottom:-1px; overflow:hidden; } #f { margin-top:3px; }",
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 2,
+                    reason: OwnerProfileReason::NegativeMargin,
+                }
+            ))
+        ),
+        "{error:?}"
+    );
+}
