@@ -288,6 +288,12 @@ pub enum SiblingLayoutError {
     },
     Height(BfcHeightError),
     Bottom(BlockBottomError),
+    /// P's computed `overflow: auto` is admitted only when every child's border box and
+    /// margin box lie within P's published content box (CSS2.2 §11.1); `source` is the
+    /// first child, in source order, that is not proven contained.
+    ParentAutoOverflow {
+        source: usize,
+    },
     FactInvariant {
         source: usize,
         property: &'static str,
@@ -318,6 +324,7 @@ impl std::error::Error for SiblingLayoutError {
             | Self::Bytes
             | Self::ScratchBytes
             | Self::UnexpectedParentClearance
+            | Self::ParentAutoOverflow { .. }
             | Self::FactInvariant { .. } => None,
         }
     }
@@ -325,24 +332,30 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `68 + 32*N + 43*(N-2) + 66*(N-3)` is prepaid before any
+/// Facade work `80 + 32*N + 74*(N-2) + 66*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the `hidden`/`auto` guard of B1 and the float,
-/// which runs at most three times, and five more cover B1's context relabel after the
-/// guard loop. Forty-three constant-size actions per child cover
-/// typed conversion and retained computed/used margin facts, including the two
-/// retained used horizontal margins; 66 actions per normal cover Auto width
-/// categories, a possible minimum-width category rerun and the two solver-margin
-/// reads. Each normal still has one horizontal producer invocation. The core is
-/// invoked exactly once, with computed Auto preserved and bounded vertical and
-/// float Auto margins given used value zero. B1 and the float also admit computed
-/// `overflow: hidden` or `auto`. Each then establishes a block formatting context and
-/// has no content, so nothing is clipped, nothing overflows and `auto` presents no
-/// scrollbar. The facade then labels B1 `ChildContext::OtherNewBfc`, and the core
-/// rejects it unless its border box lies strictly above the float's margin box
-/// (CSS2.2 §9.5). No clip or scroll state is published, and the tails keep `visible`
-/// only. The float's content box is
+/// which runs at most three times, five more cover B1's context relabel after the
+/// guard loop, and twelve more cover P's second admitted value, the `auto` test, the
+/// four content-box reads, the four placed-float reads and the containment error.
+/// Seventy-four constant-size actions per child cover typed conversion and retained
+/// computed/used margin facts, including the two retained used horizontal margins,
+/// and the containment test: the loop step, the kind test, four border and four
+/// used-margin reads, four margin-edge sums and sixteen comparisons. 66 actions per
+/// normal cover Auto width categories, a possible minimum-width category rerun and
+/// the two solver-margin reads. Each normal still has one horizontal producer
+/// invocation. The core is invoked exactly once, with computed Auto preserved and
+/// bounded vertical and float Auto margins given used value zero. B1 and the float
+/// also admit computed `overflow: hidden` or `auto`. Each then establishes a block
+/// formatting context and has no content, so nothing is clipped, nothing overflows
+/// and `auto` presents no scrollbar. The facade then labels B1
+/// `ChildContext::OtherNewBfc`, and the core rejects it unless its border box lies
+/// strictly above the float's margin box (CSS2.2 §9.5). P admits `hidden`, and `auto`
+/// only when every child's border box and margin box lie within P's published
+/// content box (CSS2.2 §11.1), so that nothing overflows P and `auto` presents no
+/// scrollbar; otherwise the build returns `ParentAutoOverflow`. No clip or scroll
+/// state is published, and the tails keep `visible` only. The float's content box is
 /// the core's published content band horizontally and its published vertical
 /// content span (`sequence().float_content_vertical()`) vertically; its margin box
 /// stays `sequence().placed_float()`.
@@ -430,7 +443,12 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
 
     let parent_row = fact_row(facts, 1, "row")?;
-    if parent_row.overflow.value != BoxOverflow::Hidden {
+    // CSS2.2 §9.4.1: P establishes a block formatting context with `hidden` or `auto`;
+    // `auto` is kept only if nothing can overflow P, checked once P's height is known.
+    if !matches!(
+        parent_row.overflow.value,
+        BoxOverflow::Hidden | BoxOverflow::Auto
+    ) {
         return Err(E::Captured(unsupported(
             1,
             "overflow",
@@ -722,6 +740,45 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     })
     .map_err(E::Bottom)?;
 
+    // CSS2.2 §11.1/§11.1.1: `auto` on P is admitted only when no content of P lies outside
+    // P's content box, so nothing overflows P, `auto` presents no scrollbar (Architecture 60)
+    // and the layout is the `hidden` layout. Every child's border box and margin box must lie
+    // within P's published content box, edges included. A normal's margin edges are its
+    // published border edges moved by its used margins in nearest-even f32 steps, as P's Auto
+    // height publishes the last margin bottom; the float's margin box is `placed_float()`.
+    if parent_row.overflow.value == BoxOverflow::Auto {
+        let area = PrincipalEdges {
+            left: horizontal.content.left,
+            right: horizontal.content.right,
+            top: origin.content_top,
+            bottom: height.content_bottom,
+        };
+        let placed = sequence.placed_float();
+        for child in &children {
+            let border = child.border();
+            let margin = if child.kind() == PrincipalChildKind::Float {
+                PrincipalEdges {
+                    left: placed.left,
+                    right: placed.right,
+                    top: placed.top,
+                    bottom: placed.bottom,
+                }
+            } else {
+                PrincipalEdges {
+                    left: border.left - child.used_margin_left(),
+                    right: border.right + child.used_margin_right(),
+                    top: border.top - child.used_margin_top(),
+                    bottom: border.bottom + child.used_margin_bottom(),
+                }
+            };
+            if !within(border, area) || !within(margin, area) {
+                return Err(E::ParentAutoOverflow {
+                    source: child.source_index(),
+                });
+            }
+        }
+    }
+
     let parent = SiblingParentGeometry {
         source_index: 1,
         containing_source_index: 0,
@@ -778,6 +835,16 @@ fn admitted_display(display: DisplayResolution, floating: bool) -> bool {
         }
 }
 
+/// Every edge coordinate of `edges` lies in `area` on its own axis, bounds included.
+fn within(edges: PrincipalEdges, area: PrincipalEdges) -> bool {
+    [edges.left, edges.right]
+        .into_iter()
+        .all(|x| (area.left..=area.right).contains(&x))
+        && [edges.top, edges.bottom]
+            .into_iter()
+            .all(|y| (area.top..=area.bottom).contains(&y))
+}
+
 fn fact_row<'a>(
     facts: &'a SiblingBoxFacts<'_, '_, '_, '_, '_, '_>,
     source: usize,
@@ -825,11 +892,11 @@ fn place_child_horizontal(
 fn facade_work(nodes: usize) -> Option<usize> {
     let children = nodes.checked_sub(2)?;
     let normals = nodes.checked_sub(3)?;
-    let child_actions = children.checked_mul(43)?;
+    let child_actions = children.checked_mul(74)?;
     let category_actions = normals.checked_mul(66)?;
     nodes
         .checked_mul(32)?
-        .checked_add(68)?
+        .checked_add(80)?
         .checked_add(child_actions)?
         .checked_add(category_actions)
 }
@@ -935,9 +1002,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(489));
-        assert_eq!(facade_work(6), Some(630));
-        assert_eq!(facade_work(7), Some(771));
+        assert_eq!(facade_work(5), Some(594));
+        assert_eq!(facade_work(6), Some(766));
+        assert_eq!(facade_work(7), Some(938));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

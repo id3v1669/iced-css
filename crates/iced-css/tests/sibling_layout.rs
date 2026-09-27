@@ -23,7 +23,7 @@ use iced_css_core::formatting::{
         BlockCoordinateStage, BlockHorizontalError, BlockHorizontalPlacement, BlockWidthError,
         BlockWidthResult,
     },
-    block_bottom::BlockBottomPlacement,
+    block_bottom::{BlockBottomError, BlockBottomPlacement, BlockBottomStage},
     clearance::{ClearSide, ClearanceRequirement},
     clearance_owner::{
         ClearanceOwnerError, MarginGroupId, MarginMember, MarginSide, OwnerProfileReason,
@@ -511,7 +511,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            68 + 32 * 6 + 43 * (6 - 2) + 66 * (6 - 3)
+            80 + 32 * 6 + 74 * (6 - 2) + 66 * (6 - 3)
         );
     });
 }
@@ -3342,8 +3342,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 630;
-        for short in [1, 629] {
+        let work = 766;
+        for short in [1, 765] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3372,12 +3372,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            489,
+            594,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            771,
+            938,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3403,14 +3403,14 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             assert_eq!(layout.receipt().work, work);
             let children = source_count - 2;
             let normals = source_count - 3;
-            assert_eq!(work, 68 + 32 * source_count + 43 * children + 66 * normals);
+            assert_eq!(work, 80 + 32 * source_count + 74 * children + 66 * normals);
         });
     }
 }
 
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
-    for (source_count, facade_work, core_work) in [(5, 489, 419), (6, 630, 501), (7, 771, 584)] {
+    for (source_count, facade_work, core_work) in [(5, 594, 419), (6, 766, 501), (7, 938, 584)] {
         let mut receipts = Vec::new();
         for width in [10, 140] {
             let b4 = if source_count == 7 {
@@ -3459,21 +3459,21 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            489,
+            594,
             419,
             337,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            630,
+            766,
             501,
             419,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            771,
+            938,
             584,
             502,
         ),
@@ -5661,7 +5661,7 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [489, 630, 771][case.nodes - 5],
+        [594, 766, 938][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
@@ -6398,7 +6398,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 489, "#b2"), (6, 630, "#b3"), (7, 771, "#b4")] {
+    for (source_count, work, selector) in [(5, 594, "#b2"), (6, 766, "#b3"), (7, 938, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6662,9 +6662,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 489, 475, 419, 337),
-        (6, 630, 616, 501, 419),
-        (7, 771, 757, 584, 502),
+        (5, 594, 475, 419, 337),
+        (6, 766, 616, 501, 419),
+        (7, 938, 757, 584, 502),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -7525,9 +7525,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 489, 475, 419, 337),
-        (6, 630, 616, 501, 419),
-        (7, 771, 757, 584, 502),
+        (5, 594, 475, 419, 337),
+        (6, 766, 616, 501, 419),
+        (7, 938, 757, 584, 502),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8602,9 +8602,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 489, 475, 419, 337),
-        (6, 630, 616, 501, 419),
-        (7, 771, 757, 584, 502),
+        (5, 594, 475, 419, 337),
+        (6, 766, 616, 501, 419),
+        (7, 938, 757, 584, 502),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -9543,7 +9543,7 @@ fn float_overflow_build<'p>(
 
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, lc, core) in [(5, 489, 481, 419), (6, 630, 622, 501), (7, 771, 763, 584)] {
+    for (nodes, exact, lc, core) in [(5, 594, 481, 419), (6, 766, 622, 501), (7, 938, 763, 584)] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
             baseline_css(),
@@ -9564,7 +9564,7 @@ fn float_overflow_facade_work_thresholds_are_exact() {
             }
             let layout = float_overflow_build(&facts, &projection.nodes()[0], exact).unwrap();
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
-            assert_eq!(exact, 68 + 32 * nodes + 43 * (nodes - 2) + 66 * (nodes - 3));
+            assert_eq!(exact, 80 + 32 * nodes + 74 * (nodes - 2) + 66 * (nodes - 3));
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
         });
@@ -9577,11 +9577,11 @@ fn float_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 629),
+            float_overflow_build(&facts, &projection.nodes()[0], 765),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 630).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 766).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -9973,26 +9973,6 @@ fn css_non_float_auto_or_inherited_overflow_stays_child_overflow() {
 }
 
 #[test]
-fn css_parent_overflow_auto_stays_parent_overflow() {
-    let mut rows = 0;
-    for rule in [
-        "#p { overflow:auto; }",
-        "#p { overflow:auto; } #f { overflow:inherit; }",
-    ] {
-        assert_captured(
-            float_overflow_error(6, rule),
-            CapturedClearanceError::Unsupported {
-                projected: 1,
-                property: "overflow",
-                reason: CapturedClearanceUnsupported::ParentOverflow,
-            },
-        );
-        rows += 1;
-    }
-    assert_eq!(rows, 2);
-}
-
-#[test]
 fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
     let css = format!(
         "{} #f:before {{ content:'x'; }} #f {{ overflow:auto; }}",
@@ -10015,7 +9995,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 489, 419), (6, 630, 501), (7, 771, 584)] {
+    for (nodes, exact, core) in [(5, 594, 419), (6, 766, 501), (7, 938, 584)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -10035,7 +10015,7 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
             );
             let layout = float_overflow_build(&facts, &projection.nodes()[0], exact).unwrap();
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
-            assert_eq!(exact, 68 + 32 * nodes + 43 * (nodes - 2) + 66 * (nodes - 3));
+            assert_eq!(exact, 80 + 32 * nodes + 74 * (nodes - 2) + 66 * (nodes - 3));
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
         });
@@ -10048,11 +10028,11 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 629),
+            float_overflow_build(&facts, &projection.nodes()[0], 765),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 630).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 766).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10615,18 +10595,6 @@ fn css_b1_overflow_auto_generated_content_stays_a_fact_failure() {
 }
 
 #[test]
-fn css_parent_overflow_auto_precedes_a_b1_inherit() {
-    assert_captured(
-        float_overflow_error(6, "#p { overflow:auto; } #b1 { overflow:inherit; }"),
-        CapturedClearanceError::Unsupported {
-            projected: 1,
-            property: "overflow",
-            reason: CapturedClearanceUnsupported::ParentOverflow,
-        },
-    );
-}
-
-#[test]
 fn b1_overflow_no_longer_masks_the_float_width_kind() {
     assert_captured(
         float_overflow_error(6, "#b1 { overflow:hidden; } #f { width:auto; }"),
@@ -10640,7 +10608,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 489, 419), (6, 630, 501), (7, 771, 584)] {
+    for (nodes, exact, core) in [(5, 594, 419), (6, 766, 501), (7, 938, 584)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -10660,7 +10628,7 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
             );
             let layout = float_overflow_build(&facts, &projection.nodes()[0], exact).unwrap();
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
-            assert_eq!(exact, 68 + 32 * nodes + 43 * (nodes - 2) + 66 * (nodes - 3));
+            assert_eq!(exact, 80 + 32 * nodes + 74 * (nodes - 2) + 66 * (nodes - 3));
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
         });
@@ -10673,11 +10641,11 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 629),
+            float_overflow_build(&facts, &projection.nodes()[0], 765),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 630).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 766).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10850,4 +10818,1044 @@ fn b1_overflow_negative_bottom_margin_under_a_float_top_margin_is_a_profile_erro
         ),
         "{error:?}"
     );
+}
+
+// Parent overflow auto: P admits computed `auto` only when every child's border box and margin box
+// lie within P's published content box (POA plan).
+
+/// `inherit` on a child of P takes P's computed `auto`; P's original index is N - 2.
+fn p_auto_inherited(nodes: usize) -> KeywordBoxFact<BoxOverflow> {
+    KeywordBoxFact {
+        value: BoxOverflow::Auto,
+        origin: BoxFactOrigin::Inherited {
+            original_parent: nodes - 2,
+        },
+    }
+}
+
+/// The whole layout Debug and every fact row of `rule` equal those of `control_rule`, except that
+/// each source in `changed` carries `auto` where the control carries `hidden`, with the same origin.
+fn assert_parent_overflow_case(
+    nodes: usize,
+    control_rule: &str,
+    rule: &str,
+    changed: &[usize],
+) -> OverflowRows {
+    let (control_view, control_rows) =
+        float_overflow_layout(nodes, &format!("{} {control_rule}", baseline_css()));
+    let (view, rows) = float_overflow_layout(nodes, &format!("{} {rule}", baseline_css()));
+    assert_eq!(view, control_view, "{rule}");
+    assert_eq!(rows.len(), control_rows.len(), "{rule}");
+    for (source, (row, control)) in rows.iter().zip(&control_rows).enumerate() {
+        if changed.contains(&source) {
+            assert_eq!(
+                control.overflow.value,
+                BoxOverflow::Hidden,
+                "{rule}: {source}"
+            );
+            assert_eq!(
+                row.overflow,
+                KeywordBoxFact {
+                    value: BoxOverflow::Auto,
+                    origin: control.overflow.origin,
+                },
+                "{rule}: source {source}"
+            );
+            assert_eq!(
+                ClearanceBoxFact {
+                    overflow: control.overflow,
+                    ..*row
+                },
+                *control,
+                "{rule}: source {source}"
+            );
+        } else {
+            assert_eq!(row, control, "{rule}: source {source}");
+        }
+    }
+    rows
+}
+
+fn parent_overflow_rule(nodes: usize, side: &str) -> (String, String) {
+    let control = format!(
+        "{} #f {{ float:{side}; }}",
+        leading_clear_source_rule(nodes)
+    );
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    (control, rule)
+}
+
+/// The containment error at `source`, typed.
+fn assert_parent_auto_overflow(error: SiblingLayoutError, source: usize) {
+    match error {
+        SiblingLayoutError::ParentAutoOverflow { source: actual } => assert_eq!(actual, source),
+        other => panic!("expected ParentAutoOverflow at {source}, got {other:?}"),
+    }
+}
+
+/// The `hidden` control of a containment row lays out, and P `auto` gives the containment error.
+fn assert_parent_auto_overflow_row(nodes: usize, control_rule: &str, rule: &str, source: usize) {
+    float_overflow_layout(nodes, &format!("{} {control_rule}", baseline_css()));
+    assert_parent_auto_overflow(float_overflow_error(nodes, rule), source);
+}
+
+#[test]
+fn css_parent_overflow_auto_contained_n6_left_matches_the_hidden_layout() {
+    let (control, rule) = parent_overflow_rule(6, "left");
+    let rows = assert_parent_overflow_case(6, &control, &rule, &[1]);
+    assert_eq!(rows[1].overflow, AUTO, "{rule}");
+    assert_float_overflow_n6_left_geometry(&rule);
+}
+
+#[test]
+fn css_parent_overflow_auto_contained_n6_right_matches_the_hidden_layout() {
+    let (control, rule) = parent_overflow_rule(6, "right");
+    assert_parent_overflow_case(6, &control, &rule, &[1]);
+}
+
+#[test]
+fn css_parent_overflow_auto_contained_n5_left_matches_the_hidden_layout() {
+    let (control, rule) = parent_overflow_rule(5, "left");
+    assert_parent_overflow_case(5, &control, &rule, &[1]);
+}
+
+#[test]
+fn css_parent_overflow_auto_contained_n5_right_matches_the_hidden_layout() {
+    let (control, rule) = parent_overflow_rule(5, "right");
+    assert_parent_overflow_case(5, &control, &rule, &[1]);
+}
+
+#[test]
+fn css_parent_overflow_auto_contained_n7_left_matches_the_hidden_layout() {
+    let (control, rule) = parent_overflow_rule(7, "left");
+    assert_parent_overflow_case(7, &control, &rule, &[1]);
+}
+
+#[test]
+fn css_parent_overflow_auto_contained_n7_right_matches_the_hidden_layout() {
+    let (control, rule) = parent_overflow_rule(7, "right");
+    assert_parent_overflow_case(7, &control, &rule, &[1]);
+}
+
+#[test]
+fn css_parent_overflow_auto_admits_an_inheriting_b1_strictly_above_the_float() {
+    let control = "#b1 { overflow:inherit; }";
+    let rule = format!("#p {{ overflow:auto; }} {control}");
+    let rows = assert_parent_overflow_case(6, control, &rule, &[1, 2]);
+    assert_eq!(rows[2].overflow, p_auto_inherited(6), "{rule}");
+}
+
+#[test]
+fn css_parent_overflow_auto_admits_an_inheriting_float() {
+    let control = "#f { overflow:inherit; }";
+    let rule = format!("#p {{ overflow:auto; }} {control}");
+    let rows = assert_parent_overflow_case(6, control, &rule, &[1, 3]);
+    assert_eq!(rows[3].overflow, p_auto_inherited(6), "{rule}");
+}
+
+#[test]
+fn css_parent_overflow_auto_exact_explicit_height_matches_the_hidden_layout() {
+    // B3's margin bottom 27 equals P's content bottom 27.
+    assert_parent_overflow_case(
+        6,
+        "#p { height:16px; }",
+        "#p { overflow:auto; height:16px; }",
+        &[1],
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_one_short_is_typed() {
+    assert_parent_auto_overflow_row(
+        6,
+        "#p { height:15px; }",
+        "#p { overflow:auto; height:15px; }",
+        5,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_margin_box_only_is_typed() {
+    // B3's border box 22..23 lies within 11..24; its margin bottom 27 does not.
+    assert_parent_auto_overflow_row(
+        6,
+        "#p { height:13px; }",
+        "#p { overflow:auto; height:13px; }",
+        5,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_reports_the_first_failing_child() {
+    // F's bottom 18 lies below 16; B2 and B3 also fail.
+    assert_parent_auto_overflow_row(
+        6,
+        "#p { height:5px; }",
+        "#p { overflow:auto; height:5px; }",
+        3,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_border_box_only_is_typed() {
+    // B2's border left is -1; its margin edge is back at 0.
+    assert_parent_auto_overflow_row(
+        6,
+        "#b2 { margin-left:-1px; }",
+        "#p { overflow:auto; } #b2 { margin-left:-1px; }",
+        4,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_overconstrained_width_is_typed() {
+    // B2's border right is 101, with a used right margin of -1.
+    assert_parent_auto_overflow_row(
+        6,
+        "#b2 { width:101px; }",
+        "#p { overflow:auto; } #b2 { width:101px; }",
+        4,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_float_margin_box_only_is_typed() {
+    // F's content box is 0..10; its margin box ends at 105.
+    assert_parent_auto_overflow_row(
+        6,
+        "#f { margin-right:95px; }",
+        "#p { overflow:auto; } #f { margin-right:95px; }",
+        3,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_right_oversized_float_is_typed() {
+    assert_parent_auto_overflow_row(
+        6,
+        "#f { float:right; width:101px; }",
+        "#p { overflow:auto; } #f { float:right; width:101px; }",
+        3,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_left_oversized_float_is_typed() {
+    assert_parent_auto_overflow_row(
+        6,
+        "#f { width:101px; }",
+        "#p { overflow:auto; } #f { width:101px; }",
+        3,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_rounded_top_margin_edge_is_typed() {
+    // B1's top is RN(16777225) = 16777224 (a tie, to even); its staged margin top is 10 < 11.
+    assert_parent_auto_overflow_row(
+        6,
+        "#b1 { margin-top:16777214px; }",
+        "#p { overflow:auto; } #b1 { margin-top:16777214px; }",
+        2,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_unrounded_top_margin_edge_matches_the_hidden_layout() {
+    assert_parent_overflow_case(
+        6,
+        "#b1 { margin-top:16777215px; }",
+        "#p { overflow:auto; } #b1 { margin-top:16777215px; }",
+        &[1],
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_absorbed_margin_at_2p24_matches_the_hidden_layout() {
+    // P's content bottom and B3's border bottom are 2^24; RN(2^24 + 1) = 2^24.
+    let control = "#p { height:16777205px; } #b3 { height:16777194px; margin-bottom:1px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+}
+
+#[test]
+fn css_parent_overflow_auto_kept_margin_at_2p24_is_typed() {
+    let control = "#p { height:16777205px; } #b3 { height:16777194px; margin-bottom:2px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_auto_overflow_row(6, control, &rule, 5);
+}
+
+#[test]
+fn css_parent_overflow_auto_keeps_b1_contact_first() {
+    let control = "#b1 { overflow:inherit; margin-bottom:0px; }";
+    let mut rows = 0;
+    for rule in [
+        control.to_owned(),
+        format!("#p {{ overflow:auto; }} {control}"),
+    ] {
+        let error = float_overflow_error(6, &rule);
+        assert!(
+            matches!(
+                error,
+                SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                    source: 2,
+                    error: ClearanceOwnerError::NewBfcFloatContact,
+                })
+            ),
+            "{rule}: {error:?}"
+        );
+        rows += 1;
+    }
+    assert_eq!(rows, 2);
+}
+
+#[test]
+fn css_parent_overflow_auto_keeps_tail_equality_first() {
+    let control = "#p { height:5px; } #b1 { margin-bottom:0px; } #b2 { margin-top:2px; }";
+    let mut rows = 0;
+    for rule in [
+        control.to_owned(),
+        format!("{control} #p {{ overflow:auto; }}"),
+    ] {
+        let error = float_overflow_error(6, &rule);
+        assert!(
+            matches!(
+                error,
+                SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                    source: 4,
+                    error: ClearanceOwnerError::UnsupportedEquality,
+                })
+            ),
+            "{rule}: {error:?}"
+        );
+        rows += 1;
+    }
+    assert_eq!(rows, 2);
+}
+
+#[test]
+fn css_parent_overflow_auto_keeps_the_bottom_error_first() {
+    const MAX: &str = "340282346638528859811704183484516925440px";
+    let control = format!("#p {{ height:5px; padding-bottom:{MAX}; margin-bottom:{MAX}; }}");
+    let mut rows = 0;
+    for rule in [
+        control.clone(),
+        format!("{control} #p {{ overflow:auto; }}"),
+    ] {
+        let error = float_overflow_error(6, &rule);
+        assert!(
+            matches!(
+                error,
+                SiblingLayoutError::Bottom(BlockBottomError::Unrepresentable {
+                    stage: BlockBottomStage::MarginBottom,
+                })
+            ),
+            "{rule}: {error:?}"
+        );
+        rows += 1;
+    }
+    assert_eq!(rows, 2);
+}
+
+#[test]
+fn css_parent_overflow_auto_inherited_from_the_outer_matches_the_hidden_layout() {
+    let rows = assert_parent_overflow_case(
+        6,
+        "#o { overflow:hidden; } #p { overflow:inherit; }",
+        "#o { overflow:auto; } #p { overflow:inherit; }",
+        &[0, 1],
+    );
+    assert_eq!(rows[1].overflow.value, BoxOverflow::Auto);
+    assert!(matches!(
+        rows[1].overflow.origin,
+        BoxFactOrigin::Inherited { .. }
+    ));
+}
+
+/// POA-D-001: P's content box is 2^24..2^24 + 8. F's margin box 2^24..2^24 + 8 lies on P's edges,
+/// but its content band is 2^24 - 1..2^24 + 4, because its near edge 2^24 + 5 rounds to 2^24 + 4
+/// (a tie, to even). Only F's border box leaves P.
+#[test]
+fn css_parent_overflow_auto_float_border_box_only_is_typed() {
+    let control = "#f { float:right; width:5px; margin-right:3px; }";
+    let observe = |rule: &str| {
+        let mut out = None;
+        sibling_fixture(
+            6,
+            &format!("{} {rule}", baseline_css()),
+            |projection, display| {
+                let facts =
+                    evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+                out = Some(
+                    default_outer_layout(
+                        &facts,
+                        &projection.nodes()[0],
+                        16_777_216.0,
+                        8.0,
+                        10.0,
+                        layout_limits(),
+                    )
+                    .map(|layout| {
+                        let placed = layout.sequence().placed_float();
+                        let band = layout.children()[1].border();
+                        [placed.left, placed.right, band.left, band.right].map(f32::to_bits)
+                    }),
+                );
+            },
+        );
+        out.unwrap()
+    };
+    assert_eq!(
+        observe(control).unwrap(),
+        [16_777_216.0_f32, 16_777_224.0, 16_777_215.0, 16_777_220.0].map(f32::to_bits),
+        "{control}"
+    );
+    assert_parent_auto_overflow(
+        observe(&format!("{control} #p {{ overflow:auto; }}")).unwrap_err(),
+        3,
+    );
+}
+
+// Parent overflow auto Task2: the contained and uncontained matrices, the negatives and the work
+// thresholds.
+
+/// P's exact explicit height under the source-count rule: the last tail's margin bottom meets P's
+/// content bottom (P's content top is 11).
+fn parent_overflow_exact_height(nodes: usize) -> usize {
+    match nodes {
+        5 => 8,
+        6 => 16,
+        7 => 20,
+        _ => panic!("no parent-overflow fixture for N{nodes}"),
+    }
+}
+
+/// Side x P height (Auto, exact) x B1 (`visible`, `hidden`, `inherit`) x F (`visible`, `auto`,
+/// `inherit`) against the same CSS with P `hidden`: 36 comparisons per N, all contained.
+fn assert_parent_overflow_matrix(nodes: usize) -> usize {
+    let exact = format!("#p {{ height:{}px; }}", parent_overflow_exact_height(nodes));
+    let mut comparisons = 0;
+    for side in ["left", "right"] {
+        for height in ["", exact.as_str()] {
+            for (b1, b1_inherits) in [
+                ("", false),
+                ("#b1 { overflow:hidden; }", false),
+                ("#b1 { overflow:inherit; }", true),
+            ] {
+                for (float, float_inherits) in [
+                    ("", false),
+                    ("#f { overflow:auto; }", false),
+                    ("#f { overflow:inherit; }", true),
+                ] {
+                    let control = format!(
+                        "{} #f {{ float:{side}; }} {height} {b1} {float}",
+                        leading_clear_source_rule(nodes)
+                    );
+                    let rule = format!("{control} #p {{ overflow:auto; }}");
+                    let mut changed = vec![1];
+                    if b1_inherits {
+                        changed.push(2);
+                    }
+                    if float_inherits {
+                        changed.push(3);
+                    }
+                    let rows = assert_parent_overflow_case(nodes, &control, &rule, &changed);
+                    assert_eq!(rows[1].overflow, AUTO, "{rule}");
+                    for &source in &changed[1..] {
+                        assert_eq!(rows[source].overflow, p_auto_inherited(nodes), "{rule}");
+                    }
+                    comparisons += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(comparisons, 36, "N{nodes}");
+    comparisons
+}
+
+#[test]
+fn parent_overflow_matrix_matches_the_hidden_layouts() {
+    let comparisons: usize = [5, 6, 7]
+        .into_iter()
+        .map(assert_parent_overflow_matrix)
+        .sum();
+    assert_eq!(comparisons, 108);
+}
+
+/// Side x {P height one short, F width 101px, the last tail's left margin -1px}: 6 typed rows per
+/// N, each after its `hidden` control lays out. The sources are N - 1, 3 and N - 1.
+fn assert_parent_overflow_uncontained_matrix(nodes: usize) -> usize {
+    let last = ["#b2", "#b3", "#b4"][nodes - 5];
+    let edits = [
+        (
+            format!(
+                "#p {{ height:{}px; }}",
+                parent_overflow_exact_height(nodes) - 1
+            ),
+            nodes - 1,
+        ),
+        ("#f { width:101px; }".to_owned(), 3),
+        (format!("{last} {{ margin-left:-1px; }}"), nodes - 1),
+    ];
+    let mut rows = 0;
+    for side in ["left", "right"] {
+        for (edit, source) in &edits {
+            let control = format!(
+                "{} #f {{ float:{side}; }} {edit}",
+                leading_clear_source_rule(nodes)
+            );
+            let rule = format!("{control} #p {{ overflow:auto; }}");
+            assert_parent_auto_overflow_row(nodes, &control, &rule, *source);
+            rows += 1;
+        }
+    }
+    assert_eq!(rows, 6, "N{nodes}");
+    rows
+}
+
+#[test]
+fn parent_overflow_uncontained_matrix_is_typed() {
+    let rows: usize = [5, 6, 7]
+        .into_iter()
+        .map(assert_parent_overflow_uncontained_matrix)
+        .sum();
+    assert_eq!(rows, 18);
+}
+
+#[test]
+fn parent_overflow_scroll_and_visible_stay_parent_overflow() {
+    let mut rows = 0;
+    for rule in [
+        "#p { overflow:scroll; }",
+        "#p { overflow:visible; }",
+        "#p { overflow:scroll; } #b1 { overflow:inherit; }",
+    ] {
+        assert_captured(
+            float_overflow_error(6, rule),
+            CapturedClearanceError::Unsupported {
+                projected: 1,
+                property: "overflow",
+                reason: CapturedClearanceUnsupported::ParentOverflow,
+            },
+        );
+        rows += 1;
+    }
+    assert_eq!(rows, 3);
+}
+
+#[test]
+fn parent_overflow_auto_child_overflow_stays_typed() {
+    let mut rows = 0;
+    for (rule, projected) in [
+        ("#p { overflow:auto; } #b1 { overflow:scroll; }", 2),
+        ("#p { overflow:auto; } #b3 { overflow:inherit; }", 5),
+    ] {
+        assert_captured(
+            float_overflow_error(6, rule),
+            CapturedClearanceError::Unsupported {
+                projected,
+                property: "overflow",
+                reason: CapturedClearanceUnsupported::ChildOverflow,
+            },
+        );
+        rows += 1;
+    }
+    assert_eq!(rows, 2);
+}
+
+#[test]
+fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
+    let css = format!(
+        "{} #p:before {{ content:'x'; }} #p {{ overflow:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        assert!(matches!(
+            evaluate_sibling_box_facts(projection, display, sibling_fact_limits()),
+            Err(SiblingBoxFactsError::Evaluation(
+                ClearanceBoxFactsError::Unsupported {
+                    original: 4,
+                    target: BoxFactTarget::Before,
+                    reason: BoxFactUnsupported::GeneratedContent,
+                    ..
+                }
+            ))
+        ));
+    });
+}
+
+#[test]
+fn parent_overflow_auto_facade_work_thresholds_are_exact() {
+    for (nodes, exact, core) in [(5, 594, 419), (6, 766, 501), (7, 938, 584)] {
+        let css = format!(
+            "{} {} #p {{ overflow:auto; }}",
+            baseline_css(),
+            leading_clear_source_rule(nodes)
+        );
+        sibling_fixture(nodes, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            assert_eq!(facts.row(1).unwrap().overflow, AUTO, "N{nodes}");
+            assert!(
+                matches!(
+                    float_overflow_build(&facts, &projection.nodes()[0], exact - 1),
+                    Err(SiblingLayoutError::Work)
+                ),
+                "N{nodes} work {}",
+                exact - 1
+            );
+            let layout = float_overflow_build(&facts, &projection.nodes()[0], exact).unwrap();
+            assert_eq!(layout.receipt().work, exact, "N{nodes}");
+            assert_eq!(exact, 80 + 32 * nodes + 74 * (nodes - 2) + 66 * (nodes - 3));
+            assert_eq!(layout.receipt().core.work, core, "N{nodes}");
+            assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
+        });
+    }
+    // The work is prepaid before the profile scan reaches the later child's overflow.
+    let css = format!(
+        "{} #p {{ overflow:auto; }} #b3 {{ overflow:auto; }}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(matches!(
+            float_overflow_build(&facts, &projection.nodes()[0], 765),
+            Err(SiblingLayoutError::Work)
+        ));
+        assert_captured(
+            float_overflow_build(&facts, &projection.nodes()[0], 766).unwrap_err(),
+            CapturedClearanceError::Unsupported {
+                projected: 5,
+                property: "overflow",
+                reason: CapturedClearanceUnsupported::ChildOverflow,
+            },
+        );
+    });
+}
+
+// Parent overflow auto Task2-C1 (POA-T2Q-R1): a normal child's horizontal margin edges, F's far
+// vertical edge, P's horizontal padding and P `auto` inherited from O on an uncontained row.
+
+/// B2's border left and right and its used left and right margins, as bits.
+fn parent_overflow_b2_edges(layout: &CapturedSiblingLayout<'_>) -> [u32; 4] {
+    let b2 = &layout.children()[2];
+    [
+        b2.border().left,
+        b2.border().right,
+        b2.used_margin_left(),
+        b2.used_margin_right(),
+    ]
+    .map(f32::to_bits)
+}
+
+/// The layout of `rule` at N6 in R26's outer geometry: O's content box starts at 2^24 and is
+/// `width` wide, so P's content box is 2^24..2^24 + `width`. B2's edges, or the build's error.
+fn parent_overflow_2p24_b2_edges(width: f32, rule: &str) -> Result<[u32; 4], SiblingLayoutError> {
+    let mut out = None;
+    sibling_fixture(
+        6,
+        &format!("{} {rule}", baseline_css()),
+        |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            out = Some(
+                default_outer_layout(
+                    &facts,
+                    &projection.nodes()[0],
+                    16_777_216.0,
+                    width,
+                    10.0,
+                    layout_limits(),
+                )
+                .map(|layout| parent_overflow_b2_edges(&layout)),
+            );
+        },
+    );
+    out.unwrap()
+}
+
+#[test]
+fn css_parent_overflow_auto_normal_margin_left_matches_the_hidden_layout() {
+    // B2's border box 60..100 and its margin box 0..100 lie within P's content box 0..100.
+    let control = "#b2 { margin-left:60px; }";
+    let rule = format!("#p {{ overflow:auto; }} {control}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [60.0_f32, 100.0, 60.0, 0.0].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+#[test]
+fn css_parent_overflow_auto_normal_margin_right_matches_the_hidden_layout() {
+    // B2's border box 0..40 and its margin box 0..100 lie within P's content box 0..100.
+    let control = "#b2 { margin-right:60px; }";
+    let rule = format!("#p {{ overflow:auto; }} {control}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [0.0_f32, 40.0, 0.0, 60.0].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+/// P's content box is 2^24..2^24 + 8. B2's border left RN(2^24 + 1) = 2^24 and border right
+/// RN(2^24 + 7) = 2^24 + 8 (ties, to even) lie on P's edges; its staged margin left 2^24 - 1 does
+/// not. F is 5px wide, so its margin box 2^24..2^24 + 4 fits.
+#[test]
+fn css_parent_overflow_auto_rounded_left_margin_edge_is_typed() {
+    let control = "#f { width:5px; } #b2 { margin-left:1px; }";
+    assert_eq!(
+        parent_overflow_2p24_b2_edges(8.0, control).unwrap(),
+        [16_777_216.0_f32, 16_777_224.0, 1.0, 0.0].map(f32::to_bits),
+        "{control}"
+    );
+    assert_parent_auto_overflow(
+        parent_overflow_2p24_b2_edges(8.0, &format!("{control} #p {{ overflow:auto; }}"))
+            .unwrap_err(),
+        4,
+    );
+}
+
+/// P's content box is 2^24..2^24 + 10. B2's border box 2^24..RN(2^24 + 7) = 2^24 + 8 lies within
+/// it; its staged margin right RN(2^24 + 8 + 3) = 2^24 + 12 (a tie, to even) does not.
+#[test]
+fn css_parent_overflow_auto_rounded_right_margin_edge_is_typed() {
+    let control = "#b2 { margin-right:3px; }";
+    assert_eq!(
+        parent_overflow_2p24_b2_edges(10.0, control).unwrap(),
+        [16_777_216.0_f32, 16_777_224.0, 0.0, 3.0].map(f32::to_bits),
+        "{control}"
+    );
+    assert_parent_auto_overflow(
+        parent_overflow_2p24_b2_edges(10.0, &format!("{control} #p {{ overflow:auto; }}"))
+            .unwrap_err(),
+        4,
+    );
+}
+
+/// POA-D-001's vertical twin: F's margin box 16..16777232 ends on P's content bottom 16777232,
+/// but its content top RN(16 + 16777215) = 16777232 (a tie, to even) puts its content bottom at
+/// 16777234. Only F's border box leaves P.
+#[test]
+fn css_parent_overflow_auto_float_content_bottom_is_typed() {
+    let control = "#p { height:16777221px; } #f { margin-top:16777215px; }";
+    float_overflow_geometry(control, |layout| {
+        let placed = layout.sequence().placed_float();
+        let band = layout.children()[1].border();
+        assert_eq!(
+            [
+                placed.top,
+                placed.bottom,
+                band.top,
+                band.bottom,
+                layout.parent().content().bottom,
+            ]
+            .map(f32::to_bits),
+            [
+                16.0_f32,
+                16_777_232.0,
+                16_777_232.0,
+                16_777_234.0,
+                16_777_232.0
+            ]
+            .map(f32::to_bits),
+            "{control}"
+        );
+    });
+    assert_parent_auto_overflow(
+        float_overflow_error(6, &format!("{control} #p {{ overflow:auto; }}")),
+        3,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_left_padding_is_typed() {
+    // B2's border left 1 lies within P's padding box 0..100 but not within its content box 2..100.
+    let control = "#p { padding-left:2px; } #b2 { margin-left:-1px; }";
+    float_overflow_geometry(control, |layout| {
+        let area = layout.parent().content();
+        assert_eq!(
+            [area.left, area.right].map(f32::to_bits),
+            [2.0_f32, 100.0].map(f32::to_bits),
+            "{control}"
+        );
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [1.0_f32, 100.0, -1.0, 0.0].map(f32::to_bits),
+            "{control}"
+        );
+    });
+    assert_parent_auto_overflow(
+        float_overflow_error(6, &format!("{control} #p {{ overflow:auto; }}")),
+        4,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_right_padding_is_typed() {
+    // B2's border right 98 lies within P's padding box 0..100 but not within its content box 0..97.
+    let control = "#p { padding-right:3px; } #b2 { margin-right:-1px; }";
+    float_overflow_geometry(control, |layout| {
+        let area = layout.parent().content();
+        assert_eq!(
+            [area.left, area.right].map(f32::to_bits),
+            [0.0_f32, 97.0].map(f32::to_bits),
+            "{control}"
+        );
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [0.0_f32, 98.0, 0.0, -1.0].map(f32::to_bits),
+            "{control}"
+        );
+    });
+    assert_parent_auto_overflow(
+        float_overflow_error(6, &format!("{control} #p {{ overflow:auto; }}")),
+        4,
+    );
+}
+
+#[test]
+fn css_parent_overflow_auto_inherited_from_the_outer_one_short_is_typed() {
+    // POA-T2Q-004: P's `auto` is inherited from O. As with `#p { overflow:auto; height:15px; }`,
+    // B3's margin bottom 27 lies below P's content bottom 26.
+    assert_parent_auto_overflow_row(
+        6,
+        "#o { overflow:hidden; } #p { overflow:inherit; height:15px; }",
+        "#o { overflow:auto; } #p { overflow:inherit; height:15px; }",
+        5,
+    );
+}
+
+// Parent overflow auto Task2-C1r1 (POA-C1-R1): an inverted staged margin box, F's margin-box
+// vertical edges and the staged rounding of a normal's left, right and top margin edges.
+
+/// POA-C1R-001: P's content box is 2^24..2^24 (zero width). B2's border box 2^24..RN(2^24 + 1) =
+/// 2^24 lies on it, but its used margin right is -1, so its staged margin box 2^24..2^24 - 1 is
+/// inverted and its right edge lies left of P. Each edge is compared on its own.
+#[test]
+fn css_parent_overflow_auto_inverted_margin_box_is_typed() {
+    let control =
+        "#p { margin-left:16777216px; width:0px; } #f { width:0px; } #b2 { margin-right:-1px; }";
+    float_overflow_geometry(control, |layout| {
+        let area = layout.parent().content();
+        assert_eq!(
+            [area.left, area.right].map(f32::to_bits),
+            [16_777_216.0_f32, 16_777_216.0].map(f32::to_bits),
+            "{control}"
+        );
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [16_777_216.0_f32, 16_777_216.0, 0.0, -1.0].map(f32::to_bits),
+            "{control}"
+        );
+    });
+    assert_parent_auto_overflow(
+        float_overflow_error(6, &format!("{control} #p {{ overflow:auto; }}")),
+        4,
+    );
+}
+
+/// POA-C1R-002: F's border box 16..18 lies within P's content box 11..27, but its margin box
+/// ends at 38. Only F's margin box leaves P, and only vertically.
+#[test]
+fn css_parent_overflow_auto_float_margin_bottom_is_typed() {
+    let control = "#p { height:16px; } #f { margin-bottom:20px; }";
+    float_overflow_geometry(control, |layout| {
+        let placed = layout.sequence().placed_float();
+        let band = layout.children()[1].border();
+        assert_eq!(
+            [
+                placed.top,
+                placed.bottom,
+                band.top,
+                band.bottom,
+                layout.parent().content().bottom
+            ]
+            .map(f32::to_bits),
+            [16.0_f32, 38.0, 16.0, 18.0, 27.0].map(f32::to_bits),
+            "{control}"
+        );
+    });
+    assert_parent_auto_overflow(
+        float_overflow_error(6, &format!("{control} #p {{ overflow:auto; }}")),
+        3,
+    );
+}
+
+/// POA-C1R-003: P's content box is 2^24..2^24 + 8. B2's border box is 2^24..2^24 + 8 with a used
+/// margin left of 0.5; its staged margin left RN(2^24 - 0.5) = 2^24 (a tie, to even) lies on P's
+/// edge, so the layout is admitted, although the exact edge 2^24 - 0.5 lies outside.
+#[test]
+fn css_parent_overflow_auto_staged_left_margin_edge_matches_the_hidden_layout() {
+    let control =
+        "#p { margin-left:16777216px; width:8px; } #f { width:5px; } #b2 { margin-left:0.5px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [16_777_216.0_f32, 16_777_224.0, 0.5, 0.0].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+/// POA-C1R-003: B2's border box is 2^24..2^24 + 8 with a used margin right of 0.5; its staged
+/// margin right RN(2^24 + 8.5) = 2^24 + 8 lies on P's edge, the exact edge 2^24 + 8.5 outside.
+#[test]
+fn css_parent_overflow_auto_staged_right_margin_edge_matches_the_hidden_layout() {
+    let control =
+        "#p { margin-left:16777216px; width:8px; } #f { width:5px; } #b2 { margin-right:0.5px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [16_777_216.0_f32, 16_777_224.0, 0.0, 0.5].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+/// POA-C1R-003: P's content top is RN(10 + 16777206 + 1) = 2^24. B1's top is RN(2^24 + 0.5) = 2^24
+/// and its staged margin top RN(2^24 - 0.5) = 2^24 (ties, to even) lies on P's edge; the exact edge
+/// 2^24 - 0.5 lies outside.
+#[test]
+fn css_parent_overflow_auto_staged_top_margin_edge_matches_the_hidden_layout() {
+    let control = "#p { margin-top:16777206px; } #b1 { margin-top:0.5px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        let b1 = &layout.children()[0];
+        assert_eq!(
+            [
+                layout.parent().content().top,
+                b1.border().top,
+                b1.used_margin_top(),
+            ]
+            .map(f32::to_bits),
+            [16_777_216.0_f32, 16_777_216.0, 0.5].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+// Parent overflow auto Task2-C1r2 (POA-C1-R2): used rather than computed horizontal margins, F's
+// placed margin box, and F's top on P's content top.
+
+/// POA-C1R1-001: B2 is over-constrained, so its used margin right is 100 - 90 = 10, not the
+/// computed 20; its margin box 0..100 lies within P.
+#[test]
+fn css_parent_overflow_auto_used_margin_right_matches_the_hidden_layout() {
+    let control = "#b2 { width:90px; margin-right:20px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [0.0_f32, 90.0, 0.0, 10.0].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+/// POA-C1R1-001, left twin: with P `rtl` the over-constrained B2's used margin left is 10, not the
+/// computed 20; its margin box 0..100 lies within P.
+#[test]
+fn css_parent_overflow_auto_used_margin_left_matches_the_hidden_layout() {
+    let control = "#p { direction:rtl; } #b2 { width:90px; margin-left:20px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        assert_eq!(
+            parent_overflow_b2_edges(layout),
+            [10.0_f32, 100.0, 10.0, 0.0].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+/// POA-C1R1-002: F's margin box is its placed box 2^24..RN(2^24 + 1) = 2^24, and its content box
+/// is RN(2^24 + 1)..2^24 = 2^24..2^24, both within P's content box 2^24..2^24 + 8. F's content
+/// edge moved by its used margin left 1 would be 2^24 - 1, outside.
+#[test]
+fn css_parent_overflow_auto_placed_float_margin_box_matches_the_hidden_layout() {
+    let control = "#p { margin-left:16777216px; width:8px; } #f { width:0px; margin-left:1px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        let placed = layout.sequence().placed_float();
+        let f = &layout.children()[1];
+        assert_eq!(
+            [
+                placed.left,
+                placed.right,
+                f.border().left,
+                f.border().right,
+                f.used_margin_left(),
+            ]
+            .map(f32::to_bits),
+            [
+                16_777_216.0_f32,
+                16_777_216.0,
+                16_777_216.0,
+                16_777_216.0,
+                1.0
+            ]
+            .map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+/// POA-C1R1-003 (model-evidenced only): P's content top is 2^24, B1's height is absorbed, and F's
+/// placed top and content top both lie on P's content top.
+#[test]
+fn css_parent_overflow_auto_float_top_on_the_content_top_matches_the_hidden_layout() {
+    let control = "#p { margin-top:16777206px; } #b1 { margin-bottom:0px; }";
+    let rule = format!("{control} #p {{ overflow:auto; }}");
+    assert_parent_overflow_case(6, control, &rule, &[1]);
+    float_overflow_geometry(&rule, |layout| {
+        assert_eq!(
+            [
+                layout.parent().content().top,
+                layout.sequence().placed_float().top,
+                layout.children()[1].border().top,
+            ]
+            .map(f32::to_bits),
+            [16_777_216.0_f32, 16_777_216.0, 16_777_216.0].map(f32::to_bits),
+            "{rule}"
+        );
+    });
+}
+
+// Parent overflow auto Task2-C1r3 (POA-C1-R3): a right float's margin-box left edge.
+
+/// POA-C1R2-001: F floats right with a used margin left of 95. Its content box 90..100 lies within
+/// P's content box 0..100, but its placed box starts at 100 - 10 - 95 = -5.
+#[test]
+fn css_parent_overflow_auto_right_float_margin_left_is_typed() {
+    let control = "#f { float:right; margin-left:95px; }";
+    float_overflow_geometry(control, |layout| {
+        let placed = layout.sequence().placed_float();
+        let f = &layout.children()[1];
+        assert_eq!(
+            [
+                placed.left,
+                placed.right,
+                f.border().left,
+                f.used_margin_left()
+            ]
+            .map(f32::to_bits),
+            [-5.0_f32, 100.0, 90.0, 95.0].map(f32::to_bits),
+            "{control}"
+        );
+    });
+    assert_parent_auto_overflow_row(6, control, &format!("#p {{ overflow:auto; }} {control}"), 3);
 }
