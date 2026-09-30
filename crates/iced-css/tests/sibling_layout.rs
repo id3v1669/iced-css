@@ -3410,7 +3410,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
 
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
-    for (source_count, facade_work, core_work) in [(5, 594, 419), (6, 766, 501), (7, 938, 584)] {
+    for (source_count, facade_work, core_work) in [(5, 594, 481), (6, 766, 563), (7, 938, 646)] {
         let mut receipts = Vec::new();
         for width in [10, 140] {
             let b4 = if source_count == 7 {
@@ -3460,22 +3460,22 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
             594,
+            481,
             419,
-            337,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
             766,
+            563,
             501,
-            419,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
             938,
+            646,
             584,
-            502,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -5666,7 +5666,7 @@ fn assert_inventory_layout(
     );
     assert_eq!(
         layout.receipt().core.work,
-        [419, 501, 584][case.nodes - 5],
+        [481, 563, 646][case.nodes - 5],
         "{id}"
     );
 }
@@ -6662,9 +6662,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 594, 475, 419, 337),
-        (6, 766, 616, 501, 419),
-        (7, 938, 757, 584, 502),
+        (5, 594, 475, 481, 419),
+        (6, 766, 616, 563, 501),
+        (7, 938, 757, 646, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -6775,12 +6775,12 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             profile(2, OwnerProfileReason::NegativeMargin),
         ),
         (
-            "#f { margin-top:auto; margin-bottom:-1px; }",
-            profile(3, OwnerProfileReason::NegativeMargin),
+            "#f { margin-top:auto; margin-bottom:-3px; }",
+            profile(3, OwnerProfileReason::NegativeFloatOuterExtent),
         ),
         (
-            "#f { margin-top:auto; margin-left:-1px; }",
-            profile(3, OwnerProfileReason::NegativeMargin),
+            "#f { margin-top:auto; margin-left:-11px; }",
+            profile(3, OwnerProfileReason::NegativeFloatOuterExtent),
         ),
         (
             "#b3 { margin-top:auto; height:auto; }",
@@ -7525,9 +7525,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 594, 475, 419, 337),
-        (6, 766, 616, 501, 419),
-        (7, 938, 757, 584, 502),
+        (5, 594, 475, 481, 419),
+        (6, 766, 616, 563, 501),
+        (7, 938, 757, 646, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8602,9 +8602,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 594, 475, 419, 337),
-        (6, 766, 616, 501, 419),
-        (7, 938, 757, 584, 502),
+        (5, 594, 475, 481, 419),
+        (6, 766, 616, 563, 501),
+        (7, 938, 757, 646, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -9543,7 +9543,7 @@ fn float_overflow_build<'p>(
 
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, lc, core) in [(5, 594, 481, 419), (6, 766, 622, 501), (7, 938, 763, 584)] {
+    for (nodes, exact, lc, core) in [(5, 594, 481, 481), (6, 766, 622, 563), (7, 938, 763, 646)] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
             baseline_css(),
@@ -9995,7 +9995,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 594, 419), (6, 766, 501), (7, 938, 584)] {
+    for (nodes, exact, core) in [(5, 594, 481), (6, 766, 563), (7, 938, 646)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -10608,7 +10608,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 594, 419), (6, 766, 501), (7, 938, 584)] {
+    for (nodes, exact, core) in [(5, 594, 481), (6, 766, 563), (7, 938, 646)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -11386,7 +11386,7 @@ fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn parent_overflow_auto_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 594, 419), (6, 766, 501), (7, 938, 584)] {
+    for (nodes, exact, core) in [(5, 594, 481), (6, 766, 563), (7, 938, 646)] {
         let css = format!(
             "{} {} #p {{ overflow:auto; }}",
             baseline_css(),
@@ -11858,4 +11858,977 @@ fn css_parent_overflow_auto_right_float_margin_left_is_typed() {
         );
     });
     assert_parent_auto_overflow_row(6, control, &format!("#p {{ overflow:auto; }} {control}"), 3);
+}
+
+// Signed float margins (SFM plan): F's own margins may be negative (CSS2.2 §8.3) while both exact
+// outer extents are nonnegative; any other signed F margin is `NegativeFloatOuterExtent` at F.
+// Every expected value below is the ported model's (plan package, outputs/reds-model.json).
+
+const SFM_OUTER: (f32, f32, f32) = (0.0, 100.0, 10.0);
+/// P's content box 2^24..2^24 + 8 (design, "Binary32 rounding and staging", item 6).
+const SFM_OUTER_2P24: (f32, f32, f32) = (16_777_216.0, 8.0, 10.0);
+
+/// The published geometry an SFM row pins, as binary32 bits: F's margin box, content box and used
+/// margins (each left, right, top, bottom), B1's top and bottom, every tail's top, bottom and
+/// clearance, and P's content box (left, right, top, bottom) and used height.
+#[derive(Debug, PartialEq)]
+struct SfmGeometry {
+    float_margin_box: [u32; 4],
+    float_content: [u32; 4],
+    float_used_margins: [u32; 4],
+    b1: [u32; 2],
+    tails: Vec<(u32, u32, Option<u32>)>,
+    parent: [u32; 5],
+}
+
+fn sfm_geometry(
+    float_margin_box: [f32; 4],
+    float_content: [f32; 4],
+    float_used_margins: [f32; 4],
+    b1: [f32; 2],
+    tails: &[(f32, f32, Option<f32>)],
+    parent: [f32; 5],
+) -> SfmGeometry {
+    SfmGeometry {
+        float_margin_box: float_margin_box.map(f32::to_bits),
+        float_content: float_content.map(f32::to_bits),
+        float_used_margins: float_used_margins.map(f32::to_bits),
+        b1: b1.map(f32::to_bits),
+        tails: tails
+            .iter()
+            .map(|&(top, bottom, clearance)| {
+                (top.to_bits(), bottom.to_bits(), clearance.map(f32::to_bits))
+            })
+            .collect(),
+        parent: parent.map(f32::to_bits),
+    }
+}
+
+fn sfm_view(layout: &CapturedSiblingLayout<'_>) -> SfmGeometry {
+    let sequence = layout.sequence();
+    let placed = sequence.placed_float();
+    let float = &layout.children()[1];
+    assert_eq!(float.source_index(), 3);
+    let content = float.content();
+    let before = sequence.before();
+    let parent = layout.parent().content();
+    let tails: Vec<_> = sequence
+        .tail()
+        .iter()
+        .map(|tail| {
+            (
+                tail.vertical().top,
+                tail.vertical().bottom,
+                tail.clearance(),
+            )
+        })
+        .collect();
+    sfm_geometry(
+        [placed.left, placed.right, placed.top, placed.bottom],
+        [content.left, content.right, content.top, content.bottom],
+        [
+            float.used_margin_left(),
+            float.used_margin_right(),
+            float.used_margin_top(),
+            float.used_margin_bottom(),
+        ],
+        [before.top, before.bottom],
+        &tails,
+        [
+            parent.left,
+            parent.right,
+            parent.top,
+            parent.bottom,
+            layout.parent().height().used_height,
+        ],
+    )
+}
+
+/// Build the SFM row `rule` at `nodes` sources, after `baseline_css()` and the source-count rule,
+/// with the outer content geometry (left, width, top).
+fn sfm_build(
+    nodes: usize,
+    outer: (f32, f32, f32),
+    rule: &str,
+) -> Result<SfmGeometry, SiblingLayoutError> {
+    let css = format!(
+        "{} {} {rule}",
+        baseline_css(),
+        leading_clear_source_rule(nodes)
+    );
+    let mut out = None;
+    sibling_fixture(nodes, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        out = Some(
+            default_outer_layout(
+                &facts,
+                &projection.nodes()[0],
+                outer.0,
+                outer.1,
+                outer.2,
+                layout_limits(),
+            )
+            .map(|layout| sfm_view(&layout)),
+        );
+    });
+    out.unwrap()
+}
+
+/// An SFM row that lays out.
+fn sfm_layout(nodes: usize, outer: (f32, f32, f32), rule: &str) -> SfmGeometry {
+    sfm_build(nodes, outer, rule).unwrap_or_else(|error| panic!("{rule}: {error:?}"))
+}
+
+/// An SFM row that fails.
+fn sfm_error(nodes: usize, outer: (f32, f32, f32), rule: &str) -> SiblingLayoutError {
+    match sfm_build(nodes, outer, rule) {
+        Ok(view) => panic!("{rule}: expected an error, got {view:?}"),
+        Err(error) => error,
+    }
+}
+
+/// The outer-extent rejection at F, typed.
+fn assert_sfm_extent_rejected(error: SiblingLayoutError) {
+    match error {
+        SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported {
+                source: 3,
+                reason: OwnerProfileReason::NegativeFloatOuterExtent,
+            },
+        )) => {}
+        other => panic!("expected NegativeFloatOuterExtent at 3, got {other:?}"),
+    }
+}
+
+/// The `hidden` control of an SFM containment row lays out, and P `auto` gives the containment
+/// error at F (source 3).
+fn assert_sfm_auto_overflow(nodes: usize, outer: (f32, f32, f32), control: &str, rule: &str) {
+    sfm_layout(nodes, outer, control);
+    assert_parent_auto_overflow(sfm_error(nodes, outer, rule), 3);
+}
+
+/// R1: F's margin box stays 0..10 x 16..18; its content band moves to -3..7.
+#[test]
+fn css_signed_float_margins_left_shift_publishes_the_content_band() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, "#f { margin-left:-3px; margin-right:3px; }"),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 18.0],
+            [-3.0, 7.0, 16.0, 18.0],
+            [-3.0, 3.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R2: a right F's margin box stays 90..100; its content band moves to 93..103.
+#[test]
+fn css_signed_float_margins_right_float_right_shift_publishes_the_content_band() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER,
+            "#f { float:right; margin-right:-3px; margin-left:3px; }"
+        ),
+        sfm_geometry(
+            [90.0, 100.0, 16.0, 18.0],
+            [93.0, 103.0, 16.0, 18.0],
+            [3.0, -3.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R3: F's margin box stays 16..18; its content span moves to 13..15.
+#[test]
+fn css_signed_float_margins_up_shift_publishes_the_content_span() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, "#f { margin-top:-3px; margin-bottom:3px; }"),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 18.0],
+            [0.0, 10.0, 13.0, 15.0],
+            [0.0, 0.0, -3.0, 3.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R4: the bottom margin lifts F's margin bottom to 17, so B2 is required at 17 with clearance -2.
+#[test]
+fn css_signed_float_margins_negative_bottom_lifts_the_clearance_edge() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, "#f { margin-bottom:-1px; }"),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 17.0],
+            [0.0, 10.0, 16.0, 18.0],
+            [0.0, 0.0, 0.0, -1.0],
+            [11.0, 12.0],
+            &[(17.0, 18.0, Some(-2.0)), (21.0, 22.0, None)],
+            [0.0, 100.0, 11.0, 26.0, 15.0]
+        )
+    );
+}
+
+/// R5: the margin box narrows to 0..9; the content band is -1..9.
+#[test]
+fn css_signed_float_margins_negative_left_narrows_the_margin_box() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, "#f { margin-left:-1px; }"),
+        sfm_geometry(
+            [0.0, 9.0, 16.0, 18.0],
+            [-1.0, 9.0, 16.0, 18.0],
+            [-1.0, 0.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R6: a right F's margin box narrows to 91..100; the content band is 91..101.
+#[test]
+fn css_signed_float_margins_right_float_negative_right_narrows_the_margin_box() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, "#f { float:right; margin-right:-1px; }"),
+        sfm_geometry(
+            [91.0, 100.0, 16.0, 18.0],
+            [91.0, 101.0, 16.0, 18.0],
+            [0.0, -1.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R7: the outer width is exactly 0: margin box 0..0, content band -11..-1.
+#[test]
+fn css_signed_float_margins_zero_outer_width_is_admitted() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, "#f { margin-left:-11px; margin-right:1px; }"),
+        sfm_geometry(
+            [0.0, 0.0, 16.0, 18.0],
+            [-11.0, -1.0, 16.0, 18.0],
+            [-11.0, 1.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R8: the outer height is exactly 0: margin box 16..16, content span 13..15 (B2 `clear:none`).
+#[test]
+fn css_signed_float_margins_zero_outer_height_is_admitted() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER,
+            "#b2 { clear:none; } #f { margin-top:-3px; margin-bottom:1px; }"
+        ),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 16.0],
+            [0.0, 10.0, 13.0, 15.0],
+            [0.0, 0.0, -3.0, 1.0],
+            [11.0, 12.0],
+            &[(16.0, 17.0, None), (20.0, 21.0, None)],
+            [0.0, 100.0, 11.0, 25.0, 14.0]
+        )
+    );
+}
+
+/// R8e: the zero-height margin bottom 16 equals B2's hypothetical top, so equality stays typed.
+#[test]
+fn css_signed_float_margins_zero_outer_height_on_the_tail_top_is_equality() {
+    let error = sfm_error(6, SFM_OUTER, "#f { margin-top:-3px; margin-bottom:1px; }");
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 4,
+                error: ClearanceOwnerError::UnsupportedEquality
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// R9: the outer width -1 is rejected.
+#[test]
+fn css_signed_float_margins_negative_outer_width_is_typed() {
+    assert_sfm_extent_rejected(sfm_error(6, SFM_OUTER, "#f { margin-left:-11px; }"));
+}
+
+/// R10: the outer height -1 (bottom margin) is rejected.
+#[test]
+fn css_signed_float_margins_negative_outer_height_by_the_bottom_margin_is_typed() {
+    assert_sfm_extent_rejected(sfm_error(6, SFM_OUTER, "#f { margin-bottom:-3px; }"));
+}
+
+/// R10t: the outer height -1 (top margin) is rejected.
+#[test]
+fn css_signed_float_margins_negative_outer_height_by_the_top_margin_is_typed() {
+    assert_sfm_extent_rejected(sfm_error(6, SFM_OUTER, "#f { margin-top:-3px; }"));
+}
+
+/// R11: a right F's outer width -1 is rejected.
+#[test]
+fn css_signed_float_margins_right_float_negative_outer_width_is_typed() {
+    assert_sfm_extent_rejected(sfm_error(
+        6,
+        SFM_OUTER,
+        "#f { float:right; margin-right:-11px; }",
+    ));
+}
+
+/// R11b: the exact extent -2 MAX + 10 is rejected with the typed reason, never `Unrepresentable`.
+#[test]
+fn css_signed_float_margins_extreme_negative_outer_width_is_typed_not_unrepresentable() {
+    assert_sfm_extent_rejected(sfm_error(
+        6,
+        SFM_OUTER,
+        "#f { margin-left:-340282346638528859811704183484516925440px; margin-right:-340282346638528859811704183484516925440px; }",
+    ));
+}
+
+/// R12: a later tail's `NegativeMargin` (source 5) precedes F's extent error.
+#[test]
+fn css_signed_float_margins_later_tail_negative_margin_comes_first() {
+    let error = sfm_error(
+        6,
+        SFM_OUTER,
+        "#f { margin-left:-11px; } #b3 { margin-top:-1px; }",
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 5,
+                    reason: OwnerProfileReason::NegativeMargin
+                }
+            ))
+        ),
+        "{error:?}"
+    );
+}
+
+/// R13: F's extent error precedes B1's contact.
+#[test]
+fn css_signed_float_margins_outer_extent_precedes_b1_contact() {
+    assert_sfm_extent_rejected(sfm_error(
+        6,
+        SFM_OUTER,
+        "#f { margin-left:-11px; } #b1 { overflow:hidden; margin-bottom:0px; }",
+    ));
+}
+
+/// R16: the margin bottom 16 equals B2's hypothetical top: equality stays typed.
+#[test]
+fn css_signed_float_margins_bottom_edge_on_the_tail_top_is_equality() {
+    let error = sfm_error(6, SFM_OUTER, "#f { margin-bottom:-2px; }");
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 4,
+                error: ClearanceOwnerError::UnsupportedEquality
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// R18: F's margin bottom 36 sets P's Auto height; its border box ends at 40.
+#[test]
+fn css_signed_float_margins_n5_negative_bottom_sets_the_parent_auto_height() {
+    assert_eq!(
+        sfm_layout(
+            5,
+            SFM_OUTER,
+            "#b2 { clear:none; } #f { height:24px; margin-bottom:-4px; }"
+        ),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 36.0],
+            [0.0, 10.0, 16.0, 40.0],
+            [0.0, 0.0, 0.0, -4.0],
+            [11.0, 12.0],
+            &[(16.0, 17.0, None)],
+            [0.0, 100.0, 11.0, 36.0, 25.0]
+        )
+    );
+}
+
+/// R18a: under P `auto` F's border bottom 40 lies below P's content bottom 36.
+#[test]
+fn css_signed_float_margins_n5_parent_auto_rejects_the_border_box_below_p() {
+    assert_sfm_auto_overflow(
+        5,
+        SFM_OUTER,
+        "#b2 { clear:none; } #f { height:24px; margin-bottom:-4px; }",
+        "#p { overflow:auto; } #b2 { clear:none; } #f { height:24px; margin-bottom:-4px; }",
+    );
+}
+
+/// R19: F's border box 10..12 reaches into B1 (11..12), but its margin box 16..18 lies strictly
+/// below.
+#[test]
+fn css_signed_float_margins_new_bfc_b1_is_judged_on_the_margin_box() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER,
+            "#b1 { overflow:hidden; } #f { margin-top:-6px; margin-bottom:6px; }"
+        ),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 18.0],
+            [0.0, 10.0, 10.0, 12.0],
+            [0.0, 0.0, -6.0, 6.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R20: F's margin top 12 touches B1's border bottom 12: contact stays typed.
+#[test]
+fn css_signed_float_margins_new_bfc_b1_contact_with_a_signed_float_top_is_typed() {
+    let error = sfm_error(
+        6,
+        SFM_OUTER,
+        "#b1 { overflow:hidden; margin-bottom:0px; } #f { margin-top:-1px; }",
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 2,
+                error: ClearanceOwnerError::NewBfcFloatContact
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// R21: under P `auto` F's border left -1 lies outside P.
+#[test]
+fn css_signed_float_margins_parent_auto_rejects_a_border_box_left_of_p() {
+    assert_sfm_auto_overflow(
+        6,
+        SFM_OUTER,
+        "#f { margin-left:-1px; }",
+        "#p { overflow:auto; } #f { margin-left:-1px; }",
+    );
+}
+
+/// R22: under P `auto` a right F's border right 101 lies outside P.
+#[test]
+fn css_signed_float_margins_parent_auto_rejects_a_right_float_border_box_right_of_p() {
+    assert_sfm_auto_overflow(
+        6,
+        SFM_OUTER,
+        "#f { float:right; margin-right:-1px; }",
+        "#p { overflow:auto; } #f { float:right; margin-right:-1px; }",
+    );
+}
+
+/// R23: under P `auto` F's border top 10 lies above P's content top 11.
+#[test]
+fn css_signed_float_margins_parent_auto_rejects_a_border_box_above_p() {
+    assert_sfm_auto_overflow(
+        6,
+        SFM_OUTER,
+        "#f { margin-top:-6px; margin-bottom:6px; }",
+        "#p { overflow:auto; } #f { margin-top:-6px; margin-bottom:6px; }",
+    );
+}
+
+/// R23h: the `hidden` control of R23 lays out: border box 10..12, margin box 16..18.
+#[test]
+fn css_signed_float_margins_border_box_above_the_margin_box_lays_out() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, "#f { margin-top:-6px; margin-bottom:6px; }"),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 18.0],
+            [0.0, 10.0, 10.0, 12.0],
+            [0.0, 0.0, -6.0, 6.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R24: under P `auto` the content band 3..13 and the margin box 0..10 both lie inside P.
+#[test]
+fn css_signed_float_margins_parent_auto_admits_a_contained_border_box() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER,
+            "#p { overflow:auto; } #f { margin-left:3px; margin-right:-3px; }"
+        ),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 18.0],
+            [3.0, 13.0, 16.0, 18.0],
+            [3.0, -3.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R24h: the `hidden` twin of R24 has the same geometry.
+#[test]
+fn css_signed_float_margins_left_margin_beside_a_negative_right_keeps_the_content_inside() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, "#f { margin-left:3px; margin-right:-3px; }"),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 18.0],
+            [3.0, 13.0, 16.0, 18.0],
+            [3.0, -3.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R26: under P `rtl` and `auto` F's border left -1 lies outside P.
+#[test]
+fn css_signed_float_margins_rtl_parent_auto_rejects_a_negative_left_margin() {
+    assert_sfm_auto_overflow(
+        6,
+        SFM_OUTER,
+        "#p { direction:rtl; } #f { margin-left:-1px; }",
+        "#p { overflow:auto; direction:rtl; } #f { margin-left:-1px; }",
+    );
+}
+
+/// R26h: P `rtl` places a left F by its side: margin box 0..9, content band -1..9.
+#[test]
+fn css_signed_float_margins_rtl_places_the_float_by_its_side() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER,
+            "#p { direction:rtl; } #f { margin-left:-1px; }"
+        ),
+        sfm_geometry(
+            [0.0, 9.0, 16.0, 18.0],
+            [-1.0, 9.0, 16.0, 18.0],
+            [-1.0, 0.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R26r: under P `rtl` and `auto` a right F's border right 103 lies outside P.
+#[test]
+fn css_signed_float_margins_rtl_parent_auto_rejects_a_right_float_negative_right_margin() {
+    assert_sfm_auto_overflow(
+        6,
+        SFM_OUTER,
+        "#p { direction:rtl; } #f { float:right; margin-left:3px; margin-right:-3px; }",
+        "#p { overflow:auto; direction:rtl; } #f { float:right; margin-left:3px; margin-right:-3px; }",
+    );
+}
+
+/// R26rh: P `rtl` places a right F by its side: margin box 90..100, content band 93..103.
+#[test]
+fn css_signed_float_margins_rtl_right_float_signed_margins_lay_out() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER,
+            "#p { direction:rtl; } #f { float:right; margin-left:3px; margin-right:-3px; }"
+        ),
+        sfm_geometry(
+            [90.0, 100.0, 16.0, 18.0],
+            [93.0, 103.0, 16.0, 18.0],
+            [3.0, -3.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R27: the near sum -MAX - 2^112 of a left F leaves the finite range: `float_content_left`.
+#[test]
+fn css_signed_float_margins_near_left_edge_overflow_is_typed() {
+    let error = sfm_error(
+        6,
+        (-f32::MAX, 100.0, 10.0),
+        "#f { margin-left:-5192296858534827628530496329220096px; margin-right:5192296858534827628530496329220096px; }",
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 3,
+                error: ClearanceOwnerError::Unrepresentable {
+                    stage: "float_content_left"
+                }
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// R27r: the near sum MAX + 2^112 of a right F leaves the finite range: `float_content_right`.
+#[test]
+fn css_signed_float_margins_near_right_edge_overflow_is_typed() {
+    let error = sfm_error(
+        6,
+        (f32::MAX, 100.0, 10.0),
+        "#f { float:right; margin-right:-5192296858534827628530496329220096px; margin-left:5192296858534827628530496329220096px; }",
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 3,
+                error: ClearanceOwnerError::Unrepresentable {
+                    stage: "float_content_right"
+                }
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// R28: F's margin top MAX plus 2^112 leaves the finite range: `float_content_top`.
+#[test]
+fn css_signed_float_margins_near_top_edge_overflow_below_is_typed() {
+    let error = sfm_error(
+        6,
+        SFM_OUTER,
+        "#b1 { margin-bottom:340282346638528859811704183484516925440px; } #f { margin-top:5192296858534827628530496329220096px; margin-bottom:-5192296858534827628530496329220096px; }",
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 3,
+                error: ClearanceOwnerError::Unrepresentable {
+                    stage: "float_content_top"
+                }
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// R29: F's margin top -MAX minus 2^112 leaves the finite range: `float_content_top`.
+#[test]
+fn css_signed_float_margins_near_top_edge_overflow_above_is_typed() {
+    let error = sfm_error(
+        6,
+        (0.0, 100.0, -f32::MAX),
+        "#f { margin-top:-5192296858534827628530496329220096px; margin-bottom:5192296858534827628530496329220096px; }",
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 3,
+                error: ClearanceOwnerError::Unrepresentable {
+                    stage: "float_content_top"
+                }
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// R30: F's margin left MAX plus 2^112 beside margin right -2^112 leaves the finite range.
+#[test]
+fn css_signed_float_margins_near_left_edge_overflow_beside_a_negative_right_is_typed() {
+    let error = sfm_error(
+        6,
+        (f32::MAX, 100.0, 10.0),
+        "#f { width:0px; margin-left:5192296858534827628530496329220096px; margin-right:-5192296858534827628530496329220096px; }",
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 3,
+                error: ClearanceOwnerError::Unrepresentable {
+                    stage: "float_content_left"
+                }
+            })
+        ),
+        "{error:?}"
+    );
+}
+
+/// R31: at N5 the left shift moves only the content band.
+#[test]
+fn css_signed_float_margins_n5_left_shift_publishes_the_content_band() {
+    assert_eq!(
+        sfm_layout(5, SFM_OUTER, "#f { margin-left:-3px; margin-right:3px; }"),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 18.0],
+            [-3.0, 7.0, 16.0, 18.0],
+            [-3.0, 3.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0))],
+            [0.0, 100.0, 11.0, 19.0, 8.0]
+        )
+    );
+}
+
+/// R32: at N7 a right F's up shift moves only the content span.
+#[test]
+fn css_signed_float_margins_n7_right_float_up_shift_publishes_the_content_span() {
+    assert_eq!(
+        sfm_layout(
+            7,
+            SFM_OUTER,
+            "#f { float:right; margin-top:-3px; margin-bottom:3px; }"
+        ),
+        sfm_geometry(
+            [90.0, 100.0, 16.0, 18.0],
+            [90.0, 100.0, 13.0, 15.0],
+            [0.0, 0.0, -3.0, 3.0],
+            [11.0, 12.0],
+            &[
+                (18.0, 19.0, Some(-1.0)),
+                (22.0, 23.0, None),
+                (27.0, 29.0, None)
+            ],
+            [0.0, 100.0, 11.0, 31.0, 20.0]
+        )
+    );
+}
+
+/// R33: content right RN(2^24 + 9) = 2^24 + 8, a tie to even, lies on P's edge.
+#[test]
+fn css_signed_float_margins_parent_auto_rounds_the_right_edge_onto_p() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER_2P24,
+            "#p { overflow:auto; } #f { float:right; width:5px; margin-right:-1px; }"
+        ),
+        sfm_geometry(
+            [16_777_220.0, 16_777_224.0, 16.0, 18.0],
+            [16_777_220.0, 16_777_224.0, 16.0, 18.0],
+            [0.0, -1.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [16_777_216.0, 16_777_224.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R34: content right 2^24 + 10 lies outside P's content box 2^24..2^24 + 8.
+#[test]
+fn css_signed_float_margins_parent_auto_rejects_the_rounded_right_edge_outside_p() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER_2P24,
+            "#f { float:right; width:5px; margin-right:-2px; }"
+        ),
+        sfm_geometry(
+            [16_777_220.0, 16_777_224.0, 16.0, 18.0],
+            [16_777_220.0, 16_777_226.0, 16.0, 18.0],
+            [0.0, -2.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [16_777_216.0, 16_777_224.0, 11.0, 27.0, 16.0]
+        )
+    );
+    assert_sfm_auto_overflow(
+        6,
+        SFM_OUTER_2P24,
+        "#f { float:right; width:5px; margin-right:-2px; }",
+        "#p { overflow:auto; } #f { float:right; width:5px; margin-right:-2px; }",
+    );
+}
+
+/// R35: content left RN(2^24 - 0.5) = 2^24, a tie to even, lies on P's edge.
+#[test]
+fn css_signed_float_margins_parent_auto_rounds_the_left_edge_onto_p() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER_2P24,
+            "#p { overflow:auto; } #f { width:5px; margin-left:-0.5px; }"
+        ),
+        sfm_geometry(
+            [16_777_216.0, 16_777_220.0, 16.0, 18.0],
+            [16_777_216.0, 16_777_220.0, 16.0, 18.0],
+            [-0.5, 0.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [16_777_216.0, 16_777_224.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+/// R36: content left 2^24 - 1 lies outside P's content box.
+#[test]
+fn css_signed_float_margins_parent_auto_rejects_the_left_edge_outside_p() {
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER_2P24, "#f { width:5px; margin-left:-1px; }"),
+        sfm_geometry(
+            [16_777_216.0, 16_777_220.0, 16.0, 18.0],
+            [16_777_215.0, 16_777_220.0, 16.0, 18.0],
+            [-1.0, 0.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [16_777_216.0, 16_777_224.0, 11.0, 27.0, 16.0]
+        )
+    );
+    assert_sfm_auto_overflow(
+        6,
+        SFM_OUTER_2P24,
+        "#f { width:5px; margin-left:-1px; }",
+        "#p { overflow:auto; } #f { width:5px; margin-left:-1px; }",
+    );
+}
+
+/// R37: content top RN(16 - 2^30) = -2^30 while the placed margin top 16 stays strictly below B1.
+#[test]
+fn css_signed_float_margins_new_bfc_contact_reads_the_placed_margin_top() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER,
+            "#b1 { overflow:hidden; } #f { height:1073741824px; margin-top:-1073741824px; margin-bottom:2px; }"
+        ),
+        sfm_geometry(
+            [0.0, 10.0, 16.0, 18.0],
+            [0.0, 10.0, f32::from_bits(0xce80_0000), 0.0],
+            [0.0, 0.0, f32::from_bits(0xce80_0000), 2.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+}
+
+// Signed float margins Task2: the shift matrix and POA-C1R3-F1.
+
+/// The four shift forms: the declarations, F's used margins (left, right, top, bottom) and the move
+/// of F's content box (left and right, or top and bottom) relative to its margin box.
+const SFM_SHIFTS: [(&str, &str, [f32; 4], [f32; 4]); 4] = [
+    (
+        "shift_left",
+        "margin-left:-3px; margin-right:3px;",
+        [-3.0, 3.0, 0.0, 0.0],
+        [-3.0, -3.0, 0.0, 0.0],
+    ),
+    (
+        "shift_right",
+        "margin-right:-3px; margin-left:3px;",
+        [3.0, -3.0, 0.0, 0.0],
+        [3.0, 3.0, 0.0, 0.0],
+    ),
+    (
+        "shift_up",
+        "margin-top:-3px; margin-bottom:3px;",
+        [0.0, 0.0, -3.0, 3.0],
+        [0.0, 0.0, -3.0, -3.0],
+    ),
+    (
+        "shift_down",
+        "margin-bottom:-3px; margin-top:3px;",
+        [0.0, 0.0, 3.0, -3.0],
+        [0.0, 0.0, 3.0, 3.0],
+    ),
+];
+
+/// Side x the four shift forms x P `hidden`/`auto` at `nodes`: 16 rows. Each shift keeps F's outer
+/// extents, so under `hidden` the layout equals the zero-margin control except F's content box and
+/// used margins; under `auto` it equals that layout, or gives `ParentAutoOverflow` at F exactly
+/// when F's border box leaves P: a left F shifted left, a right F shifted right, or F shifted down
+/// at N5.
+fn assert_signed_float_margin_matrix(nodes: usize) -> usize {
+    let mut rows = 0;
+    for side in ["left", "right"] {
+        let control = sfm_layout(nodes, SFM_OUTER, &format!("#f {{ float:{side}; }}"));
+        for (form, margins, used, shift) in SFM_SHIFTS {
+            let mut content = [0.0; 4];
+            for (edge, value) in content.iter_mut().enumerate() {
+                *value = f32::from_bits(control.float_content[edge]) + shift[edge];
+            }
+            let expected = SfmGeometry {
+                float_content: content.map(f32::to_bits),
+                float_used_margins: used.map(f32::to_bits),
+                tails: control.tails.clone(),
+                ..control
+            };
+            let hidden = format!("#f {{ float:{side}; {margins} }}");
+            assert_eq!(
+                sfm_layout(nodes, SFM_OUTER, &hidden),
+                expected,
+                "N{nodes} {hidden}"
+            );
+            let auto = format!("{hidden} #p {{ overflow:auto; }}");
+            if (side, form) == ("left", "shift_left")
+                || (side, form) == ("right", "shift_right")
+                || (nodes, form) == (5, "shift_down")
+            {
+                assert_parent_auto_overflow(sfm_error(nodes, SFM_OUTER, &auto), 3);
+            } else {
+                assert_eq!(
+                    sfm_layout(nodes, SFM_OUTER, &auto),
+                    expected,
+                    "N{nodes} {auto}"
+                );
+            }
+            rows += 2;
+        }
+    }
+    assert_eq!(rows, 16, "N{nodes}");
+    rows
+}
+
+#[test]
+fn signed_float_margin_matrix_matches_the_zero_margin_layouts() {
+    let rows: usize = [5, 6, 7]
+        .into_iter()
+        .map(assert_signed_float_margin_matrix)
+        .sum();
+    assert_eq!(rows, 48);
+}
+
+/// POA-C1R3-F1 (R25): P `rtl` with F's margin right 95. F's border box 0..10 lies inside P, but
+/// its margin box 0..105 does not: the `hidden` control lays out and P `auto` gives the containment
+/// error.
+#[test]
+fn css_signed_float_margins_rtl_float_margin_right_is_typed() {
+    let control = "#p { direction:rtl; } #f { margin-right:95px; }";
+    assert_eq!(
+        sfm_layout(6, SFM_OUTER, control),
+        sfm_geometry(
+            [0.0, 105.0, 16.0, 18.0],
+            [0.0, 10.0, 16.0, 18.0],
+            [0.0, 95.0, 0.0, 0.0],
+            [11.0, 12.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            [0.0, 100.0, 11.0, 27.0, 16.0]
+        )
+    );
+    assert_sfm_auto_overflow(
+        6,
+        SFM_OUTER,
+        control,
+        "#p { overflow:auto; direction:rtl; } #f { margin-right:95px; }",
+    );
 }

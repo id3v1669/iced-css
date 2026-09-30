@@ -674,17 +674,19 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
             ))
         ));
     }
+    // A negative float margin is admitted while both outer extents stay nonnegative (SFM, C1):
+    // margin box 0..9, content -1..9.
     let (outer, parent, mut children) = facts(&source_nodes);
     children[1].margin.left = AutoLength::Value(-1.0);
-    assert!(matches!(
-        build(&source_nodes, outer, parent, &children, limits(6)),
-        Err(ClearanceSequenceError::Profile(
-            ClearanceOwnerError::Unsupported {
-                source: 3,
-                reason: OwnerProfileReason::NegativeMargin,
-            }
-        ))
-    ));
+    assert_eq!(
+        sfm_core_view(&build(&source_nodes, outer, parent, &children, limits(6)).unwrap()),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 9.0, 16.0, 18.0],
+            [-1.0, 9.0, 16.0, 18.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)]
+        )
+    );
     // A nonzero vertical float margin is admitted: margin box 16..19, content 17..19.
     let (outer, parent, mut children) = facts(&source_nodes);
     children[1].margin.top = AutoLength::Value(1.0);
@@ -758,8 +760,8 @@ fn float_auto_error_table_preserves_dynamic_profile_precedence() {
         }
     }
 
-    // Only a negative value is rejected (NegativeMargin); a positive value on any
-    // edge takes an admitted-success branch below.
+    // A negative value on any edge is admitted while both outer extents stay nonnegative
+    // (SFM); a positive value takes an admitted-success branch below.
     for value in [-1.0, 1.0] {
         for edge in 0..4 {
             let (outer, parent, mut children) = facts(&source_nodes);
@@ -808,15 +810,35 @@ fn float_auto_error_table_preserves_dynamic_profile_precedence() {
                 );
                 continue;
             }
-            assert!(matches!(
-                result,
-                Err(ClearanceSequenceError::Profile(
-                    ClearanceOwnerError::Unsupported {
-                        source: 3,
-                        reason: OwnerProfileReason::NegativeMargin,
-                    }
-                ))
-            ));
+            // SFM: top -1 (C11), right -1 (C10), bottom -1 (C8a) or left -1 (C1), the other
+            // horizontal edge Auto.
+            let expected = [
+                sfm_core_expected(
+                    [11.0, 12.0],
+                    [0.0, 10.0, 16.0, 17.0],
+                    [0.0, 10.0, 15.0, 17.0],
+                    &[(17.0, 18.0, Some(-2.0)), (21.0, 22.0, None)],
+                ),
+                sfm_core_expected(
+                    [11.0, 12.0],
+                    [0.0, 9.0, 16.0, 18.0],
+                    [0.0, 10.0, 16.0, 18.0],
+                    &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+                ),
+                sfm_core_expected(
+                    [11.0, 12.0],
+                    [0.0, 10.0, 16.0, 17.0],
+                    [0.0, 10.0, 16.0, 18.0],
+                    &[(17.0, 18.0, Some(-2.0)), (21.0, 22.0, None)],
+                ),
+                sfm_core_expected(
+                    [11.0, 12.0],
+                    [0.0, 9.0, 16.0, 18.0],
+                    [-1.0, 9.0, 16.0, 18.0],
+                    &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+                ),
+            ];
+            assert_eq!(sfm_core_view(&result.unwrap()), expected[edge]);
         }
     }
 
@@ -1011,17 +1033,18 @@ fn signed_normal_margin_validation_is_finite_ordered_and_source_typed() {
         (16.0, 19.0)
     );
 
+    // A negative float margin is admitted while both outer extents stay nonnegative (SFM, C1).
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.left = AutoLength::Value(-1.0);
-    assert!(matches!(
-        build(&sources, outer, parent, &children, limits(6)),
-        Err(ClearanceSequenceError::Profile(
-            ClearanceOwnerError::Unsupported {
-                source: 3,
-                reason: OwnerProfileReason::NegativeMargin,
-            }
-        ))
-    ));
+    assert_eq!(
+        sfm_core_view(&build(&sources, outer, parent, &children, limits(6)).unwrap()),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 9.0, 16.0, 18.0],
+            [-1.0, 9.0, 16.0, 18.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)]
+        )
+    );
 }
 
 #[test]
@@ -1151,7 +1174,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 419, 337), (6, 501, 419), (7, 584, 502)] {
+    for (count, work, old_work) in [(5, 481, 419), (6, 563, 501), (7, 646, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1179,7 +1202,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            210 + 8 * count + count * (count - 1) / 2 + 24 * tail_count + 45 * child_count
+            272 + 8 * count + count * (count - 1) / 2 + 24 * tail_count + 45 * child_count
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert_eq!(
@@ -1255,7 +1278,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(500).unwrap();
+    short.work = NonZeroUsize::new(562).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1304,7 +1327,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].padding.left = 1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(500).unwrap();
+    one_short.work = NonZeroUsize::new(562).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -1833,8 +1856,8 @@ fn vertical_auto_keeps_every_sequence_exclusion() {
         2,
         R::NegativeMargin,
     );
-    // Any float negative is NegativeMargin; a positive float margin on any edge is
-    // admitted.
+    // A float margin of either sign on any edge is admitted beside the vertical Auto
+    // margins while both outer extents stay nonnegative (SFM: C12t, C12r, C12b and C12l).
     for edge in 0..4 {
         for value in [-1.0, 1.0] {
             if value > 0.0 && (edge == 0 || edge == 2) {
@@ -1878,19 +1901,45 @@ fn vertical_auto_keeps_every_sequence_exclusion() {
                 );
                 continue;
             }
-            rejected(
-                &|c| {
-                    let value = AutoLength::Value(value);
-                    match edge {
-                        0 => c[1].margin.top = value,
-                        1 => c[1].margin.right = value,
-                        2 => c[1].margin.bottom = value,
-                        _ => c[1].margin.left = value,
-                    }
-                },
-                3,
-                R::NegativeMargin,
-            );
+            let (outer, parent, mut children) = facts(&source_nodes);
+            for child in &mut children {
+                child.margin.top = AutoLength::Auto;
+            }
+            let value = AutoLength::Value(value);
+            match edge {
+                0 => children[1].margin.top = value,
+                1 => children[1].margin.right = value,
+                2 => children[1].margin.bottom = value,
+                _ => children[1].margin.left = value,
+            }
+            let expected = [
+                sfm_core_expected(
+                    [11.0, 12.0],
+                    [0.0, 10.0, 16.0, 17.0],
+                    [0.0, 10.0, 15.0, 17.0],
+                    &[(17.0, 18.0, Some(1.0)), (21.0, 22.0, None)],
+                ),
+                sfm_core_expected(
+                    [11.0, 12.0],
+                    [0.0, 9.0, 16.0, 18.0],
+                    [0.0, 10.0, 16.0, 18.0],
+                    &[(18.0, 19.0, Some(2.0)), (22.0, 23.0, None)],
+                ),
+                sfm_core_expected(
+                    [11.0, 12.0],
+                    [0.0, 10.0, 16.0, 17.0],
+                    [0.0, 10.0, 16.0, 18.0],
+                    &[(17.0, 18.0, Some(1.0)), (21.0, 22.0, None)],
+                ),
+                sfm_core_expected(
+                    [11.0, 12.0],
+                    [0.0, 9.0, 16.0, 18.0],
+                    [-1.0, 9.0, 16.0, 18.0],
+                    &[(18.0, 19.0, Some(2.0)), (22.0, 23.0, None)],
+                ),
+            ];
+            let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+            assert_eq!(sfm_core_view(&owner), expected[edge]);
         }
     }
     rejected(&|c| c[3].height = OwnerHeight::Auto, 5, R::HeightKind);
@@ -2019,6 +2068,18 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
                         field: "margin",
                     })) if actual == source
                 )),
+                // SFM: F's top Auto beside its bottom -1 is admitted (C13).
+                1 if source == 3 => {
+                    assert_eq!(
+                        sfm_core_view(&result.unwrap()),
+                        sfm_core_expected(
+                            [11.0, 12.0],
+                            [0.0, 10.0, 16.0, 17.0],
+                            [0.0, 10.0, 16.0, 18.0],
+                            &[(17.0, 18.0, Some(-2.0)), (21.0, 22.0, None)]
+                        )
+                    )
+                }
                 1 => assert!(matches!(
                     result,
                     Err(ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
@@ -2126,7 +2187,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 419, 337), (6, 501, 419), (7, 584, 502)] {
+    for (count, work, old_work) in [(5, 481, 419), (6, 563, 501), (7, 646, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2422,7 +2483,8 @@ fn profile<'s>(
 #[test]
 fn nonzero_float_margin_admission_keeps_fault_precedence() {
     let sources = sources(6);
-    // A negative horizontal edge is NegativeMargin on either edge.
+    // A negative horizontal edge is admitted on either edge while the outer width stays
+    // nonnegative (SFM: C1 and C10).
     for right in [false, true] {
         let (outer, parent, mut children) = facts(&sources);
         if right {
@@ -2430,18 +2492,36 @@ fn nonzero_float_margin_admission_keeps_fault_precedence() {
         } else {
             children[1].margin.left = AutoLength::Value(-1.0);
         }
-        assert_eq!(
-            profile(build(&sources, outer, parent, &children, limits(6))),
-            "Unsupported { source: 3, reason: NegativeMargin }"
-        );
+        let expected = if right {
+            sfm_core_expected(
+                [11.0, 12.0],
+                [0.0, 9.0, 16.0, 18.0],
+                [0.0, 10.0, 16.0, 18.0],
+                &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            )
+        } else {
+            sfm_core_expected(
+                [11.0, 12.0],
+                [0.0, 9.0, 16.0, 18.0],
+                [-1.0, 9.0, 16.0, 18.0],
+                &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+            )
+        };
+        let owner = build(&sources, outer, parent, &children, limits(6)).unwrap();
+        assert_eq!(sfm_core_view(&owner), expected);
     }
-    // A negative horizontal edge beats a nonzero vertical edge.
+    // A negative horizontal edge beside a nonzero vertical edge is admitted too (SFM, C14).
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.left = AutoLength::Value(-1.0);
     children[1].margin.top = AutoLength::Value(1.0);
     assert_eq!(
-        profile(build(&sources, outer, parent, &children, limits(6))),
-        "Unsupported { source: 3, reason: NegativeMargin }"
+        sfm_core_view(&build(&sources, outer, parent, &children, limits(6)).unwrap()),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 9.0, 16.0, 19.0],
+            [-1.0, 9.0, 17.0, 19.0],
+            &[(19.0, 20.0, Some(0.0)), (23.0, 24.0, None)]
+        )
     );
     // A nonzero vertical edge is admitted, alone or beside nonzero horizontal edges:
     // (left, top, bottom, right) -> margin box, content.
@@ -2573,7 +2653,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 419, 337), (6, 501, 419), (7, 584, 502)] {
+    for (count, work, old_work) in [(5, 481, 419), (6, 563, 501), (7, 646, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -2878,13 +2958,19 @@ fn negative_zero_vertical_margins_and_height_take_the_identity_path() {
 #[test]
 fn nonzero_float_vertical_margin_admission_keeps_fault_precedence() {
     let sources = sources(6);
-    // A negative vertical edge is NegativeMargin even beside an admitted one.
+    // A negative vertical edge beside a positive one is admitted (SFM, C9): margin box
+    // 16..22, content 15..17, B2 required at 22 with clearance 3.
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.top = AutoLength::Value(-1.0);
     children[1].margin.bottom = AutoLength::Value(5.0);
     assert_eq!(
-        profile(build(&sources, outer, parent, &children, limits(6))),
-        "Unsupported { source: 3, reason: NegativeMargin }"
+        sfm_core_view(&build(&sources, outer, parent, &children, limits(6)).unwrap()),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 22.0],
+            [0.0, 10.0, 15.0, 17.0],
+            &[(22.0, 23.0, Some(3.0)), (26.0, 27.0, None)]
+        )
     );
     // A nonfinite vertical edge is InvalidNumber before any sign check.
     let (outer, parent, mut children) = facts(&sources);
@@ -2949,7 +3035,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 419, 337), (6, 501, 419), (7, 584, 502)] {
+    for (count, work, old_work) in [(5, 481, 419), (6, 563, 501), (7, 646, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3083,16 +3169,19 @@ fn leading_clear_masks_no_sequence_profile_fault_bytes_or_kernel() {
             reason: OwnerProfileReason::ChildDecoration,
         }
     );
-    // F `clear` with a negative bottom margin: NegativeMargin at the float.
+    // F `clear` with a negative bottom margin: the clear selects nothing and the margin is
+    // admitted (SFM, C8): margin box 16..17, B2 required at 17 with clearance -2.
     let (outer, parent, mut children) = facts(&sources);
     children[1].clear = ClearSide::Both;
     children[1].margin.bottom = AutoLength::Value(-1.0);
     assert_eq!(
-        profile_error(build(&sources, outer, parent, &children, limits(6))),
-        ClearanceOwnerError::Unsupported {
-            source: 3,
-            reason: OwnerProfileReason::NegativeMargin,
-        }
+        sfm_core_view(&build(&sources, outer, parent, &children, limits(6)).unwrap()),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 17.0],
+            [0.0, 10.0, 16.0, 18.0],
+            &[(17.0, 18.0, Some(-2.0)), (21.0, 22.0, None)]
+        )
     );
     // B1 and F `clear` with too few retained bytes: Bytes, before any kernel.
     let tiny_bytes = ClearanceSequenceLimits {
@@ -3229,7 +3318,7 @@ fn sequence_other_new_bfc_stays_rejected_off_b1() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 419), (6, 501), (7, 584)] {
+    for (count, work) in [(5, 481), (6, 563), (7, 646)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3244,7 +3333,7 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
         assert_eq!(owner.receipt().work, work);
         assert_eq!(
             work,
-            210 + 8 * count + count * (count - 1) / 2 + 24 * (count - 4) + 45 * (count - 2)
+            272 + 8 * count + count * (count - 1) / 2 + 24 * (count - 4) + 45 * (count - 2)
         );
     }
 }
@@ -3381,4 +3470,432 @@ fn sequence_b1_contact_with_an_empty_float_margin_box_is_typed() {
             "N{count}"
         );
     }
+}
+
+// Signed float margins (SFM plan): the core rows. F's own margins may be negative while both exact
+// outer extents are nonnegative; otherwise the profile rejects F with `NegativeFloatOuterExtent`.
+// Every expected value below is the ported model's (plan package, outputs/reds-model.json).
+
+/// 2^112, the near-edge magnitude of the design's sealed scripts (SFM-D-004).
+const SFM_2P112: u32 = 0x7780_0000;
+/// 2^60, the SFM-D-001 witness magnitude.
+const SFM_2P60: u32 = 0x5d80_0000;
+
+/// The core-owned geometry an SFM row pins, as binary32 bits: B1's top and bottom, F's margin box
+/// (left, right, top, bottom), F's content band and vertical span (left, right, top, bottom), and
+/// every tail's top, bottom and clearance.
+#[derive(Debug, PartialEq)]
+struct SfmCoreView {
+    before: [u32; 2],
+    margin_box: [u32; 4],
+    content: [u32; 4],
+    tails: Vec<(u32, u32, Option<u32>)>,
+}
+
+fn sfm_core_view(
+    owner: &iced_css_core::formatting::clearance_sequence::ClearanceSequenceOwner<'_>,
+) -> SfmCoreView {
+    let before = owner.before();
+    let placed = owner.placed_float();
+    let band = owner.float_content();
+    let span = owner.float_content_vertical();
+    SfmCoreView {
+        before: [before.top, before.bottom].map(f32::to_bits),
+        margin_box: [placed.left, placed.right, placed.top, placed.bottom].map(f32::to_bits),
+        content: [band.left, band.right, span.top, span.bottom].map(f32::to_bits),
+        tails: owner
+            .tail()
+            .iter()
+            .map(|tail| {
+                (
+                    tail.vertical().top.to_bits(),
+                    tail.vertical().bottom.to_bits(),
+                    tail.clearance().map(f32::to_bits),
+                )
+            })
+            .collect(),
+    }
+}
+
+fn sfm_core_expected(
+    before: [f32; 2],
+    margin_box: [f32; 4],
+    content: [f32; 4],
+    tails: &[(f32, f32, Option<f32>)],
+) -> SfmCoreView {
+    SfmCoreView {
+        before: before.map(f32::to_bits),
+        margin_box: margin_box.map(f32::to_bits),
+        content: content.map(f32::to_bits),
+        tails: tails
+            .iter()
+            .map(|&(top, bottom, clearance)| {
+                (top.to_bits(), bottom.to_bits(), clearance.map(f32::to_bits))
+            })
+            .collect(),
+    }
+}
+
+/// The outer-extent rejection at F, typed.
+fn assert_sfm_core_extent_rejected<T: std::fmt::Debug>(result: Result<T, ClearanceSequenceError>) {
+    assert_eq!(
+        profile_error(result),
+        ClearanceOwnerError::Unsupported {
+            source: 3,
+            reason: OwnerProfileReason::NegativeFloatOuterExtent,
+        }
+    );
+}
+
+/// C2: a later child's decoration fault (source 5) precedes F's extent error.
+#[test]
+fn signed_float_margins_later_decoration_fault_comes_first() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-11.0);
+    children[3].padding.left = 1.0;
+    assert_eq!(
+        profile_error(build(&sources, outer, parent, &children, limits(6))),
+        ClearanceOwnerError::Unsupported {
+            source: 5,
+            reason: OwnerProfileReason::ChildDecoration
+        }
+    );
+}
+
+/// C2b: the outer width -1 is rejected.
+#[test]
+fn signed_float_margins_negative_outer_width_is_typed() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-11.0);
+    assert_sfm_core_extent_rejected(build(&sources, outer, parent, &children, limits(6)));
+}
+
+/// C3: the float-width domain precedes F's extent error.
+#[test]
+fn signed_float_margins_float_width_domain_comes_first() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-11.0);
+    assert_eq!(
+        profile_error(build_width(
+            &sources,
+            outer,
+            parent,
+            &children,
+            -1.0,
+            limits(6)
+        )),
+        ClearanceOwnerError::InvalidNumber {
+            source: 3,
+            field: "float_width"
+        }
+    );
+}
+
+/// C4: F's extent error precedes the retained-byte floor.
+#[test]
+fn signed_float_margins_outer_extent_precedes_the_byte_floor() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-11.0);
+    let mut limit = limits(6);
+    limit.retained_bytes = NonZeroUsize::new(2 * size_of::<SequenceNormalPlacement>() - 1).unwrap();
+    assert_sfm_core_extent_rejected(build(&sources, outer, parent, &children, limit));
+}
+
+/// C4b: an admitted signed F reaches the retained-byte floor.
+#[test]
+fn signed_float_margins_admitted_signed_float_reaches_the_byte_floor() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-1.0);
+    let mut limit = limits(6);
+    limit.retained_bytes = NonZeroUsize::new(2 * size_of::<SequenceNormalPlacement>() - 1).unwrap();
+    let result = build(&sources, outer, parent, &children, limit);
+    assert!(
+        matches!(result, Err(ClearanceSequenceError::Bytes)),
+        "{result:?}"
+    );
+}
+
+/// C5: the exact extent -1 + 2^25 - 2^25 = -1 is rejected; a left-to-right f32 sum would give 0.
+#[test]
+fn signed_float_margins_exact_outer_width_rejects_minus_one_beside_2p25() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-1.0);
+    children[1].margin.right = AutoLength::Value(-33_554_432.0);
+    assert_sfm_core_extent_rejected(build_width(
+        &sources,
+        outer,
+        parent,
+        &children,
+        33_554_432.0,
+        limits(6),
+    ));
+}
+
+/// C5a: the exact extent 3 + 2^25 - 2^25 = 3 lays out: margin box 0..3.
+#[test]
+fn signed_float_margins_exact_outer_width_admits_three_beside_2p25() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(3.0);
+    children[1].margin.right = AutoLength::Value(-33_554_432.0);
+    assert_eq!(
+        sfm_core_view(
+            &build_width(&sources, outer, parent, &children, 33_554_432.0, limits(6)).unwrap()
+        ),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 3.0, 16.0, 18.0],
+            [3.0, 33_554_436.0, 16.0, 18.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)]
+        )
+    );
+}
+
+/// C5v: the exact vertical extent -1 is rejected.
+#[test]
+fn signed_float_margins_exact_outer_height_rejects_minus_one_beside_2p25() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].height = OwnerHeight::Explicit(33_554_432.0);
+    children[1].margin.top = AutoLength::Value(-1.0);
+    children[1].margin.bottom = AutoLength::Value(-33_554_432.0);
+    assert_sfm_core_extent_rejected(build(&sources, outer, parent, &children, limits(6)));
+}
+
+/// C5c: the exact extent -2 MAX + 10 is rejected with the typed reason, never `Unrepresentable`.
+#[test]
+fn signed_float_margins_extreme_outer_width_is_typed_not_unrepresentable() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-f32::MAX);
+    children[1].margin.right = AutoLength::Value(-f32::MAX);
+    assert_sfm_core_extent_rejected(build(&sources, outer, parent, &children, limits(6)));
+}
+
+/// C6: the outer width is exactly 0.
+#[test]
+fn signed_float_margins_zero_outer_width_is_admitted() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-10.0);
+    assert_eq!(
+        sfm_core_view(&build(&sources, outer, parent, &children, limits(6)).unwrap()),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 0.0, 16.0, 18.0],
+            [-10.0, 0.0, 16.0, 18.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)]
+        )
+    );
+}
+
+/// C6v: the outer height is exactly 0 (B2 `clear:none`).
+#[test]
+fn signed_float_margins_zero_outer_height_is_admitted() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.top = AutoLength::Value(-2.0);
+    children[2].clear = ClearSide::None;
+    assert_eq!(
+        sfm_core_view(&build(&sources, outer, parent, &children, limits(6)).unwrap()),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 16.0],
+            [0.0, 10.0, 14.0, 16.0],
+            &[(16.0, 17.0, None), (20.0, 21.0, None)]
+        )
+    );
+}
+
+/// C7: the near sum -MAX - 2^112 of a left F leaves the finite range.
+#[test]
+fn signed_float_margins_near_left_edge_overflow_is_typed() {
+    let sources = sources(6);
+    let (outer, mut parent, mut children) = facts(&sources);
+    parent.containing = Band {
+        left: -f32::MAX,
+        right: -f32::MAX,
+    };
+    children[1].margin.left = AutoLength::Value(-f32::from_bits(SFM_2P112));
+    children[1].margin.right = AutoLength::Value(f32::from_bits(SFM_2P112));
+    assert_eq!(
+        placement_failure(build(&sources, outer, parent, &children, limits(6))),
+        (3, unrepresentable("float_content_left"))
+    );
+}
+
+/// C7r: the near sum MAX + 2^112 of a right F leaves the finite range.
+#[test]
+fn signed_float_margins_near_right_edge_overflow_is_typed() {
+    let sources = sources(6);
+    let (outer, mut parent, mut children) = facts(&sources);
+    parent.containing = Band {
+        left: f32::MAX,
+        right: f32::MAX,
+    };
+    children[1].display.float = Float::Right;
+    children[1].margin.right = AutoLength::Value(-f32::from_bits(SFM_2P112));
+    children[1].margin.left = AutoLength::Value(f32::from_bits(SFM_2P112));
+    assert_eq!(
+        placement_failure(build(&sources, outer, parent, &children, limits(6))),
+        (3, unrepresentable("float_content_right"))
+    );
+}
+
+/// C7p: the near margin 2^112 beside the far margin -2^112 leaves the finite range.
+#[test]
+fn signed_float_margins_near_left_edge_overflow_beside_a_negative_right_is_typed() {
+    let sources = sources(6);
+    let (outer, mut parent, mut children) = facts(&sources);
+    parent.containing = Band {
+        left: f32::MAX,
+        right: f32::MAX,
+    };
+    children[1].margin.left = AutoLength::Value(f32::from_bits(SFM_2P112));
+    children[1].margin.right = AutoLength::Value(-f32::from_bits(SFM_2P112));
+    assert_eq!(
+        placement_failure(build_width(
+            &sources,
+            outer,
+            parent,
+            &children,
+            0.0,
+            limits(6)
+        )),
+        (3, unrepresentable("float_content_left"))
+    );
+}
+
+/// C7pr: a right F's near margin 2^112 beside the far margin -2^112 leaves the finite range.
+#[test]
+fn signed_float_margins_near_right_edge_overflow_beside_a_negative_left_is_typed() {
+    let sources = sources(6);
+    let (outer, mut parent, mut children) = facts(&sources);
+    parent.containing = Band {
+        left: -f32::MAX,
+        right: -f32::MAX,
+    };
+    children[1].display.float = Float::Right;
+    children[1].margin.right = AutoLength::Value(f32::from_bits(SFM_2P112));
+    children[1].margin.left = AutoLength::Value(-f32::from_bits(SFM_2P112));
+    assert_eq!(
+        placement_failure(build_width(
+            &sources,
+            outer,
+            parent,
+            &children,
+            0.0,
+            limits(6)
+        )),
+        (3, unrepresentable("float_content_right"))
+    );
+}
+
+/// C7t: the content top -MAX - 2^112 leaves the finite range.
+#[test]
+fn signed_float_margins_near_top_edge_overflow_above_is_typed() {
+    let sources = sources(6);
+    let (outer, mut parent, mut children) = facts(&sources);
+    parent.content_top = -f32::MAX;
+    children[1].margin.top = AutoLength::Value(-f32::from_bits(SFM_2P112));
+    children[1].margin.bottom = AutoLength::Value(f32::from_bits(SFM_2P112));
+    assert_eq!(
+        placement_failure(build(&sources, outer, parent, &children, limits(6))),
+        (3, unrepresentable("float_content_top"))
+    );
+}
+
+/// C7tp: the content top MAX + 2^112 leaves the finite range.
+#[test]
+fn signed_float_margins_near_top_edge_overflow_below_is_typed() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].margin.bottom = AutoLength::Value(f32::MAX);
+    children[1].margin.top = AutoLength::Value(f32::from_bits(SFM_2P112));
+    children[1].margin.bottom = AutoLength::Value(-f32::from_bits(SFM_2P112));
+    assert_eq!(
+        placement_failure(build(&sources, outer, parent, &children, limits(6))),
+        (3, unrepresentable("float_content_top"))
+    );
+}
+
+/// C15 (SFM-D-001): -1 + 2^60 - 2^60 = -1 is rejected; an f64 sum would give 0.
+#[test]
+fn signed_float_margins_exact_outer_width_rejects_minus_one_beside_2p60() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.left = AutoLength::Value(-1.0);
+    children[1].margin.right = AutoLength::Value(-f32::from_bits(SFM_2P60));
+    assert_sfm_core_extent_rejected(build_width(
+        &sources,
+        outer,
+        parent,
+        &children,
+        f32::from_bits(SFM_2P60),
+        limits(6),
+    ));
+}
+
+/// C15c (SFM-D-001): the control 0 + 2^60 - 2^60 = 0 lays out.
+#[test]
+fn signed_float_margins_exact_outer_width_admits_zero_beside_2p60() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].margin.right = AutoLength::Value(-f32::from_bits(SFM_2P60));
+    assert_eq!(
+        sfm_core_view(
+            &build_width(
+                &sources,
+                outer,
+                parent,
+                &children,
+                f32::from_bits(SFM_2P60),
+                limits(6)
+            )
+            .unwrap()
+        ),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 0.0, 16.0, 18.0],
+            [0.0, f32::from_bits(SFM_2P60), 16.0, 18.0],
+            &[(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)]
+        )
+    );
+}
+
+/// C16 (SFM-D-001): the vertical twin of C15 (B2 `clear:none`).
+#[test]
+fn signed_float_margins_exact_outer_height_rejects_minus_one_beside_2p60() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].height = OwnerHeight::Explicit(f32::from_bits(SFM_2P60));
+    children[1].margin.top = AutoLength::Value(-1.0);
+    children[1].margin.bottom = AutoLength::Value(-f32::from_bits(SFM_2P60));
+    children[2].clear = ClearSide::None;
+    assert_sfm_core_extent_rejected(build(&sources, outer, parent, &children, limits(6)));
+}
+
+/// C16c (SFM-D-001): the vertical control lays out.
+#[test]
+fn signed_float_margins_exact_outer_height_admits_zero_beside_2p60() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[1].height = OwnerHeight::Explicit(f32::from_bits(SFM_2P60));
+    children[1].margin.bottom = AutoLength::Value(-f32::from_bits(SFM_2P60));
+    children[2].clear = ClearSide::None;
+    assert_eq!(
+        sfm_core_view(&build(&sources, outer, parent, &children, limits(6)).unwrap()),
+        sfm_core_expected(
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 16.0],
+            [0.0, 10.0, 16.0, f32::from_bits(SFM_2P60)],
+            &[(16.0, 17.0, None), (20.0, 21.0, None)]
+        )
+    );
 }

@@ -195,6 +195,11 @@ pub enum OwnerProfileReason {
     /// context, so CSS2.2 §9.5.2 gives their `clear` no effect.
     ClearOnBeforeOrFloat,
     FloatTooWide,
+    /// Sequence owner only: an outer extent of the float is negative, that is
+    /// `margin-left + width + margin-right` or `margin-top + height + margin-bottom`,
+    /// summed exactly from the used values. CSS2.2 §8.3 admits negative margins, but the
+    /// §9.5.1 placer takes a nonnegative margin box.
+    NegativeFloatOuterExtent,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClearanceOwnerError {
@@ -230,8 +235,9 @@ pub enum ClearanceOwnerError {
     UnsupportedEquality,
     /// Sequence owner only: B1 establishes a new block formatting context
     /// (`ChildContext::OtherNewBfc`) and its border box is not strictly above the
-    /// float's margin box (`placed_float().top <= before().bottom`). With admitted
-    /// nonnegative margins this is edge contact, which stays unsupported (CSS2.2 §9.5).
+    /// float's margin box (`placed_float().top <= before().bottom`). B1's admitted margins
+    /// are nonnegative and the float's own margins never move its margin top, so this is
+    /// edge contact, which stays unsupported (CSS2.2 §9.5).
     NewBfcFloatContact,
     /// The presence classifier required clearance without a selected float.
     /// This indicates an internal primitive contract inconsistency.
@@ -503,9 +509,12 @@ fn child(
             return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
         }
     } else {
-        if values
-            .into_iter()
-            .any(|v| matches!(v, AutoLength::Value(v) if v < 0.0))
+        // CSS2.2 §8.3: a Sequence float's margins may be negative; its outer extents are
+        // checked once its width is known (`validate_sequence_float_extents`).
+        if !(floating && margin_policy == ChildMarginPolicy::Sequence)
+            && values
+                .into_iter()
+                .any(|v| matches!(v, AutoLength::Value(v) if v < 0.0))
         {
             return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
         }
@@ -641,6 +650,34 @@ pub(super) fn validate_sequence_float_width(
     nonnegative(width, source, "float_width")
 }
 
+/// Sequence float only (CSS2.2 §8.3, §10.3.5, §10.6.6): each used margin may be negative,
+/// but both outer extents, `left + width + right` and `top + height + bottom`, summed
+/// exactly from the used values, must be nonnegative, because the §9.5.1 placer takes a
+/// nonnegative margin box. The caller has already validated every margin, the width and
+/// the height as finite, and the width and the height as nonnegative.
+pub(super) fn validate_sequence_float_extents(
+    facts: ChildFacts<'_>,
+    width: f32,
+    height: f32,
+    source: usize,
+) -> Result<(), ClearanceOwnerError> {
+    let margin = facts.margin;
+    let extent = |terms: [f32; 3]| {
+        terms
+            .into_iter()
+            .fold(Exact::ZERO, |sum, term| sum.add(Exact::from_f32(term)))
+    };
+    if extent([margin.float_used_left(), width, margin.float_used_right()]) < Exact::ZERO
+        || extent([margin.used_top(), height, margin.used_bottom()]) < Exact::ZERO
+    {
+        return Err(unsupported(
+            source,
+            OwnerProfileReason::NegativeFloatOuterExtent,
+        ));
+    }
+    Ok(())
+}
+
 pub(super) struct KernelError {
     pub source: usize,
     pub error: ClearanceOwnerError,
@@ -748,9 +785,10 @@ pub(super) fn place_first_float(
             right: placed_float.right,
         }
     } else {
-        // The near-edge sum of either arm (left for a left F, right for a right F)
-        // cannot fail after a successful placement (NFH design r1, NFH-D-003); it
-        // stays as a documented defensive branch.
+        // The near-edge sum of either arm (left for a left F, right for a right F) is
+        // no longer bounded by the margin box: a negative near margin, or a positive one
+        // beside a negative far margin, can carry it past the finite range, which returns
+        // its named stage (SFM design).
         match placed_float.side {
             FloatSide::Left => {
                 let left = sum(&[placed_float.left, ml], "float_content_left").map_err(tagged)?;
@@ -767,9 +805,9 @@ pub(super) fn place_first_float(
             }
         }
     };
-    // The near (top) edge cannot fail after a successful placement: placed.top = y
-    // exactly and y <= RN(y + mt) <= RN(y + outer) = placed.bottom (design,
-    // "Near-edge unreachability"); it stays a documented defensive branch.
+    // The near (top) edge is no longer bounded by the margin box: a negative top margin,
+    // or a positive one beside a negative bottom margin, can carry `placed.top + mt` past
+    // the finite range, which returns its named stage (SFM design).
     let float_content_vertical = if vertical_identity {
         BlockVertical {
             top: placed_float.top,
