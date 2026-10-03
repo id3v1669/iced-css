@@ -233,11 +233,11 @@ pub enum ClearanceOwnerError {
         stage: &'static str,
     },
     UnsupportedEquality,
-    /// Sequence owner only: B1 establishes a new block formatting context
-    /// (`ChildContext::OtherNewBfc`) and its border box is not strictly above the
-    /// float's margin box (`placed_float().top <= before().bottom`). B1's admitted margins
-    /// are nonnegative and the float's own margins never move its margin top, so this is
-    /// edge contact, which stays unsupported (CSS2.2 §9.5).
+    /// Defensive Sequence-only overlap guard for a new-BFC B1: its border bottom
+    /// is strictly below the float's margin top in the downward coordinate system
+    /// (`placed_float().top < before().bottom`). Edge contact is admitted (Q1).
+    /// This strict-overlap branch is unreachable in the bounded profile: B1's
+    /// nonnegative bottom margin and the placer's lower bound preserve separation.
     NewBfcFloatContact,
     /// The presence classifier required clearance without a selected float.
     /// This indicates an internal primitive contract inconsistency.
@@ -469,8 +469,8 @@ fn child(
 ) -> Result<f32, ClearanceOwnerError> {
     display(f.display, source, floating)?;
     // Sequence B1 (source 2) may establish a new block formatting context (CSS2.2
-    // §9.4.1); the Sequence owner then rejects it unless it lies strictly above the
-    // float. Legacy owners keep the fixed contexts.
+    // §9.4.1); the Sequence owner permits boundary contact with the float's margin
+    // box and keeps a defensive strict-interior-overlap guard. Legacy contexts stay fixed.
     if f.context
         != if floating {
             ChildContext::FloatBfc
@@ -549,7 +549,9 @@ fn child(
     }
     for (edges, field) in [(f.border, "border"), (f.padding, "padding")] {
         check_edges(edges, source, field, true)?;
-        if edge_values(edges).into_iter().any(|v| v != 0.) {
+        if (field == "border" || margin_policy == ChildMarginPolicy::Legacy)
+            && edge_values(edges).into_iter().any(|v| v != 0.)
+        {
             return Err(unsupported(source, OwnerProfileReason::ChildDecoration));
         }
     }
@@ -651,10 +653,10 @@ pub(super) fn validate_sequence_float_width(
 }
 
 /// Sequence float only (CSS2.2 §8.3, §10.3.5, §10.6.6): each used margin may be negative,
-/// but both outer extents, `left + width + right` and `top + height + bottom`, summed
-/// exactly from the used values, must be nonnegative, because the §9.5.1 placer takes a
-/// nonnegative margin box. The caller has already validated every margin, the width and
-/// the height as finite, and the width and the height as nonnegative.
+/// but both five-term outer extents (near margin, near padding, content extent,
+/// far padding, far margin), summed exactly, must be nonnegative because the
+/// §9.5.1 placer takes a nonnegative margin box. Complete child profiles and the
+/// width domain have already validated finite terms and nonnegative padding/extents.
 pub(super) fn validate_sequence_float_extents(
     facts: ChildFacts<'_>,
     width: f32,
@@ -662,13 +664,25 @@ pub(super) fn validate_sequence_float_extents(
     source: usize,
 ) -> Result<(), ClearanceOwnerError> {
     let margin = facts.margin;
-    let extent = |terms: [f32; 3]| {
+    let extent = |terms: [f32; 5]| {
         terms
             .into_iter()
             .fold(Exact::ZERO, |sum, term| sum.add(Exact::from_f32(term)))
     };
-    if extent([margin.float_used_left(), width, margin.float_used_right()]) < Exact::ZERO
-        || extent([margin.used_top(), height, margin.used_bottom()]) < Exact::ZERO
+    if extent([
+        margin.float_used_left(),
+        facts.padding.left,
+        width,
+        facts.padding.right,
+        margin.float_used_right(),
+    ]) < Exact::ZERO
+        || extent([
+            margin.used_top(),
+            facts.padding.top,
+            height,
+            facts.padding.bottom,
+            margin.used_bottom(),
+        ]) < Exact::ZERO
     {
         return Err(unsupported(
             source,
@@ -685,6 +699,9 @@ pub(super) struct KernelError {
 
 pub(super) struct FirstFloatKernel {
     pub before: BlockVertical,
+    pub before_content: BlockVertical,
+    pub float_border: Band,
+    pub float_border_vertical: BlockVertical,
     pub placed_float: PlacedFloat,
     pub float_content: Band,
     pub float_content_vertical: BlockVertical,
@@ -703,12 +720,39 @@ pub(super) struct FirstFloatInput<'s> {
 
 pub(super) struct NormalKernel {
     pub vertical: BlockVertical,
+    pub content_vertical: BlockVertical,
     pub hypothetical_top: f32,
     pub zero_clearance_top: Option<f32>,
     pub clearance: Option<f32>,
     pub hypothetical_group: MarginGroup,
     pub actual_groups: [MarginGroup; 2],
     pub actual_len: usize,
+}
+
+// Border top is already published by origin/clearance. Preserve the unpadded
+// path, including its stage and signed-zero semantics, without extra arithmetic.
+fn normal_vertical(
+    border_top: f32,
+    height: f32,
+    padding: OwnerEdges,
+    top_stage: &'static str,
+    content_bottom_stage: &'static str,
+    border_bottom_stage: &'static str,
+) -> Result<(BlockVertical, f32), ClearanceOwnerError> {
+    if padding.top == 0.0 && padding.bottom == 0.0 {
+        let bottom = sum(&[border_top, height], border_bottom_stage)?;
+        return Ok((
+            BlockVertical {
+                top: border_top,
+                bottom,
+            },
+            bottom,
+        ));
+    }
+    let top = sum(&[border_top, padding.top], top_stage)?;
+    let bottom = sum(&[top, height], content_bottom_stage)?;
+    let border_bottom = sum(&[bottom, padding.bottom], border_bottom_stage)?;
+    Ok((BlockVertical { top, bottom }, border_bottom))
 }
 
 pub(super) fn place_first_float(
@@ -722,11 +766,18 @@ pub(super) fn place_first_float(
         source: input.before_source,
         error,
     })?;
-    let before_bottom =
-        sum(&[before_top, input.before_height], "before_bottom").map_err(|error| KernelError {
-            source: input.before_source,
-            error,
-        })?;
+    let (before_content, before_bottom) = normal_vertical(
+        before_top,
+        input.before_height,
+        input.before.padding,
+        "before_content_top",
+        "before_content_bottom",
+        "before_bottom",
+    )
+    .map_err(|error| KernelError {
+        source: input.before_source,
+        error,
+    })?;
     let float_top = sum(
         &[before_bottom, input.before.margin.used_bottom()],
         "float_top",
@@ -737,31 +788,49 @@ pub(super) fn place_first_float(
     })?;
     let ml = input.float.margin.float_used_left();
     let mr = input.float.margin.float_used_right();
+    let padding = input.float.padding;
+    let horizontal_unpadded = padding.left == 0.0 && padding.right == 0.0;
     let identity = ml == 0.0 && mr == 0.0;
     let tagged = |error| KernelError {
         source: input.float_source,
         error,
     };
-    let outer_width = if identity {
-        input.float_width
+    let outer_width = if horizontal_unpadded {
+        if identity {
+            input.float_width
+        } else {
+            sum(&[ml, input.float_width, mr], "float_outer_width").map_err(tagged)?
+        }
     } else {
-        sum(&[ml, input.float_width, mr], "float_outer_width").map_err(tagged)?
+        sum(
+            &[ml, padding.left, input.float_width, padding.right, mr],
+            "float_outer_width",
+        )
+        .map_err(tagged)?
     };
     let mt = input.float.margin.used_top();
     let mb = input.float.margin.used_bottom();
     let vertical_identity = mt == 0.0 && mb == 0.0;
-    let outer_height = if vertical_identity {
-        input.float_height
+    let vertical_unpadded = padding.top == 0.0 && padding.bottom == 0.0;
+    let outer_height = if vertical_unpadded {
+        if vertical_identity {
+            input.float_height
+        } else {
+            sum(&[mt, input.float_height, mb], "float_outer_height").map_err(tagged)?
+        }
     } else {
-        sum(&[mt, input.float_height, mb], "float_outer_height").map_err(tagged)?
+        sum(
+            &[mt, padding.top, input.float_height, padding.bottom, mb],
+            "float_outer_height",
+        )
+        .map_err(tagged)?
     };
     let placed_float = place_float(
         &[],
         input.parent.containing,
-        // The request is the float's margin box: each extent is the content extent
-        // plus both used margins on that axis. With both used margins on an axis
-        // zero (Auto or ±0) the content extent is passed unchanged, so every
-        // zero-margin input keeps its predecessor bits.
+        // The request is the float's margin box. Each extent includes both padding
+        // edges and both used margins, summed once. The axis-specific zero-padding
+        // path retains the predecessor's identity and rounded extent behavior.
         FloatRequest {
             side: match input.float.display.float {
                 Float::Right => FloatSide::Right,
@@ -779,46 +848,102 @@ pub(super) fn place_first_float(
         error: ClearanceOwnerError::FloatPlacement(error),
     })?
     .placed;
-    let float_content = if identity {
-        Band {
-            left: placed_float.left,
-            right: placed_float.right,
-        }
+    let (float_content, float_border) = if horizontal_unpadded {
+        let content = if identity {
+            Band {
+                left: placed_float.left,
+                right: placed_float.right,
+            }
+        } else {
+            match placed_float.side {
+                FloatSide::Left => {
+                    let left =
+                        sum(&[placed_float.left, ml], "float_content_left").map_err(tagged)?;
+                    let right =
+                        sum(&[left, input.float_width], "float_content_right").map_err(tagged)?;
+                    Band { left, right }
+                }
+                FloatSide::Right => {
+                    let right =
+                        sum(&[placed_float.right, -mr], "float_content_right").map_err(tagged)?;
+                    let left =
+                        sum(&[right, -input.float_width], "float_content_left").map_err(tagged)?;
+                    Band { left, right }
+                }
+            }
+        };
+        (content, content)
     } else {
-        // The near-edge sum of either arm (left for a left F, right for a right F) is
-        // no longer bounded by the margin box: a negative near margin, or a positive one
-        // beside a negative far margin, can carry it past the finite range, which returns
-        // its named stage (SFM design).
         match placed_float.side {
             FloatSide::Left => {
-                let left = sum(&[placed_float.left, ml], "float_content_left").map_err(tagged)?;
+                let border_left =
+                    sum(&[placed_float.left, ml], "float_border_left").map_err(tagged)?;
+                let left =
+                    sum(&[border_left, padding.left], "float_content_left").map_err(tagged)?;
                 let right =
                     sum(&[left, input.float_width], "float_content_right").map_err(tagged)?;
-                Band { left, right }
+                let border_right =
+                    sum(&[right, padding.right], "float_border_right").map_err(tagged)?;
+                (
+                    Band { left, right },
+                    Band {
+                        left: border_left,
+                        right: border_right,
+                    },
+                )
             }
             FloatSide::Right => {
+                let border_right =
+                    sum(&[placed_float.right, -mr], "float_border_right").map_err(tagged)?;
                 let right =
-                    sum(&[placed_float.right, -mr], "float_content_right").map_err(tagged)?;
+                    sum(&[border_right, -padding.right], "float_content_right").map_err(tagged)?;
                 let left =
                     sum(&[right, -input.float_width], "float_content_left").map_err(tagged)?;
-                Band { left, right }
+                let border_left =
+                    sum(&[left, -padding.left], "float_border_left").map_err(tagged)?;
+                (
+                    Band { left, right },
+                    Band {
+                        left: border_left,
+                        right: border_right,
+                    },
+                )
             }
         }
     };
     // The near (top) edge is no longer bounded by the margin box: a negative top margin,
     // or a positive one beside a negative bottom margin, can carry `placed.top + mt` past
     // the finite range, which returns its named stage (SFM design).
-    let float_content_vertical = if vertical_identity {
-        BlockVertical {
-            top: placed_float.top,
-            bottom: placed_float.bottom,
-        }
+    let (float_content_vertical, float_border_vertical) = if vertical_unpadded {
+        let content = if vertical_identity {
+            BlockVertical {
+                top: placed_float.top,
+                bottom: placed_float.bottom,
+            }
+        } else {
+            let top = sum(&[placed_float.top, mt], "float_content_top").map_err(tagged)?;
+            let bottom = sum(&[top, input.float_height], "float_content_bottom").map_err(tagged)?;
+            BlockVertical { top, bottom }
+        };
+        (content, content)
     } else {
-        let top = sum(&[placed_float.top, mt], "float_content_top").map_err(tagged)?;
+        let border_top = sum(&[placed_float.top, mt], "float_border_top").map_err(tagged)?;
+        let top = sum(&[border_top, padding.top], "float_content_top").map_err(tagged)?;
         let bottom = sum(&[top, input.float_height], "float_content_bottom").map_err(tagged)?;
-        BlockVertical { top, bottom }
+        let border_bottom =
+            sum(&[bottom, padding.bottom], "float_border_bottom").map_err(tagged)?;
+        (
+            BlockVertical { top, bottom },
+            BlockVertical {
+                top: border_top,
+                bottom: border_bottom,
+            },
+        )
     };
     Ok(FirstFloatKernel {
+        before_content,
+        float_border,
+        float_border_vertical,
         before: BlockVertical {
             top: before_top,
             bottom: before_bottom,
@@ -898,8 +1023,16 @@ pub(super) fn place_next_normal(
             }
         };
         let placement = solve_clearance(hypothetical_top, state).map_err(amount_error)?;
-        let bottom = sum(&[placement.border_top, next_height], "after_bottom")?;
+        let (content_vertical, bottom) = normal_vertical(
+            placement.border_top,
+            next_height,
+            next.padding,
+            "after_content_top",
+            "after_content_bottom",
+            "after_bottom",
+        )?;
         Ok(NormalKernel {
+            content_vertical,
             vertical: BlockVertical {
                 top: placement.border_top,
                 bottom,

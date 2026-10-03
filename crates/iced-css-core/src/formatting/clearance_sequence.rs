@@ -79,6 +79,7 @@ impl std::error::Error for ClearanceSequenceError {
 pub struct SequenceNormalPlacement {
     source_index: usize,
     vertical: BlockVertical,
+    content_vertical: BlockVertical,
     hypothetical_top: f32,
     zero_clearance_top: Option<f32>,
     clearance: Option<f32>,
@@ -93,6 +94,10 @@ impl SequenceNormalPlacement {
     }
     pub fn vertical(&self) -> BlockVertical {
         self.vertical
+    }
+    /// Copied content span; `vertical()` remains the border span.
+    pub fn content_vertical(&self) -> BlockVertical {
+        self.content_vertical
     }
     pub fn hypothetical_top(&self) -> f32 {
         self.hypothetical_top
@@ -118,6 +123,9 @@ impl SequenceNormalPlacement {
 pub struct ClearanceSequenceOwner<'s> {
     sources: &'s [SourceNode],
     before: BlockVertical,
+    before_content: BlockVertical,
+    float_border: Band,
+    float_border_vertical: BlockVertical,
     placed_float: PlacedFloat,
     float_content: Band,
     float_content_vertical: BlockVertical,
@@ -135,26 +143,37 @@ impl<'s> ClearanceSequenceOwner<'s> {
     pub fn before(&self) -> BlockVertical {
         self.before
     }
+    /// Copied B1 content span; `before()` remains the border span.
+    pub fn before_content(&self) -> BlockVertical {
+        self.before_content
+    }
+    /// Float border band, independent of its placed margin band.
+    pub fn float_border(&self) -> Band {
+        self.float_border
+    }
+    /// Float border span, independent of its placed margin span.
+    pub fn float_border_vertical(&self) -> BlockVertical {
+        self.float_border_vertical
+    }
     pub fn placed_float(&self) -> PlacedFloat {
         self.placed_float
     }
-    /// Content band of the float. With both used horizontal margins zero it equals
-    /// `placed_float()` left/right. Otherwise the near edge is the margin edge offset
-    /// by the used margin, and the far edge is published from that edge plus or minus
-    /// the used width, each rounded once. The edges are published independently of the
-    /// margin box, so they may lie outside `placed_float()`: after rounding, or by a
-    /// negative used margin on either side. The band is never clamped, and
-    /// `left <= right` always holds.
+    /// Copied float content band, independently published from its margin box.
+    /// With zero padding on this axis, the predecessor margin-offset near/far
+    /// path is retained; if the used margins are also zero, copy the placer band.
+    /// With padding, publish the side-selected near border edge, near content
+    /// edge, far content edge, then far border edge. Each stage rounds once.
+    /// Signed margins may place border/content outside the margin box; no span
+    /// is clamped. Nonnegative padding ensures border contains content.
     pub fn float_content(&self) -> Band {
         self.float_content
     }
-    /// Content top/bottom of the float. With both used vertical margins zero it equals
-    /// `placed_float()` top/bottom. Otherwise the top is the margin top plus the used top
-    /// margin, and the bottom is published from that top plus the used height, each
-    /// rounded once. With both used vertical margins nonnegative the top lies within
-    /// `placed_float()` top..bottom and only the bottom may lie below it after rounding;
-    /// a negative used margin can put either edge outside the margin box on either side.
-    /// Nothing is clamped, and `top <= bottom` always holds.
+    /// Copied float content span, independently published from its margin box.
+    /// With zero vertical padding, retain the predecessor margin-offset stages;
+    /// if both used vertical margins are also zero, copy the placer span.
+    /// Otherwise publish border top, content top, content bottom and border
+    /// bottom in that order. Signed margins may move either span outside the
+    /// margin box; nonnegative padding keeps border around content. No clamp.
     pub fn float_content_vertical(&self) -> BlockVertical {
         self.float_content_vertical
     }
@@ -176,16 +195,16 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// absolute margins on all four edges (Auto is used zero) while both exact outer
 /// extents are nonnegative; otherwise, after every child's profile and the float-width
 /// domain, the profile rejects the float with `NegativeFloatOuterExtent`. The float is
-/// placed by its margin box, formed from the content extents and all four used
-/// margins, and its content band and vertical content span are published
-/// separately. B1 and the float admit any computed `clear`. No float precedes either
+/// placed by its margin box, formed from content extents, padding and used
+/// margins. Content and border bands/spans are published separately; finite
+/// nonnegative absolute padding is admitted on all Sequence children. B1 and the float admit any computed `clear`. No float precedes either
 /// of them in the parent's new block formatting context, so CSS2.2 §9.5.2 and float
 /// constraint #10 select nothing; the value is not read after admission. B1 may
 /// instead carry `ChildContext::OtherNewBfc`, a normal-flow block that establishes a
-/// new block formatting context. It is admitted only when its published border bottom
-/// lies strictly above the float's placed margin top; otherwise the owner returns
-/// `Placement { source: 2, error: NewBfcFloatContact }` before any tail is placed. Work
-/// `272 + 8*N + N*(N-1)/2 + 24*(N-4) + 45*(N-2)` is prepaid,
+/// new block formatting context. Its border bottom may equal the float's margin
+/// top, including a zero-height float margin box (Q1). A defensive strict-overlap
+/// `NewBfcFloatContact` guard remains before tails, but is unreachable here.
+/// Work `528 + 8*N + N*(N-1)/2 + 24*(N-4) + 53*(N-2) + 64*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages.
@@ -322,11 +341,12 @@ fn build_with_reserve<'s>(
     })
     .map_err(placement)?;
     // CSS2.2 §9.5: the border box of a B1 that establishes a new block formatting
-    // context must not overlap the float's margin box. Admitted margins keep
-    // `placed_float.top >= before.bottom`; only strict separation is supported, so
-    // edge contact returns a typed error instead of choosing a reading of "overlap".
+    // context must not overlap the float's margin box interiors. Nonnegative B1
+    // bottom margin and the placer's lower bound imply `placed_float.top >= before.bottom`.
+    // Q1 admits equality, including a zero-height float margin box. Keep the
+    // strict-interior guard defensively without claiming a reachable error row.
     if input.children[0].context == ChildContext::OtherNewBfc
-        && first.placed_float.top <= first.before.bottom
+        && first.placed_float.top < first.before.bottom
     {
         return Err(ClearanceSequenceError::Placement {
             source: 2,
@@ -356,6 +376,9 @@ fn build_with_reserve<'s>(
     Ok(ClearanceSequenceOwner {
         sources,
         before: first.before,
+        before_content: first.before_content,
+        float_border: first.float_border,
+        float_border_vertical: first.float_border_vertical,
         placed_float: first.placed_float,
         float_content: first.float_content,
         float_content_vertical: first.float_content_vertical,
@@ -396,6 +419,7 @@ fn record(source_index: usize, placement: NormalKernel) -> SequenceNormalPlaceme
     SequenceNormalPlacement {
         source_index,
         vertical: placement.vertical,
+        content_vertical: placement.content_vertical,
         hypothetical_top: placement.hypothetical_top,
         zero_clearance_top: placement.zero_clearance_top,
         clearance: placement.clearance,
@@ -420,6 +444,10 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
     // 4, typed error 2), all charged unconditionally. Then eight bounded
     // per-node actions, every duplicate comparison, 24 arithmetic/group and vertical
     // used-value actions per tail, and 45 constant-size typed margin actions per child.
+    // Padding adds 256 fixed actions, 64 per normal and eight per child, prepaid
+    // on zero-padding paths too. This covers widened exact folds, four additional
+    // F publications, two additional normal publications and copied border/content
+    // observations. No credit is taken for the removed decoration rejection.
     let children = nodes.checked_sub(2)?;
     let linear = nodes.checked_mul(8)?;
     let pairs = nodes.checked_mul(nodes.checked_sub(1)?)?.checked_div(2)?;
@@ -429,7 +457,10 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         .checked_add(linear)?
         .checked_add(pairs)?
         .checked_add(kernels)?
-        .checked_add(margin_actions)
+        .checked_add(margin_actions)?
+        .checked_add(256)?
+        .checked_add(nodes.checked_sub(3)?.checked_mul(64)?)?
+        .checked_add(children.checked_mul(8)?)
 }
 
 fn retained_bytes(capacity: usize) -> Option<usize> {
@@ -475,7 +506,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(481).unwrap(),
+            work: NonZeroUsize::new(889).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -870,7 +901,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [480, 419, 337, 269, 213] {
+        for short in [888, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -886,8 +917,9 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(481).unwrap();
+        limits.work = NonZeroUsize::new(889).unwrap();
         let mut calls = 0;
+        limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -905,13 +937,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 481);
+        assert_eq!(owner.receipt().work, 889);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
         );
 
         // Spare actual capacity is charged against the runtime-sized limit.
+        limits.retained_bytes = NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap();
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -932,9 +965,178 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(481));
-        assert_eq!(sequence_work(6, 2), Some(563));
-        assert_eq!(sequence_work(7, 3), Some(646));
+        assert_eq!(sequence_work(5, 1), Some(889));
+        assert_eq!(sequence_work(6, 2), Some(1043));
+        assert_eq!(sequence_work(7, 3), Some(1198));
         assert_eq!(sequence_work(1, 0), None);
+    }
+    #[test]
+    fn cp_task1_actual_representation_measurement() {
+        println!(
+            "CP_REPRESENTATION SequenceNormalPlacement {} {}",
+            size_of::<SequenceNormalPlacement>(),
+            std::mem::align_of::<SequenceNormalPlacement>()
+        );
+        println!(
+            "CP_REPRESENTATION ChildFacts {} {}",
+            size_of::<ChildFacts<'_>>(),
+            std::mem::align_of::<ChildFacts<'_>>()
+        );
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
+        {
+            assert_eq!(
+                (
+                    size_of::<SequenceNormalPlacement>(),
+                    std::mem::align_of::<SequenceNormalPlacement>()
+                ),
+                (224, 8)
+            );
+            assert_eq!(
+                (
+                    size_of::<ChildFacts<'_>>(),
+                    std::mem::align_of::<ChildFacts<'_>>()
+                ),
+                (88, 8)
+            );
+        }
+    }
+    fn cp_capacity_fixture(count: usize) -> (Vec<SourceNode>, ClearanceSequenceLimits) {
+        let mut ids = IdAllocator::new(NonZeroU64::new(71).unwrap());
+        let mut sources: Vec<_> = (0..count)
+            .map(|_| SourceNode {
+                instance: ids.allocate().unwrap(),
+                parent: None,
+                children: vec![],
+                metadata: Metadata::default(),
+            })
+            .collect();
+        let parent = sources[1].instance;
+        sources[0].children.push(parent);
+        sources[1].parent = Some(sources[0].instance);
+        sources[1].children = sources[2..].iter().map(|node| node.instance).collect();
+        for source in &mut sources[2..] {
+            source.parent = Some(parent);
+        }
+        let limits = ClearanceSequenceLimits {
+            sources: NonZeroUsize::new(count).unwrap(),
+            work: NonZeroUsize::new(sequence_work(count, count - 4).unwrap()).unwrap(),
+            retained_bytes: NonZeroUsize::MAX,
+        };
+        (sources, limits)
+    }
+
+    #[test]
+    fn cp_injected_capacity_is_charged_for_the_same_vector() {
+        for count in 5..=7 {
+            let requested_tail = count - 4;
+            let (sources, mut limits) = cp_capacity_fixture(count);
+            let (outer, parent, mut children) = input(&sources);
+            children[0].padding.top = 2.0;
+            let input = ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.0,
+            };
+            limits.retained_bytes = NonZeroUsize::MAX;
+
+            // Requested floors and work bounds reject before the allocator seam.
+            let work = sequence_work(count, requested_tail).unwrap();
+            limits.work = NonZeroUsize::new(work - 1).unwrap();
+            assert!(matches!(
+                build_with_reserve(&sources, input, limits, |_, _| panic!("work admission")),
+                Err(ClearanceSequenceError::Work)
+            ));
+            limits.work = NonZeroUsize::new(work).unwrap();
+            limits.retained_bytes =
+                NonZeroUsize::new(requested_tail * size_of::<SequenceNormalPlacement>() - 1)
+                    .unwrap();
+            assert!(matches!(
+                build_with_reserve(&sources, input, limits, |_, _| panic!(
+                    "requested byte admission"
+                )),
+                Err(ClearanceSequenceError::Bytes)
+            ));
+            limits.retained_bytes = NonZeroUsize::MAX;
+            // Overflow operands are synthetic usize guards, not enormous allocated trees.
+            assert_eq!(sequence_work(usize::MAX, requested_tail), None);
+            assert_eq!(sequence_work(count, usize::MAX), None);
+            assert_eq!(retained_bytes(usize::MAX - requested_tail), None);
+            let real = Vec::<u8>::new().try_reserve_exact(usize::MAX).unwrap_err();
+            let error = build_with_reserve(&sources, input, limits, |records, requested| {
+                assert_eq!(requested, requested_tail);
+                records.try_reserve_exact(usize::MAX)
+            })
+            .unwrap_err();
+            assert!(matches!(error, ClearanceSequenceError::Allocation(_)));
+            assert!(
+                std::error::Error::source(&error)
+                    .unwrap()
+                    .is::<TryReserveError>()
+            );
+            assert_eq!(
+                std::error::Error::source(&error).unwrap().to_string(),
+                real.to_string()
+            );
+
+            // Under-reserve is a separate contract failure, before placement.
+            let error = build_with_reserve(&sources, input, limits, |_, requested| {
+                assert_eq!(requested, requested_tail);
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(matches!(error, ClearanceSequenceError::Bytes));
+
+            // Boxed-slice conversion removes spare capacity. This is an initialized
+            // placement vector produced by the public builder, then cleared in place.
+            let mut exact = build_clearance_sequence(&sources, input, limits)
+                .unwrap()
+                .tail
+                .into_boxed_slice()
+                .into_vec();
+            assert_eq!(exact.len(), requested_tail);
+            assert_eq!(exact.capacity(), requested_tail);
+            exact.clear();
+            limits.retained_bytes =
+                NonZeroUsize::new(requested_tail * size_of::<SequenceNormalPlacement>()).unwrap();
+            let owner = build_with_reserve(&sources, input, limits, move |records, requested| {
+                assert_eq!(requested, requested_tail);
+                *records = exact;
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(owner.receipt().record_capacity, requested_tail);
+            assert_eq!(
+                owner.receipt().retained_bytes,
+                requested_tail * size_of::<SequenceNormalPlacement>()
+            );
+
+            // Every case measures its own allocation BEFORE the call and moves that
+            // exact vector into the seam. No two independent allocations are equated.
+            for offset in [-1isize, 0, 1] {
+                let mut prepared = Vec::<SequenceNormalPlacement>::new();
+                prepared.try_reserve_exact(requested_tail + 1).unwrap();
+                let capacity = prepared.capacity();
+                assert!(capacity > requested_tail);
+                let bytes = capacity * size_of::<SequenceNormalPlacement>();
+                limits.retained_bytes =
+                    NonZeroUsize::new(bytes.checked_add_signed(offset).unwrap()).unwrap();
+                let mut called = false;
+                let result = build_with_reserve(&sources, input, limits, |records, requested| {
+                    called = true;
+                    assert_eq!(requested, requested_tail);
+                    *records = prepared;
+                    Ok(())
+                });
+                assert!(called);
+                if offset < 0 {
+                    assert!(matches!(result, Err(ClearanceSequenceError::Bytes)));
+                } else {
+                    let receipt = result.unwrap().receipt();
+                    assert_eq!(receipt.record_capacity, capacity);
+                    assert_eq!(receipt.retained_bytes, bytes);
+                }
+            }
+        }
     }
 }

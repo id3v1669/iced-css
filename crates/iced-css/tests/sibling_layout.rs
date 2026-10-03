@@ -511,7 +511,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            80 + 32 * 6 + 74 * (6 - 2) + 66 * (6 - 3)
+            80 + 32 * 6 + 90 * (6 - 2) + 146 * (6 - 3)
         );
     });
 }
@@ -3342,8 +3342,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 766;
-        for short in [1, 765] {
+        let work = 1070;
+        for short in [1, 1069] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3372,12 +3372,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            594,
+            802,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            938,
+            1338,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3403,14 +3403,15 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             assert_eq!(layout.receipt().work, work);
             let children = source_count - 2;
             let normals = source_count - 3;
-            assert_eq!(work, 80 + 32 * source_count + 74 * children + 66 * normals);
+            assert_eq!(work, 80 + 32 * source_count + 90 * children + 146 * normals);
         });
     }
 }
 
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
-    for (source_count, facade_work, core_work) in [(5, 594, 481), (6, 766, 563), (7, 938, 646)] {
+    for (source_count, facade_work, core_work) in [(5, 802, 889), (6, 1070, 1043), (7, 1338, 1198)]
+    {
         let mut receipts = Vec::new();
         for width in [10, 140] {
             let b4 = if source_count == 7 {
@@ -3459,22 +3460,22 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            594,
-            481,
+            802,
+            889,
             419,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            766,
-            563,
+            1070,
+            1043,
             501,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            938,
-            646,
+            1338,
+            1198,
             584,
         ),
     ] {
@@ -3718,7 +3719,7 @@ fn auto_multi_faults_preserve_phase_dominance() {
     let horizontal_css = format!(
         "{} #f {{ margin-left:auto; margin-right:auto; }} \
          #p {{ width:{MAX}; margin-left:{MAX}; margin-right:auto; }} \
-         #b1 {{ margin-left:auto; }} #b3 {{ padding-left:1px; }}",
+         #b1 {{ margin-left:auto; }} #b3 {{ margin-top:-1px; }}",
         baseline_css()
     );
     sibling_fixture(6, &horizontal_css, |projection, display| {
@@ -3741,7 +3742,7 @@ fn auto_multi_faults_preserve_phase_dominance() {
     let origin_css = format!(
         "{} #f {{ margin-left:auto; margin-right:auto; }} \
          #p {{ margin-top:{MAX}; }} #b1 {{ margin-left:auto; }} \
-         #b3 {{ padding-left:1px; }}",
+         #b3 {{ margin-top:-1px; }}",
         baseline_css()
     );
     sibling_fixture(6, &origin_css, |projection, display| {
@@ -3825,9 +3826,9 @@ fn parent_and_child_profile_errors_preserve_causes_and_source_indices() {
             OwnerProfileReason::NegativeMargin,
         ),
         (
-            "#b3 { padding-left:1px; }",
+            "#b3 { margin-bottom:-1px; }",
             5,
-            OwnerProfileReason::ChildDecoration,
+            OwnerProfileReason::NegativeMargin,
         ),
     ] {
         let css = format!(
@@ -3922,9 +3923,9 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
 
     for (suffix, source, reason) in [
         (
-            "#b3 { padding-left:1px; }",
+            "#b3 { margin-bottom:-1px; }",
             5,
-            OwnerProfileReason::ChildDecoration,
+            OwnerProfileReason::NegativeMargin,
         ),
         (
             "#b1 { height:0; }",
@@ -4123,7 +4124,7 @@ fn auto_vertical_margins_advance_to_later_profile_faults() {
     for (suffix, captured) in [
         ("#b1 { margin-bottom:auto; } #b3 { height:auto; }", true),
         (
-            "#b1 { margin-bottom:auto; } #b3 { padding-left:1px; }",
+            "#b1 { margin-bottom:auto; } #b3 { margin-bottom:-1px; }",
             false,
         ),
     ] {
@@ -4157,7 +4158,7 @@ fn auto_vertical_margins_advance_to_later_profile_faults() {
                     SiblingLayoutError::Core(ClearanceSequenceError::Profile(
                         ClearanceOwnerError::Unsupported {
                             source: 5,
-                            reason: OwnerProfileReason::ChildDecoration,
+                            reason: OwnerProfileReason::NegativeMargin,
                         }
                     ))
                 ));
@@ -5661,12 +5662,12 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [594, 766, 938][case.nodes - 5],
+        [802, 1070, 1338][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
         layout.receipt().core.work,
-        [481, 563, 646][case.nodes - 5],
+        [889, 1043, 1198][case.nodes - 5],
         "{id}"
     );
 }
@@ -6398,7 +6399,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 594, "#b2"), (6, 766, "#b3"), (7, 938, "#b4")] {
+    for (source_count, work, selector) in [(5, 802, "#b2"), (6, 1070, "#b3"), (7, 1338, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6662,9 +6663,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 594, 475, 481, 419),
-        (6, 766, 616, 563, 501),
-        (7, 938, 757, 646, 584),
+        (5, 802, 475, 889, 419),
+        (6, 1070, 616, 1043, 501),
+        (7, 1338, 757, 1198, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -6793,14 +6794,6 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
         (
             "#f { margin-top:auto; width:auto; }",
             captured(3, "width", U::FloatWidth),
-        ),
-        (
-            "#b3 { margin-top:auto; padding-top:1px; }",
-            profile(5, OwnerProfileReason::ChildDecoration),
-        ),
-        (
-            "#f { margin-bottom:auto; padding-bottom:1px; }",
-            profile(3, OwnerProfileReason::ChildDecoration),
         ),
         (
             "#b1 { margin-bottom:auto; height:0; }",
@@ -7525,9 +7518,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 594, 475, 481, 419),
-        (6, 766, 616, 563, 501),
-        (7, 938, 757, 646, 584),
+        (5, 802, 475, 889, 419),
+        (6, 1070, 616, 1043, 501),
+        (7, 1338, 757, 1198, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8602,9 +8595,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 594, 475, 481, 419),
-        (6, 766, 616, 563, 501),
-        (7, 938, 757, 646, 584),
+        (5, 802, 475, 889, 419),
+        (6, 1070, 616, 1043, 501),
+        (7, 1338, 757, 1198, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -9543,7 +9536,11 @@ fn float_overflow_build<'p>(
 
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, lc, core) in [(5, 594, 481, 481), (6, 766, 622, 563), (7, 938, 763, 646)] {
+    for (nodes, exact, lc, core) in [
+        (5, 802, 481, 889),
+        (6, 1070, 622, 1043),
+        (7, 1338, 763, 1198),
+    ] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
             baseline_css(),
@@ -9564,7 +9561,10 @@ fn float_overflow_facade_work_thresholds_are_exact() {
             }
             let layout = float_overflow_build(&facts, &projection.nodes()[0], exact).unwrap();
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
-            assert_eq!(exact, 80 + 32 * nodes + 74 * (nodes - 2) + 66 * (nodes - 3));
+            assert_eq!(
+                exact,
+                80 + 32 * nodes + 90 * (nodes - 2) + 146 * (nodes - 3)
+            );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
         });
@@ -9577,11 +9577,11 @@ fn float_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 765),
+            float_overflow_build(&facts, &projection.nodes()[0], 1069),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 766).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 1070).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -9995,7 +9995,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 594, 481), (6, 766, 563), (7, 938, 646)] {
+    for (nodes, exact, core) in [(5, 802, 889), (6, 1070, 1043), (7, 1338, 1198)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -10015,7 +10015,10 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
             );
             let layout = float_overflow_build(&facts, &projection.nodes()[0], exact).unwrap();
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
-            assert_eq!(exact, 80 + 32 * nodes + 74 * (nodes - 2) + 66 * (nodes - 3));
+            assert_eq!(
+                exact,
+                80 + 32 * nodes + 90 * (nodes - 2) + 146 * (nodes - 3)
+            );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
         });
@@ -10028,11 +10031,11 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 765),
+            float_overflow_build(&facts, &projection.nodes()[0], 1069),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 766).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 1070).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10091,20 +10094,6 @@ fn b1_overflow_rule(nodes: usize, side: &str, value: &str) -> (String, String) {
     );
     let rule = format!("{control} #b1 {{ overflow:{value}; }}");
     (control, rule)
-}
-
-/// The typed contact error at B1 (source 2).
-fn assert_b1_contact(error: SiblingLayoutError) {
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
-                source: 2,
-                error: ClearanceOwnerError::NewBfcFloatContact,
-            })
-        ),
-        "{error:?}"
-    );
 }
 
 /// The `visible` control of a contact rule lays out, with F's margin top equal to B1's border
@@ -10192,7 +10181,7 @@ fn css_b1_overflow_inherit_matches_the_visible_layout() {
 }
 
 #[test]
-fn css_b1_overflow_hidden_edge_contact_is_typed() {
+fn css_b1_overflow_hidden_edge_contact_is_admitted() {
     let control = "#b1 { margin-bottom:0px; }";
     assert_b1_contact_control(6, control);
     float_overflow_geometry(control, |layout| {
@@ -10202,30 +10191,21 @@ fn css_b1_overflow_hidden_edge_contact_is_typed() {
             "{control}"
         );
     });
-    assert_b1_contact(float_overflow_error(
-        6,
-        "#b1 { margin-bottom:0px; } #b1 { overflow:hidden; }",
-    ));
+    assert_b1_contact_control(6, "#b1 { margin-bottom:0px; } #b1 { overflow:hidden; }");
 }
 
 #[test]
 fn css_b1_overflow_hidden_negative_zero_bottom_margin_is_contact() {
     let control = "#b1 { margin-bottom:-0px; }";
     assert_b1_contact_control(6, control);
-    assert_b1_contact(float_overflow_error(
-        6,
-        "#b1 { margin-bottom:-0px; } #b1 { overflow:hidden; }",
-    ));
+    assert_b1_contact_control(6, "#b1 { margin-bottom:-0px; } #b1 { overflow:hidden; }");
 }
 
 #[test]
 fn css_b1_overflow_auto_bottom_auto_margin_is_contact() {
     let control = "#b1 { margin-bottom:auto; }";
     assert_b1_contact_control(6, control);
-    assert_b1_contact(float_overflow_error(
-        6,
-        "#b1 { margin-bottom:auto; } #b1 { overflow:auto; }",
-    ));
+    assert_b1_contact_control(6, "#b1 { margin-bottom:auto; } #b1 { overflow:auto; }");
 }
 
 #[test]
@@ -10240,10 +10220,10 @@ fn css_b1_overflow_rounding_absorbed_margin_is_contact() {
             "{control}"
         );
     });
-    assert_b1_contact(float_overflow_error(
+    assert_b1_contact_control(
         6,
         "#b1 { height:16777205px; margin-bottom:1px; } #b1 { overflow:hidden; }",
-    ));
+    );
 }
 
 #[test]
@@ -10302,7 +10282,7 @@ fn b1_overflow_no_longer_masks_a_negative_margin() {
 }
 
 #[test]
-fn b1_overflow_contact_precedes_a_tail_equality() {
+fn b1_overflow_contact_exposes_tail_equality() {
     let control = "#b1 { margin-bottom:0px; } #b2 { margin-top:2px; }";
     let error = float_overflow_error(6, control);
     assert!(
@@ -10315,14 +10295,21 @@ fn b1_overflow_contact_precedes_a_tail_equality() {
         ),
         "{error:?}"
     );
-    assert_b1_contact(float_overflow_error(
-        6,
-        &format!("{control} #b1 {{ overflow:hidden; }}"),
-    ));
+    let error = float_overflow_error(6, &format!("{control} #b1 {{ overflow:hidden; }}"));
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                source: 4,
+                error: ClearanceOwnerError::UnsupportedEquality,
+            })
+        ),
+        "{error:?}"
+    );
 }
 
 #[test]
-fn b1_overflow_contact_precedes_child_horizontal() {
+fn b1_overflow_contact_exposes_child_horizontal() {
     const MAX: &str = "340282346638528859811704183484516925440px";
     let base = format!("#f {{ width:0; }} #b1 {{ width:{MAX}; }}");
     let observe = |rule: &str| {
@@ -10365,9 +10352,21 @@ fn b1_overflow_contact_precedes_child_horizontal() {
         );
         rows += 1;
     }
-    assert_b1_contact(observe(&format!(
+    let error = observe(&format!(
         "{base} #b1 {{ overflow:hidden; margin-bottom:0px; }}"
-    )));
+    ));
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::ChildHorizontal {
+                source: 2,
+                error: BlockHorizontalError::Unrepresentable {
+                    stage: BlockCoordinateStage::ContentRight
+                },
+            }
+        ),
+        "{error:?}"
+    );
     rows += 1;
     assert_eq!(rows, 3);
 }
@@ -10410,7 +10409,7 @@ fn b1_overflow_matrix_matches_the_visible_layouts() {
 }
 
 /// Float side x used-zero bottom margin x B1 form: each `visible` control lays out with F's margin
-/// top equal to B1's border bottom, and each B1 form gives the typed contact error: 12 rows per N.
+/// top equal to B1's border bottom, and Q1 admits each B1 form: 12 rows per N.
 fn assert_b1_contact_matrix(nodes: usize) -> usize {
     let mut rows = 0;
     for side in ["left", "right"] {
@@ -10422,7 +10421,7 @@ fn assert_b1_contact_matrix(nodes: usize) -> usize {
             assert_b1_contact_control(nodes, &control);
             for value in ["hidden", "auto", "inherit"] {
                 let rule = format!("{control} #b1 {{ overflow:{value}; }}");
-                assert_b1_contact(float_overflow_error(nodes, &rule));
+                assert_b1_contact_control(nodes, &rule);
                 rows += 1;
             }
         }
@@ -10432,7 +10431,7 @@ fn assert_b1_contact_matrix(nodes: usize) -> usize {
 }
 
 #[test]
-fn b1_overflow_contact_matrix_is_typed() {
+fn b1_overflow_contact_matrix_is_admitted() {
     let rows: usize = [5, 6, 7].into_iter().map(assert_b1_contact_matrix).sum();
     assert_eq!(rows, 36);
 }
@@ -10608,7 +10607,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 594, 481), (6, 766, 563), (7, 938, 646)] {
+    for (nodes, exact, core) in [(5, 802, 889), (6, 1070, 1043), (7, 1338, 1198)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -10628,7 +10627,10 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
             );
             let layout = float_overflow_build(&facts, &projection.nodes()[0], exact).unwrap();
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
-            assert_eq!(exact, 80 + 32 * nodes + 74 * (nodes - 2) + 66 * (nodes - 3));
+            assert_eq!(
+                exact,
+                80 + 32 * nodes + 90 * (nodes - 2) + 146 * (nodes - 3)
+            );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
         });
@@ -10641,11 +10643,11 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 765),
+            float_overflow_build(&facts, &projection.nodes()[0], 1069),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 766).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 1070).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10656,8 +10658,8 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
 }
 
 // Contact margin tests (LO-T2Q-001): with a positive F top margin, F's content box starts below
-// B1's border box while its margin box can still touch it. Only the margin-box comparison
-// (CSS2.2 §9.5) rejects that contact.
+// B1's border box while its margin box can still touch it. Q1 admits that contact;
+// content and margin spans remain independently observed (CSS2.2 §9.5).
 
 /// The `visible` control of a margin-box contact: F's margin top equals B1's border bottom, and
 /// F's content top lies strictly below it.
@@ -10708,10 +10710,7 @@ fn css_b1_overflow_contact_reads_the_float_margin_box() {
             "{control}"
         );
     });
-    assert_b1_contact(float_overflow_error(
-        6,
-        &format!("{control} #b1 {{ overflow:hidden; }}"),
-    ));
+    assert_b1_contact_control(6, &format!("{control} #b1 {{ overflow:hidden; }}"));
     // A 1px B1 bottom margin separates the boxes: admitted with the `visible` layout.
     let control = "#b1 { margin-bottom:1px; } #f { margin-top:3px; }";
     let rule = format!("{control} #b1 {{ overflow:hidden; }}");
@@ -10736,7 +10735,7 @@ fn css_b1_overflow_contact_reads_the_float_margin_box() {
 }
 
 /// Float side x used-zero B1 bottom margin x B1 form, with F's top margin 3px: each `visible`
-/// control is a margin-box contact, and each B1 form gives the typed contact error. 12 rows per N.
+/// control is a margin-box contact, and Q1 admits each B1 form. 12 rows per N.
 fn assert_b1_margin_contact_matrix(nodes: usize) -> usize {
     let mut rows = 0;
     for side in ["left", "right"] {
@@ -10748,7 +10747,7 @@ fn assert_b1_margin_contact_matrix(nodes: usize) -> usize {
             assert_b1_margin_contact_control(nodes, &control);
             for value in ["hidden", "auto", "inherit"] {
                 let rule = format!("{control} #b1 {{ overflow:{value}; }}");
-                assert_b1_contact(float_overflow_error(nodes, &rule));
+                assert_b1_contact_control(nodes, &rule);
                 rows += 1;
             }
         }
@@ -10758,7 +10757,7 @@ fn assert_b1_margin_contact_matrix(nodes: usize) -> usize {
 }
 
 #[test]
-fn b1_overflow_float_top_margin_contact_matrix_is_typed() {
+fn b1_overflow_float_top_margin_contact_matrix_is_admitted() {
     let rows: usize = [5, 6, 7]
         .into_iter()
         .map(assert_b1_margin_contact_matrix)
@@ -11086,27 +11085,12 @@ fn css_parent_overflow_auto_kept_margin_at_2p24_is_typed() {
 }
 
 #[test]
-fn css_parent_overflow_auto_keeps_b1_contact_first() {
+fn css_parent_overflow_auto_admits_b1_contact() {
     let control = "#b1 { overflow:inherit; margin-bottom:0px; }";
-    let mut rows = 0;
-    for rule in [
-        control.to_owned(),
-        format!("#p {{ overflow:auto; }} {control}"),
-    ] {
-        let error = float_overflow_error(6, &rule);
-        assert!(
-            matches!(
-                error,
-                SiblingLayoutError::Core(ClearanceSequenceError::Placement {
-                    source: 2,
-                    error: ClearanceOwnerError::NewBfcFloatContact,
-                })
-            ),
-            "{rule}: {error:?}"
-        );
-        rows += 1;
-    }
-    assert_eq!(rows, 2);
+    assert_b1_contact_control(6, control);
+    let rule = format!("#p {{ overflow:auto; }} {control}");
+    assert_b1_contact_control(6, &rule);
+    assert_parent_overflow_case(6, control, &rule, &[1, 2]);
 }
 
 #[test]
@@ -11386,7 +11370,7 @@ fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn parent_overflow_auto_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 594, 481), (6, 766, 563), (7, 938, 646)] {
+    for (nodes, exact, core) in [(5, 802, 889), (6, 1070, 1043), (7, 1338, 1198)] {
         let css = format!(
             "{} {} #p {{ overflow:auto; }}",
             baseline_css(),
@@ -11406,7 +11390,10 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
             );
             let layout = float_overflow_build(&facts, &projection.nodes()[0], exact).unwrap();
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
-            assert_eq!(exact, 80 + 32 * nodes + 74 * (nodes - 2) + 66 * (nodes - 3));
+            assert_eq!(
+                exact,
+                80 + 32 * nodes + 90 * (nodes - 2) + 146 * (nodes - 3)
+            );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
         });
@@ -11419,11 +11406,11 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 765),
+            float_overflow_build(&facts, &projection.nodes()[0], 1069),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 766).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 1070).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -12297,23 +12284,23 @@ fn css_signed_float_margins_new_bfc_b1_is_judged_on_the_margin_box() {
     );
 }
 
-/// R20: F's margin top 12 touches B1's border bottom 12: contact stays typed.
+/// R20 under Q1: F's margin top 12 touches B1's border bottom 12; the layout is admitted.
 #[test]
-fn css_signed_float_margins_new_bfc_b1_contact_with_a_signed_float_top_is_typed() {
-    let error = sfm_error(
-        6,
-        SFM_OUTER,
-        "#b1 { overflow:hidden; margin-bottom:0px; } #f { margin-top:-1px; }",
-    );
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Placement {
-                source: 2,
-                error: ClearanceOwnerError::NewBfcFloatContact
-            })
+fn css_signed_float_margins_new_bfc_b1_contact_with_a_signed_float_top_is_admitted() {
+    assert_eq!(
+        sfm_layout(
+            6,
+            SFM_OUTER,
+            "#b1 { overflow:hidden; margin-bottom:0px; } #f { margin-top:-1px; }"
         ),
-        "{error:?}"
+        sfm_geometry(
+            [0.0, 10.0, 12.0, 13.0],
+            [0.0, 10.0, 11.0, 13.0],
+            [0.0, 0.0, -1.0, 0.0],
+            [11.0, 12.0],
+            &[(15.0, 16.0, None), (19.0, 20.0, None)],
+            [0.0, 100.0, 11.0, 24.0, 13.0]
+        )
     );
 }
 
@@ -12831,4 +12818,17189 @@ fn css_signed_float_margins_rtl_float_margin_right_is_typed() {
         control,
         "#p { overflow:auto; direction:rtl; } #f { margin-right:95px; }",
     );
+}
+
+#[test]
+fn cp_vertical_auto_padding_former_exclusions_are_admitted() {
+    for rule in [
+        "#b3 { margin-top:auto; padding-top:1px; }",
+        "#f { margin-bottom:auto; padding-bottom:1px; }",
+    ] {
+        float_overflow_geometry(rule, |layout| {
+            assert_eq!(layout.parent().height().content_bottom, 28.0, "{rule}");
+            assert!(
+                layout
+                    .children()
+                    .iter()
+                    .all(|child| child.padding() == child.border())
+            );
+        });
+    }
+}
+
+// Append to crates/iced-css/tests/sibling_layout.rs before production edits.
+// New API assertions belong to Task 2, after the semantic red has been recorded.
+#[test]
+fn cp_css_padding_boxes_and_auto_parent_height() {
+    for (rule, source, content, border, bottom) in [
+        (
+            "#b1 {padding-top:2px;padding-bottom:3px;}",
+            2,
+            [0.0, 100.0, 13.0, 14.0],
+            [0.0, 100.0, 11.0, 17.0],
+            32.0,
+        ),
+        (
+            "#f {padding-top:3px;padding-right:2px;padding-bottom:4px;padding-left:1px;}",
+            3,
+            [1.0, 11.0, 19.0, 21.0],
+            [0.0, 13.0, 16.0, 25.0],
+            34.0,
+        ),
+        (
+            "#b1 {padding-left:2px;padding-right:3px;}",
+            2,
+            [2.0, 97.0, 11.0, 12.0],
+            [0.0, 100.0, 11.0, 12.0],
+            27.0,
+        ),
+    ] {
+        let css = format!("{} {rule}", baseline_css());
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let layout = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            )
+            .unwrap();
+            let child = &layout.children()[source - 2];
+            let c = child.content();
+            let b = child.border();
+            assert_eq!([c.left, c.right, c.top, c.bottom], content, "{rule}");
+            assert_eq!([b.left, b.right, b.top, b.bottom], border, "{rule}");
+            assert_eq!(child.padding(), b, "{rule}");
+            assert_eq!(layout.parent().height().content_bottom, bottom, "{rule}");
+            assert!(std::ptr::eq(
+                layout.source(source).unwrap(),
+                &projection.nodes()[source]
+            ));
+        });
+    }
+}
+
+#[test]
+fn cp_css_contact_zero_float_and_padding() {
+    let css = format!(
+        "{} #b1 {{overflow:hidden;margin-bottom:0;padding-top:2px;padding-bottom:3px;}} #f {{height:0;}}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: 0.0,
+                content_width: 100.0,
+                content_top: 10.0,
+            },
+            layout_limits(),
+        )
+        .unwrap();
+        assert_eq!(layout.children()[0].border().bottom, 17.0);
+        let placed = layout.sequence().placed_float();
+        assert_eq!([placed.top, placed.bottom], [17.0, 17.0]);
+        assert_eq!(layout.parent().height().content_bottom, 29.0);
+    });
+}
+
+#[test]
+fn cp_css_padding_rescue_hidden_and_auto_containment() {
+    for auto in [false, true] {
+        let css = format!(
+            "{} #p {{overflow:{};}} #f {{width:0;margin-left:-1px;padding-left:1px;}}",
+            baseline_css(),
+            if auto { "auto" } else { "hidden" }
+        );
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let result = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            );
+            if auto {
+                assert!(
+                    matches!(
+                        result,
+                        Err(SiblingLayoutError::ParentAutoOverflow { source: 3 })
+                    ),
+                    "{result:?}"
+                );
+            } else {
+                let layout = result.unwrap();
+                let child = &layout.children()[1];
+                assert_eq!([child.content().left, child.content().right], [0.0, 0.0]);
+                assert_eq!([child.border().left, child.border().right], [-1.0, 0.0]);
+                let placed = layout.sequence().placed_float();
+                assert_eq!([placed.left, placed.right], [0.0, 0.0]);
+            }
+        });
+    }
+}
+
+// Append after Task 1 passes and is independently reviewed.
+#[test]
+fn cp_css_copied_boxes_outlive_facts_and_keep_source_identity() {
+    let css = format!(
+        "{} #b1 {{padding:2px 3px 4px 5px;}} #f {{padding:3px 2px 4px 1px;}}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        let layout = {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            )
+            .unwrap()
+        };
+        let before = &layout.children()[0];
+        assert_eq!(
+            before.content(),
+            PrincipalEdges {
+                left: 5.0,
+                right: 97.0,
+                top: 13.0,
+                bottom: 14.0
+            }
+        );
+        assert_eq!(
+            before.border(),
+            PrincipalEdges {
+                left: 0.0,
+                right: 100.0,
+                top: 11.0,
+                bottom: 18.0
+            }
+        );
+        assert_eq!(before.padding(), before.border());
+        assert_eq!(layout.sequence().before_content().top, 13.0);
+        for child in layout.children() {
+            assert!(std::ptr::eq(
+                layout.source(child.source_index()).unwrap(),
+                &projection.nodes()[child.source_index()]
+            ));
+            let c = child.content();
+            let b = child.border();
+            assert!(
+                b.left <= c.left && c.right <= b.right && b.top <= c.top && c.bottom <= b.bottom
+            );
+            assert_eq!(child.padding(), b);
+        }
+    });
+}
+
+#[test]
+fn cp_css_fixed_width_is_content_and_auto_width_shrinks() {
+    for (width, used, right) in [("auto", 95.0, 97.0), ("10px", 10.0, 12.0)] {
+        let css = format!(
+            "{} #b1 {{width:{width};padding-left:2px;padding-right:3px;}}",
+            baseline_css()
+        );
+        sibling_fixture(6, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let layout = build_captured_sibling_layout(
+                &facts,
+                ClearanceOuterContentGeometry {
+                    outer: &projection.nodes()[0],
+                    content_left: 0.0,
+                    content_width: 100.0,
+                    content_top: 10.0,
+                },
+                layout_limits(),
+            )
+            .unwrap();
+            let child = &layout.children()[0];
+            assert_eq!(child.used_width(), used);
+            assert_eq!([child.content().left, child.content().right], [2.0, right]);
+            assert_eq!(
+                [child.border().left, child.border().right],
+                [0.0, right + 3.0]
+            );
+        });
+    }
+}
+
+#[test]
+fn cp_css_requested_combined_and_core_budgets_keep_typed_boundaries() {
+    use iced_css_core::formatting::clearance_sequence::SequenceNormalPlacement;
+    use std::mem::size_of;
+    for count in [5, 6, 7] {
+        let css = format!(
+            "{} #b1 {{padding-top:2px;}} #f {{padding-left:1px;}} #b4 {{ height:2px; margin-top:1px; margin-bottom:2px; clear:none; }}",
+            baseline_css()
+        );
+        sibling_fixture(count, &css, |projection, display| {
+            let facts =
+                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+            let outer = || ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: 0.0,
+                content_width: 100.0,
+                content_top: 10.0,
+            };
+            let core_floor = (count - 4) * size_of::<SequenceNormalPlacement>();
+            let child_floor =
+                (count - 2) * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>();
+            let mut limits = layout_limits();
+            limits.retained_bytes = nz(core_floor + child_floor - 1);
+            assert!(matches!(
+                build_captured_sibling_layout(&facts, outer(), limits),
+                Err(SiblingLayoutError::Bytes)
+            ));
+            let mut limits = layout_limits();
+            limits.core.retained_bytes = nz(core_floor - 1);
+            assert!(matches!(
+                build_captured_sibling_layout(&facts, outer(), limits),
+                Err(SiblingLayoutError::Core(ClearanceSequenceError::Bytes))
+            ));
+            let layout = build_captured_sibling_layout(&facts, outer(), layout_limits()).unwrap();
+            let receipt = layout.receipt();
+            assert_eq!(
+                receipt.retained_bytes,
+                receipt.core.retained_bytes
+                    + receipt.child_capacity
+                        * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>()
+            );
+            assert_eq!(
+                receipt.core.retained_bytes,
+                receipt.core.record_capacity * size_of::<SequenceNormalPlacement>()
+            );
+            assert!(
+                receipt.child_capacity >= count - 2 && receipt.core.record_capacity >= count - 4
+            );
+        });
+    }
+}
+
+// Append to the existing sibling_layout integration test file in Task 2.
+#[test]
+fn cp_css_unsupported_padding_categories_keep_fact_source_and_property() {
+    for nodes in 5..=7 {
+        for (source, selector) in [
+            (2, "#b1".to_string()),
+            (nodes - 1, format!("#b{}", nodes - 3)),
+        ] {
+            for property in [
+                "padding-top",
+                "padding-right",
+                "padding-bottom",
+                "padding-left",
+            ] {
+                for (value, reason) in [
+                    ("0em", BoxFactUnsupported::RelativeLength),
+                    ("2ex", BoxFactUnsupported::RelativeLength),
+                    ("0%", BoxFactUnsupported::PercentageLength),
+                ] {
+                    let css = format!("{} {selector} {{{property}:{value};}}", baseline_css());
+                    sibling_fixture(nodes, &css, |projection, display| {
+                        let error = match evaluate_sibling_box_facts(
+                            projection,
+                            display,
+                            sibling_fact_limits(),
+                        ) {
+                            Err(error) => error,
+                            Ok(_) => panic!("unsupported padding unexpectedly admitted"),
+                        };
+                        let expected_original = projection.original_index(source).unwrap();
+                        let SiblingBoxFactsError::Evaluation(error) = error else {
+                            panic!("unexpected wrapper: {error:?}");
+                        };
+                        assert_eq!(
+                            error,
+                            ClearanceBoxFactsError::Unsupported {
+                                original: expected_original,
+                                property: iced_css_core::values::registry::PropertyId::lookup(
+                                    property
+                                )
+                                .unwrap(),
+                                target: BoxFactTarget::Element,
+                                reason,
+                            },
+                            "N{nodes} source {source} {property}:{value}"
+                        );
+                    });
+                }
+            }
+        }
+    }
+}
+
+// Planned Task 2 addition to crates/iced-css/tests/sibling_layout.rs.
+// Bit-exact expectations; not compiled, executed, or credited as Rust mutant kills.
+
+// Model case 19198: cp-n5-f-left-top; expected SHA-256 e42ce37773f24d9bf556655a1cfc5fe821244007bee662cbe3c85f5274432629.
+fn cp_witness_case_19198() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#f{float:left;padding-top:3px}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 5);
+        assert_eq!(layout.children().len(), 3);
+        assert_eq!(sequence.tail().len(), 1);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41a80000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41a80000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41980000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41980000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0x40000000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41980000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a80000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19199: cp-n5-f-left-right; expected SHA-256 e6c8b55b38dba7af6c96506e21ec456c4fffd581101c671cdfb3f191a46834ed.
+fn cp_witness_case_19199() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#f{float:left;padding-right:3px}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 5);
+        assert_eq!(layout.children().len(), 3);
+        assert_eq!(sequence.tail().len(), 1);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41980000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0xbf800000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41500000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41500000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41300000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41b00000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41b00000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19200: cp-n5-f-left-bottom; expected SHA-256 ef3cac41f43ae21a995db30689a442ce26646a60f33ebaccb5937673344d1074.
+fn cp_witness_case_19200() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#f{float:left;padding-bottom:3px}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 5);
+        assert_eq!(layout.children().len(), 3);
+        assert_eq!(sequence.tail().len(), 1);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41a80000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41980000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0x40000000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a80000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19201: cp-n5-f-left-left; expected SHA-256 bce9750e827df1492f2c4ef687e9da9411a3491fb27abd594a49ea88c08d31fa.
+fn cp_witness_case_19201() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#f{float:left;padding-left:3px}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 5);
+        assert_eq!(layout.children().len(), 3);
+        assert_eq!(sequence.tail().len(), 1);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x40400000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41500000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41980000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0xbf800000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x40400000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41500000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41500000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41500000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41300000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41b00000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41b00000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19203: cp-n5-f-right-right; expected SHA-256 65d2923f46d8272b9ce406a12d28fc891d579bd8e34b8b9eca53d127ed10df5b.
+fn cp_witness_case_19203() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#f{float:right;padding-right:3px}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 5);
+        assert_eq!(layout.children().len(), 3);
+        assert_eq!(sequence.tail().len(), 1);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x42ae0000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x42ae0000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x42c20000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x42ae0000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x42c80000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Right
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41980000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0xbf800000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x42ae0000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c20000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x42ae0000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0x42ae0000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41300000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41b00000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41b00000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41b00000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41b80000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19206: cp-n5-b1-all; expected SHA-256 c7808fa7d5a6daa85d7eb3c73175486cbbf9c8b69c8bb25c2c8a0fc2ecf45068.
+fn cp_witness_case_19206() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b1{padding:2px 3px 4px 5px}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x40a00000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 5);
+        assert_eq!(layout.children().len(), 3);
+        assert_eq!(sequence.tail().len(), 1);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41600000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41c00000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41b00000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41c00000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41b00000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41b00000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41c00000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41c00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41c00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41b00000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41c80000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0xbf800000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x40a00000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c20000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41500000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41600000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42b80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42b80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41c00000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41c00000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41c00000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41c00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41c00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41c00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41e00000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41880000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41e00000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41e00000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41e00000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41e80000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41e80000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41e80000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19207: cp-n5-b2-all; expected SHA-256 9df27548609e366a7c6cadc439605a0dacc95222a286ffa1b97cee789c38cf4e.
+fn cp_witness_case_19207() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b2{padding:2px 3px 4px 5px}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x40a00000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 5);
+        assert_eq!(layout.children().len(), 3);
+        assert_eq!(sequence.tail().len(), 1);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41980000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0xbf800000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x40a00000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c20000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42b80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42b80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41e00000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41880000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41e00000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41e00000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41e00000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41e80000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41e80000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41e80000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19208: cp-n5-contact-zero; expected SHA-256 57ccade54e9ed27545a945adae35dd34c38bd9ee27d876daeaf872858c4ed6c1.
+fn cp_witness_case_19208() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b1{overflow:hidden;margin-bottom:0;padding-top:2px;padding-bottom:3px}#f{height:0}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 5);
+        assert_eq!(layout.children().len(), 3);
+        assert_eq!(sequence.tail().len(), 1);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41600000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41880000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41880000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41880000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41880000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41880000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41880000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41500000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41600000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41880000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c00000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41500000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c00000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c00000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c00000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19209: cp-n5-contact-equality; expected SHA-256 bafd6f998598576fd309c6cd56038860b4e40d5ca80e4fd290916764f018dc25.
+fn cp_witness_case_19209() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b1{overflow:hidden;margin-bottom:0;padding-top:2px;padding-bottom:3px}#b2{margin-top:2px}";
+    sibling_fixture(5, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let error = result.unwrap_err();
+        assert!(
+            matches!(
+                error,
+                SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                    source: 4,
+                    error: ClearanceOwnerError::UnsupportedEquality
+                })
+            ),
+            "{error:?}"
+        );
+    });
+}
+
+// Model case 19234: cp-rescue-left; expected SHA-256 3c2db557fa90621386861efaeb556a84f570edb2baadbba82f71be2097476601.
+fn cp_witness_case_19234() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{margin-left:-11px;padding-left:1px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc1300000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0xc1300000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0xc1200000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x00000000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0xc1200000u32);
+        assert_eq!((child.content().right).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0xc1300000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0xc1300000u32);
+        assert_eq!((child.border().right).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0xc1300000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc1300000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19236: cp-rescue-right; expected SHA-256 02acf3c556a3dffc746ceb575e8b294767b9835fc3c93bac19560c5d13b33311.
+fn cp_witness_case_19236() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{margin-right:-11px;padding-right:1px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc1300000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0xc1300000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc1300000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19238: cp-rescue-top; expected SHA-256 e9219e2c50599ab92f262ef3bcb5dadecab4fc80c02cf4ef61831e82c9be25ea.
+fn cp_witness_case_19238() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{margin-top:-3px;padding-top:1px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc0400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41500000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41600000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41800000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41600000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41500000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41500000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41800000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0xc0400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc0400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19240: cp-rescue-bottom; expected SHA-256 c7b884e5c1e13edbb04939d558da83307eb4a59800d19e8bedef144a1a517187.
+fn cp_witness_case_19240() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{margin-bottom:-3px;padding-bottom:1px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc0400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41980000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41800000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0xc0400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc0400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19248: cp-normal-anchor; expected SHA-256 333ab6fbf946cb99444775a89a7f4d401ff8efbff6f2ad56cc749ac7ad129de8.
+fn cp_witness_case_19248() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#b1{width:10px;margin-left:1px;padding-left:2px}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        match facts.row(2).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x3f800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x4b800000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x4b800000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x4b800005u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x4b800000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x4b800005u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x4b800000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x4b800005u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41980000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0xbf800000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41b00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41b00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41b00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x4b800002u32);
+        assert_eq!((child.content().right).to_bits(), 0x4b800007u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x4b800001u32);
+        assert_eq!((child.padding().right).to_bits(), 0x4b800007u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x4b800001u32);
+        assert_eq!((child.border().right).to_bits(), 0x4b800007u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x42ae0000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x3f800000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x3f800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x3f800000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x42ae0000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x41200000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.content().right).to_bits(), 0x4b800005u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x4b800005u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.border().right).to_bits(), 0x4b800005u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.content().right).to_bits(), 0x4b800032u32);
+        assert_eq!((child.content().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x4b800032u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.border().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.border().right).to_bits(), 0x4b800032u32);
+        assert_eq!((child.border().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.content().right).to_bits(), 0x4b800032u32);
+        assert_eq!((child.content().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x4b800032u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x4b800000u32);
+        assert_eq!((child.border().right).to_bits(), 0x4b800032u32);
+        assert_eq!((child.border().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x4b800000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x4b800032u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41d80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x4b800000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x4b800032u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41800000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41d80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41d80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41d80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41e00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41e00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41e00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19249: cp-all-boxes; expected SHA-256 2698cf3269e0158ec82b1a421bb5ff5729d02afdf4b6df1674dd5f37f1fa9db0.
+fn cp_witness_case_19249() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#b1{padding:2px 3px 4px 5px}#f{padding:3px 2px 4px 1px}#b2{padding-top:2px;padding-bottom:3px}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x40a00000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41600000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x3f800000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41300000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41f80000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41b00000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41d80000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41c80000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41500000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41b00000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41f80000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41f80000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x42040000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x42140000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x42080000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41b00000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41c80000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0x40c00000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x42200000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x42200000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x42240000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x42240000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x42200000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x40a00000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c20000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41500000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41600000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42b80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42b80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x3f800000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41c80000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41d80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41500000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41f80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41500000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41f80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x42040000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x42080000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41f80000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x42140000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41f80000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x42140000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x42200000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x42240000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x42200000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x42240000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x42200000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x42240000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x42340000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x42080000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x42340000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x42340000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x42340000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x42380000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x42380000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x42380000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19255: cp-border-containment-auto; expected SHA-256 5e0808ea4b681b6de8a2ada6bafef948f9acf8ee6b8a748ae8989ce49e2ff24f.
+fn cp_witness_case_19255() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#p{overflow:auto}#f{width:0;margin-left:-1px;padding-left:1px}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Auto
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xbf800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let error = result.unwrap_err();
+        assert!(
+            matches!(error, SiblingLayoutError::ParentAutoOverflow { source: 3 }),
+            "{error:?}"
+        );
+    });
+}
+
+// Model case 19256: cp-margin-containment-auto; expected SHA-256 eb38c5aa33fa793554db85c4ac01341808f23f1c983d2a2ba0a1af678349b0d4.
+fn cp_witness_case_19256() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#p{overflow:auto;direction:rtl}#f{float:left;width:90px;margin-right:20px;padding-right:1px}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Auto
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x42b40000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41a00000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let error = result.unwrap_err();
+        assert!(
+            matches!(error, SiblingLayoutError::ParentAutoOverflow { source: 3 }),
+            "{error:?}"
+        );
+    });
+}
+
+// Model case 19258: cp-cancellation-width; expected SHA-256 a93005eb505185c83547bc12ceb8b8e20defc6dcd115cf3d53549b402b829b85.
+fn cp_witness_case_19258() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{width:0;margin-left:-340282346638528859811704183484516925440px;margin-right:340282346638528859811704183484516925440px;padding-left:1px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x7f7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0xff7fffffu32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0xff7fffffu32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0xff7fffffu32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0xff7fffffu32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x3f800000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.content().right).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.padding().right).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.border().right).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x7f7fffffu32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0xff7fffffu32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x7f7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19259: cp-cancellation-height; expected SHA-256 ee3a215250784acef0c82bcaca9326147dfcd9392a91d7bbd1df6b8390ba9342.
+fn cp_witness_case_19259() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{height:0;margin-top:-340282346638528859811704183484516925440px;margin-bottom:340282346638528859811704183484516925440px;padding-top:1px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x7f7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0xff7fffffu32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0xff7fffffu32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0xff7fffffu32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0xff7fffffu32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41880000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.content().bottom).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.padding().bottom).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.border().bottom).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x7f7fffffu32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x7f7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19260: cp-border-preround-width; expected SHA-256 1875b7ad8e5ee52d5d2e8a0879ee7c590570442f5a37a216cedbfe8cf55fb592.
+fn cp_witness_case_19260() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{width:1px;margin-left:-340282346638528859811704183484516925440px;padding-left:340282346638528859811704183484516925440px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x3f800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x7f7fffffu32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0xff7fffffu32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x3f800000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x3f800000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x3f800000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x3f800000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.padding().right).to_bits(), 0x3f800000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().left).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.border().right).to_bits(), 0x3f800000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0xff7fffffu32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19261: cp-border-preround-height; expected SHA-256 b57617fb3919d3059003f37a5cb486c4366fdec38c5257cdd3380ab7b82eca70.
+fn cp_witness_case_19261() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{height:1px;margin-top:-340282346638528859811704183484516925440px;padding-top:340282346638528859811704183484516925440px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x7f7fffffu32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0xff7fffffu32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41880000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41a00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x3f800000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x3f800000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.border().bottom).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0xff7fffffu32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41880000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41a00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41600000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41c80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41c80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41c80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41d00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+// Model case 19273: cp-float-border-right; expected SHA-256 f4362ab4eba58d8cb885ae722829c10eff9b778931b89bfc42f0b986afa1ee6c.
+fn cp_witness_case_19273() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{float:right;width:0;margin-right:-10141204801825835211973625643008px;margin-left:10141204801825835211973625643008px;padding-right:1px}#b2{clear:none}#b3{clear:none}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xf3000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x73000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x3f800000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x7f7fffff),
+                content_width: f32::from_bits(0x00000000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let error = result.unwrap_err();
+        assert!(
+            matches!(
+                error,
+                SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+                    source: 3,
+                    error: ClearanceOwnerError::Unrepresentable {
+                        stage: "float_border_right"
+                    }
+                })
+            ),
+            "{error:?}"
+        );
+    });
+}
+
+// Model case 19276: cp-normal-border-left; expected SHA-256 47e5563d86d263efe88556c671181044aa6be8f026f4f14ffea309aa38288867.
+fn cp_witness_case_19276() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#b1{width:1px;margin-left:-340282346638528859811704183484516925440px;padding-left:340282346638528859811704183484516925440px}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        match facts.row(2).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x3f800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xff7fffffu32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x7f7fffffu32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0xff7fffff),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let error = result.unwrap_err();
+        assert!(
+            matches!(
+                error,
+                SiblingLayoutError::ChildBorderPublication {
+                    source: 2,
+                    stage: iced_css::evaluation::sibling_layout::ChildBorderStage::Left
+                }
+            ),
+            "{error:?}"
+        );
+        assert!(std::error::Error::source(&error).is_none());
+    });
+}
+
+// Model case 19283: cp-float-border-is-not-clearance; expected SHA-256 e691f297ec75b3d5d49b7a3153c4ba2d7459e6b75c91bc82b8d1fb2e10191a5a.
+fn cp_witness_case_19283() {
+    let css = "#o{display:block;border-style:none;width:100px}#p{display:block;border-style:none;overflow:hidden;width:auto;height:auto;margin:0;padding:0;padding-top:1px;padding-bottom:1px}#b1{display:block;border-style:none;clear:none;height:1px;margin-bottom:4px}#f{display:block;border-style:none;clear:none;float:left;width:10px;height:2px}#b2{display:block;border-style:none;height:1px;margin-top:3px;margin-bottom:3px;clear:both}#b3{display:block;border-style:none;height:1px;margin-top:2px;margin-bottom:4px;clear:both}#f{padding-bottom:3px;margin-bottom:-3px}";
+    sibling_fixture(6, css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(
+            matches!(facts.row(1).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Specified)
+        );
+        match facts.row(1).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(1).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(1).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(1).unwrap().clear.origin, BoxFactOrigin::Initial);
+        assert_eq!(
+            facts.row(1).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Hidden
+        );
+        assert_eq!(
+            facts.row(1).unwrap().overflow.origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(
+            matches!(facts.row(2).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(2).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(2).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(2).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(2).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(2).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(2).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(2).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        match facts.row(3).unwrap().width {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x41200000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc0400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(3).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(3).unwrap().clear.value, ClearSide::None);
+        assert_eq!(facts.row(3).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(3).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(3).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[2].origin,
+            BoxFactOrigin::Specified
+        );
+        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(3).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(4).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(4).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(4).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(4).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(4).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(4).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(4).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(
+            matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
+        );
+        match facts.row(5).unwrap().margin[0] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[1] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[2] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match facts.row(5).unwrap().margin[3] {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert_eq!(facts.row(5).unwrap().clear.value, ClearSide::Both);
+        assert_eq!(facts.row(5).unwrap().clear.origin, BoxFactOrigin::Specified);
+        assert_eq!(
+            facts.row(5).unwrap().overflow.value,
+            iced_css::evaluation::clearance_box_facts::BoxOverflow::Visible
+        );
+        assert_eq!(
+            facts.row(5).unwrap().overflow.origin,
+            BoxFactOrigin::Initial
+        );
+        assert_eq!(
+            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[0].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[1].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[2].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert_eq!(
+            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            facts.row(5).unwrap().padding[3].origin,
+            BoxFactOrigin::Initial
+        );
+        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        let result = build_captured_sibling_layout(
+            &facts,
+            ClearanceOuterContentGeometry {
+                outer: &projection.nodes()[0],
+                content_left: f32::from_bits(0x00000000),
+                content_width: f32::from_bits(0x42c80000),
+                content_top: f32::from_bits(0x41200000),
+            },
+            layout_limits(),
+        );
+        let layout = result.unwrap();
+        let sequence = layout.sequence();
+        assert_eq!(layout.sources().len(), 6);
+        assert_eq!(layout.children().len(), 4);
+        assert_eq!(sequence.tail().len(), 2);
+        assert!(std::ptr::eq(
+            layout.source(0).unwrap(),
+            &projection.nodes()[0]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(1).unwrap(),
+            &projection.nodes()[1]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(2).unwrap(),
+            &projection.nodes()[2]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(3).unwrap(),
+            &projection.nodes()[3]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(4).unwrap(),
+            &projection.nodes()[4]
+        ));
+        assert!(std::ptr::eq(
+            layout.source(5).unwrap(),
+            &projection.nodes()[5]
+        ));
+        assert_eq!((sequence.before().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.before_content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((sequence.before_content().top).to_bits(), 0x41300000u32);
+        assert_eq!((sequence.float_border().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_border().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.float_content().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.float_content().right).to_bits(), 0x41200000u32);
+        assert_eq!(
+            (sequence.float_border_vertical().bottom).to_bits(),
+            0x41a80000u32
+        );
+        assert_eq!(
+            (sequence.float_border_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().bottom).to_bits(),
+            0x41900000u32
+        );
+        assert_eq!(
+            (sequence.float_content_vertical().top).to_bits(),
+            0x41800000u32
+        );
+        assert_eq!((sequence.placed_float().left).to_bits(), 0x00000000u32);
+        assert_eq!((sequence.placed_float().right).to_bits(), 0x41200000u32);
+        assert_eq!((sequence.placed_float().top).to_bits(), 0x41800000u32);
+        assert_eq!((sequence.placed_float().bottom).to_bits(), 0x41900000u32);
+        assert_eq!(
+            sequence.placed_float().side,
+            iced_css_core::formatting::floats::FloatSide::Left
+        );
+        let tail = &sequence.tail()[0];
+        assert_eq!(tail.source_index(), 4);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41800000u32);
+        assert_eq!(
+            tail.zero_clearance_top().map(f32::to_bits),
+            Some(0x41980000u32)
+        );
+        assert_eq!(tail.clearance().map(f32::to_bits), Some(0xbf800000u32));
+        assert_eq!(tail.barrier_source_index(), Some(4));
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 2);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 4);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 2);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 1);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40800000u32
+        );
+        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+        assert_eq!(
+            (tail.actual_groups()[1].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[1].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[1].members().len(), 1);
+        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        let tail = &sequence.tail()[1];
+        assert_eq!(tail.source_index(), 5);
+        assert_eq!((tail.vertical().top).to_bits(), 0x41b00000u32);
+        assert_eq!((tail.content_vertical().top).to_bits(), 0x41b00000u32);
+        assert_eq!((tail.vertical().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((tail.content_vertical().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((tail.hypothetical_top()).to_bits(), 0x41b00000u32);
+        assert_eq!(tail.zero_clearance_top().map(f32::to_bits), None);
+        assert_eq!(tail.clearance().map(f32::to_bits), None);
+        assert_eq!(tail.barrier_source_index(), None);
+        assert_eq!(
+            tail.hypothetical_group().id(),
+            MarginGroupId::HypotheticalPair
+        );
+        assert_eq!(
+            (tail.hypothetical_group().positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.hypothetical_group().negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.hypothetical_group().members().len(), 2);
+        assert_eq!(tail.hypothetical_group().members()[0].source_index, 4);
+        assert_eq!(
+            tail.hypothetical_group().members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.hypothetical_group().members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.hypothetical_group().members()[1].source_index, 5);
+        assert_eq!(tail.hypothetical_group().members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.hypothetical_group().members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        assert_eq!(tail.actual_groups().len(), 1);
+        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
+        assert_eq!(
+            (tail.actual_groups()[0].positive()).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].negative()).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members().len(), 2);
+        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(
+            tail.actual_groups()[0].members()[0].side,
+            MarginSide::Bottom
+        );
+        assert_eq!(
+            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            0x40400000u32
+        );
+        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
+        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
+        assert_eq!(
+            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            0x40000000u32
+        );
+        let child = &layout.children()[0];
+        assert_eq!(child.source_index(), 2);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41300000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41400000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[1];
+        assert_eq!(child.source_index(), 3);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Float);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x41200000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41800000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41a80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x41200000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0xc0400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0xc0400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        assert!(child.normal_width().is_none());
+        let child = &layout.children()[2];
+        assert_eq!(child.source_index(), 4);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41900000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41980000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40400000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40400000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let child = &layout.children()[3];
+        assert_eq!(child.source_index(), 5);
+        assert_eq!(child.containing_source_index(), 1);
+        assert_eq!(child.kind(), PrincipalChildKind::Normal);
+        assert_eq!((child.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.content().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.content().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((child.padding().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.padding().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.padding().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.padding().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((child.border().left).to_bits(), 0x00000000u32);
+        assert_eq!((child.border().right).to_bits(), 0x42c80000u32);
+        assert_eq!((child.border().top).to_bits(), 0x41b00000u32);
+        assert_eq!((child.border().bottom).to_bits(), 0x41b80000u32);
+        assert_eq!((child.used_width()).to_bits(), 0x42c80000u32);
+        assert_eq!((child.used_height()).to_bits(), 0x3f800000u32);
+        assert_eq!((child.used_margin_top()).to_bits(), 0x40000000u32);
+        assert_eq!((child.used_margin_right()).to_bits(), 0x00000000u32);
+        assert_eq!((child.used_margin_bottom()).to_bits(), 0x40800000u32);
+        assert_eq!((child.used_margin_left()).to_bits(), 0x00000000u32);
+        match child.margin_top() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_right() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.margin_bottom() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x40800000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Specified);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        match child.computed_margin_left() {
+            BoxLengthFact::Absolute(value) => {
+                assert_eq!((value.pixels).to_bits(), 0x00000000u32);
+                assert_eq!(value.origin, BoxFactOrigin::Initial);
+                assert!(!(value.rounded_to_zero));
+            }
+            _ => panic!("expected absolute fact"),
+        }
+        let used = child.normal_width().unwrap();
+        assert_eq!((used.margin_left).to_bits(), 0x00000000u32);
+        assert_eq!((used.margin_right).to_bits(), 0x00000000u32);
+        assert_eq!(used.passes, 1);
+        assert_eq!((used.width).to_bits(), 0x42c80000u32);
+        let parent = layout.parent();
+        assert_eq!(parent.source_index(), 1);
+        assert_eq!(parent.containing_source_index(), 0);
+        assert_eq!((parent.content().left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.content().right).to_bits(), 0x42c80000u32);
+        assert_eq!((parent.content().top).to_bits(), 0x41300000u32);
+        assert_eq!((parent.content().bottom).to_bits(), 0x41d80000u32);
+        assert_eq!((parent.horizontal().used.width).to_bits(), 0x42c80000u32);
+        assert_eq!(
+            (parent.horizontal().used.margin_left).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!(
+            (parent.horizontal().used.margin_right).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.horizontal().content.left).to_bits(), 0x00000000u32);
+        assert_eq!((parent.horizontal().content.right).to_bits(), 0x42c80000u32);
+        assert_eq!(parent.horizontal().used.passes, 1);
+        assert!(!(parent.horizontal().collapsed_positive_width()));
+        assert_eq!((parent.origin().used_margin_top).to_bits(), 0x00000000u32);
+        assert_eq!((parent.origin().border_top).to_bits(), 0x41200000u32);
+        assert_eq!((parent.origin().content_top).to_bits(), 0x41300000u32);
+        assert_eq!(
+            parent.origin().margin_resolution,
+            iced_css_core::formatting::first_child_origin::TopMarginResolution::Absolute
+        );
+        assert_eq!((parent.height().used_height).to_bits(), 0x41800000u32);
+        assert_eq!((parent.height().content_bottom).to_bits(), 0x41d80000u32);
+        let extent = parent.height().auto_extent.unwrap();
+        assert_eq!((extent.normal_margin_bottom).to_bits(), 0x41d80000u32);
+        assert_eq!((extent.selected_bottom).to_bits(), 0x41d80000u32);
+        assert!(!(extent.float_extended));
+        assert_eq!(
+            (parent.bottom().used_margin_bottom).to_bits(),
+            0x00000000u32
+        );
+        assert_eq!((parent.bottom().padding_bottom).to_bits(), 0x41e00000u32);
+        assert_eq!((parent.bottom().border_bottom).to_bits(), 0x41e00000u32);
+        assert_eq!((parent.bottom().margin_bottom).to_bits(), 0x41e00000u32);
+        assert_eq!(
+            parent.bottom().margin_resolution,
+            iced_css_core::formatting::block_bottom::BottomMarginResolution::Absolute
+        );
+    });
+}
+
+#[test]
+fn cp_mutant_witness_omit_admission_left() {
+    cp_witness_case_19234();
+}
+
+#[test]
+fn cp_mutant_witness_omit_placement_left() {
+    cp_witness_case_19201();
+}
+
+#[test]
+fn cp_mutant_witness_omit_admission_right() {
+    cp_witness_case_19236();
+}
+
+#[test]
+fn cp_mutant_witness_omit_placement_right() {
+    cp_witness_case_19199();
+}
+
+#[test]
+fn cp_mutant_witness_omit_admission_top() {
+    cp_witness_case_19238();
+}
+
+#[test]
+fn cp_mutant_witness_omit_placement_top() {
+    cp_witness_case_19198();
+}
+
+#[test]
+fn cp_mutant_witness_omit_admission_bottom() {
+    cp_witness_case_19240();
+}
+
+#[test]
+fn cp_mutant_witness_omit_placement_bottom() {
+    cp_witness_case_19200();
+}
+
+#[test]
+fn cp_mutant_witness_preround_border_width() {
+    cp_witness_case_19260();
+}
+
+#[test]
+fn cp_mutant_witness_preround_border_height() {
+    cp_witness_case_19261();
+}
+
+#[test]
+fn cp_mutant_witness_f64_extent_width() {
+    cp_witness_case_19258();
+}
+
+#[test]
+fn cp_mutant_witness_f64_extent_height() {
+    cp_witness_case_19259();
+}
+
+#[test]
+fn cp_mutant_witness_before_content_alias() {
+    cp_witness_case_19206();
+}
+
+#[test]
+fn cp_mutant_witness_tail_content_alias() {
+    cp_witness_case_19207();
+}
+
+#[test]
+fn cp_mutant_witness_float_border_alias() {
+    cp_witness_case_19198();
+}
+
+#[test]
+fn cp_mutant_witness_facade_padding_alias() {
+    cp_witness_case_19198();
+}
+
+#[test]
+fn cp_mutant_witness_before_content_bottom_float_top() {
+    cp_witness_case_19206();
+}
+
+#[test]
+fn cp_mutant_witness_before_content_bottom_clearance() {
+    cp_witness_case_19206();
+}
+
+#[test]
+fn cp_mutant_witness_tail_content_bottom_clearance() {
+    cp_witness_case_19249();
+}
+
+#[test]
+fn cp_mutant_witness_last_content_bottom_height() {
+    cp_witness_case_19207();
+}
+
+#[test]
+fn cp_mutant_witness_float_border_bottom_clearance() {
+    cp_witness_case_19283();
+}
+
+#[test]
+fn cp_mutant_witness_float_border_bottom_height() {
+    cp_witness_case_19259();
+}
+
+#[test]
+fn cp_mutant_witness_contact_less_equal() {
+    cp_witness_case_19208();
+}
+
+#[test]
+fn cp_mutant_witness_contact_reject_zero() {
+    cp_witness_case_19208();
+}
+
+#[test]
+fn cp_mutant_witness_admit_clearance_equality() {
+    cp_witness_case_19209();
+}
+
+#[test]
+fn cp_mutant_witness_normal_border_wrong_anchor() {
+    cp_witness_case_19248();
+}
+
+#[test]
+fn cp_mutant_witness_right_border_sign() {
+    cp_witness_case_19273();
+}
+
+#[test]
+fn cp_mutant_witness_right_padding_sign() {
+    cp_witness_case_19203();
+}
+
+#[test]
+fn cp_mutant_witness_containment_content_only() {
+    cp_witness_case_19255();
+}
+
+#[test]
+fn cp_mutant_witness_containment_margin_only() {
+    cp_witness_case_19255();
+}
+
+#[test]
+fn cp_mutant_witness_containment_border_only() {
+    cp_witness_case_19256();
+}
+
+#[test]
+fn cp_mutant_witness_border_source_index() {
+    cp_witness_case_19276();
 }

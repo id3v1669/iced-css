@@ -90,6 +90,7 @@ pub struct PrincipalChildBox {
     containing_source_index: usize,
     kind: PrincipalChildKind,
     content: PrincipalEdges,
+    border: PrincipalEdges,
     used_width: f32,
     normal_width: Option<BlockWidthResult>,
     used_margin_left: f32,
@@ -120,10 +121,10 @@ impl PrincipalChildBox {
         self.content
     }
     pub fn padding(&self) -> PrincipalEdges {
-        self.content
+        self.border
     }
     pub fn border(&self) -> PrincipalEdges {
-        self.content
+        self.border
     }
     pub fn used_width(&self) -> f32 {
         self.used_width
@@ -267,6 +268,13 @@ impl<'p> CapturedSiblingLayout<'p> {
     }
 }
 
+/// Normal child's horizontal border publication edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildBorderStage {
+    Left,
+    Right,
+}
+
 /// Failure from facade admission, its one core call, or final principal assembly.
 #[derive(Debug)]
 pub enum SiblingLayoutError {
@@ -285,6 +293,11 @@ pub enum SiblingLayoutError {
     ChildHorizontal {
         source: usize,
         error: BlockHorizontalError,
+    },
+    /// A finite content edge plus its padding cannot publish a finite border edge.
+    ChildBorderPublication {
+        source: usize,
+        stage: ChildBorderStage,
     },
     Height(BfcHeightError),
     Bottom(BlockBottomError),
@@ -324,6 +337,7 @@ impl std::error::Error for SiblingLayoutError {
             | Self::Bytes
             | Self::ScratchBytes
             | Self::UnexpectedParentClearance
+            | Self::ChildBorderPublication { .. }
             | Self::ParentAutoOverflow { .. }
             | Self::FactInvariant { .. } => None,
         }
@@ -332,7 +346,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `80 + 32*N + 74*(N-2) + 66*(N-3)` is prepaid before any
+/// Facade work `80 + 32*N + 90*(N-2) + 146*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the `hidden`/`auto` guard of B1 and the float,
@@ -345,13 +359,16 @@ impl std::error::Error for SiblingLayoutError {
 /// used-margin reads, four margin-edge sums and sixteen comparisons. 66 actions per
 /// normal cover Auto width categories, a possible minimum-width category rerun and
 /// the two solver-margin reads. Each normal still has one horizontal producer
-/// invocation. The core is invoked exactly once, with computed Auto preserved and
+/// invocation. Padding adds 80 actions per normal for separate copied spans
+/// and checked left/right border expansion, plus 16 per child for copied border
+/// observations. These additions are prepaid even when padding is zero.
+/// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. B1 and the float
 /// also admit computed `overflow: hidden` or `auto`. Each then establishes a block
 /// formatting context and has no content, so nothing is clipped, nothing overflows
 /// and `auto` presents no scrollbar. The facade then labels B1
-/// `ChildContext::OtherNewBfc`, and the core rejects it unless its border box lies
-/// strictly above the float's margin box (CSS2.2 §9.5). P admits `hidden`, and `auto`
+/// `ChildContext::OtherNewBfc`; the core permits border/margin boundary contact
+/// and keeps a defensive strict-interior-overlap guard (CSS2.2 §9.5, Q1). P admits `hidden`, and `auto`
 /// only when every child's border box and margin box lie within P's published
 /// content box (CSS2.2 §11.1), so that nothing overflows P and `auto` presents no
 /// scrollbar; otherwise the build returns `ParentAutoOverflow`. No clip or scroll
@@ -459,8 +476,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         let row = fact_row(facts, source, "row")?;
         // CSS2.2 §9.4.1: the float establishes a block formatting context, and so does
         // B1 (source 2) with `hidden` or `auto`; B1's value is read once more after this
-        // loop to label its context, and the core then requires B1 strictly above the
-        // float (§9.5). Neither has content, so §11.1.1 `hidden` clips nothing and `auto`
+        // loop to label its context; the core permits boundary contact with F's
+        // margin box (§9.5, Q1). Neither has content, so §11.1.1 `hidden` clips nothing and `auto`
         // has no overflow to scroll.
         match row.overflow.value {
             BoxOverflow::Visible => {}
@@ -627,6 +644,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         let principal = if source == 3 {
             let band = sequence.float_content();
             let span = sequence.float_content_vertical();
+            let border_band = sequence.float_border();
+            let border_span = sequence.float_border_vertical();
             Principal {
                 kind: PrincipalChildKind::Float,
                 content: PrincipalEdges {
@@ -635,14 +654,20 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     top: span.top,
                     bottom: span.bottom,
                 },
+                border: PrincipalEdges {
+                    left: border_band.left,
+                    right: border_band.right,
+                    top: border_span.top,
+                    bottom: border_span.bottom,
+                },
                 used_width: float_width,
                 normal_width: None,
                 used_margin_left: child.margin.float_used_left(),
                 used_margin_right: child.margin.float_used_right(),
             }
         } else {
-            let vertical = if source == 2 {
-                sequence.before()
+            let (vertical, content_vertical) = if source == 2 {
+                (sequence.before(), sequence.before_content())
             } else {
                 let record = sequence.tail().get(source - 4).ok_or(E::FactInvariant {
                     source,
@@ -654,15 +679,33 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                         property: "sequence-source",
                     });
                 }
-                record.vertical()
+                (record.vertical(), record.content_vertical())
             };
             let placed = place_child_horizontal(horizontal, parent_direction, row)
                 .map_err(|error| E::ChildHorizontal { source, error })?;
+            let left = child_border_edge(
+                placed.content.left,
+                child.padding.left,
+                source,
+                ChildBorderStage::Left,
+            )?;
+            let right = child_border_edge(
+                placed.content.right,
+                child.padding.right,
+                source,
+                ChildBorderStage::Right,
+            )?;
             Principal {
                 kind: PrincipalChildKind::Normal,
                 content: PrincipalEdges {
                     left: placed.content.left,
                     right: placed.content.right,
+                    top: content_vertical.top,
+                    bottom: content_vertical.bottom,
+                },
+                border: PrincipalEdges {
+                    left,
+                    right,
                     top: vertical.top,
                     bottom: vertical.bottom,
                 },
@@ -677,6 +720,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             containing_source_index: 1,
             kind: principal.kind,
             content: principal.content,
+            border: principal.border,
             used_width: principal.used_width,
             normal_width: principal.normal_width,
             used_margin_left: principal.used_margin_left,
@@ -819,6 +863,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
 struct Principal {
     kind: PrincipalChildKind,
     content: PrincipalEdges,
+    border: PrincipalEdges,
     used_width: f32,
     normal_width: Option<BlockWidthResult>,
     used_margin_left: f32,
@@ -889,6 +934,25 @@ fn place_child_horizontal(
     )
 }
 
+fn child_border_edge(
+    content: f32,
+    padding: f32,
+    source: usize,
+    stage: ChildBorderStage,
+) -> Result<f32, SiblingLayoutError> {
+    if padding == 0.0 {
+        return Ok(content);
+    }
+    let value = match stage {
+        ChildBorderStage::Left => content - padding,
+        ChildBorderStage::Right => content + padding,
+    };
+    if !value.is_finite() {
+        return Err(SiblingLayoutError::ChildBorderPublication { source, stage });
+    }
+    Ok(if value == 0.0 { 0.0 } else { value })
+}
+
 fn facade_work(nodes: usize) -> Option<usize> {
     let children = nodes.checked_sub(2)?;
     let normals = nodes.checked_sub(3)?;
@@ -898,7 +962,9 @@ fn facade_work(nodes: usize) -> Option<usize> {
         .checked_mul(32)?
         .checked_add(80)?
         .checked_add(child_actions)?
-        .checked_add(category_actions)
+        .checked_add(category_actions)?
+        .checked_add(normals.checked_mul(80)?)?
+        .checked_add(children.checked_mul(16)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1002,9 +1068,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(594));
-        assert_eq!(facade_work(6), Some(766));
-        assert_eq!(facade_work(7), Some(938));
+        assert_eq!(facade_work(5), Some(802));
+        assert_eq!(facade_work(6), Some(1070));
+        assert_eq!(facade_work(7), Some(1338));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
@@ -1021,19 +1087,31 @@ mod tests {
             None
         );
 
-        // Exact requested floors succeed and charge the actual capacities.
-        let (children, bytes) = allocate_children(4, 7, nz(7 + 4 * size), |children, count| {
-            children.try_reserve_exact(count)
-        })
-        .unwrap();
-        assert_eq!(children.capacity(), 4);
-        assert_eq!(bytes, 4 * size);
-        let (records, bytes) = allocate_scratch(4, nz(4 * scratch), |records, count| {
-            records.try_reserve_exact(count)
-        })
-        .unwrap();
-        assert_eq!(records.capacity(), 4);
-        assert_eq!(bytes, 4 * scratch);
+        // Bind success to each prepared vector's measured capacity before moving it.
+        let mut prepared = Vec::<PrincipalChildBox>::new();
+        prepared.try_reserve_exact(4).unwrap();
+        let capacity = prepared.capacity();
+        let (children, bytes) =
+            allocate_children(4, 7, nz(7 + capacity * size), move |children, count| {
+                assert_eq!(count, 4);
+                *children = prepared;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(children.capacity(), capacity);
+        assert_eq!(bytes, capacity * size);
+        let mut prepared = Vec::<ChildFacts<'_>>::new();
+        prepared.try_reserve_exact(4).unwrap();
+        let capacity = prepared.capacity();
+        let (records, bytes) =
+            allocate_scratch(4, nz(capacity * scratch), move |records, count| {
+                assert_eq!(count, 4);
+                *records = prepared;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(records.capacity(), capacity);
+        assert_eq!(bytes, capacity * scratch);
 
         // Core bytes plus requested children beyond isize::MAX or the limit fail
         // before any reserve; the combined surplus includes core bytes.
@@ -1061,5 +1139,257 @@ mod tests {
         .unwrap_err();
         assert!(error.source().unwrap().is::<TryReserveError>());
         assert_eq!(error.source().unwrap().to_string(), real.to_string());
+    }
+    #[test]
+    fn cp_task1_actual_representation_measurement() {
+        println!(
+            "CP_REPRESENTATION PrincipalChildBox {} {}",
+            size_of::<PrincipalChildBox>(),
+            std::mem::align_of::<PrincipalChildBox>()
+        );
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
+        assert_eq!(
+            (
+                size_of::<PrincipalChildBox>(),
+                std::mem::align_of::<PrincipalChildBox>()
+            ),
+            (264, 8)
+        );
+    }
+
+    // Initialized test values allow boxed-slice conversion to make exact capacities
+    // 3/4/5 without assuming any allocator's reserve_exact behavior.
+    fn cp_capacity_child(source: &SourceNode) -> ChildFacts<'_> {
+        use iced_css_core::formatting::clearance_owner::OwnerEdges;
+        let zero = OwnerEdges {
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        };
+        ChildFacts {
+            source,
+            display: DisplayResolution {
+                display: Display::Block,
+                position: Position::Static,
+                float: Float::None,
+                flow: Flow::Normal,
+            },
+            context: ChildContext::OrdinaryNonBfc,
+            content: OwnerContent::NoOwnContentNonReplaced,
+            generated: OwnerGenerated::None,
+            height: OwnerHeight::Explicit(1.0),
+            margin: zero.into(),
+            border: zero,
+            padding: OwnerEdges { top: 2.0, ..zero },
+            clear: ClearSide::None,
+        }
+    }
+    fn cp_capacity_principal() -> PrincipalChildBox {
+        use super::super::clearance_box_facts::{AbsoluteBoxFact, BoxFactOrigin};
+        let length = BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels: 0.0,
+            rounded_to_zero: false,
+            origin: BoxFactOrigin::Specified,
+        });
+        let edges = PrincipalEdges {
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+        };
+        PrincipalChildBox {
+            source_index: 2,
+            containing_source_index: 1,
+            kind: PrincipalChildKind::Normal,
+            content: edges,
+            border: edges,
+            used_width: 0.0,
+            normal_width: None,
+            used_margin_left: 0.0,
+            used_margin_right: 0.0,
+            used_height: 0.0,
+            used_margin_top: 0.0,
+            used_margin_bottom: 0.0,
+            computed_width: length,
+            computed_height: length,
+            computed_margin_left: length,
+            computed_margin_right: length,
+            margin_top: length,
+            margin_bottom: length,
+            clear: KeywordBoxFact {
+                value: ClearSide::None,
+                origin: BoxFactOrigin::Specified,
+            },
+        }
+    }
+
+    #[test]
+    fn cp_injected_scratch_and_child_capacity_boundaries() {
+        use iced_css_core::{identity::IdAllocator, source::Metadata};
+        let mut ids = IdAllocator::new(std::num::NonZeroU64::new(712).unwrap());
+        let source = SourceNode {
+            instance: ids.allocate().unwrap(),
+            parent: None,
+            children: vec![],
+            metadata: Metadata::default(),
+        };
+        for nodes in 5..=7 {
+            let count = nodes - 2;
+            let core_bytes = (nodes - 4) * size_of::<SequenceNormalPlacement>();
+            let scratch_floor = count * size_of::<ChildFacts<'_>>();
+            let child_floor = count * size_of::<PrincipalChildBox>();
+            assert!(matches!(
+                allocate_scratch(count, NonZeroUsize::MAX, |_, _| Ok(())),
+                Err(SiblingLayoutError::ScratchBytes)
+            ));
+            assert!(matches!(
+                allocate_children(count, core_bytes, NonZeroUsize::MAX, |_, _| Ok(())),
+                Err(SiblingLayoutError::Bytes)
+            ));
+            assert!(matches!(
+                allocate_scratch(count, nz(scratch_floor - 1), |_, _| panic!("scratch floor")),
+                Err(SiblingLayoutError::ScratchBytes)
+            ));
+            assert!(matches!(
+                allocate_children(
+                    count,
+                    core_bytes,
+                    nz(core_bytes + child_floor - 1),
+                    |_, _| panic!("combined floor")
+                ),
+                Err(SiblingLayoutError::Bytes)
+            ));
+            // Synthetic oversized operands cover checked arithmetic without allocations.
+            assert_eq!(facade_work(usize::MAX - nodes), None);
+            assert!(matches!(
+                allocate_scratch(usize::MAX - count, NonZeroUsize::MAX, |_, _| panic!(
+                    "scratch integer guard"
+                )),
+                Err(SiblingLayoutError::ScratchBytes)
+            ));
+            assert!(matches!(
+                allocate_children(
+                    usize::MAX - count,
+                    core_bytes,
+                    NonZeroUsize::MAX,
+                    |_, _| panic!("child integer guard")
+                ),
+                Err(SiblingLayoutError::Bytes)
+            ));
+            for huge_core in [isize::MAX as usize, usize::MAX - child_floor + 1] {
+                assert!(matches!(
+                    allocate_children(count, huge_core, NonZeroUsize::MAX, |_, _| panic!(
+                        "combined integer guard"
+                    )),
+                    Err(SiblingLayoutError::Bytes)
+                ));
+            }
+            let real = Vec::<u8>::new().try_reserve_exact(usize::MAX).unwrap_err();
+            for error in [
+                allocate_scratch(count, NonZeroUsize::MAX, |v, requested| {
+                    assert_eq!(requested, count);
+                    v.try_reserve_exact(usize::MAX)
+                })
+                .unwrap_err(),
+                allocate_children(count, core_bytes, NonZeroUsize::MAX, |v, requested| {
+                    assert_eq!(requested, count);
+                    v.try_reserve_exact(usize::MAX)
+                })
+                .unwrap_err(),
+            ] {
+                assert!(matches!(error, SiblingLayoutError::Allocation(_)));
+                assert!(error.source().unwrap().is::<TryReserveError>());
+                assert_eq!(error.source().unwrap().to_string(), real.to_string());
+            }
+            for offset in [0usize, 1] {
+                let mut exact = (0..count)
+                    .map(|_| cp_capacity_child(&source))
+                    .collect::<Box<[_]>>()
+                    .into_vec();
+                assert_eq!(exact.capacity(), count);
+                exact.clear();
+                let (v, bytes) =
+                    allocate_scratch(count, nz(scratch_floor + offset), move |v, requested| {
+                        assert_eq!(requested, count);
+                        *v = exact;
+                        Ok(())
+                    })
+                    .unwrap();
+                assert_eq!(v.capacity(), count);
+                assert_eq!(bytes, scratch_floor);
+                let mut exact = (0..count)
+                    .map(|_| cp_capacity_principal())
+                    .collect::<Box<[_]>>()
+                    .into_vec();
+                assert_eq!(exact.capacity(), count);
+                exact.clear();
+                let (v, bytes) = allocate_children(
+                    count,
+                    core_bytes,
+                    nz(core_bytes + child_floor + offset),
+                    move |v, requested| {
+                        assert_eq!(requested, count);
+                        *v = exact;
+                        Ok(())
+                    },
+                )
+                .unwrap();
+                assert_eq!(v.capacity(), count);
+                assert_eq!(bytes, child_floor);
+            }
+            // Bind every boundary to its own prepared allocation, passed unchanged.
+            for offset in [-1isize, 0, 1] {
+                let mut prepared = Vec::<ChildFacts<'_>>::new();
+                prepared.try_reserve_exact(count + 1).unwrap();
+                let capacity = prepared.capacity();
+                assert!(capacity > count);
+                let wanted = capacity * size_of::<ChildFacts<'_>>();
+                let mut called = false;
+                let result = allocate_scratch(
+                    count,
+                    nz(wanted.checked_add_signed(offset).unwrap()),
+                    |v, requested| {
+                        called = true;
+                        assert_eq!(requested, count);
+                        *v = prepared;
+                        Ok(())
+                    },
+                );
+                assert!(called);
+                if offset < 0 {
+                    assert!(matches!(result, Err(SiblingLayoutError::ScratchBytes)));
+                } else {
+                    let (v, bytes) = result.unwrap();
+                    assert_eq!(v.capacity(), capacity);
+                    assert_eq!(bytes, wanted);
+                }
+                let mut prepared = Vec::<PrincipalChildBox>::new();
+                prepared.try_reserve_exact(count + 1).unwrap();
+                let capacity = prepared.capacity();
+                assert!(capacity > count);
+                let wanted = capacity * size_of::<PrincipalChildBox>();
+                let mut called = false;
+                let result = allocate_children(
+                    count,
+                    core_bytes,
+                    nz((core_bytes + wanted).checked_add_signed(offset).unwrap()),
+                    |v, requested| {
+                        called = true;
+                        assert_eq!(requested, count);
+                        *v = prepared;
+                        Ok(())
+                    },
+                );
+                assert!(called);
+                if offset < 0 {
+                    assert!(matches!(result, Err(SiblingLayoutError::Bytes)));
+                } else {
+                    let (v, bytes) = result.unwrap();
+                    assert_eq!(v.capacity(), capacity);
+                    assert_eq!(bytes, wanted);
+                }
+            }
+        }
     }
 }
