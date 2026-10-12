@@ -875,7 +875,7 @@ fn float_auto_error_table_preserves_dynamic_profile_precedence() {
         float.margin.left = AutoLength::Auto;
         float.margin.right = AutoLength::Value(1.0);
         match fault {
-            0 => float.height = OwnerHeight::Auto,
+            0 => float.height = OwnerHeight::Percentage(0.0),
             1 => float.context = ChildContext::Unknown,
             2 => float.display.display = Display::Inline,
             _ => float.content = OwnerContent::TextOrRichText,
@@ -1174,7 +1174,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 889, 419), (6, 1043, 501), (7, 1198, 584)] {
+    for (count, work, old_work) in [(5, 921, 419), (6, 1083, 501), (7, 1246, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1202,10 +1202,10 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            528 + 8 * count
+            536 + 8 * count
                 + count * (count - 1) / 2
                 + 24 * tail_count
-                + 53 * child_count
+                + 61 * child_count
                 + 64 * (count - 3)
         );
         assert!(owner.receipt().record_capacity >= tail_count);
@@ -1282,7 +1282,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(1042).unwrap();
+    short.work = NonZeroUsize::new(1082).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1331,7 +1331,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].border.left = 1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(1042).unwrap();
+    one_short.work = NonZeroUsize::new(1082).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -2191,7 +2191,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 889, 419), (6, 1043, 501), (7, 1198, 584)] {
+    for (count, work, old_work) in [(5, 921, 419), (6, 1083, 501), (7, 1246, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2657,7 +2657,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 889, 419), (6, 1043, 501), (7, 1198, 584)] {
+    for (count, work, old_work) in [(5, 921, 419), (6, 1083, 501), (7, 1246, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -3039,7 +3039,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 889, 419), (6, 1043, 501), (7, 1198, 584)] {
+    for (count, work, old_work) in [(5, 921, 419), (6, 1083, 501), (7, 1246, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3319,7 +3319,7 @@ fn sequence_other_new_bfc_stays_rejected_off_b1() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 889), (6, 1043), (7, 1198)] {
+    for (count, work) in [(5, 921), (6, 1083), (7, 1246)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3334,10 +3334,10 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
         assert_eq!(owner.receipt().work, work);
         assert_eq!(
             work,
-            528 + 8 * count
+            536 + 8 * count
                 + count * (count - 1) / 2
                 + 24 * (count - 4)
-                + 53 * (count - 2)
+                + 61 * (count - 2)
                 + 64 * (count - 3)
         );
     }
@@ -4211,7 +4211,7 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 889), (6, 1043), (7, 1198)] {
+    for (count, work) in [(5, 921), (6, 1083), (7, 1246)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
@@ -4347,4 +4347,214 @@ fn cp_negative_zero_padding_preserves_zero_axis_bits() {
             }
         }
     }
+}
+
+// Append to crates/iced-css-core/tests/clearance_sequence.rs before production edits.
+#[test]
+fn cfh_core_auto_matches_positive_zero() {
+    for count in [5, 6, 7] {
+        for side in [Float::Left, Float::Right] {
+            for padded in [false, true] {
+                let nodes = sources(count);
+                let (outer, parent, mut children) = facts(&nodes);
+                children[1].display.float = side;
+                for child in &mut children[2..] {
+                    child.clear = ClearSide::None;
+                }
+                if padded {
+                    children[1].padding.top = 2.0;
+                    children[1].padding.bottom = 3.0;
+                }
+                children[1].height = OwnerHeight::Explicit(0.0);
+                let expected = build(&nodes, outer, parent, &children, limits(count)).unwrap();
+                children[1].height = OwnerHeight::Auto;
+                let actual = build(&nodes, outer, parent, &children, limits(count)).unwrap();
+                assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+                let content = actual.float_content_vertical();
+                assert_eq!(content.top.to_bits(), content.bottom.to_bits());
+                if padded {
+                    let border = actual.float_border_vertical();
+                    assert_eq!(border.bottom - border.top, 5.0);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn cfh_core_profile_fences() {
+    for count in [5, 6, 7] {
+        let nodes = sources(count);
+        for index in 0..count - 2 {
+            if index == 1 {
+                continue;
+            }
+            let (outer, parent, mut children) = facts(&nodes);
+            children[index].height = OwnerHeight::Auto;
+            assert!(
+                matches!(build(&nodes, outer, parent, &children, limits(count)),
+                Err(ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
+                    source, reason: OwnerProfileReason::HeightKind,
+                })) if source == index + 2)
+            );
+        }
+        let (outer, parent, mut children) = facts(&nodes);
+        children[1].height = OwnerHeight::Percentage(0.0);
+        assert!(matches!(
+            build(&nodes, outer, parent, &children, limits(count)),
+            Err(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 3,
+                    reason: OwnerProfileReason::HeightKind,
+                }
+            ))
+        ));
+    }
+    let nodes = sources(5);
+    let (outer, parent, mut children) = facts(&nodes);
+    children[1].height = OwnerHeight::Auto;
+    let result = iced_css_core::formatting::clearance_owner::build_nested_clearance_owner(
+        &nodes,
+        outer,
+        ClearanceOwnerInput {
+            parent,
+            before: children[0],
+            float: children[1],
+            after: children[2],
+            float_width: 10.0,
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(ClearanceOwnerError::Unsupported {
+            source: 3,
+            reason: OwnerProfileReason::HeightKind,
+        })
+    ));
+}
+
+#[test]
+fn cfh_core_exact_extent_and_later_profile_order() {
+    for (top, bottom) in [(0.0, 0.0), (-3.0, 3.0), (f32::MAX, -f32::MAX), (-1.0, 0.0)] {
+        let nodes = sources(6);
+        let (outer, parent, mut children) = facts(&nodes);
+        children[1].margin.top = AutoLength::Value(top);
+        children[1].margin.bottom = AutoLength::Value(bottom);
+        children[1].height = OwnerHeight::Explicit(0.0);
+        let expected = build(&nodes, outer, parent, &children, limits(6));
+        children[1].height = OwnerHeight::Auto;
+        let actual = build(&nodes, outer, parent, &children, limits(6));
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+    let nodes = sources(6);
+    let (outer, parent, mut children) = facts(&nodes);
+    children[1].height = OwnerHeight::Auto;
+    children[1].margin.bottom = AutoLength::Value(-1.0);
+    children[3].height = OwnerHeight::Auto;
+    let mut short = limits(6);
+    short.retained_bytes = NonZeroUsize::new(1).unwrap();
+    assert!(matches!(
+        build_width(&nodes, outer, parent, &children, -1.0, short),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported {
+                source: 5,
+                reason: OwnerProfileReason::HeightKind,
+            }
+        ))
+    ));
+}
+
+#[test]
+fn cfh_core_auto_work_thresholds() {
+    for (count, work) in [(5, 921), (6, 1083), (7, 1246)] {
+        let nodes = sources(count);
+        let (outer, parent, mut children) = facts(&nodes);
+        children[1].height = OwnerHeight::Auto;
+        for child in &mut children[2..] {
+            child.clear = ClearSide::None;
+        }
+        let mut bound = limits(count);
+        bound.work = NonZeroUsize::new(work - 1).unwrap();
+        assert!(matches!(
+            build(&nodes, outer, parent, &children, bound),
+            Err(ClearanceSequenceError::Work)
+        ));
+        bound.work = NonZeroUsize::new(work).unwrap();
+        let owner = build(&nodes, outer, parent, &children, bound).unwrap();
+        assert_eq!(owner.receipt().work, work);
+    }
+}
+
+#[test]
+fn cfh_core_mandatory_equality_is_preserved() {
+    let nodes = sources(6);
+    let (outer, parent, mut children) = facts(&nodes);
+    for height in [OwnerHeight::Explicit(0.0), OwnerHeight::Auto] {
+        children[1].height = height;
+        assert!(matches!(
+            build(&nodes, outer, parent, &children, limits(6)),
+            Err(ClearanceSequenceError::Placement {
+                source: 4,
+                error: ClearanceOwnerError::UnsupportedEquality,
+            })
+        ));
+    }
+}
+
+#[test]
+fn cfh_core_validation_order() {
+    for (height, width, margin, padding, field) in [
+        (OwnerHeight::Auto, -1.0, -1.0, 0.0, "float_width"),
+        (OwnerHeight::Auto, 10.0, f32::NAN, -1.0, "margin"),
+        (
+            OwnerHeight::Explicit(f32::NAN),
+            10.0,
+            f32::NAN,
+            -1.0,
+            "height",
+        ),
+        (OwnerHeight::Explicit(-1.0), 10.0, f32::NAN, -1.0, "height"),
+    ] {
+        let nodes = sources(6);
+        let (outer, parent, mut children) = facts(&nodes);
+        children[1].height = height;
+        children[1].margin.bottom = AutoLength::Value(margin);
+        children[1].padding.top = padding;
+        assert!(
+            matches!(build_width(&nodes, outer, parent, &children, width, limits(6)),
+            Err(ClearanceSequenceError::Profile(ClearanceOwnerError::InvalidNumber {
+                source: 3, field: actual,
+            })) if actual == field)
+        );
+    }
+}
+
+#[test]
+fn cfh_core_auto_content_and_shape_fences() {
+    let nodes = sources(6);
+    for generated in [OwnerGenerated::Present, OwnerGenerated::Unresolved] {
+        let (outer, parent, mut children) = facts(&nodes);
+        children[1].height = OwnerHeight::Auto;
+        children[1].generated = generated;
+        assert!(matches!(
+            build(&nodes, outer, parent, &children, limits(6)),
+            Err(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 3,
+                    reason: OwnerProfileReason::GeneratedContent,
+                }
+            ))
+        ));
+    }
+    let mut nodes = sources(6);
+    let extra = nodes[4].instance;
+    nodes[3].children.push(extra);
+    let (outer, parent, mut children) = facts(&nodes);
+    children[1].height = OwnerHeight::Auto;
+    assert!(matches!(
+        build(&nodes, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::ChildCount { source: 3 }
+        ))
+    ));
 }

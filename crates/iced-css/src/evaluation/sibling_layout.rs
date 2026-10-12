@@ -346,7 +346,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `80 + 32*N + 90*(N-2) + 146*(N-3)` is prepaid before any
+/// Facade work `80 + 32*N + 98*(N-2) + 146*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the `hidden`/`auto` guard of B1 and the float,
@@ -492,6 +492,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         }
         let height = match row.height {
             BoxLengthFact::Absolute(value) => OwnerHeight::Explicit(value.pixels),
+            BoxLengthFact::Auto { .. } if source == 3 => OwnerHeight::Auto,
             BoxLengthFact::Auto { .. } => {
                 return Err(E::Captured(unsupported(
                     source,
@@ -640,7 +641,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 source,
                 property: "child-facts",
             })?;
-        let used_height = explicit_height(child, source)?;
+        let used_height = used_child_height(child, source)?;
         let principal = if source == 3 {
             let band = sequence.float_content();
             let span = sequence.float_content_vertical();
@@ -900,9 +901,10 @@ fn fact_row<'a>(
         .ok_or(SiblingLayoutError::FactInvariant { source, property })
 }
 
-fn explicit_height(child: ChildFacts<'_>, source: usize) -> Result<f32, SiblingLayoutError> {
+fn used_child_height(child: ChildFacts<'_>, source: usize) -> Result<f32, SiblingLayoutError> {
     match child.height {
         OwnerHeight::Explicit(height) => Ok(height),
+        OwnerHeight::Auto if source == 3 => Ok(0.0_f32),
         _ => Err(SiblingLayoutError::FactInvariant {
             source,
             property: "height",
@@ -964,7 +966,10 @@ fn facade_work(nodes: usize) -> Option<usize> {
         .checked_add(child_actions)?
         .checked_add(category_actions)?
         .checked_add(normals.checked_mul(80)?)?
-        .checked_add(children.checked_mul(16)?)
+        .checked_add(children.checked_mul(16)?)?
+        // CFH: four conversion/category/role actions and four used-height
+        // category/role/publication actions per child, including explicit paths.
+        .checked_add(children.checked_mul(8)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1068,9 +1073,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(802));
-        assert_eq!(facade_work(6), Some(1070));
-        assert_eq!(facade_work(7), Some(1338));
+        assert_eq!(facade_work(5), Some(826));
+        assert_eq!(facade_work(6), Some(1102));
+        assert_eq!(facade_work(7), Some(1378));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

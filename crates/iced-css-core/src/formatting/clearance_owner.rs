@@ -53,6 +53,8 @@ pub enum OwnerHeight {
     /// must not relabel auto, percentage, zero-computed, or native-derived height.
     /// SourceNode cannot prove that provenance; the owner checks the used payload.
     Explicit(f32),
+    /// Computed Auto: only the childless Sequence float resolves this to positive zero.
+    /// Legacy owners and every normal child reject this category.
     Auto,
     Percentage(f32),
 }
@@ -484,8 +486,10 @@ fn child(
         return Err(unsupported(source, OwnerProfileReason::ChildContext));
     }
     content(f.content, f.generated, source)?;
-    let OwnerHeight::Explicit(height) = f.height else {
-        return Err(unsupported(source, OwnerProfileReason::HeightKind));
+    let height = match f.height {
+        OwnerHeight::Explicit(height) => height,
+        OwnerHeight::Auto if margin_policy == ChildMarginPolicy::Sequence && floating => 0.0_f32,
+        _ => return Err(unsupported(source, OwnerProfileReason::HeightKind)),
     };
     finite(height, source, "height")?;
     if floating {

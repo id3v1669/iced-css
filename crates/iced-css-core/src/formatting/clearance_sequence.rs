@@ -204,7 +204,9 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// new block formatting context. Its border bottom may equal the float's margin
 /// top, including a zero-height float margin box (Q1). A defensive strict-overlap
 /// `NewBfcFloatContact` guard remains before tails, but is unreachable here.
-/// Work `528 + 8*N + N*(N-1)/2 + 24*(N-4) + 53*(N-2) + 64*(N-3)` is prepaid,
+/// Childless F admits computed Auto height with positive-zero used content height;
+/// normal children retain positive explicit height and Legacy admission is unchanged.
+/// Work `536 + 8*N + N*(N-1)/2 + 24*(N-4) + 61*(N-2) + 64*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages.
@@ -300,18 +302,19 @@ fn build_with_reserve<'s>(
 
     validate_outer(input.outer, 0).map_err(profile)?;
     validate_parent(input.parent, 1).map_err(profile)?;
+    let mut checked_float_height = None;
     for (offset, facts) in input.children.iter().copied().enumerate() {
         let source = offset + 2;
-        validate_sequence_child(facts, source, source == 3).map_err(profile)?;
+        let height = validate_sequence_child(facts, source, source == 3).map_err(profile)?;
+        if source == 3 {
+            checked_float_height = Some(height);
+        }
     }
+    let float_height =
+        checked_float_height.expect("validated Sequence shape contains source-3 float");
     validate_sequence_float_width(input.float_width, 3).map_err(profile)?;
-    validate_sequence_float_extents(
-        input.children[1],
-        input.float_width,
-        explicit_height(input.children[1]),
-        3,
-    )
-    .map_err(profile)?;
+    validate_sequence_float_extents(input.children[1], input.float_width, float_height, 3)
+        .map_err(profile)?;
 
     let requested_bytes = retained_bytes(tail_count).ok_or(ClearanceSequenceError::Bytes)?;
     if requested_bytes > limits.retained_bytes.get() {
@@ -328,7 +331,6 @@ fn build_with_reserve<'s>(
     }
 
     let before_height = explicit_height(input.children[0]);
-    let float_height = explicit_height(input.children[1]);
     let first = place_first_float(FirstFloatInput {
         parent: input.parent,
         before: input.children[0],
@@ -460,7 +462,11 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         .checked_add(margin_actions)?
         .checked_add(256)?
         .checked_add(nodes.checked_sub(3)?.checked_mul(64)?)?
-        .checked_add(children.checked_mul(8)?)
+        .checked_add(children.checked_mul(8)?)?
+        // CFH: 4 category/policy/role actions plus 4 returned-scalar/role actions
+        // per child; 8 fixed Option and two downstream scalar-transfer actions.
+        .checked_add(children.checked_mul(8)?)?
+        .checked_add(8)
 }
 
 fn retained_bytes(capacity: usize) -> Option<usize> {
@@ -506,7 +512,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(889).unwrap(),
+            work: NonZeroUsize::new(921).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -901,7 +907,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [888, 480, 419, 337, 269, 213] {
+        for short in [920, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -917,7 +923,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(889).unwrap();
+        limits.work = NonZeroUsize::new(921).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -937,7 +943,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 889);
+        assert_eq!(owner.receipt().work, 921);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -965,9 +971,9 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(889));
-        assert_eq!(sequence_work(6, 2), Some(1043));
-        assert_eq!(sequence_work(7, 3), Some(1198));
+        assert_eq!(sequence_work(5, 1), Some(921));
+        assert_eq!(sequence_work(6, 2), Some(1083));
+        assert_eq!(sequence_work(7, 3), Some(1246));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
@@ -1138,5 +1144,106 @@ mod tests {
                 }
             }
         }
+    }
+
+    // Insert within clearance_sequence.rs::tests; uses that module's fixture/input.
+    #[test]
+    fn cfh_checked_height_bits_and_profile_order() {
+        let (sources, _) = fixture();
+        let (_, _, mut children) = input(&sources);
+        children[1].height = OwnerHeight::Auto;
+        assert_eq!(
+            validate_sequence_child(children[1], 3, true)
+                .unwrap()
+                .to_bits(),
+            0
+        );
+        for value in [-0.0_f32, 0.0, 2.0, f32::MAX] {
+            children[1].height = OwnerHeight::Explicit(value);
+            assert_eq!(
+                validate_sequence_child(children[1], 3, true)
+                    .unwrap()
+                    .to_bits(),
+                value.to_bits()
+            );
+        }
+        children[1].height = OwnerHeight::Auto;
+        children[1].content = OwnerContent::TextOrRichText;
+        assert!(matches!(
+            validate_sequence_child(children[1], 3, true),
+            Err(ClearanceOwnerError::Unsupported {
+                source: 3,
+                reason: OwnerProfileReason::Content
+            })
+        ));
+    }
+
+    #[test]
+    fn cfh_auto_profile_before_reserve_and_actual_capacity() {
+        let (sources, mut limits) = fixture();
+        let (outer, parent, mut children) = input(&sources);
+        children[1].height = OwnerHeight::Auto;
+        children[1].margin.bottom = AutoLength::Value(-1.0);
+        let failed = build_with_reserve(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.0,
+            },
+            limits,
+            |_, _| panic!("reserve before complete Auto profile"),
+        );
+        assert!(matches!(
+            failed,
+            Err(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 3,
+                    reason: OwnerProfileReason::NegativeFloatOuterExtent,
+                }
+            ))
+        ));
+        children[1].margin.bottom = AutoLength::Value(0.0);
+        children[2].clear = ClearSide::None;
+        children[1].height = OwnerHeight::Explicit(0.0);
+        build_clearance_sequence(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.0,
+            },
+            limits,
+        )
+        .unwrap();
+        children[1].height = OwnerHeight::Auto;
+        let mut prepared = Vec::new();
+        prepared.try_reserve_exact(3).unwrap();
+        let capacity = prepared.capacity();
+        limits.retained_bytes =
+            NonZeroUsize::new(capacity * size_of::<SequenceNormalPlacement>()).unwrap();
+        let result = build_with_reserve(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.0,
+            },
+            limits,
+            |records, requested| {
+                assert_eq!(requested, 1);
+                *records = prepared;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(result.receipt().record_capacity, capacity);
+        assert_eq!(
+            result.receipt().retained_bytes,
+            capacity * size_of::<SequenceNormalPlacement>()
+        );
     }
 }
