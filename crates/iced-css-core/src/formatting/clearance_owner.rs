@@ -235,11 +235,9 @@ pub enum ClearanceOwnerError {
         stage: &'static str,
     },
     UnsupportedEquality,
-    /// Defensive Sequence-only overlap guard for a new-BFC B1: its border bottom
-    /// is strictly below the float's margin top in the downward coordinate system
-    /// (`placed_float().top < before().bottom`). Edge contact is admitted (Q1).
-    /// This strict-overlap branch is unreachable in the bounded profile: B1's
-    /// nonnegative bottom margin and the placer's lower bound preserve separation.
+    /// Sequence-only rejection of intersecting nonempty B1 border and F margin
+    /// intervals when B1 establishes a BFC. Edge contact and empty intervals pass.
+    /// Signed B1 margins make this conservative vertical guard reachable.
     NewBfcFloatContact,
     /// The presence classifier required clearance without a selected float.
     /// This indicates an internal primitive contract inconsistency.
@@ -506,13 +504,9 @@ fn child(
             finite(value, source, "margin")?;
         }
     }
-    if !floating && margin_policy == ChildMarginPolicy::Sequence {
-        if matches!(f.margin.top, AutoLength::Value(v) if v < 0.0)
-            || matches!(f.margin.bottom, AutoLength::Value(v) if v < 0.0)
-        {
-            return Err(unsupported(source, OwnerProfileReason::NegativeMargin));
-        }
-    } else {
+    // Sequence normals admit finite signed and Auto margins on every edge.
+    // Keep them outside the Legacy horizontal/category restrictions below.
+    if floating || margin_policy == ChildMarginPolicy::Legacy {
         // CSS2.2 §8.3: a Sequence float's margins may be negative; its outer extents are
         // checked once its width is known (`validate_sequence_float_extents`).
         if !(floating && margin_policy == ChildMarginPolicy::Sequence)

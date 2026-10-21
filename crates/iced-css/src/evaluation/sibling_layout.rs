@@ -16,7 +16,10 @@ use super::{
 use iced_css_core::{
     formatting::{
         bfc_height::{
-            BfcHeightError, BfcHeightInput, BfcHeightMode, BfcHeightPlacement, solve_bfc_height,
+            BfcHeightError, BfcHeightInput, BfcHeightMode, BfcHeightPlacement,
+            SignedBfcHeightError, SignedBfcHeightInput, SignedNormalMarginError,
+            SignedNormalMarginInput, publish_signed_normal_margin_edges, solve_bfc_height,
+            solve_signed_bfc_height,
         },
         block::{
             BlockHorizontalError, BlockHorizontalPlacement, BlockWidthInput, BlockWidthResult,
@@ -300,6 +303,12 @@ pub enum SiblingLayoutError {
         stage: ChildBorderStage,
     },
     Height(BfcHeightError),
+    /// Signed Auto normal edge publication, visited in projected source order.
+    NormalMargin {
+        source: usize,
+        error: SignedNormalMarginError,
+    },
+    SignedHeight(SignedBfcHeightError),
     Bottom(BlockBottomError),
     /// P's computed `overflow: auto` is admitted only when every child's border box and
     /// margin box lie within P's published content box (CSS2.2 §11.1); `source` is the
@@ -331,6 +340,8 @@ impl std::error::Error for SiblingLayoutError {
             Self::Core(error) => Some(error),
             Self::ChildHorizontal { error, .. } => Some(error),
             Self::Height(error) => Some(error),
+            Self::NormalMargin { error, .. } => Some(error),
+            Self::SignedHeight(error) => Some(error),
             Self::Bottom(error) => Some(error),
             Self::Sources
             | Self::Work
@@ -346,7 +357,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `80 + 32*N + 98*(N-2) + 146*(N-3)` is prepaid before any
+/// Facade work `208 + 32*N + 118*(N-2) + 274*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the `hidden`/`auto` guard of B1 and the float,
@@ -740,43 +751,81 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
 
     let computed_height = parent_row.height;
-    let height_mode = match computed_height {
-        BoxLengthFact::Absolute(value) => BfcHeightMode::Explicit(value.pixels),
-        BoxLengthFact::Auto { .. } => {
-            let last_source = node_count - 1;
-            let last_child = children.last().ok_or(E::FactInvariant {
-                source: last_source,
-                property: "principal-last",
+    let height = if matches!(computed_height, BoxLengthFact::Auto { .. })
+        && children.iter().any(|child| {
+            child.kind() == PrincipalChildKind::Normal
+                && (child.used_margin_top() < 0.0 || child.used_margin_bottom() < 0.0)
+        }) {
+        let mut extrema: Option<(f32, f32)> = None;
+        for child in &children {
+            if child.kind() != PrincipalChildKind::Normal {
+                continue;
+            }
+            let edges = publish_signed_normal_margin_edges(SignedNormalMarginInput {
+                border_top: child.border().top,
+                border_bottom: child.border().bottom,
+                margin_top: child.used_margin_top(),
+                margin_bottom: child.used_margin_bottom(),
+            })
+            .map_err(|error| E::NormalMargin {
+                source: child.source_index(),
+                error,
             })?;
-            if last_child.source_index() != last_source {
-                return Err(E::FactInvariant {
-                    source: last_source,
-                    property: "principal-source",
-                });
-            }
-            let last_in_flow_margin_bottom = last_child.used_margin_bottom();
-            let last = sequence.tail().last().ok_or(E::FactInvariant {
-                source: last_source,
-                property: "sequence-tail-last",
-            })?;
-            if last.source_index() != last_source {
-                return Err(E::FactInvariant {
-                    source: last_source,
-                    property: "sequence-source",
-                });
-            }
-            BfcHeightMode::Auto {
-                last_in_flow_border_bottom: last.vertical().bottom,
-                last_in_flow_margin_bottom,
-                float_bottom: sequence.placed_float().bottom,
-            }
+            extrema = Some(match extrema {
+                None => (edges.top, edges.bottom),
+                Some((top, bottom)) => (top.min(edges.top), bottom.max(edges.bottom)),
+            });
         }
+        let (normal_margin_top, normal_margin_bottom) = extrema.ok_or(E::FactInvariant {
+            source: 1,
+            property: "normal-extrema",
+        })?;
+        solve_signed_bfc_height(SignedBfcHeightInput {
+            content_top: origin.content_top,
+            normal_margin_top,
+            normal_margin_bottom,
+            float_bottom: sequence.placed_float().bottom,
+        })
+        .map_err(E::SignedHeight)?
+    } else {
+        let height_mode = match computed_height {
+            BoxLengthFact::Absolute(value) => BfcHeightMode::Explicit(value.pixels),
+            BoxLengthFact::Auto { .. } => {
+                let last_source = node_count - 1;
+                let last_child = children.last().ok_or(E::FactInvariant {
+                    source: last_source,
+                    property: "principal-last",
+                })?;
+                if last_child.source_index() != last_source {
+                    return Err(E::FactInvariant {
+                        source: last_source,
+                        property: "principal-source",
+                    });
+                }
+                let last_in_flow_margin_bottom = last_child.used_margin_bottom();
+                let last = sequence.tail().last().ok_or(E::FactInvariant {
+                    source: last_source,
+                    property: "sequence-tail-last",
+                })?;
+                if last.source_index() != last_source {
+                    return Err(E::FactInvariant {
+                        source: last_source,
+                        property: "sequence-source",
+                    });
+                }
+                BfcHeightMode::Auto {
+                    last_in_flow_border_bottom: last.vertical().bottom,
+                    last_in_flow_margin_bottom,
+                    float_bottom: sequence.placed_float().bottom,
+                }
+            }
+        };
+        solve_bfc_height(BfcHeightInput {
+            content_top: origin.content_top,
+            mode: height_mode,
+        })
+        .map_err(E::Height)?
     };
-    let height = solve_bfc_height(BfcHeightInput {
-        content_top: origin.content_top,
-        mode: height_mode,
-    })
-    .map_err(E::Height)?;
     let bottom = place_block_bottom(BlockBottomInput {
         content_bottom: height.content_bottom,
         padding_bottom: parent_row.padding[2].pixels,
@@ -790,7 +839,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     // and the layout is the `hidden` layout. Every child's border box and margin box must lie
     // within P's published content box, edges included. A normal's margin edges are its
     // published border edges moved by its used margins in nearest-even f32 steps, as P's Auto
-    // height publishes the last margin bottom; the float's margin box is `placed_float()`.
+    // height uses the last bottom on the nonnegative route or signed extrema; the
+    // float's margin box is `placed_float()`. Containment remains a separate check.
     if parent_row.overflow.value == BoxOverflow::Auto {
         let area = PrincipalEdges {
             left: horizontal.content.left,
@@ -969,7 +1019,11 @@ fn facade_work(nodes: usize) -> Option<usize> {
         .checked_add(children.checked_mul(16)?)?
         // CFH: four conversion/category/role actions and four used-height
         // category/role/publication actions per child, including explicit paths.
-        .checked_add(children.checked_mul(8)?)
+        .checked_add(children.checked_mul(8)?)?
+        // SNV: prepaid route scan, normal-edge fold and aggregate publication.
+        .checked_add(128)?
+        .checked_add(children.checked_mul(20)?)?
+        .checked_add(normals.checked_mul(128)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1073,9 +1127,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(826));
-        assert_eq!(facade_work(6), Some(1102));
-        assert_eq!(facade_work(7), Some(1378));
+        assert_eq!(facade_work(5), Some(1270));
+        assert_eq!(facade_work(6), Some(1694));
+        assert_eq!(facade_work(7), Some(2118));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

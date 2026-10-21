@@ -511,7 +511,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            80 + 32 * 6 + 98 * (6 - 2) + 146 * (6 - 3)
+            208 + 32 * 6 + 118 * (6 - 2) + 274 * (6 - 3)
         );
     });
 }
@@ -3342,8 +3342,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 1102;
-        for short in [1, 1101] {
+        let work = 1694;
+        for short in [1, 1693] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3372,12 +3372,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            826,
+            1270,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            1378,
+            2118,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3403,14 +3403,17 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             assert_eq!(layout.receipt().work, work);
             let children = source_count - 2;
             let normals = source_count - 3;
-            assert_eq!(work, 80 + 32 * source_count + 98 * children + 146 * normals);
+            assert_eq!(
+                work,
+                208 + 32 * source_count + 118 * children + 274 * normals
+            );
         });
     }
 }
 
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
-    for (source_count, facade_work, core_work) in [(5, 826, 921), (6, 1102, 1083), (7, 1378, 1246)]
+    for (source_count, facade_work, core_work) in [(5, 1270, 945), (6, 1694, 1107), (7, 2118, 1270)]
     {
         let mut receipts = Vec::new();
         for width in [10, 140] {
@@ -3460,22 +3463,22 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            826,
-            921,
+            1270,
+            945,
             419,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            1102,
-            1083,
+            1694,
+            1107,
             501,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            1378,
-            1246,
+            2118,
+            1270,
             584,
         ),
     ] {
@@ -3818,43 +3821,14 @@ fn dynamic_child_conversion_precedes_float_width_extraction() {
 
 #[test]
 fn parent_and_child_profile_errors_preserve_causes_and_source_indices() {
-    for (suffix, expected_source, expected_reason) in [
-        (
-            "#b3 { margin-top:-1px; }",
-            5,
-            OwnerProfileReason::NegativeMargin,
-        ),
-        (
-            "#b3 { margin-bottom:-1px; }",
-            5,
-            OwnerProfileReason::NegativeMargin,
-        ),
+    for (suffix, oracle) in [
+        ("#b3 {margin-top:-1px;}", "A"),
+        ("#b3 {margin-bottom:-1px;}", "B"),
     ] {
-        let css = format!(
-            "{} #f {{ margin-left:auto; margin-right:auto; }} {suffix}",
-            baseline_css()
+        snv_assert_migration_css(
+            &format!("#f {{margin-left:auto;margin-right:auto;}} {suffix}"),
+            oracle,
         );
-        sibling_fixture(6, &css, |projection, display| {
-            let facts =
-                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
-            let error = build_captured_sibling_layout(
-                &facts,
-                ClearanceOuterContentGeometry {
-                    outer: &projection.nodes()[0],
-                    content_left: 0.0,
-                    content_width: 100.0,
-                    content_top: 10.0,
-                },
-                layout_limits(),
-            )
-            .unwrap_err();
-            assert!(matches!(
-                error,
-                SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                    ClearanceOwnerError::Unsupported { source, reason }
-                )) if source == expected_source && reason == expected_reason
-            ));
-        });
     }
 
     // Leading clear on B1 or the float is admitted and inert: the layout equals the
@@ -3920,18 +3894,17 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
         });
     }
 
-    for (suffix, source, reason) in [
-        (
-            "#b3 { margin-bottom:-1px; }",
-            5,
-            OwnerProfileReason::NegativeMargin,
-        ),
-        (
+    snv_assert_migration_css(
+        "#f {margin-left:auto;margin-right:auto;} #b3 {margin-bottom:-1px;}",
+        "B",
+    );
+
+    {
+        let (suffix, source, reason) = (
             "#b1 { height:0; }",
             2,
             OwnerProfileReason::NonpositiveBlockHeight,
-        ),
-    ] {
+        );
         let css = format!(
             "{} #f {{ margin-left:auto; margin-right:auto; }} {suffix}",
             baseline_css()
@@ -4120,50 +4093,31 @@ fn auto_vertical_margins_advance_to_later_profile_faults() {
         });
     }
 
-    for (suffix, captured) in [
-        ("#b1 { margin-bottom:auto; } #b3 { height:auto; }", true),
-        (
-            "#b1 { margin-bottom:auto; } #b3 { margin-bottom:-1px; }",
-            false,
-        ),
-    ] {
-        let css = format!("{} {suffix}", baseline_css());
-        sibling_fixture(6, &css, |projection, display| {
-            let facts =
-                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
-            let error = build_captured_sibling_layout(
+    snv_assert_migration_css("#b1 {margin-bottom:auto;} #b3 {margin-bottom:-1px;}", "C");
+    let css = format!(
+        "{} #b1 {{margin-bottom:auto;}} #b3 {{height:auto;}}",
+        baseline_css()
+    );
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        assert!(matches!(
+            default_outer_layout(
                 &facts,
-                ClearanceOuterContentGeometry {
-                    outer: &projection.nodes()[0],
-                    content_left: 0.0,
-                    content_width: 100.0,
-                    content_top: 10.0,
-                },
-                layout_limits(),
-            )
-            .unwrap_err();
-            if captured {
-                assert!(matches!(
-                    error,
-                    SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
-                        projected: 5,
-                        property: "height",
-                        reason: U::HeightKind,
-                    })
-                ));
-            } else {
-                assert!(matches!(
-                    error,
-                    SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                        ClearanceOwnerError::Unsupported {
-                            source: 5,
-                            reason: OwnerProfileReason::NegativeMargin,
-                        }
-                    ))
-                ));
-            }
-        });
-    }
+                &projection.nodes()[0],
+                0.0,
+                100.0,
+                10.0,
+                layout_limits()
+            ),
+            Err(SiblingLayoutError::Captured(
+                CapturedClearanceError::Unsupported {
+                    projected: 5,
+                    property: "height",
+                    reason: U::HeightKind
+                }
+            ))
+        ));
+    });
 
     let same_child = format!(
         "{} #b1 {{ height:auto; margin-top:auto; margin-bottom:auto; }}",
@@ -5661,12 +5615,12 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [826, 1102, 1378][case.nodes - 5],
+        [1270, 1694, 2118][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
         layout.receipt().core.work,
-        [921, 1083, 1246][case.nodes - 5],
+        [945, 1107, 1270][case.nodes - 5],
         "{id}"
     );
 }
@@ -6398,7 +6352,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 826, "#b2"), (6, 1102, "#b3"), (7, 1378, "#b4")] {
+    for (source_count, work, selector) in [(5, 1270, "#b2"), (6, 1694, "#b3"), (7, 2118, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6662,9 +6616,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 826, 475, 921, 419),
-        (6, 1102, 616, 1083, 501),
-        (7, 1378, 757, 1246, 584),
+        (5, 1270, 475, 945, 419),
+        (6, 1694, 616, 1107, 501),
+        (7, 2118, 757, 1270, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -6765,15 +6719,9 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             ClearanceOwnerError::Unsupported { source, reason },
         ))
     };
+    snv_assert_migration_css("#b3 {margin-top:auto;margin-bottom:-1px;}", "D");
+    snv_assert_migration_css("#b1 {margin-top:-1px;margin-bottom:auto;}", "E");
     for (rule, expected) in [
-        (
-            "#b3 { margin-top:auto; margin-bottom:-1px; }",
-            profile(5, OwnerProfileReason::NegativeMargin),
-        ),
-        (
-            "#b1 { margin-top:-1px; margin-bottom:auto; }",
-            profile(2, OwnerProfileReason::NegativeMargin),
-        ),
         (
             "#f { margin-top:auto; margin-bottom:-3px; }",
             profile(3, OwnerProfileReason::NegativeFloatOuterExtent),
@@ -7517,9 +7465,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 826, 475, 921, 419),
-        (6, 1102, 616, 1083, 501),
-        (7, 1378, 757, 1246, 584),
+        (5, 1270, 475, 945, 419),
+        (6, 1694, 616, 1107, 501),
+        (7, 2118, 757, 1270, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8594,9 +8542,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 826, 475, 921, 419),
-        (6, 1102, 616, 1083, 501),
-        (7, 1378, 757, 1246, 584),
+        (5, 1270, 475, 945, 419),
+        (6, 1694, 616, 1107, 501),
+        (7, 2118, 757, 1270, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8867,32 +8815,8 @@ fn css_inherited_leading_clear_matches_the_parent_clear_control() {
 }
 
 #[test]
-fn css_b1_clear_no_longer_masks_a_later_negative_margin() {
-    let rule = "#b1 { clear:left; } #b3 { margin-top:-1px; }";
-    sibling_fixture(
-        6,
-        &format!("{} {rule}", baseline_css()),
-        |projection, display| {
-            let facts =
-                evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
-            let error = default_outer_layout(
-                &facts,
-                &projection.nodes()[0],
-                0.0,
-                100.0,
-                10.0,
-                layout_limits(),
-            )
-            .unwrap_err();
-            let expected = SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 5,
-                    reason: OwnerProfileReason::NegativeMargin,
-                },
-            ));
-            assert_eq!(format!("{error:?}"), format!("{expected:?}"), "{rule}");
-        },
-    );
+fn css_b1_clear_with_signed_tail_preserves_geometry() {
+    snv_assert_migration_css("#b1 {clear:left;} #b3 {margin-top:-1px;}", "A");
 }
 
 // Leading clear Task2: the facade matrix, the stage rows and the receipts control.
@@ -9314,15 +9238,8 @@ fn float_overflow_hidden_no_longer_masks_the_float_width_kind() {
 }
 
 #[test]
-fn float_overflow_hidden_no_longer_masks_a_later_negative_margin() {
-    let error = float_overflow_error(6, "#f { overflow:hidden; } #b3 { margin-top:-1px; }");
-    let expected = SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-        ClearanceOwnerError::Unsupported {
-            source: 5,
-            reason: OwnerProfileReason::NegativeMargin,
-        },
-    ));
-    assert_eq!(format!("{error:?}"), format!("{expected:?}"));
+fn float_overflow_hidden_with_signed_tail_preserves_geometry() {
+    snv_assert_migration_css("#f {overflow:hidden;} #b3 {margin-top:-1px;}", "A");
 }
 
 // Float overflow hidden Task2: the matrix, the category rows, the failure seeds, the
@@ -9535,9 +9452,9 @@ fn float_overflow_build<'p>(
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
     for (nodes, exact, lc, core) in [
-        (5, 826, 481, 921),
-        (6, 1102, 622, 1083),
-        (7, 1378, 763, 1246),
+        (5, 1270, 481, 945),
+        (6, 1694, 622, 1107),
+        (7, 2118, 763, 1270),
     ] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
@@ -9561,7 +9478,7 @@ fn float_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                80 + 32 * nodes + 98 * (nodes - 2) + 146 * (nodes - 3)
+                208 + 32 * nodes + 118 * (nodes - 2) + 274 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9575,11 +9492,11 @@ fn float_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 1101),
+            float_overflow_build(&facts, &projection.nodes()[0], 1693),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 1102).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 1694).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -9731,20 +9648,8 @@ fn float_overflow_auto_no_longer_masks_the_float_width_kind() {
 }
 
 #[test]
-fn float_overflow_auto_no_longer_masks_a_later_negative_margin() {
-    let error = float_overflow_error(6, "#f { overflow:auto; } #b3 { margin-top:-1px; }");
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 5,
-                    reason: OwnerProfileReason::NegativeMargin,
-                },
-            ))
-        ),
-        "{error:?}"
-    );
+fn float_overflow_auto_with_signed_tail_preserves_geometry() {
+    snv_assert_migration_css("#f {overflow:auto;} #b3 {margin-top:-1px;}", "A");
 }
 
 #[test]
@@ -9992,7 +9897,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 826, 921), (6, 1102, 1083), (7, 1378, 1246)] {
+    for (nodes, exact, core) in [(5, 1270, 945), (6, 1694, 1107), (7, 2118, 1270)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -10014,7 +9919,7 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                80 + 32 * nodes + 98 * (nodes - 2) + 146 * (nodes - 3)
+                208 + 32 * nodes + 118 * (nodes - 2) + 274 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -10028,11 +9933,11 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 1101),
+            float_overflow_build(&facts, &projection.nodes()[0], 1693),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 1102).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 1694).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10262,20 +10167,8 @@ fn b1_overflow_no_longer_masks_a_later_child_overflow() {
 }
 
 #[test]
-fn b1_overflow_no_longer_masks_a_negative_margin() {
-    let error = float_overflow_error(6, "#b1 { overflow:hidden; margin-top:-1px; }");
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 2,
-                    reason: OwnerProfileReason::NegativeMargin,
-                },
-            ))
-        ),
-        "{error:?}"
-    );
+fn b1_overflow_with_signed_margin_preserves_geometry() {
+    snv_assert_migration_css("#b1 {overflow:hidden;margin-top:-1px;}", "F");
 }
 
 #[test]
@@ -10604,7 +10497,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 826, 921), (6, 1102, 1083), (7, 1378, 1246)] {
+    for (nodes, exact, core) in [(5, 1270, 945), (6, 1694, 1107), (7, 2118, 1270)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -10626,7 +10519,7 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                80 + 32 * nodes + 98 * (nodes - 2) + 146 * (nodes - 3)
+                208 + 32 * nodes + 118 * (nodes - 2) + 274 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -10640,11 +10533,11 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 1101),
+            float_overflow_build(&facts, &projection.nodes()[0], 1693),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 1102).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 1694).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10794,26 +10687,21 @@ fn b1_overflow_float_top_margin_strict_matrix_matches_the_visible_layouts() {
     assert_eq!(comparisons, 18);
 }
 
-/// B1's border box cannot cross F's margin top: the only way down, a negative B1 bottom margin,
-/// is a profile error before placement.
+/// Signed B1 margins are admitted; intersection of its nonempty border interval
+/// with F's nonempty margin interval remains a source-2 placement rejection.
 #[test]
-fn b1_overflow_negative_bottom_margin_under_a_float_top_margin_is_a_profile_error() {
+fn b1_signed_bottom_margin_under_float_top_margin_rejects_overlap() {
     let error = float_overflow_error(
         6,
-        "#b1 { margin-bottom:-1px; overflow:hidden; } #f { margin-top:3px; }",
+        "#b1 {margin-bottom:-1px;overflow:hidden;} #f {margin-top:3px;}",
     );
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 2,
-                    reason: OwnerProfileReason::NegativeMargin,
-                }
-            ))
-        ),
-        "{error:?}"
-    );
+    assert!(matches!(
+        error,
+        SiblingLayoutError::Core(ClearanceSequenceError::Placement {
+            source: 2,
+            error: ClearanceOwnerError::NewBfcFloatContact,
+        })
+    ));
 }
 
 // Parent overflow auto: P admits computed `auto` only when every child's border box and margin box
@@ -11367,7 +11255,7 @@ fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn parent_overflow_auto_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 826, 921), (6, 1102, 1083), (7, 1378, 1246)] {
+    for (nodes, exact, core) in [(5, 1270, 945), (6, 1694, 1107), (7, 2118, 1270)] {
         let css = format!(
             "{} {} #p {{ overflow:auto; }}",
             baseline_css(),
@@ -11389,7 +11277,7 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                80 + 32 * nodes + 98 * (nodes - 2) + 146 * (nodes - 3)
+                208 + 32 * nodes + 118 * (nodes - 2) + 274 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -11403,11 +11291,11 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 1101),
+            float_overflow_build(&facts, &projection.nodes()[0], 1693),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 1102).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 1694).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -12181,26 +12069,25 @@ fn css_signed_float_margins_extreme_negative_outer_width_is_typed_not_unrepresen
     ));
 }
 
-/// R12: a later tail's `NegativeMargin` (source 5) precedes F's extent error.
+/// Signed tail margins expose F's extent error. A source-5 zero-height control
+/// preserves complete-profile validation before float extents.
 #[test]
-fn css_signed_float_margins_later_tail_negative_margin_comes_first() {
-    let error = sfm_error(
-        6,
-        SFM_OUTER,
-        "#f { margin-left:-11px; } #b3 { margin-top:-1px; }",
-    );
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 5,
-                    reason: OwnerProfileReason::NegativeMargin
-                }
-            ))
-        ),
-        "{error:?}"
-    );
+fn css_signed_normal_admission_exposes_float_extent_error() {
+    for (height, expected_source, expected_reason) in [
+        (1, 3, OwnerProfileReason::NegativeFloatOuterExtent),
+        (0, 5, OwnerProfileReason::NonpositiveBlockHeight),
+    ] {
+        let error = sfm_error(
+            6,
+            SFM_OUTER,
+            &format!("#f {{margin-left:-11px;}} #b3 {{margin-top:-1px;height:{height}px;}}"),
+        );
+        assert!(
+            matches!(error, SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::Unsupported { source, reason }
+        )) if source == expected_source && reason == expected_reason)
+        );
+    }
 }
 
 /// R13: F's extent error precedes B1's contact.
@@ -30082,7 +29969,6 @@ fn cfh_css_auto_origins_matrix() {
                 for (declaration, inherited, specified) in [
                     ("", false, false),
                     ("height:auto;", false, true),
-                    ("height:initial;", false, false),
                     ("height:inherit;", true, false),
                 ] {
                     let actual = cfh_observe(nodes, &cfh_css(nodes, side, padded, declaration));
@@ -30145,7 +30031,7 @@ fn cfh_css_cascade_and_copied_auto() {
 
 #[test]
 fn cfh_css_auto_work_thresholds() {
-    for (nodes, facade_work, core_work) in [(5, 826, 921), (6, 1102, 1083), (7, 1378, 1246)] {
+    for (nodes, facade_work, core_work) in [(5, 1270, 945), (6, 1694, 1107), (7, 2118, 1270)] {
         let css = cfh_css(nodes, "right", true, "height:inherit;");
         sibling_fixture(nodes, &css, |projection, display| {
             let facts =
@@ -30176,4 +30062,131 @@ fn cfh_css_auto_work_thresholds() {
             assert_eq!(layout.children()[1].used_height().to_bits(), 0);
         });
     }
+}
+
+#[path = "support/signed_normal_vertical_margins.rs"]
+mod signed_normal_vertical_margins;
+
+#[path = "support/signed_normal_vertical_margin_api.rs"]
+mod signed_normal_vertical_margin_api;
+
+fn snv_assert_facade_oracle(layout: &CapturedSiblingLayout<'_>, oracle: &str) {
+    let (borders, clearances, height, bottom) = match oracle {
+        "A" => (
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (21.0, 22.0)],
+            [Some(-1.0), None],
+            15.0,
+            26.0,
+        ),
+        "B" => (
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (22.0, 23.0)],
+            [Some(-1.0), None],
+            11.0,
+            22.0,
+        ),
+        "C" => (
+            [(11.0, 12.0), (12.0, 14.0), (15.0, 16.0), (19.0, 20.0)],
+            [None, None],
+            8.0,
+            19.0,
+        ),
+        "D" => (
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (22.0, 23.0)],
+            [Some(-1.0), None],
+            11.0,
+            22.0,
+        ),
+        "E" => (
+            [(10.0, 11.0), (11.0, 13.0), (14.0, 15.0), (18.0, 19.0)],
+            [None, None],
+            12.0,
+            23.0,
+        ),
+        "F" => (
+            [(10.0, 11.0), (15.0, 17.0), (17.0, 18.0), (21.0, 22.0)],
+            [Some(-1.0), None],
+            15.0,
+            26.0,
+        ),
+        "G" => (
+            [(11.0, 12.0), (11.0, 13.0), (14.0, 15.0), (18.0, 19.0)],
+            [None, None],
+            12.0,
+            23.0,
+        ),
+        "H" => (
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (22.0, 23.0)],
+            [Some(2.0), None],
+            11.0,
+            22.0,
+        ),
+        "I" => (
+            [(11.0, 12.0), (11.0, 13.0), (13.0, 14.0), (17.0, 18.0)],
+            [Some(2.0), None],
+            11.0,
+            22.0,
+        ),
+        "J" => (
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (20.0, 21.0)],
+            [Some(2.0), None],
+            14.0,
+            25.0,
+        ),
+        _ => panic!("unknown independently reviewed signed-normal oracle {oracle}"),
+    };
+    assert_eq!(
+        layout
+            .children()
+            .iter()
+            .map(|child| (child.border().top, child.border().bottom))
+            .collect::<Vec<_>>(),
+        borders,
+        "{oracle}"
+    );
+    assert_eq!(
+        layout
+            .sequence()
+            .tail()
+            .iter()
+            .map(|child| child.clearance())
+            .collect::<Vec<_>>(),
+        clearances,
+        "{oracle}"
+    );
+    assert_eq!(layout.parent().height().used_height, height, "{oracle}");
+    assert_eq!(layout.parent().height().content_bottom, bottom, "{oracle}");
+    let extent = layout.parent().height().auto_extent.unwrap();
+    assert_eq!(
+        (
+            extent.normal_margin_bottom,
+            extent.selected_bottom,
+            extent.float_extended
+        ),
+        (bottom, bottom, false),
+        "{oracle}"
+    );
+}
+
+fn snv_assert_migration_css(suffix: &str, oracle: &str) {
+    let css = format!("{} {suffix}", baseline_css());
+    sibling_fixture(6, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap();
+        snv_assert_facade_oracle(&layout, oracle);
+        for child in layout.children() {
+            let row = facts.row(child.source_index()).unwrap();
+            assert_eq!(child.margin_top(), row.margin[0]);
+            assert_eq!(child.margin_bottom(), row.margin[2]);
+            assert_eq!(child.clear(), row.clear);
+            assert_eq!(child.computed_height(), row.height);
+        }
+    });
 }

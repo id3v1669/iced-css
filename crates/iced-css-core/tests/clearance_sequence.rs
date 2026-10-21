@@ -622,15 +622,10 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
         let (outer, parent, mut children) = facts(&source_nodes);
         children[source - 2].margin.left = AutoLength::Auto;
         children[source - 2].margin.top = AutoLength::Value(-1.0);
-        assert!(matches!(
-            build(&source_nodes, outer, parent, &children, limits(6)),
-            Err(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: actual_source,
-                    reason: OwnerProfileReason::NegativeMargin,
-                }
-            )) if actual_source == source
-        ));
+        snv_assert_core_oracle(
+            &build(&source_nodes, outer, parent, &children, limits(6)).unwrap(),
+            if source == 2 { "F" } else { "A" },
+        );
 
         let (outer, parent, mut children) = facts(&source_nodes);
         children[source - 2].margin.left = AutoLength::Auto;
@@ -931,13 +926,17 @@ fn signed_normal_margin_validation_is_finite_ordered_and_source_typed() {
             } else {
                 children[source - 2].margin.bottom = AutoLength::Value(-1.0);
             }
-            assert!(matches!(
-                build(&source_nodes, outer, parent, &children, limits(6)),
-                Err(ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
-                    source: actual_source,
-                    reason: OwnerProfileReason::NegativeMargin,
-                })) if actual_source == source
-            ));
+            let oracle = match (source, edge) {
+                (2, "top") => "F",
+                (2, "bottom") => "G",
+                (5, "top") => "A",
+                (5, "bottom") => "B",
+                _ => unreachable!(),
+            };
+            snv_assert_core_oracle(
+                &build(&source_nodes, outer, parent, &children, limits(6)).unwrap(),
+                oracle,
+            );
         }
     }
 
@@ -1076,20 +1075,25 @@ fn float_width_domain_storage_and_placement_follow_the_documented_phase_order() 
     let (outer, parent, mut children) = facts(&source_nodes);
     children[3].margin.top = AutoLength::Value(-1.0);
     assert!(matches!(
-        build_width(&source_nodes, outer, parent, &children, f32::NAN, limits(6),),
+        build_width(&source_nodes, outer, parent, &children, f32::NAN, limits(6)),
         Err(ClearanceSequenceError::Profile(
-            ClearanceOwnerError::Unsupported {
-                source: 5,
-                reason: OwnerProfileReason::NegativeMargin,
+            ClearanceOwnerError::InvalidNumber {
+                source: 3,
+                field: "float_width"
             }
         ))
     ));
+    snv_assert_core_oracle(
+        &build_width(&source_nodes, outer, parent, &children, 10.0, limits(6)).unwrap(),
+        "A",
+    );
+    children[3].margin.bottom = AutoLength::Value(f32::NAN);
     assert!(matches!(
-        build_width(&source_nodes, outer, parent, &children, 10.0, limits(6)),
+        build_width(&source_nodes, outer, parent, &children, f32::NAN, limits(6)),
         Err(ClearanceSequenceError::Profile(
-            ClearanceOwnerError::Unsupported {
+            ClearanceOwnerError::InvalidNumber {
                 source: 5,
-                reason: OwnerProfileReason::NegativeMargin,
+                field: "margin"
             }
         ))
     ));
@@ -1174,7 +1178,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 921, 419), (6, 1083, 501), (7, 1246, 584)] {
+    for (count, work, old_work) in [(5, 945, 419), (6, 1107, 501), (7, 1270, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1202,7 +1206,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            536 + 8 * count
+            560 + 8 * count
                 + count * (count - 1) / 2
                 + 24 * tail_count
                 + 61 * child_count
@@ -1282,7 +1286,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(1082).unwrap();
+    short.work = NonZeroUsize::new(1106).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1331,7 +1335,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].border.left = 1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(1082).unwrap();
+    one_short.work = NonZeroUsize::new(1106).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -1849,17 +1853,18 @@ fn vertical_auto_keeps_every_sequence_exclusion() {
             "{error:?}"
         );
     };
-    // Normal negative vertical stays rejected beside a vertical Auto.
-    rejected(
-        &|c| c[3].margin.bottom = AutoLength::Value(-1.0),
-        5,
-        R::NegativeMargin,
-    );
-    rejected(
-        &|c| c[0].margin.bottom = AutoLength::Value(-1.0),
-        2,
-        R::NegativeMargin,
-    );
+    // Signed normal bottoms beside all-top Auto retain their exact geometry.
+    for (slot, oracle) in [(3, "H"), (0, "I")] {
+        let (outer, parent, mut children) = facts(&source_nodes);
+        for child in &mut children {
+            child.margin.top = AutoLength::Auto;
+        }
+        children[slot].margin.bottom = AutoLength::Value(-1.0);
+        snv_assert_core_oracle(
+            &build(&source_nodes, outer, parent, &children, limits(6)).unwrap(),
+            oracle,
+        );
+    }
     // A float margin of either sign on any edge is admitted beside the vertical Auto
     // margins while both outer extents stay nonnegative (SFM: C12t, C12r, C12b and C12l).
     for edge in 0..4 {
@@ -2022,8 +2027,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
     ));
     assert!(build(&source_nodes, outer, parent, &children, limits(6)).is_ok());
 
-    // Core child top Auto, a later negative vertical and an invalid float width:
-    // the later child's NegativeMargin wins; removing it reaches float_width.
+    // Both signed and nonnegative normals expose the later float-width domain.
     for negative in [true, false] {
         let (outer, parent, mut children) = facts(&source_nodes);
         children[2].margin.top = AutoLength::Auto;
@@ -2032,24 +2036,27 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
         }
         let error =
             build_width(&source_nodes, outer, parent, &children, f32::NAN, limits(6)).unwrap_err();
-        if negative {
-            assert!(matches!(
-                error,
-                ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
-                    source: 5,
-                    reason: OwnerProfileReason::NegativeMargin,
-                })
-            ));
-        } else {
-            assert!(matches!(
-                error,
-                ClearanceSequenceError::Profile(ClearanceOwnerError::InvalidNumber {
-                    source: 3,
-                    field: "float_width",
-                })
-            ));
-        }
+        assert!(matches!(
+            error,
+            ClearanceSequenceError::Profile(ClearanceOwnerError::InvalidNumber {
+                source: 3,
+                field: "float_width",
+            })
+        ));
     }
+
+    // A genuinely invalid later profile still precedes float-width validation.
+    let (outer, parent, mut children) = facts(&source_nodes);
+    children[3].margin.bottom = AutoLength::Value(f32::NAN);
+    assert!(matches!(
+        build_width(&source_nodes, outer, parent, &children, f32::NAN, limits(6)),
+        Err(ClearanceSequenceError::Profile(
+            ClearanceOwnerError::InvalidNumber {
+                source: 5,
+                field: "margin"
+            }
+        ))
+    ));
 
     // Core top Auto plus bottom NaN: same-source InvalidNumber before sign/Auto
     // classification; the negative and valid controls classify normally.
@@ -2084,13 +2091,15 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
                         )
                     )
                 }
-                1 => assert!(matches!(
-                    result,
-                    Err(ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
-                        source: actual,
-                        reason: OwnerProfileReason::NegativeMargin,
-                    })) if actual == source
-                )),
+                1 => {
+                    let oracle = match source {
+                        2 => "G",
+                        4 => "J",
+                        5 => "D",
+                        _ => unreachable!(),
+                    };
+                    snv_assert_core_oracle(&result.unwrap(), oracle);
+                }
                 _ => assert!(result.is_ok()),
             }
         }
@@ -2191,7 +2200,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 921, 419), (6, 1083, 501), (7, 1246, 584)] {
+    for (count, work, old_work) in [(5, 945, 419), (6, 1107, 501), (7, 1270, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2657,7 +2666,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 921, 419), (6, 1083, 501), (7, 1246, 584)] {
+    for (count, work, old_work) in [(5, 945, 419), (6, 1107, 501), (7, 1270, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -3039,7 +3048,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 921, 419), (6, 1083, 501), (7, 1246, 584)] {
+    for (count, work, old_work) in [(5, 945, 419), (6, 1107, 501), (7, 1270, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3319,7 +3328,7 @@ fn sequence_other_new_bfc_stays_rejected_off_b1() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 921), (6, 1083), (7, 1246)] {
+    for (count, work) in [(5, 945), (6, 1107), (7, 1270)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3334,7 +3343,7 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
         assert_eq!(owner.receipt().work, work);
         assert_eq!(
             work,
-            536 + 8 * count
+            560 + 8 * count
                 + count * (count - 1) / 2
                 + 24 * (count - 4)
                 + 61 * (count - 2)
@@ -3419,10 +3428,10 @@ fn sequence_b1_other_new_bfc_above_a_float_top_margin_matches_ordinary() {
 }
 
 /// LO-T2Q-002: a Sequence B1 labelled `FloatBfc`, reachable only through this API, stays a
-/// `ChildContext` profile error; and a negative B1 bottom margin, the only way B1 could cross the
-/// float's margin top, stays `NegativeMargin`.
+/// `ChildContext` profile error. A signed B1 bottom margin is admitted, then
+/// intersecting nonempty B1 border/F margin intervals reject at source-2 placement.
 #[test]
-fn sequence_b1_float_bfc_and_negative_bottom_margin_stay_profile_errors() {
+fn sequence_b1_context_and_signed_overlap_keep_typed_errors() {
     let sources = sources(6);
     let (outer, parent, mut children) = facts(&sources);
     children[0].context = ChildContext::FloatBfc;
@@ -3437,13 +3446,13 @@ fn sequence_b1_float_bfc_and_negative_bottom_margin_stay_profile_errors() {
     children[0].context = ChildContext::OtherNewBfc;
     children[0].margin.bottom = AutoLength::Value(-1.0);
     children[1].margin.top = AutoLength::Value(3.0);
-    assert_eq!(
-        profile_error(build(&sources, outer, parent, &children, limits(6))),
-        ClearanceOwnerError::Unsupported {
+    assert!(matches!(
+        build(&sources, outer, parent, &children, limits(6)),
+        Err(ClearanceSequenceError::Placement {
             source: 2,
-            reason: OwnerProfileReason::NegativeMargin,
-        }
-    );
+            error: ClearanceOwnerError::NewBfcFloatContact
+        })
+    ));
 }
 
 /// CMT-D-004: with zero height and zero vertical margins, F's margin box is empty (12..12) and
@@ -4211,7 +4220,7 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 921), (6, 1083), (7, 1246)] {
+    for (count, work) in [(5, 945), (6, 1107), (7, 1270)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
@@ -4466,7 +4475,7 @@ fn cfh_core_exact_extent_and_later_profile_order() {
 
 #[test]
 fn cfh_core_auto_work_thresholds() {
-    for (count, work) in [(5, 921), (6, 1083), (7, 1246)] {
+    for (count, work) in [(5, 945), (6, 1107), (7, 1270)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[1].height = OwnerHeight::Auto;
@@ -4557,4 +4566,68 @@ fn cfh_core_auto_content_and_shape_fences() {
             ClearanceOwnerError::ChildCount { source: 3 }
         ))
     ));
+}
+
+fn snv_assert_core_oracle(
+    owner: &iced_css_core::formatting::clearance_sequence::ClearanceSequenceOwner<'_>,
+    oracle: &str,
+) {
+    let (b1, float, tails) = match oracle {
+        "A" => (
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 18.0],
+            [(18.0, 19.0, Some(-1.0)), (21.0, 22.0, None)],
+        ),
+        "B" => (
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 18.0],
+            [(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+        ),
+        "C" => (
+            [11.0, 12.0],
+            [0.0, 10.0, 12.0, 14.0],
+            [(15.0, 16.0, None), (19.0, 20.0, None)],
+        ),
+        "D" => (
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 18.0],
+            [(18.0, 19.0, Some(-1.0)), (22.0, 23.0, None)],
+        ),
+        "E" => (
+            [10.0, 11.0],
+            [0.0, 10.0, 11.0, 13.0],
+            [(14.0, 15.0, None), (18.0, 19.0, None)],
+        ),
+        "F" => (
+            [10.0, 11.0],
+            [0.0, 10.0, 15.0, 17.0],
+            [(17.0, 18.0, Some(-1.0)), (21.0, 22.0, None)],
+        ),
+        "G" => (
+            [11.0, 12.0],
+            [0.0, 10.0, 11.0, 13.0],
+            [(14.0, 15.0, None), (18.0, 19.0, None)],
+        ),
+        "H" => (
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 18.0],
+            [(18.0, 19.0, Some(2.0)), (22.0, 23.0, None)],
+        ),
+        "I" => (
+            [11.0, 12.0],
+            [0.0, 10.0, 11.0, 13.0],
+            [(13.0, 14.0, Some(2.0)), (17.0, 18.0, None)],
+        ),
+        "J" => (
+            [11.0, 12.0],
+            [0.0, 10.0, 16.0, 18.0],
+            [(18.0, 19.0, Some(2.0)), (20.0, 21.0, None)],
+        ),
+        _ => panic!("unknown independently reviewed signed-normal oracle {oracle}"),
+    };
+    assert_eq!(
+        sfm_core_view(owner),
+        sfm_core_expected(b1, float, float, &tails),
+        "{oracle}"
+    );
 }

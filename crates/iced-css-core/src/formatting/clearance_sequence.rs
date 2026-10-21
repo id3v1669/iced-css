@@ -190,8 +190,8 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// Source/count/work checks precede the complete graph and profile scan. All
 /// profile checks, including the last child and float-width domain, precede the
 /// fallible record allocation; allocation precedes every numerical kernel.
-/// Sequence normals admit genuine finite signed horizontal margins and nonnegative
-/// absolute or Auto vertical margins. Floats admit computed Auto or finite signed
+/// Sequence normals admit finite signed absolute or Auto margins on every edge.
+/// Floats admit computed Auto or finite signed
 /// absolute margins on all four edges (Auto is used zero) while both exact outer
 /// extents are nonnegative; otherwise, after every child's profile and the float-width
 /// domain, the profile rejects the float with `NegativeFloatOuterExtent`. The float is
@@ -201,12 +201,12 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// of them in the parent's new block formatting context, so CSS2.2 §9.5.2 and float
 /// constraint #10 select nothing; the value is not read after admission. B1 may
 /// instead carry `ChildContext::OtherNewBfc`, a normal-flow block that establishes a
-/// new block formatting context. Its border bottom may equal the float's margin
-/// top, including a zero-height float margin box (Q1). A defensive strict-overlap
-/// `NewBfcFloatContact` guard remains before tails, but is unreachable here.
+/// new block formatting context. Before tails, `NewBfcFloatContact` rejects
+/// intersection of nonempty published B1 border and F margin intervals. Contact
+/// and empty intervals pass (Q1); signed B1 margins make rejection reachable.
 /// Childless F admits computed Auto height with positive-zero used content height;
 /// normal children retain positive explicit height and Legacy admission is unchanged.
-/// Work `536 + 8*N + N*(N-1)/2 + 24*(N-4) + 61*(N-2) + 64*(N-3)` is prepaid,
+/// Work `560 + 8*N + N*(N-1)/2 + 24*(N-4) + 61*(N-2) + 64*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages.
@@ -342,13 +342,14 @@ fn build_with_reserve<'s>(
         float_source: 3,
     })
     .map_err(placement)?;
-    // CSS2.2 §9.5: the border box of a B1 that establishes a new block formatting
-    // context must not overlap the float's margin box interiors. Nonnegative B1
-    // bottom margin and the placer's lower bound imply `placed_float.top >= before.bottom`.
-    // Q1 admits equality, including a zero-height float margin box. Keep the
-    // strict-interior guard defensively without claiming a reachable error row.
+    // CSS2.2 §9.5, Q1: reject intersection of nonempty published intervals.
+    // This bounded core has no normal horizontal geometry for avoidance search.
+    // Signed margins may put F above B1; rounded-empty B1 and F remain admitted.
     if input.children[0].context == ChildContext::OtherNewBfc
+        && first.before.top < first.before.bottom
+        && first.placed_float.top < first.placed_float.bottom
         && first.placed_float.top < first.before.bottom
+        && first.before.top < first.placed_float.bottom
     {
         return Err(ClearanceSequenceError::Placement {
             source: 2,
@@ -466,7 +467,9 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         // CFH: 4 category/policy/role actions plus 4 returned-scalar/role actions
         // per child; 8 fixed Option and two downstream scalar-transfer actions.
         .checked_add(children.checked_mul(8)?)?
-        .checked_add(8)
+        .checked_add(8)?
+        // SNV: 24 unconditional actions for the wider interval guard and admission.
+        .checked_add(24)
 }
 
 fn retained_bytes(capacity: usize) -> Option<usize> {
@@ -512,7 +515,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(921).unwrap(),
+            work: NonZeroUsize::new(945).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -875,10 +878,11 @@ mod tests {
             })
         ));
 
-        // A negative vertical beside Auto also fails before reserve.
+        // A finite negative margin is admitted and reaches the genuine reserve failure.
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
         children[2].margin.bottom = AutoLength::Value(-1.0);
+        let mut calls = 0;
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -888,14 +892,42 @@ mod tests {
                 float_width: 10.0,
             },
             limits,
-            |_, _| panic!("reserve reached before negative margin rejection"),
+            |records, _| {
+                calls += 1;
+                records.try_reserve_exact(usize::MAX)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        let ClearanceSequenceError::Allocation(actual) = &error else {
+            panic!("expected allocation error, got {error:?}");
+        };
+        assert_eq!(actual.to_string(), real);
+        assert!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .is::<TryReserveError>()
+        );
+
+        // A nonfinite later profile still cannot reach reserve.
+        children[2].margin.bottom = AutoLength::Value(f32::NAN);
+        let error = build_with_reserve(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.0,
+            },
+            limits,
+            |_, _| panic!("reserve reached before complete profile validation"),
         )
         .unwrap_err();
         assert!(matches!(
             error,
-            ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
+            ClearanceSequenceError::Profile(ClearanceOwnerError::InvalidNumber {
                 source: 4,
-                reason: OwnerProfileReason::NegativeMargin,
+                field: "margin",
             })
         ));
     }
@@ -907,7 +939,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [920, 480, 419, 337, 269, 213] {
+        for short in [944, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -923,7 +955,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(921).unwrap();
+        limits.work = NonZeroUsize::new(945).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -943,7 +975,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 921);
+        assert_eq!(owner.receipt().work, 945);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -971,9 +1003,9 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(921));
-        assert_eq!(sequence_work(6, 2), Some(1083));
-        assert_eq!(sequence_work(7, 3), Some(1246));
+        assert_eq!(sequence_work(5, 1), Some(945));
+        assert_eq!(sequence_work(6, 2), Some(1107));
+        assert_eq!(sequence_work(7, 3), Some(1270));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
