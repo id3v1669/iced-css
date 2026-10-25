@@ -235,9 +235,10 @@ pub enum ClearanceOwnerError {
         stage: &'static str,
     },
     UnsupportedEquality,
-    /// Sequence-only rejection of intersecting nonempty B1 border and F margin
-    /// intervals when B1 establishes a BFC. Edge contact and empty intervals pass.
-    /// Signed B1 margins make this conservative vertical guard reachable.
+    /// Sequence-only rejection of intersecting nonempty border and F margin intervals
+    /// when a normal (B1 or a tail) establishes a BFC; the placement source names that
+    /// normal. Edge contact and empty intervals pass. Signed margins make this
+    /// conservative vertical guard reachable.
     NewBfcFloatContact,
     /// The presence classifier required clearance without a selected float.
     /// This indicates an internal primitive contract inconsistency.
@@ -468,9 +469,9 @@ fn child(
     margin_policy: ChildMarginPolicy,
 ) -> Result<f32, ClearanceOwnerError> {
     display(f.display, source, floating)?;
-    // Sequence B1 (source 2) may establish a new block formatting context (CSS2.2
-    // §9.4.1); the Sequence owner permits boundary contact with the float's margin
-    // box and keeps a defensive strict-interior-overlap guard. Legacy contexts stay fixed.
+    // A Sequence normal (B1 or a tail) may establish a new block formatting context
+    // (CSS2.2 §9.4.1); the Sequence owner permits boundary contact with the float's
+    // margin box and rejects strict nonempty intersection. Legacy contexts stay fixed.
     if f.context
         != if floating {
             ChildContext::FloatBfc
@@ -478,7 +479,7 @@ fn child(
             ChildContext::OrdinaryNonBfc
         }
         && !(margin_policy == ChildMarginPolicy::Sequence
-            && source == 2
+            && !floating
             && f.context == ChildContext::OtherNewBfc)
     {
         return Err(unsupported(source, OwnerProfileReason::ChildContext));

@@ -199,14 +199,15 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// margins. Content and border bands/spans are published separately; finite
 /// nonnegative absolute padding is admitted on all Sequence children. B1 and the float admit any computed `clear`. No float precedes either
 /// of them in the parent's new block formatting context, so CSS2.2 §9.5.2 and float
-/// constraint #10 select nothing; the value is not read after admission. B1 may
-/// instead carry `ChildContext::OtherNewBfc`, a normal-flow block that establishes a
-/// new block formatting context. Before tails, `NewBfcFloatContact` rejects
-/// intersection of nonempty published B1 border and F margin intervals. Contact
-/// and empty intervals pass (Q1); signed B1 margins make rejection reachable.
+/// constraint #10 select nothing; the value is not read after admission. Every
+/// Sequence normal (B1 or a tail) may instead carry `ChildContext::OtherNewBfc`, a
+/// normal-flow block that establishes a new block formatting context. Right after
+/// that normal's placement, `NewBfcFloatContact` rejects intersection of its nonempty
+/// published border interval with F's nonempty margin interval, tagged with its
+/// source. Contact and empty intervals pass (Q1); signed margins make rejection reachable.
 /// Childless F admits computed Auto height with positive-zero used content height;
 /// normal children retain positive explicit height and Legacy admission is unchanged.
-/// Work `560 + 8*N + N*(N-1)/2 + 24*(N-4) + 61*(N-2) + 64*(N-3)` is prepaid,
+/// Work `560 + 8*N + N*(N-1)/2 + 54*(N-4) + 61*(N-2) + 64*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages.
@@ -346,10 +347,7 @@ fn build_with_reserve<'s>(
     // This bounded core has no normal horizontal geometry for avoidance search.
     // Signed margins may put F above B1; rounded-empty B1 and F remain admitted.
     if input.children[0].context == ChildContext::OtherNewBfc
-        && first.before.top < first.before.bottom
-        && first.placed_float.top < first.placed_float.bottom
-        && first.placed_float.top < first.before.bottom
-        && first.before.top < first.placed_float.bottom
+        && new_bfc_intersects_float(first.before, first.placed_float)
     {
         return Err(ClearanceSequenceError::Placement {
             source: 2,
@@ -371,6 +369,16 @@ fn build_with_reserve<'s>(
             first.placed_float,
         )
         .map_err(placement)?;
+        // CSS2.2 §9.5, Q1: a new-BFC tail obeys the B1 rule, checked right after its own
+        // placement so that the first failing source in source order is reported.
+        if facts.context == ChildContext::OtherNewBfc
+            && new_bfc_intersects_float(next.vertical, first.placed_float)
+        {
+            return Err(ClearanceSequenceError::Placement {
+                source,
+                error: ClearanceOwnerError::NewBfcFloatContact,
+            });
+        }
         previous_bottom = next.vertical.bottom;
         previous_margin = facts.margin.used_bottom();
         previous_source = source;
@@ -409,6 +417,14 @@ fn placement(failure: KernelError) -> ClearanceSequenceError {
         source: failure.source,
         error: failure.error,
     }
+}
+
+/// Both published intervals are nonempty and strictly intersect (CSS2.2 §9.5, Q1).
+fn new_bfc_intersects_float(border: BlockVertical, float: PlacedFloat) -> bool {
+    border.top < border.bottom
+        && float.top < float.bottom
+        && float.top < border.bottom
+        && border.top < float.bottom
 }
 
 fn explicit_height(facts: ChildFacts<'_>) -> f32 {
@@ -469,7 +485,12 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         .checked_add(children.checked_mul(8)?)?
         .checked_add(8)?
         // SNV: 24 unconditional actions for the wider interval guard and admission.
-        .checked_add(24)
+        .checked_add(24)?
+        // TNB: 30 per tail, charged on every path: the widened context exception 6
+        // (policy, role and context comparisons) and the per-tail guard 24 (context test
+        // 2, predicate call and return 4, four published reads 4, four comparisons 8,
+        // conjunction chain 4, typed error 2). The fixed B1 charges stay without credit.
+        .checked_add(tail.checked_mul(30)?)
 }
 
 fn retained_bytes(capacity: usize) -> Option<usize> {
@@ -515,7 +536,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(945).unwrap(),
+            work: NonZeroUsize::new(975).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -939,7 +960,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [944, 480, 419, 337, 269, 213] {
+        for short in [974, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -955,7 +976,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(945).unwrap();
+        limits.work = NonZeroUsize::new(975).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -975,7 +996,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 945);
+        assert_eq!(owner.receipt().work, 975);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -1003,9 +1024,9 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(945));
-        assert_eq!(sequence_work(6, 2), Some(1107));
-        assert_eq!(sequence_work(7, 3), Some(1270));
+        assert_eq!(sequence_work(5, 1), Some(975));
+        assert_eq!(sequence_work(6, 2), Some(1167));
+        assert_eq!(sequence_work(7, 3), Some(1360));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
