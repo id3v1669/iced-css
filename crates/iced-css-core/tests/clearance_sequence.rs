@@ -629,13 +629,13 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
 
         let (outer, parent, mut children) = facts(&source_nodes);
         children[source - 2].margin.left = AutoLength::Auto;
-        children[source - 2].border.left = 1.0;
+        children[source - 2].border.left = -1.0;
         assert!(matches!(
             build(&source_nodes, outer, parent, &children, limits(6)),
             Err(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
+                ClearanceOwnerError::InvalidNumber {
                     source: actual_source,
-                    reason: OwnerProfileReason::ChildDecoration,
+                    field: "border",
                 }
             )) if actual_source == source
         ));
@@ -839,13 +839,13 @@ fn float_auto_error_table_preserves_dynamic_profile_precedence() {
 
     let (outer, parent, mut children) = facts(&source_nodes);
     children[1].margin.left = AutoLength::Auto;
-    children[1].border.left = 1.0;
+    children[1].border.left = -1.0;
     assert!(matches!(
         build(&source_nodes, outer, parent, &children, limits(6)),
         Err(ClearanceSequenceError::Profile(
-            ClearanceOwnerError::Unsupported {
+            ClearanceOwnerError::InvalidNumber {
                 source: 3,
-                reason: OwnerProfileReason::ChildDecoration,
+                field: "border",
             }
         ))
     ));
@@ -998,13 +998,13 @@ fn signed_normal_margin_validation_is_finite_ordered_and_source_typed() {
     // ClearOnBeforeOrFloat).
     let (outer, parent, mut children) = facts(&sources);
     children[0].clear = ClearSide::Left;
-    children[3].border.left = 1.0;
+    children[3].border.left = -1.0;
     assert!(matches!(
         build(&sources, outer, parent, &children, limits(6)),
         Err(ClearanceSequenceError::Profile(
-            ClearanceOwnerError::Unsupported {
+            ClearanceOwnerError::InvalidNumber {
                 source: 5,
-                reason: OwnerProfileReason::ChildDecoration,
+                field: "border",
             }
         ))
     ));
@@ -1178,7 +1178,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 975, 419), (6, 1167, 501), (7, 1360, 584)] {
+    for (count, work, old_work) in [(5, 1233, 419), (6, 1481, 501), (7, 1730, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1206,11 +1206,11 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            560 + 8 * count
+            706 + 8 * count
                 + count * (count - 1) / 2
                 + 54 * tail_count
                 + 61 * child_count
-                + 64 * (count - 3)
+                + 120 * (count - 3)
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert_eq!(
@@ -1286,7 +1286,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(1166).unwrap();
+    short.work = NonZeroUsize::new(1480).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1333,9 +1333,9 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     let (outer, parent, mut children) = facts(&sources);
     children[0].margin.left = AutoLength::Auto;
     children[3].margin.right = AutoLength::Auto;
-    children[3].border.left = 1.0;
+    children[3].border.left = -1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(1166).unwrap();
+    one_short.work = NonZeroUsize::new(1480).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -1343,9 +1343,9 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     assert!(matches!(
         build(&sources, outer, parent, &children, limits(6)),
         Err(ClearanceSequenceError::Profile(
-            ClearanceOwnerError::Unsupported {
+            ClearanceOwnerError::InvalidNumber {
                 source: 5,
-                reason: OwnerProfileReason::ChildDecoration,
+                field: "border",
             }
         ))
     ));
@@ -1980,8 +1980,65 @@ fn vertical_auto_keeps_every_sequence_exclusion() {
         assert_eq!((b2.top, b2.bottom), (18.0, 19.0));
         assert_eq!(format!("{owner:?}"), format!("{control:?}"));
     }
-    rejected(&|c| c[3].border.bottom = 1.0, 5, R::ChildDecoration);
-    rejected(&|c| c[1].border.top = 1.0, 3, R::ChildDecoration);
+    // CBR: a bordered tail and a bordered float are admitted beside the vertical Auto
+    // tops (formerly `ChildDecoration`); spans from the joint sums (plan D2).
+    {
+        let (outer, parent, mut children) = facts(&source_nodes);
+        for child in &mut children {
+            child.margin.top = AutoLength::Auto;
+        }
+        children[3].border.bottom = 1.0;
+        let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+        let b3 = &owner.tail()[1];
+        assert_eq!(
+            b3.vertical(),
+            BlockVertical {
+                top: 22.0,
+                bottom: 24.0
+            }
+        );
+        assert_eq!(
+            b3.padding_vertical(),
+            BlockVertical {
+                top: 22.0,
+                bottom: 23.0
+            }
+        );
+        assert_eq!(b3.content_vertical(), b3.padding_vertical());
+    }
+    {
+        let (outer, parent, mut children) = facts(&source_nodes);
+        for child in &mut children {
+            child.margin.top = AutoLength::Auto;
+        }
+        children[1].border.top = 1.0;
+        let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+        let placed = owner.placed_float();
+        assert_eq!((placed.top, placed.bottom), (16.0, 19.0));
+        assert_eq!(
+            owner.float_border_vertical(),
+            BlockVertical {
+                top: 16.0,
+                bottom: 19.0
+            }
+        );
+        assert_eq!(
+            owner.float_padding_vertical(),
+            BlockVertical {
+                top: 17.0,
+                bottom: 19.0
+            }
+        );
+        assert_eq!(
+            owner.float_content_vertical(),
+            owner.float_padding_vertical()
+        );
+        let b2 = owner.tail()[0].vertical();
+        assert_eq!(
+            (b2.top, b2.bottom, owner.tail()[0].clearance()),
+            (19.0, 20.0, Some(3.0))
+        );
+    }
     // Leading clear on B1 or the float is admitted beside every vertical Auto and is
     // inert: each owner equals the same all-tops-Auto input without `clear`.
     for (slot, side) in [(0, ClearSide::Left), (1, ClearSide::Both)] {
@@ -2223,7 +2280,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 975, 419), (6, 1167, 501), (7, 1360, 584)] {
+    for (count, work, old_work) in [(5, 1233, 419), (6, 1481, 501), (7, 1730, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2624,11 +2681,11 @@ fn nonzero_float_margin_admission_keeps_fault_precedence() {
         children[1].margin.left = AutoLength::Value(5.0);
         children[1].margin.right = AutoLength::Value(7.0);
         if later_fault {
-            children[3].border.left = 1.0;
+            children[3].border.left = -1.0;
         }
         let result = build_width(&sources, outer, parent, &children, -1.0, limits(6));
         let expected = if later_fault {
-            "Unsupported { source: 5, reason: ChildDecoration }"
+            "InvalidNumber { source: 5, field: \"border\" }"
         } else {
             "InvalidNumber { source: 3, field: \"float_width\" }"
         };
@@ -2689,7 +2746,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 975, 419), (6, 1167, 501), (7, 1360, 584)] {
+    for (count, work, old_work) in [(5, 1233, 419), (6, 1481, 501), (7, 1730, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -3022,11 +3079,11 @@ fn nonzero_float_vertical_margin_admission_keeps_fault_precedence() {
         children[1].margin.top = AutoLength::Value(3.0);
         children[1].margin.bottom = AutoLength::Value(4.0);
         if later_fault {
-            children[3].border.left = 1.0;
+            children[3].border.left = -1.0;
         }
         let result = build_width(&sources, outer, parent, &children, -1.0, limits(6));
         let expected = if later_fault {
-            "Unsupported { source: 5, reason: ChildDecoration }"
+            "InvalidNumber { source: 5, field: \"border\" }"
         } else {
             "InvalidNumber { source: 3, field: \"float_width\" }"
         };
@@ -3071,7 +3128,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 975, 419), (6, 1167, 501), (7, 1360, 584)] {
+    for (count, work, old_work) in [(5, 1233, 419), (6, 1481, 501), (7, 1730, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3194,15 +3251,15 @@ fn profile_error<T: std::fmt::Debug>(
 #[test]
 fn leading_clear_masks_no_sequence_profile_fault_bytes_or_kernel() {
     let sources = sources(6);
-    // B1 `clear` with its own decoration: the decoration is the fault, not the clear.
+    // B1 `clear` with its own negative border: the border is the fault, not the clear.
     let (outer, parent, mut children) = facts(&sources);
     children[0].clear = ClearSide::Left;
-    children[0].border.left = 1.0;
+    children[0].border.left = -1.0;
     assert_eq!(
         profile_error(build(&sources, outer, parent, &children, limits(6))),
-        ClearanceOwnerError::Unsupported {
+        ClearanceOwnerError::InvalidNumber {
             source: 2,
-            reason: OwnerProfileReason::ChildDecoration,
+            field: "border",
         }
     );
     // F `clear` with a negative bottom margin: the clear selects nothing and the margin is
@@ -3376,12 +3433,12 @@ fn tnb_core_profile_continues_after_a_tail_context() {
     let sources = sources(6);
     let (outer, parent, mut children) = facts(&sources);
     children[3].context = ChildContext::OtherNewBfc;
-    children[3].border.top = 1.0;
+    children[3].border.top = -1.0;
     assert_eq!(
         profile_error(build(&sources, outer, parent, &children, limits(6))),
-        ClearanceOwnerError::Unsupported {
+        ClearanceOwnerError::InvalidNumber {
             source: 5,
-            reason: OwnerProfileReason::ChildDecoration,
+            field: "border",
         }
     );
     let (outer, parent, mut children) = facts(&sources);
@@ -3429,7 +3486,7 @@ fn tnb_core_tail_guards_follow_source_order() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 975), (6, 1167), (7, 1360)] {
+    for (count, work) in [(5, 1233), (6, 1481), (7, 1730)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3444,11 +3501,11 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
         assert_eq!(owner.receipt().work, work);
         assert_eq!(
             work,
-            560 + 8 * count
+            706 + 8 * count
                 + count * (count - 1) / 2
                 + 54 * (count - 4)
                 + 61 * (count - 2)
-                + 64 * (count - 3)
+                + 120 * (count - 3)
         );
     }
 }
@@ -3660,18 +3717,18 @@ fn assert_sfm_core_extent_rejected<T: std::fmt::Debug>(result: Result<T, Clearan
     );
 }
 
-/// C2: a later child's decoration fault (source 5) precedes F's extent error.
+/// C2: a later child's border fault (source 5) precedes F's extent error.
 #[test]
 fn signed_float_margins_later_decoration_fault_comes_first() {
     let sources = sources(6);
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.left = AutoLength::Value(-11.0);
-    children[3].border.left = 1.0;
+    children[3].border.left = -1.0;
     assert_eq!(
         profile_error(build(&sources, outer, parent, &children, limits(6))),
-        ClearanceOwnerError::Unsupported {
+        ClearanceOwnerError::InvalidNumber {
             source: 5,
-            reason: OwnerProfileReason::ChildDecoration
+            field: "border",
         }
     );
 }
@@ -4171,12 +4228,12 @@ fn cp_later_profile_precedes_padding_arithmetic() {
     let (outer, parent, mut children) = facts(&sources);
     children[0].padding.top = f32::MAX;
     children[0].height = OwnerHeight::Explicit(f32::MAX);
-    children[3].border.left = 1.0;
+    children[3].border.left = -1.0;
     assert_eq!(
         profile_error(build(&sources, outer, parent, &children, limits(6))),
-        ClearanceOwnerError::Unsupported {
+        ClearanceOwnerError::InvalidNumber {
             source: 5,
-            reason: OwnerProfileReason::ChildDecoration
+            field: "border",
         }
     );
 }
@@ -4321,7 +4378,7 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 975), (6, 1167), (7, 1360)] {
+    for (count, work) in [(5, 1233), (6, 1481), (7, 1730)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
@@ -4576,7 +4633,7 @@ fn cfh_core_exact_extent_and_later_profile_order() {
 
 #[test]
 fn cfh_core_auto_work_thresholds() {
-    for (count, work) in [(5, 975), (6, 1167), (7, 1360)] {
+    for (count, work) in [(5, 1233), (6, 1481), (7, 1730)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[1].height = OwnerHeight::Auto;
@@ -4731,4 +4788,326 @@ fn snv_assert_core_oracle(
         sfm_core_expected(b1, float, float, &tails),
         "{oracle}"
     );
+}
+
+// CBR (plan section 3.3): child borders and the unisolated parent in the Sequence core.
+
+/// D2 transfer twin: B2 with borders 2/1 and padding 1/2 against padding 3/3. The
+/// border and content spans are equal; only the padding span differs.
+#[test]
+fn cbr_core_bordered_tail_matches_its_padding_twin_except_the_padding_span() {
+    let nodes = sources(6);
+    let (outer, parent, mut bordered) = facts(&nodes);
+    bordered[2].border.top = 2.0;
+    bordered[2].border.bottom = 1.0;
+    bordered[2].padding.top = 1.0;
+    bordered[2].padding.bottom = 2.0;
+    let (_, _, mut twin) = facts(&nodes);
+    twin[2].padding.top = 3.0;
+    twin[2].padding.bottom = 3.0;
+    let owner = build(&nodes, outer, parent, &bordered, limits(6)).unwrap();
+    let control = build(&nodes, outer, parent, &twin, limits(6)).unwrap();
+    let (b2, c2) = (&owner.tail()[0], &control.tail()[0]);
+    assert_eq!(
+        b2.vertical(),
+        BlockVertical {
+            top: 18.0,
+            bottom: 25.0
+        }
+    );
+    assert_eq!(
+        b2.padding_vertical(),
+        BlockVertical {
+            top: 20.0,
+            bottom: 24.0
+        }
+    );
+    assert_eq!(
+        b2.content_vertical(),
+        BlockVertical {
+            top: 21.0,
+            bottom: 22.0
+        }
+    );
+    assert_eq!(c2.vertical(), b2.vertical());
+    assert_eq!(c2.content_vertical(), b2.content_vertical());
+    assert_eq!(c2.padding_vertical(), c2.vertical());
+    assert_eq!((b2.clearance(), c2.clearance()), (Some(-1.0), Some(-1.0)));
+    let b3 = &owner.tail()[1];
+    assert_eq!(
+        b3.vertical(),
+        BlockVertical {
+            top: 28.0,
+            bottom: 29.0
+        }
+    );
+    assert_eq!(b3.padding_vertical(), b3.vertical());
+    assert_eq!(b3.content_vertical(), b3.vertical());
+    assert_eq!(control.tail()[1].vertical(), b3.vertical());
+}
+
+/// B1's top border: `before_padding()` starts below it.
+#[test]
+fn cbr_core_bordered_b1_publishes_its_padding_span() {
+    let nodes = sources(6);
+    let (outer, parent, mut children) = facts(&nodes);
+    children[0].border.top = 2.0;
+    let owner = build(&nodes, outer, parent, &children, limits(6)).unwrap();
+    assert_eq!(
+        owner.before(),
+        BlockVertical {
+            top: 11.0,
+            bottom: 14.0
+        }
+    );
+    assert_eq!(
+        owner.before_padding(),
+        BlockVertical {
+            top: 13.0,
+            bottom: 14.0
+        }
+    );
+    assert_eq!(owner.before_content(), owner.before_padding());
+    let placed = owner.placed_float();
+    assert_eq!((placed.top, placed.bottom), (18.0, 20.0));
+    assert_eq!(
+        owner.tail()[0].vertical(),
+        BlockVertical {
+            top: 20.0,
+            bottom: 21.0
+        }
+    );
+    assert_eq!(
+        owner.tail()[1].vertical(),
+        BlockVertical {
+            top: 24.0,
+            bottom: 25.0
+        }
+    );
+}
+
+/// Decorated left and right floats publish border, padding and content bands and
+/// spans; the margin box includes both borders and both paddings on each axis.
+#[test]
+fn cbr_core_decorated_floats_publish_border_padding_and_content() {
+    for (float, margin, border, padding, content) in [
+        (
+            Float::Left,
+            (0.0, 16.0),
+            (0.0, 16.0),
+            (1.0, 15.0),
+            (3.0, 13.0),
+        ),
+        (
+            Float::Right,
+            (84.0, 100.0),
+            (84.0, 100.0),
+            (85.0, 99.0),
+            (87.0, 97.0),
+        ),
+    ] {
+        let nodes = sources(6);
+        let (outer, parent, mut children) = facts(&nodes);
+        children[1].display.float = float;
+        children[1].border = OwnerEdges {
+            top: 1.0,
+            right: 1.0,
+            bottom: 1.0,
+            left: 1.0,
+        };
+        children[1].padding = OwnerEdges {
+            top: 2.0,
+            right: 2.0,
+            bottom: 2.0,
+            left: 2.0,
+        };
+        let owner = build(&nodes, outer, parent, &children, limits(6)).unwrap();
+        let placed = owner.placed_float();
+        assert_eq!(
+            (placed.left, placed.right, placed.top, placed.bottom),
+            (margin.0, margin.1, 16.0, 24.0)
+        );
+        assert_eq!(
+            owner.float_border(),
+            Band {
+                left: border.0,
+                right: border.1
+            }
+        );
+        assert_eq!(
+            owner.float_padding(),
+            Band {
+                left: padding.0,
+                right: padding.1
+            }
+        );
+        assert_eq!(
+            owner.float_content(),
+            Band {
+                left: content.0,
+                right: content.1
+            }
+        );
+        assert_eq!(
+            owner.float_border_vertical(),
+            BlockVertical {
+                top: 16.0,
+                bottom: 24.0
+            }
+        );
+        assert_eq!(
+            owner.float_padding_vertical(),
+            BlockVertical {
+                top: 17.0,
+                bottom: 23.0
+            }
+        );
+        assert_eq!(
+            owner.float_content_vertical(),
+            BlockVertical {
+                top: 19.0,
+                bottom: 21.0
+            }
+        );
+        let b2 = &owner.tail()[0];
+        assert_eq!(
+            (b2.vertical().top, b2.vertical().bottom, b2.clearance()),
+            (24.0, 25.0, Some(5.0))
+        );
+    }
+}
+
+/// G0: a P without top or bottom isolation is admitted, with geometry equal to the
+/// isolated P's (the core reads P's border and padding only in its profile).
+#[test]
+fn cbr_core_unisolated_parent_is_admitted_with_unchanged_geometry() {
+    let nodes = sources(6);
+    let (outer, parent, children) = facts(&nodes);
+    let isolated = build(&nodes, outer, parent, &children, limits(6)).unwrap();
+    for (border, padding) in [
+        (edges(), edges()),
+        (
+            OwnerEdges {
+                top: 1.0,
+                ..edges()
+            },
+            edges(),
+        ),
+        (
+            edges(),
+            OwnerEdges {
+                bottom: 1.0,
+                ..edges()
+            },
+        ),
+    ] {
+        let mut unisolated = parent;
+        unisolated.border = border;
+        unisolated.padding = padding;
+        let owner = build(&nodes, outer, unisolated, &children, limits(6)).unwrap();
+        assert_eq!(format!("{owner:?}"), format!("{isolated:?}"));
+    }
+}
+
+/// Q-6: a negative or nonfinite child border is still `InvalidNumber` with field
+/// `border`, at every child source and side.
+#[test]
+fn cbr_core_invalid_child_borders_are_typed_numbers() {
+    let nodes = sources(6);
+    for source in 2..6 {
+        for side in 0..4 {
+            for bad in [-1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let (outer, parent, mut children) = facts(&nodes);
+                let border = &mut children[source - 2].border;
+                match side {
+                    0 => border.top = bad,
+                    1 => border.right = bad,
+                    2 => border.bottom = bad,
+                    _ => border.left = bad,
+                }
+                let result = build(&nodes, outer, parent, &children, limits(6));
+                assert!(
+                    matches!(
+                        result,
+                        Err(ClearanceSequenceError::Profile(ClearanceOwnerError::InvalidNumber {
+                            source: actual,
+                            field: "border",
+                        })) if actual == source
+                    ),
+                    "source {source} side {side} value {bad}: {result:?}"
+                );
+            }
+        }
+    }
+}
+
+/// D2: F's borders enter both outer-extent sign checks; without the border each
+/// extent is negative.
+#[test]
+fn cbr_core_float_extents_include_borders() {
+    let nodes = sources(6);
+    for vertical in [false, true] {
+        let (outer, parent, mut children) = facts(&nodes);
+        let width = if vertical {
+            children[1].margin.top = AutoLength::Value(-3.0);
+            children[2].clear = ClearSide::None;
+            10.0
+        } else {
+            children[1].margin.left = AutoLength::Value(-1.0);
+            0.0
+        };
+        assert_eq!(
+            profile_error(build_width(
+                &nodes,
+                outer,
+                parent,
+                &children,
+                width,
+                limits(6)
+            )),
+            ClearanceOwnerError::Unsupported {
+                source: 3,
+                reason: OwnerProfileReason::NegativeFloatOuterExtent,
+            }
+        );
+        if vertical {
+            children[1].border.top = 1.0;
+        } else {
+            children[1].border.left = 1.0;
+        }
+        assert!(build_width(&nodes, outer, parent, &children, width, limits(6)).is_ok());
+    }
+}
+
+/// D2: border terms reach the named content-top and border-bottom stages of B1 and
+/// of a tail; the padding stages stay unreachable.
+#[test]
+fn cbr_core_border_terms_reach_the_named_stages() {
+    for (slot, top, stage) in [
+        (0, true, "before_content_top"),
+        (0, false, "before_bottom"),
+        (2, true, "after_content_top"),
+        (2, false, "after_bottom"),
+    ] {
+        let nodes = sources(6);
+        let (outer, parent, mut children) = facts(&nodes);
+        if top {
+            children[slot].border.top = f32::MAX;
+            children[slot].padding.top = f32::MAX;
+        } else {
+            children[slot].border.bottom = f32::MAX;
+            children[slot].padding.bottom = f32::MAX;
+        }
+        let result = build(&nodes, outer, parent, &children, limits(6));
+        assert!(
+            matches!(
+                result,
+                Err(ClearanceSequenceError::Placement {
+                    source,
+                    error: ClearanceOwnerError::Unrepresentable { stage: actual },
+                }) if source == slot + 2 && actual == stage
+            ),
+            "slot {slot} top {top}: {result:?}"
+        );
+    }
 }

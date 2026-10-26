@@ -770,9 +770,10 @@ fn pbr_w2_sequence_numeric_allowance_is_exact() {
     }
 }
 
-/// W3: at N7 the exact-limit facts build with the unchanged facade and core work.
+/// W3: at N7 the exact-limit facts build at the exact facade and core work (CBR
+/// values 2364 and 1730).
 #[test]
-fn pbr_w3_exact_facts_build_with_unchanged_facade_work() {
+fn pbr_w3_exact_facts_build_at_the_exact_facade_and_core_work() {
     let css = work_css(7);
     sibling_fixture(7, &css, |projection, display| {
         let rules = display.bundle().rule_count();
@@ -782,12 +783,12 @@ fn pbr_w3_exact_facts_build_with_unchanged_facade_work() {
         let facts = evaluate_sibling_box_facts(projection, display, exact).unwrap();
         assert_eq!(facts.row(1).unwrap().border_widths(), [3.0; 4]);
         let mut limits = layout_limits();
-        limits.work = nz(2158);
-        limits.core.work = nz(1360);
+        limits.work = nz(2364);
+        limits.core.work = nz(1730);
         let layout =
             default_outer_layout(&facts, &projection.nodes()[0], 0.0, 100.0, 10.0, limits).unwrap();
-        assert_eq!(layout.receipt().work, 2158);
-        assert_eq!(layout.receipt().core.work, 1360);
+        assert_eq!(layout.receipt().work, 2364);
+        assert_eq!(layout.receipt().core.work, 1730);
         assert_eq!(layout.parent().origin().content_top, 14.0);
     });
 }

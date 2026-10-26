@@ -1549,3 +1549,34 @@ fn legacy_clear_check_precedes_the_float_width_check() {
         );
     }
 }
+
+/// CBR C14 (Legacy fence, M2 witness): the Legacy owner still rejects every nonzero
+/// child border as `ChildDecoration`, at each child source and side.
+#[test]
+fn cbr_legacy_child_border_is_still_child_decoration() {
+    let s = sources();
+    for source in 1..4 {
+        for side in 0..4 {
+            let mut f = input(&s);
+            let child = match source {
+                1 => &mut f.before,
+                2 => &mut f.float,
+                _ => &mut f.after,
+            };
+            match side {
+                0 => child.border.top = 1.0,
+                1 => child.border.right = 1.0,
+                2 => child.border.bottom = 1.0,
+                _ => child.border.left = 1.0,
+            }
+            assert_eq!(
+                build_clearance_owner(&s, f).unwrap_err(),
+                ClearanceOwnerError::Unsupported {
+                    source,
+                    reason: OwnerProfileReason::ChildDecoration
+                },
+                "source {source} side {side}"
+            );
+        }
+    }
+}

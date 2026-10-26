@@ -93,6 +93,7 @@ pub struct PrincipalChildBox {
     containing_source_index: usize,
     kind: PrincipalChildKind,
     content: PrincipalEdges,
+    padding: PrincipalEdges,
     border: PrincipalEdges,
     used_width: f32,
     normal_width: Option<BlockWidthResult>,
@@ -123,8 +124,10 @@ impl PrincipalChildBox {
     pub fn content(&self) -> PrincipalEdges {
         self.content
     }
+    /// The padding box: the border box moved in by the child's border widths. It
+    /// equals `border()` for a child without borders.
     pub fn padding(&self) -> PrincipalEdges {
-        self.border
+        self.padding
     }
     pub fn border(&self) -> PrincipalEdges {
         self.border
@@ -297,7 +300,8 @@ pub enum SiblingLayoutError {
         source: usize,
         error: BlockHorizontalError,
     },
-    /// A finite content edge plus its padding cannot publish a finite border edge.
+    /// A finite content edge moved out by its padding, or that padding edge moved out by
+    /// its border, cannot publish a finite edge.
     ChildBorderPublication {
         source: usize,
         stage: ChildBorderStage,
@@ -357,7 +361,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `208 + 32*N + 126*(N-2) + 274*(N-3)` is prepaid before any
+/// Facade work `218 + 32*N + 134*(N-2) + 313*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -374,7 +378,11 @@ impl std::error::Error for SiblingLayoutError {
 /// and checked left/right border expansion, plus 16 per child for copied border
 /// observations. These additions are prepaid even when padding is zero. Eight more
 /// actions per child cover the in-loop new-BFC label: the role test, the overflow
-/// read and comparison, and the context write.
+/// read and comparison, and the context write. Child borders add 10 fixed actions
+/// for the float padding band and span, 8 per child for the copied padding box and
+/// 39 per normal for the two border reads, the two staged border-edge steps, the
+/// vertical padding-span read and the padding-edge assembly, prepaid on zero-border
+/// paths too.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -391,13 +399,23 @@ impl std::error::Error for SiblingLayoutError {
 /// content span (`sequence().float_content_vertical()`) vertically; its margin box
 /// stays `sequence().placed_float()`.
 /// P's computed `border-*-width` facts are admitted on every side and enter P's
-/// horizontal solve, first-child origin, core isolation (a nonzero border alone
-/// isolates P) and bottom. They offset P's content box, and narrow it when P's width
-/// is `auto`; the `auto` containment area stays that content box and never includes
-/// P's border area. Any child (B1, F or a tail) with a nonzero computed width on
-/// any side is rejected by the core profile scan as `ChildDecoration` at its source,
-/// after every facade stage before the core call. A zero-width child border of any
-/// style has the geometry of `border-style: none`. O's widths are captured and unused.
+/// horizontal solve, first-child origin and bottom. They offset P's content box, and
+/// narrow it when P's width is `auto`; the `auto` containment area stays that content
+/// box and never includes P's border area. P needs no top or bottom isolation: as a
+/// new block formatting context root it never collapses margins with its children
+/// (CSS2.2 8.3.1), so a P without border and padding is admitted.
+/// Every child (B1, F or a tail) admits computed border widths on every side. A
+/// normal's width solve subtracts them; its padding edges are its content edges moved
+/// out by its padding, and its border edges are those padding edges moved out by its
+/// border, one f32 step each. This staged, inside-out derivation starts from the
+/// solver's rounded content edge, so a border edge can differ from the exact border
+/// position by the rounding already absorbed in that content edge. Vertically, and
+/// for F on both axes, the core publishes the border, padding and content spans. The
+/// Q1 contact check, the signed and nonnegative Auto routes and the `auto`
+/// containment read the border box, which includes the child's borders. `padding()`
+/// is the padding box and equals `border()` for a child without borders. A zero-width
+/// child border of any style has the geometry of `border-style: none`. O's widths
+/// are captured and unused.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -660,6 +678,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         let principal = if source == 3 {
             let band = sequence.float_content();
             let span = sequence.float_content_vertical();
+            let padding_band = sequence.float_padding();
+            let padding_span = sequence.float_padding_vertical();
             let border_band = sequence.float_border();
             let border_span = sequence.float_border_vertical();
             Principal {
@@ -669,6 +689,12 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     right: band.right,
                     top: span.top,
                     bottom: span.bottom,
+                },
+                padding: PrincipalEdges {
+                    left: padding_band.left,
+                    right: padding_band.right,
+                    top: padding_span.top,
+                    bottom: padding_span.bottom,
                 },
                 border: PrincipalEdges {
                     left: border_band.left,
@@ -682,8 +708,12 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 used_margin_right: child.margin.float_used_right(),
             }
         } else {
-            let (vertical, content_vertical) = if source == 2 {
-                (sequence.before(), sequence.before_content())
+            let (vertical, padding_vertical, content_vertical) = if source == 2 {
+                (
+                    sequence.before(),
+                    sequence.before_padding(),
+                    sequence.before_content(),
+                )
             } else {
                 let record = sequence.tail().get(source - 4).ok_or(E::FactInvariant {
                     source,
@@ -695,19 +725,37 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                         property: "sequence-source",
                     });
                 }
-                (record.vertical(), record.content_vertical())
+                (
+                    record.vertical(),
+                    record.padding_vertical(),
+                    record.content_vertical(),
+                )
             };
             let placed = place_child_horizontal(horizontal, parent_direction, row)
                 .map_err(|error| E::ChildHorizontal { source, error })?;
-            let left = child_border_edge(
+            // CBR D3: the padding edges move out from the solver's content edges, then the
+            // border edges move out from the published padding edges (staged, inside-out).
+            let padding_left = child_border_edge(
                 placed.content.left,
                 child.padding.left,
                 source,
                 ChildBorderStage::Left,
             )?;
-            let right = child_border_edge(
+            let padding_right = child_border_edge(
                 placed.content.right,
                 child.padding.right,
+                source,
+                ChildBorderStage::Right,
+            )?;
+            let left = child_border_edge(
+                padding_left,
+                child.border.left,
+                source,
+                ChildBorderStage::Left,
+            )?;
+            let right = child_border_edge(
+                padding_right,
+                child.border.right,
                 source,
                 ChildBorderStage::Right,
             )?;
@@ -718,6 +766,12 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     right: placed.content.right,
                     top: content_vertical.top,
                     bottom: content_vertical.bottom,
+                },
+                padding: PrincipalEdges {
+                    left: padding_left,
+                    right: padding_right,
+                    top: padding_vertical.top,
+                    bottom: padding_vertical.bottom,
                 },
                 border: PrincipalEdges {
                     left,
@@ -736,6 +790,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             containing_source_index: 1,
             kind: principal.kind,
             content: principal.content,
+            padding: principal.padding,
             border: principal.border,
             used_width: principal.used_width,
             normal_width: principal.normal_width,
@@ -918,6 +973,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
 struct Principal {
     kind: PrincipalChildKind,
     content: PrincipalEdges,
+    padding: PrincipalEdges,
     border: PrincipalEdges,
     used_width: f32,
     normal_width: Option<BlockWidthResult>,
@@ -990,18 +1046,21 @@ fn place_child_horizontal(
     )
 }
 
+/// Moves a published edge outward by a nonnegative width (a padding, then a border):
+/// a zero width copies the edge; otherwise one f32 step that must stay finite, with
+/// zero published as +0.
 fn child_border_edge(
-    content: f32,
-    padding: f32,
+    edge: f32,
+    width: f32,
     source: usize,
     stage: ChildBorderStage,
 ) -> Result<f32, SiblingLayoutError> {
-    if padding == 0.0 {
-        return Ok(content);
+    if width == 0.0 {
+        return Ok(edge);
     }
     let value = match stage {
-        ChildBorderStage::Left => content - padding,
-        ChildBorderStage::Right => content + padding,
+        ChildBorderStage::Left => edge - width,
+        ChildBorderStage::Right => edge + width,
     };
     if !value.is_finite() {
         return Err(SiblingLayoutError::ChildBorderPublication { source, stage });
@@ -1029,7 +1088,15 @@ fn facade_work(nodes: usize) -> Option<usize> {
         .checked_add(children.checked_mul(20)?)?
         .checked_add(normals.checked_mul(128)?)?
         // TNB: eight per child for the in-loop new-BFC label.
-        .checked_add(children.checked_mul(8)?)
+        .checked_add(children.checked_mul(8)?)?
+        // CBR: 10 fixed (the float padding band and span: two accessor returns, four
+        // reads and four assembly writes), 8 per child (the padding box into `Principal`
+        // and into `PrincipalChildBox`) and 39 per normal (two border reads, two staged
+        // border-edge steps of 15, the padding-span accessor return and two reads, and
+        // four assembly writes), charged on every path.
+        .checked_add(10)?
+        .checked_add(children.checked_mul(8)?)?
+        .checked_add(normals.checked_mul(39)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1133,9 +1200,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(1294));
-        assert_eq!(facade_work(6), Some(1726));
-        assert_eq!(facade_work(7), Some(2158));
+        assert_eq!(facade_work(5), Some(1406));
+        assert_eq!(facade_work(6), Some(1885));
+        assert_eq!(facade_work(7), Some(2364));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
@@ -1218,7 +1285,7 @@ mod tests {
                 size_of::<PrincipalChildBox>(),
                 std::mem::align_of::<PrincipalChildBox>()
             ),
-            (264, 8)
+            (280, 8)
         );
     }
 
@@ -1268,6 +1335,7 @@ mod tests {
             containing_source_index: 1,
             kind: PrincipalChildKind::Normal,
             content: edges,
+            padding: edges,
             border: edges,
             used_width: 0.0,
             normal_width: None,

@@ -468,15 +468,21 @@ fn pbr_red_parent_top_border_is_admitted() {
     assert_child_spans(&view, &[(12.0, 13.0), (17.0, 19.0), (19.0, 20.0)], &css);
 }
 
-/// R2: a child with a nonzero computed border width is the core `ChildDecoration`.
+/// Former R2 (CBR): a child with a nonzero computed border width is admitted; B1's
+/// content starts below its 1px top border.
 #[test]
-fn pbr_red_child_border_reports_child_decoration() {
+fn pbr_child_top_border_is_admitted() {
     let css = pbr_css(5, "#b1 { border-top:1px solid; }");
-    assert_profile(
-        &pbr_error(5, &css),
-        2,
-        OwnerProfileReason::ChildDecoration,
-        &css,
+    let view = pbr_layout(5, &css);
+    assert_p_vertical(&view, [10.0, 11.0, 23.0, 24.0, 24.0], &css);
+    assert_child_spans(&view, &[(11.0, 13.0), (17.0, 19.0), (19.0, 20.0)], &css);
+    assert_eq!(
+        (
+            view.children[0].content.top,
+            view.children[0].content.bottom
+        ),
+        (12.0, 13.0),
+        "{css}: B1 content"
     );
 }
 
@@ -838,13 +844,15 @@ fn pbr_i3_new_bfc_tail_moves_with_the_top_border() {
 
 // New pins.
 
-/// N1: 48 rows; every child source and side with a 1px solid border.
+/// N1 (CBR): 48 rows; every child source and side admits a 1px solid border, and
+/// that child's border box exceeds its content box by exactly 1 on that side only
+/// (twins and literal anchors: `child_borders`).
 #[test]
-fn pbr_n1_child_borders_report_child_decoration() {
+fn pbr_n1_child_borders_are_admitted() {
     let mut rows = 0;
     for nodes in [5, 6, 7] {
         for source in 2..nodes {
-            for side in PBR_SIDES {
+            for (index, side) in PBR_SIDES.iter().enumerate() {
                 let css = pbr_css(
                     nodes,
                     &format!(
@@ -852,12 +860,16 @@ fn pbr_n1_child_borders_report_child_decoration() {
                         PBR_CHILDREN[source - 2]
                     ),
                 );
-                assert_profile(
-                    &pbr_error(nodes, &css),
-                    source,
-                    OwnerProfileReason::ChildDecoration,
-                    &css,
-                );
+                let child = pbr_layout(nodes, &css).children[source - 2];
+                let inset = [
+                    child.content.top - child.border.top,
+                    child.border.right - child.content.right,
+                    child.border.bottom - child.content.bottom,
+                    child.content.left - child.border.left,
+                ];
+                let mut expected = [0.0_f32; 4];
+                expected[index] = 1.0;
+                assert_eq!(inset, expected, "{css}");
                 rows += 1;
             }
         }
@@ -889,24 +901,31 @@ fn pbr_n2_border_alone_isolates_the_parent() {
     }
 }
 
-/// N2 (M2 and M3 witnesses): zero computed widths do not isolate P, whatever the
-/// specified width under `none` or `hidden`.
+/// N2 / CBR M-B (PBR M2 and M3 witnesses): zero computed widths leave P unisolated,
+/// whatever the specified width under `none` or `hidden`, and such a P is admitted:
+/// its content top is its border top.
 #[test]
-fn pbr_n2_zero_width_borders_do_not_isolate_the_parent() {
-    for fragment in [
-        "#p { padding:0; }",
-        "#p { padding-top:0; }",
-        "#p { border:0 solid; padding:0; }",
-        "#p { border:5px hidden; padding:0; }",
-        "#p { border:5px none; padding:0; }",
+fn pbr_n2_zero_width_borders_leave_an_admitted_unisolated_parent() {
+    for (fragment, expected) in [
+        ("#p { padding:0; }", [10.0, 10.0, 21.0, 21.0, 21.0]),
+        ("#p { padding-top:0; }", [10.0, 10.0, 21.0, 22.0, 22.0]),
+        (
+            "#p { border:0 solid; padding:0; }",
+            [10.0, 10.0, 21.0, 21.0, 21.0],
+        ),
+        (
+            "#p { border:5px hidden; padding:0; }",
+            [10.0, 10.0, 21.0, 21.0, 21.0],
+        ),
+        (
+            "#p { border:5px none; padding:0; }",
+            [10.0, 10.0, 21.0, 21.0, 21.0],
+        ),
     ] {
         let css = pbr_css(5, fragment);
-        assert_profile(
-            &pbr_error(5, &css),
-            1,
-            OwnerProfileReason::ParentIsolation,
-            &css,
-        );
+        let view = pbr_layout(5, &css);
+        assert_p_vertical(&view, expected, &css);
+        assert_child_spans(&view, &[(10.0, 11.0), (15.0, 17.0), (17.0, 18.0)], &css);
     }
 }
 
@@ -954,9 +973,10 @@ fn pbr_n4_outer_borders_are_admitted_and_unused() {
 
 // Error-order pins (N6 baseline unless stated).
 
-/// X1: a later tail's `HeightKind` (facade loop) precedes B1's decoration (core).
+/// X1: a later tail's `HeightKind` (facade loop) is reported beside B1's admitted
+/// border.
 #[test]
-fn pbr_x01_height_kind_precedes_child_decoration() {
+fn pbr_x01_height_kind_with_an_admitted_child_border() {
     for fragment in [
         "#b1 { border-top:1px solid; } #b3 { height:auto; }",
         "#b3 { height:auto; }",
@@ -974,9 +994,10 @@ fn pbr_x01_height_kind_precedes_child_decoration() {
     }
 }
 
-/// X2: F's `FloatWidth` (after the facade loop) precedes B1's decoration.
+/// X2: F's `FloatWidth` (after the facade loop) is reported beside B1's admitted
+/// border.
 #[test]
-fn pbr_x02_float_width_precedes_child_decoration() {
+fn pbr_x02_float_width_with_an_admitted_child_border() {
     for fragment in [
         "#b1 { border:1px solid; } #f { width:auto; }",
         "#f { width:auto; }",
@@ -994,9 +1015,9 @@ fn pbr_x02_float_width_precedes_child_decoration() {
     }
 }
 
-/// X3: P's `ParentOverflow` precedes B1's decoration.
+/// X3: P's `ParentOverflow` is reported beside B1's admitted border.
 #[test]
-fn pbr_x03_parent_overflow_precedes_child_decoration() {
+fn pbr_x03_parent_overflow_with_an_admitted_child_border() {
     for fragment in [
         "#b1 { border:1px solid; } #p { overflow:visible; }",
         "#p { overflow:visible; }",
@@ -1014,9 +1035,10 @@ fn pbr_x03_parent_overflow_precedes_child_decoration() {
     }
 }
 
-/// X4: an earlier child's `NonpositiveBlockHeight` precedes a later child's decoration.
+/// X4: an earlier child's `NonpositiveBlockHeight` is reported beside a later child's
+/// admitted border.
 #[test]
-fn pbr_x04_earlier_height_precedes_later_decoration() {
+fn pbr_x04_earlier_height_with_a_later_child_border() {
     for fragment in [
         "#b2 { border-left:1px solid; } #b1 { height:0; }",
         "#b1 { height:0; }",
@@ -1031,14 +1053,15 @@ fn pbr_x04_earlier_height_precedes_later_decoration() {
     }
 }
 
-/// X5: an earlier child's decoration precedes a later child's height fault.
+/// X5 (CBR): an earlier child's admitted border leaves a later child's height fault
+/// as the first error.
 #[test]
-fn pbr_x05_earlier_decoration_precedes_later_height() {
+fn pbr_x05_admitted_child_border_leaves_the_later_height_fault() {
     let css = pbr_css(5, "#b1 { border-bottom:2px solid; } #b2 { height:0; }");
     assert_profile(
         &pbr_error(5, &css),
-        2,
-        OwnerProfileReason::ChildDecoration,
+        4,
+        OwnerProfileReason::NonpositiveBlockHeight,
         &css,
     );
     let control = pbr_css(5, "#b2 { height:0; }");
@@ -1050,9 +1073,10 @@ fn pbr_x05_earlier_decoration_precedes_later_height() {
     );
 }
 
-/// X6: within one child, the height check precedes the decoration check.
+/// X6: within one child, the height check precedes the border check, which admits
+/// any finite nonnegative width.
 #[test]
-fn pbr_x06_own_height_precedes_own_decoration() {
+fn pbr_x06_own_height_with_an_own_border() {
     for fragment in ["#b1 { border:1px solid; height:0; }", "#b1 { height:0; }"] {
         let css = pbr_css(5, fragment);
         assert_profile(
@@ -1162,16 +1186,14 @@ fn pbr_x11_relative_parent_width_is_relative_length() {
     );
 }
 
-/// X12: a zero-width solid top border with zero padding-top does not isolate P.
+/// X12 (CBR M-B): a zero-width solid top border with zero padding-top leaves P
+/// unisolated, and such a P is admitted.
 #[test]
-fn pbr_x12_zero_width_top_border_is_parent_isolation() {
+fn pbr_x12_zero_width_top_border_leaves_an_admitted_unisolated_parent() {
     let css = pbr_css(5, "#p { border-top:0 solid; padding-top:0; }");
-    assert_profile(
-        &pbr_error(5, &css),
-        1,
-        OwnerProfileReason::ParentIsolation,
-        &css,
-    );
+    let view = pbr_layout(5, &css);
+    assert_p_vertical(&view, [10.0, 10.0, 21.0, 22.0, 22.0], &css);
+    assert_child_spans(&view, &[(10.0, 11.0), (15.0, 17.0), (17.0, 18.0)], &css);
 }
 
 /// X14: O's border leaves the layout unchanged.

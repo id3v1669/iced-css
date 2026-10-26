@@ -9,8 +9,8 @@ use super::{
     clearance_owner::{
         BlockVertical, ChildContext, ChildFacts, ClearanceOwnerError, FirstFloatInput, KernelError,
         MarginGroup, NormalKernel, OuterFacts, ParentFacts, place_first_float, place_next_normal,
-        validate_outer, validate_parent, validate_sequence_child, validate_sequence_float_extents,
-        validate_sequence_float_width,
+        validate_outer, validate_sequence_child, validate_sequence_float_extents,
+        validate_sequence_float_width, validate_sequence_parent,
     },
     floats::{Band, PlacedFloat},
 };
@@ -80,6 +80,7 @@ pub struct SequenceNormalPlacement {
     source_index: usize,
     vertical: BlockVertical,
     content_vertical: BlockVertical,
+    padding_vertical: BlockVertical,
     hypothetical_top: f32,
     zero_clearance_top: Option<f32>,
     clearance: Option<f32>,
@@ -98,6 +99,12 @@ impl SequenceNormalPlacement {
     /// Copied content span; `vertical()` remains the border span.
     pub fn content_vertical(&self) -> BlockVertical {
         self.content_vertical
+    }
+    /// Copied padding span, between the border span and the content span: on a side
+    /// without border its edge is the border edge, on a side without padding the
+    /// content edge.
+    pub fn padding_vertical(&self) -> BlockVertical {
+        self.padding_vertical
     }
     pub fn hypothetical_top(&self) -> f32 {
         self.hypothetical_top
@@ -124,11 +131,14 @@ pub struct ClearanceSequenceOwner<'s> {
     sources: &'s [SourceNode],
     before: BlockVertical,
     before_content: BlockVertical,
+    before_padding: BlockVertical,
     float_border: Band,
     float_border_vertical: BlockVertical,
     placed_float: PlacedFloat,
     float_content: Band,
     float_content_vertical: BlockVertical,
+    float_padding: Band,
+    float_padding_vertical: BlockVertical,
     tail: Vec<SequenceNormalPlacement>,
     receipt: ClearanceSequenceReceipt,
 }
@@ -147,6 +157,11 @@ impl<'s> ClearanceSequenceOwner<'s> {
     pub fn before_content(&self) -> BlockVertical {
         self.before_content
     }
+    /// Copied B1 padding span: on a side without border its edge is the border edge,
+    /// on a side without padding the content edge.
+    pub fn before_padding(&self) -> BlockVertical {
+        self.before_padding
+    }
     /// Float border band, independent of its placed margin band.
     pub fn float_border(&self) -> Band {
         self.float_border
@@ -159,23 +174,34 @@ impl<'s> ClearanceSequenceOwner<'s> {
         self.placed_float
     }
     /// Copied float content band, independently published from its margin box.
-    /// With zero padding on this axis, the predecessor margin-offset near/far
-    /// path is retained; if the used margins are also zero, copy the placer band.
-    /// With padding, publish the side-selected near border edge, near content
-    /// edge, far content edge, then far border edge. Each stage rounds once.
-    /// Signed margins may place border/content outside the margin box; no span
-    /// is clamped. Nonnegative padding ensures border contains content.
+    /// With zero padding and border on this axis, the predecessor margin-offset
+    /// near/far path is retained; if the used margins are also zero, copy the placer
+    /// band. Otherwise publish the side-selected near border edge, near content edge
+    /// (border and padding summed once), far content edge, far border edge, then the
+    /// two padding edges. Each stage rounds once. Signed margins may place
+    /// border/content outside the margin box; no span is clamped. Nonnegative
+    /// padding and borders keep border around padding around content.
     pub fn float_content(&self) -> Band {
         self.float_content
     }
     /// Copied float content span, independently published from its margin box.
-    /// With zero vertical padding, retain the predecessor margin-offset stages;
-    /// if both used vertical margins are also zero, copy the placer span.
-    /// Otherwise publish border top, content top, content bottom and border
-    /// bottom in that order. Signed margins may move either span outside the
-    /// margin box; nonnegative padding keeps border around content. No clamp.
+    /// With zero vertical padding and border, retain the predecessor margin-offset
+    /// stages; if both used vertical margins are also zero, copy the placer span.
+    /// Otherwise publish border top, content top, content bottom, border bottom,
+    /// then padding top and padding bottom. Signed margins may move either span
+    /// outside the margin box; nonnegative padding and borders keep border around
+    /// padding around content. No clamp.
     pub fn float_content_vertical(&self) -> BlockVertical {
         self.float_content_vertical
+    }
+    /// Copied float padding band: on a side without border its edge is the border
+    /// edge, on a side without padding the content edge.
+    pub fn float_padding(&self) -> Band {
+        self.float_padding
+    }
+    /// Copied float padding span, the vertical analogue of `float_padding()`.
+    pub fn float_padding_vertical(&self) -> BlockVertical {
+        self.float_padding_vertical
     }
     pub fn tail(&self) -> &[SequenceNormalPlacement] {
         &self.tail
@@ -195,9 +221,12 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// absolute margins on all four edges (Auto is used zero) while both exact outer
 /// extents are nonnegative; otherwise, after every child's profile and the float-width
 /// domain, the profile rejects the float with `NegativeFloatOuterExtent`. The float is
-/// placed by its margin box, formed from content extents, padding and used
-/// margins. Content and border bands/spans are published separately; finite
-/// nonnegative absolute padding is admitted on all Sequence children. B1 and the float admit any computed `clear`. No float precedes either
+/// placed by its margin box, formed from content extents, borders, padding and used
+/// margins. Content, padding and border bands/spans are published separately;
+/// finite nonnegative absolute padding and border widths are admitted on all
+/// Sequence children (CBR). P needs no top/bottom isolation: it is a new block
+/// formatting context root (CSS2.2 8.3.1). B1 and the float admit any computed
+/// `clear`. No float precedes either
 /// of them in the parent's new block formatting context, so CSS2.2 §9.5.2 and float
 /// constraint #10 select nothing; the value is not read after admission. Every
 /// Sequence normal (B1 or a tail) may instead carry `ChildContext::OtherNewBfc`, a
@@ -207,10 +236,10 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// source. Contact and empty intervals pass (Q1); signed margins make rejection reachable.
 /// Childless F admits computed Auto height with positive-zero used content height;
 /// normal children retain positive explicit height and Legacy admission is unchanged.
-/// Work `560 + 8*N + N*(N-1)/2 + 54*(N-4) + 61*(N-2) + 64*(N-3)` is prepaid,
+/// Work `706 + 8*N + N*(N-1)/2 + 54*(N-4) + 61*(N-2) + 120*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
-/// vertical content stages.
+/// vertical content stages, and every child's border terms and padding publications.
 ///
 /// # Errors
 /// Returns bounded admission/allocation failures, complete-profile failures, or a
@@ -302,7 +331,7 @@ fn build_with_reserve<'s>(
     }
 
     validate_outer(input.outer, 0).map_err(profile)?;
-    validate_parent(input.parent, 1).map_err(profile)?;
+    validate_sequence_parent(input.parent, 1).map_err(profile)?;
     let mut checked_float_height = None;
     for (offset, facts) in input.children.iter().copied().enumerate() {
         let source = offset + 2;
@@ -388,11 +417,14 @@ fn build_with_reserve<'s>(
         sources,
         before: first.before,
         before_content: first.before_content,
+        before_padding: first.before_padding,
         float_border: first.float_border,
         float_border_vertical: first.float_border_vertical,
         placed_float: first.placed_float,
         float_content: first.float_content,
         float_content_vertical: first.float_content_vertical,
+        float_padding: first.float_padding,
+        float_padding_vertical: first.float_padding_vertical,
         receipt: ClearanceSequenceReceipt {
             nodes,
             tail: tail_count,
@@ -439,6 +471,7 @@ fn record(source_index: usize, placement: NormalKernel) -> SequenceNormalPlaceme
         source_index,
         vertical: placement.vertical,
         content_vertical: placement.content_vertical,
+        padding_vertical: placement.padding_vertical,
         hypothetical_top: placement.hypothetical_top,
         zero_clearance_top: placement.zero_clearance_top,
         clearance: placement.clearance,
@@ -490,7 +523,20 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         // (policy, role and context comparisons) and the per-tail guard 24 (context test
         // 2, predicate call and return 4, four published reads 4, four comparisons 8,
         // conjunction chain 4, typed error 2). The fixed B1 charges stay without credit.
-        .checked_add(tail.checked_mul(30)?)
+        .checked_add(tail.checked_mul(30)?)?
+        // CBR: 146 fixed actions and 56 per normal, charged on every path, without credit
+        // for the removed decoration and isolation rejections. Per normal: the border
+        // argument and two stage names 3, two border reads 2, two fast-path comparisons
+        // 4, two widened folds 8, two padding zero tests 4, two padding publications 32,
+        // and the padding span's return, kernel and record transfers 3. Fixed: per float
+        // axis 61 (two border reads 2, two undecorated comparisons 4, two widened
+        // outer-extent terms 8, widened near-content and far-border folds 8, two padding
+        // zero tests 4, two padding publications 32, and the band or span's return,
+        // kernel and owner transfers 3), the float border read 1, the extents check's
+        // four widened terms 16 and four border reads 4, and P's policy argument 1 and
+        // comparison 2.
+        .checked_add(146)?
+        .checked_add(nodes.checked_sub(3)?.checked_mul(56)?)
 }
 
 fn retained_bytes(capacity: usize) -> Option<usize> {
@@ -536,7 +582,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(975).unwrap(),
+            work: NonZeroUsize::new(1233).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -960,7 +1006,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [974, 480, 419, 337, 269, 213] {
+        for short in [1232, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -976,7 +1022,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(975).unwrap();
+        limits.work = NonZeroUsize::new(1233).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -996,7 +1042,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 975);
+        assert_eq!(owner.receipt().work, 1233);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -1024,9 +1070,9 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(975));
-        assert_eq!(sequence_work(6, 2), Some(1167));
-        assert_eq!(sequence_work(7, 3), Some(1360));
+        assert_eq!(sequence_work(5, 1), Some(1233));
+        assert_eq!(sequence_work(6, 2), Some(1481));
+        assert_eq!(sequence_work(7, 3), Some(1730));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
@@ -1048,7 +1094,7 @@ mod tests {
                     size_of::<SequenceNormalPlacement>(),
                     std::mem::align_of::<SequenceNormalPlacement>()
                 ),
-                (224, 8)
+                (232, 8)
             );
             assert_eq!(
                 (
