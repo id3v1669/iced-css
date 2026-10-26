@@ -16,7 +16,7 @@ use iced_css_core::{
     selectors::PseudoElement,
     source::selector_tree::SelectorTreeLimits,
     values::{
-        LengthTarget, NumericLimits,
+        LengthTarget, NumericLimits, RangeEvent,
         content_computation::{
             ContentComputationError, ContentSelection, ContentTarget, select_content,
         },
@@ -64,10 +64,33 @@ pub struct KeywordBoxFact<T> {
 pub struct PseudoAbsence {
     pub origin: BoxFactOrigin,
 }
-/// Computed facts only. Construction guarantees min-width/min-height zero,
-/// max-width/max-height none, and zero border widths from None/Hidden styles.
-/// Edge arrays use top, right, bottom, left order. An inherited rounding flag
-/// describes the original conversion; inheritance does not emit a new warning.
+/// One computed `border-*-width` side. `pixels` is finite and non-negative, and +0
+/// when zero. `event` is the range event of the conversion that produced the value:
+/// upper saturation to `f32::MAX`, or a positive length rounded to +0. An inherited
+/// fact keeps the parent's pixels and event, as an inherited rounding flag does; this
+/// deliberately differs from `ComputedBorderWidth::sample`, which drops inherited
+/// events. This layer delivers no range diagnostic; a later delivery reports only
+/// facts whose origin is `Specified`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BorderWidthFact {
+    pub pixels: f32,
+    pub event: Option<RangeEvent>,
+    pub origin: BoxFactOrigin,
+}
+/// Computed facts only. Construction guarantees min-width/min-height zero and
+/// max-width/max-height none. Edge arrays use top, right, bottom, left order. An
+/// inherited rounding flag or range event describes the original conversion;
+/// inheritance does not emit a new warning.
+///
+/// Border facts depend on the entry. `evaluate_clearance_box_facts` (Legacy) admits
+/// only `none`/`hidden` styles and never computes a width: every Legacy width fact is
+/// (+0, no event, `Initial`), and that `origin` is not provenance, so Legacy
+/// `border_widths()` is zero. `evaluate_sibling_box_facts` (Sequence) admits every
+/// CSS2.2 style and computes each side (CSS2.2 8.5.1): +0 without conversion when the
+/// side's own style is `none` or `hidden`; otherwise `thin`/`medium`/`thick` are
+/// 1/3/5, an absolute length is the nearest f32 (ties to even, saturating at
+/// `f32::MAX`), and `inherit` copies the parent's computed fact. Sequence width facts
+/// carry true provenance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,
@@ -77,12 +100,15 @@ pub struct ClearanceBoxFact {
     pub clear: KeywordBoxFact<ClearSide>,
     pub overflow: KeywordBoxFact<BoxOverflow>,
     pub border_style: [KeywordBoxFact<BorderStyle>; 4],
+    /// Computed border widths; see the type contract for Legacy and Sequence rows.
+    pub border_width: [BorderWidthFact; 4],
     pub before: PseudoAbsence,
     pub after: PseudoAbsence,
 }
 impl ClearanceBoxFact {
+    /// Computed border widths in pixels, top, right, bottom, left.
     pub fn border_widths(&self) -> [f32; 4] {
-        [0.; 4]
+        self.border_width.map(|width| width.pixels)
     }
 }
 #[derive(Debug, Clone, Copy)]
@@ -231,7 +257,7 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
     display: &'d SourceDisplay<'s, 'b, 'r>,
     limits: ClearanceBoxFactsLimits,
 ) -> Result<ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r>, ClearanceBoxFactsError> {
-    let mut prepared = prepare_box_facts(projection, display, limits)?;
+    let mut prepared = prepare_box_facts(projection, display, limits, BoxFactMode::Legacy)?;
     let mut rows = match projection.shape() {
         ClearanceProjectionShape::RootRegion => ClearanceSlots::Four([resolve::initial_row(); 4]),
         ClearanceProjectionShape::NestedRegion => ClearanceSlots::Five([resolve::initial_row(); 5]),
@@ -240,9 +266,7 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
         projection,
         display,
         limits,
-        &prepared.ids,
-        prepared.per_target,
-        &mut prepared.receipt,
+        &mut prepared,
         rows.as_mut_slice(),
     )?;
     Ok(ClearanceBoxFacts {
@@ -253,10 +277,23 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
     })
 }
 
+/// Fact mode, bound once by each public entry and carried in `PreparedBoxFacts`, so
+/// that the work charge, the numeric allowance and the resolved longhands agree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BoxFactMode {
+    /// `evaluate_clearance_box_facts`: indices 0-19, `none`/`hidden` styles only,
+    /// width facts never computed.
+    Legacy,
+    /// `evaluate_sibling_box_facts`: indices 0-23, every style, computed widths.
+    Sequence,
+}
+
 pub(super) struct PreparedBoxFacts {
-    pub(super) ids: [PropertyId; 21],
+    pub(super) ids: [PropertyId; 25],
     pub(super) receipt: ClearanceBoxFactsReceipt,
     pub(super) per_target: RuleBatchLimits,
+    /// Private to this module: the Sequence entry can neither build nor change it.
+    mode: BoxFactMode,
 }
 
 pub(super) fn initial_box_fact() -> ClearanceBoxFact {
@@ -267,6 +304,7 @@ pub(super) fn prepare_box_facts<'h>(
     projection: &impl ProjectionView<'h>,
     display: &SourceDisplay<'_, '_, '_>,
     limits: ClearanceBoxFactsLimits,
+    mode: BoxFactMode,
 ) -> Result<PreparedBoxFacts, ClearanceBoxFactsError> {
     use ClearanceBoxFactsError as E;
     let mut remaining = limits.work.get();
@@ -311,10 +349,18 @@ pub(super) fn prepare_box_facts<'h>(
             return Err(E::Declarations { rule });
         }
     }
+    // Per node: one row, three target dispatches, one unit per resolved longhand (20
+    // Legacy, 24 Sequence) and two pseudos; plus one. The numeric allowance reserves
+    // one conversion per length-valued longhand: 14 Legacy, 18 Sequence (four widths).
+    // Both are charged on every path of the mode, without credit.
+    let (per_node, numeric_per_node) = match mode {
+        BoxFactMode::Legacy => (26, 14),
+        BoxFactMode::Sequence => (30, 18),
+    };
     charge(
         &mut remaining,
         count
-            .checked_mul(26)
+            .checked_mul(per_node)
             .and_then(|n| n.checked_add(1))
             .ok_or(E::Work)?,
     )?;
@@ -342,7 +388,7 @@ pub(super) fn prepare_box_facts<'h>(
         E::MembershipWork,
     )?;
     let numeric_work = product(
-        count.checked_mul(14).ok_or(E::NumericWork)?,
+        count.checked_mul(numeric_per_node).ok_or(E::NumericWork)?,
         limits.numeric.work.get(),
         limits.numeric_work,
         E::NumericWork,
@@ -370,6 +416,7 @@ pub(super) fn prepare_box_facts<'h>(
         ids,
         receipt,
         per_target,
+        mode,
     })
 }
 
@@ -377,12 +424,15 @@ pub(super) fn evaluate_box_rows<'h>(
     projection: &impl ProjectionView<'h>,
     display: &SourceDisplay<'_, '_, '_>,
     limits: ClearanceBoxFactsLimits,
-    ids: &[PropertyId; 21],
-    per_target: RuleBatchLimits,
-    receipt: &mut ClearanceBoxFactsReceipt,
+    prepared: &mut PreparedBoxFacts,
     rows: &mut [ClearanceBoxFact],
 ) -> Result<(), ClearanceBoxFactsError> {
     use ClearanceBoxFactsError as E;
+    // The mode bound by `prepare_box_facts` selects both the charge and the loop.
+    let mode = prepared.mode;
+    let per_target = prepared.per_target;
+    let ids = &prepared.ids;
+    let receipt = &mut prepared.receipt;
     let snapshot = projection.snapshot();
     let nodes = snapshot.construction().nodes();
     let count = projection.nodes().len();
@@ -430,6 +480,7 @@ pub(super) fn evaluate_box_rows<'h>(
             original,
             parent,
             limits.numeric,
+            mode,
             &mut receipt.numeric_calls,
         )?;
         for (target, pseudo) in [
@@ -453,7 +504,7 @@ pub(super) fn evaluate_box_rows<'h>(
                 target,
                 error,
             })?;
-            let absence = resolve::pseudo(&winners, ids[20], original, target)?;
+            let absence = resolve::pseudo(&winners, ids[24], original, target)?;
             match target {
                 BoxFactTarget::Before => row.before = absence,
                 BoxFactTarget::After => row.after = absence,

@@ -390,6 +390,14 @@ impl std::error::Error for SiblingLayoutError {
 /// the core's published content band horizontally and its published vertical
 /// content span (`sequence().float_content_vertical()`) vertically; its margin box
 /// stays `sequence().placed_float()`.
+/// P's computed `border-*-width` facts are admitted on every side and enter P's
+/// horizontal solve, first-child origin, core isolation (a nonzero border alone
+/// isolates P) and bottom. They offset P's content box, and narrow it when P's width
+/// is `auto`; the `auto` containment area stays that content box and never includes
+/// P's border area. Any child (B1, F or a tail) with a nonzero computed width on
+/// any side is rejected by the core profile scan as `ChildDecoration` at its source,
+/// after every facade stage before the core call. A zero-width child border of any
+/// style has the geometry of `border-style: none`. O's widths are captured and unused.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors

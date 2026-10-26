@@ -30076,6 +30076,12 @@ mod signed_normal_vertical_margin_api;
 #[path = "support/new_bfc_tails.rs"]
 mod new_bfc_tails;
 
+#[path = "support/parent_borders.rs"]
+mod parent_borders;
+
+#[path = "support/parent_border_facts.rs"]
+mod parent_border_facts;
+
 fn snv_assert_facade_oracle(layout: &CapturedSiblingLayout<'_>, oracle: &str) {
     let (borders, clearances, height, bottom) = match oracle {
         "A" => (

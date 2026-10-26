@@ -3,7 +3,7 @@
 
 use super::{
     clearance_box_facts::{
-        ClearanceBoxFact, ClearanceBoxFactsError, ClearanceBoxFactsLimits,
+        BoxFactMode, ClearanceBoxFact, ClearanceBoxFactsError, ClearanceBoxFactsLimits,
         ClearanceBoxFactsReceipt, evaluate_box_rows, initial_box_fact, prepare_box_facts,
     },
     sibling_source_projection::SiblingSourceProjection,
@@ -93,6 +93,11 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 
 /// Evaluates all element, `::before`, and `::after` targets in a complete sibling capture.
 ///
+/// This is the Sequence fact mode: every CSS2.2 border style is admitted and every row
+/// carries computed `border-*-width` facts with true provenance (see `ClearanceBoxFact`).
+/// Work is `31*N+2+r` for N sources and r rules, and the numeric allowance is `18*N`
+/// conversions; the Legacy entry keeps `27*N+2+r` and `14*N`.
+///
 /// Shared registry/rule/declaration preflight and aggregate service reservations finish
 /// before row allocation. Actual row capacity is then charged before row initialization
 /// and before selector or cascade scratch is constructed.
@@ -126,17 +131,20 @@ fn evaluate_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         return Err(E::Sources);
     }
 
-    let mut prepared =
-        prepare_box_facts(projection, display, limits.evaluation).map_err(E::Evaluation)?;
+    let mut prepared = prepare_box_facts(
+        projection,
+        display,
+        limits.evaluation,
+        BoxFactMode::Sequence,
+    )
+    .map_err(E::Evaluation)?;
     let (mut rows, owned_heap_bytes) = allocate_rows(count, limits.retained_bytes, reserve)?;
     prepared.receipt.owned_heap_bytes = owned_heap_bytes;
     evaluate_box_rows(
         projection,
         display,
         limits.evaluation,
-        &prepared.ids,
-        prepared.per_target,
-        &mut prepared.receipt,
+        &mut prepared,
         &mut rows,
     )
     .map_err(E::Evaluation)?;
