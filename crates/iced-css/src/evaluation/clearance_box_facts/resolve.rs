@@ -1,6 +1,6 @@
 use super::*;
 use ClearanceBoxFactsError as E;
-const NAMES: [&str; 25] = [
+const NAMES: [&str; 29] = [
     "width",
     "height",
     "min-width",
@@ -26,14 +26,19 @@ const NAMES: [&str; 25] = [
     "border-bottom-width",
     "border-left-width",
     "content",
+    "top",
+    "right",
+    "bottom",
+    "left",
 ];
-const RECIPES: [&str; 25] = [
+const RECIPES: [&str; 29] = [
     "auto", "auto", "0", "0", "none", "none", "0", "0", "0", "0", "0", "0", "0", "0", "none",
     "none", "none", "none", "none", "visible", "medium", "medium", "medium", "medium", "normal",
+    "auto", "auto", "auto", "auto",
 ];
-pub(super) fn property_ids() -> Result<[PropertyId; 25], E> {
+pub(super) fn property_ids() -> Result<[PropertyId; 29], E> {
     let first = PropertyId::lookup(NAMES[0]).ok_or(E::PropertyRegistry { name: NAMES[0] })?;
-    let mut ids = [first; 25];
+    let mut ids = [first; 29];
     for (i, name) in NAMES.into_iter().enumerate() {
         ids[i] = PropertyId::lookup(name).ok_or(E::PropertyRegistry { name })?;
         if ids[i].descriptor().shorthand {
@@ -89,6 +94,7 @@ pub(super) fn initial_row() -> ClearanceBoxFact {
         after: PseudoAbsence {
             origin: BoxFactOrigin::Initial,
         },
+        offset: None,
     }
 }
 fn inherited(v: BoxLengthFact, origin: BoxFactOrigin) -> BoxLengthFact {
@@ -116,11 +122,15 @@ impl Resolver {
             reason,
         }
     }
+    /// One length longhand: `auto` is admitted only when `auto` is set (width, height,
+    /// margins and the REL offsets), a negative absolute length only when `signed` is
+    /// set (margins and offsets); an absolute length is one counted conversion.
     fn length(
         &self,
         value: &SpecifiedValue,
         property: PropertyId,
-        index: usize,
+        auto: bool,
+        signed: bool,
         calls: &mut usize,
     ) -> Result<BoxLengthFact, E> {
         let SpecifiedValue::Length(target) = value else {
@@ -134,7 +144,7 @@ impl Resolver {
                 return Err(self.unsupported(property, BoxFactUnsupported::PercentageLength));
             }
             LengthTarget::Auto => {
-                return if index < 2 || (6..10).contains(&index) {
+                return if auto {
                     Ok(BoxLengthFact::Auto {
                         origin: BoxFactOrigin::Specified,
                     })
@@ -144,7 +154,7 @@ impl Resolver {
             }
             LengthTarget::Absolute(..) => {}
         }
-        if !(6..10).contains(&index) && target.is_negative() {
+        if !signed && target.is_negative() {
             return Err(self.invalid(property));
         }
         *calls += 1;
@@ -227,7 +237,7 @@ fn suppressed(style: BorderStyle) -> bool {
 }
 pub(super) fn element(
     winners: &PropertyWinners<'_>,
-    ids: &[PropertyId; 25],
+    ids: &[PropertyId; 29],
     original: usize,
     parent: Option<(usize, ClearanceBoxFact)>,
     numeric: NumericLimits,
@@ -332,7 +342,9 @@ pub(super) fn element(
                         };
                         return Err(resolver.unsupported(property, reason));
                     }
-                    let length = resolver.length(value, property, index, calls)?;
+                    let auto = index < 2 || (6..10).contains(&index);
+                    let signed = (6..10).contains(&index);
+                    let length = resolver.length(value, property, auto, signed, calls)?;
                     match index {
                         0 => row.width = length,
                         1 => row.height = length,
@@ -404,6 +416,56 @@ pub(super) fn element(
         }
     }
     Ok(row)
+}
+/// REL (CSS2.2 9.3.2, 9.4.3): the computed `top`, `right`, `bottom` and `left` (25-28)
+/// of a relatively positioned Sequence row, in index order: `auto`, or an absolute
+/// length converted like a signed margin (one counted conversion), or, for `inherit`,
+/// the parent row's resolved offset.
+pub(super) fn offsets(
+    winners: &PropertyWinners<'_>,
+    ids: &[PropertyId; 29],
+    original: usize,
+    parent: Option<(usize, ClearanceBoxFact)>,
+    numeric: NumericLimits,
+    calls: &mut usize,
+) -> Result<[BoxLengthFact; 4], E> {
+    let resolver = Resolver { original, numeric };
+    let mut offset = [BoxLengthFact::Auto {
+        origin: BoxFactOrigin::Initial,
+    }; 4];
+    for (side, &property) in ids[25..].iter().enumerate() {
+        let defaulted = winners
+            .defaulted(property, parent.is_some())
+            .map_err(|error| E::Defaulting {
+                original,
+                property,
+                error,
+            })?;
+        offset[side] = match defaulted {
+            DefaultedValueRef::Initial(_) => {
+                recipe(property, 25 + side)?;
+                BoxLengthFact::Auto {
+                    origin: BoxFactOrigin::Initial,
+                }
+            }
+            // Q-4 (a): `inherit` copies the parent row's resolved offset, which exists
+            // only when the parent row is itself relatively positioned.
+            DefaultedValueRef::ParentComputed => {
+                let (original_parent, p) = parent.ok_or_else(|| resolver.invalid(property))?;
+                let parent_offset = p.offset.ok_or_else(|| {
+                    resolver.unsupported(property, BoxFactUnsupported::InheritedOffset)
+                })?;
+                inherited(
+                    parent_offset[side],
+                    BoxFactOrigin::Inherited { original_parent },
+                )
+            }
+            DefaultedValueRef::Compute(value) => {
+                resolver.length(value, property, true, true, calls)?
+            }
+        };
+    }
+    Ok(offset)
 }
 pub(super) fn pseudo(
     winners: &PropertyWinners<'_>,

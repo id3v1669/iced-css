@@ -39,7 +39,7 @@ fn real_six_and_seven_source_css_produces_every_dynamic_row_and_target() {
             assert_eq!(facts.receipt().evaluation.targets, 3 * source_count);
             assert_eq!(
                 facts.receipt().evaluation.numeric_work,
-                18 * source_count * 100_000
+                22 * source_count * 100_000
             );
             assert_eq!(
                 facts.receipt().evaluation.numeric_calls,
@@ -145,10 +145,10 @@ fn dynamic_five_source_rows_match_the_legacy_entry_with_the_pbr_receipt_delta() 
         assert_eq!(expected_evaluation.targets, 15);
         assert_eq!(expected_evaluation.owned_heap_bytes, 0);
         assert_eq!(legacy.receipt().numeric_work, 70 * 100_000);
-        // PBR: the Sequence entry resolves four more longhands per source (work + 4 * 5)
-        // and reserves four more conversions per source (90 against 70).
-        expected_evaluation.work += 20;
-        expected_evaluation.numeric_work = 90 * 100_000;
+        // PBR and REL: the Sequence entry charges eight more longhands per source (work
+        // + 8 * 5) and reserves eight more conversions per source (110 against 70).
+        expected_evaluation.work += 40;
+        expected_evaluation.numeric_work = 110 * 100_000;
         expected_evaluation.owned_heap_bytes = dynamic.receipt().evaluation.owned_heap_bytes;
         assert_eq!(dynamic.receipt().evaluation, expected_evaluation);
     });
@@ -160,8 +160,8 @@ fn exact_dynamic_receipts_and_each_aggregate_limit_are_enforced() {
         let result = evaluate_sibling_box_facts(projection, display, limits()).unwrap();
         let receipt = result.receipt();
         let evaluation = receipt.evaluation;
-        assert_eq!(evaluation.work, 31 * 7 + 2 + display.bundle().rule_count());
-        assert_eq!(evaluation.numeric_work, 18 * 7 * 100_000);
+        assert_eq!(evaluation.work, 35 * 7 + 2 + display.bundle().rule_count());
+        assert_eq!(evaluation.numeric_work, 22 * 7 * 100_000);
         assert_eq!(evaluation.targets, 21);
         assert_eq!(evaluation.rule_visits, 21 * display.bundle().rule_count());
         assert_eq!(

@@ -7,7 +7,10 @@
 //! independent top/bottom isolation (a nonzero border or padding on each side); the
 //! Sequence owner does not, because a new BFC root never collapses margins with its
 //! in-flow children (CSS2.2 8.3.1). Ordinary positive-height B1/B2 cannot collapse
-//! through. This is not full layout.
+//! through. The Sequence owner also admits a relatively positioned P or child (REL,
+//! CSS2.2 9.4.3) and computes its normal-flow geometry, which the offsets do not
+//! change; the outer source and every Legacy source stay static. This is not full
+//! layout.
 use super::{
     arithmetic::Exact,
     block::AutoLength,
@@ -411,13 +414,17 @@ fn check_edges(
     }
     Ok(())
 }
+/// `relative` admits computed `position: relative` besides `static` (Sequence P and
+/// children only, REL).
 fn display(
     facts: DisplayResolution,
     source: usize,
     floating: bool,
+    relative: bool,
 ) -> Result<(), ClearanceOwnerError> {
     let valid = facts.display == Display::Block
-        && facts.position == Position::Static
+        && (facts.position == Position::Static
+            || (relative && facts.position == Position::Relative))
         && if floating {
             facts.flow == Flow::Floating && matches!(facts.float, Float::Left | Float::Right)
         } else {
@@ -443,7 +450,12 @@ fn parent(
     source: usize,
     policy: ChildMarginPolicy,
 ) -> Result<(), ClearanceOwnerError> {
-    display(f.display, source, false)?;
+    display(
+        f.display,
+        source,
+        false,
+        policy == ChildMarginPolicy::Sequence,
+    )?;
     content(f.content, f.generated, source)?;
     if f.bfc != ParentBfc::NewWithEmptyPrefix {
         return Err(unsupported(source, OwnerProfileReason::ParentContext));
@@ -482,7 +494,12 @@ fn child(
     floating: bool,
     margin_policy: ChildMarginPolicy,
 ) -> Result<f32, ClearanceOwnerError> {
-    display(f.display, source, floating)?;
+    display(
+        f.display,
+        source,
+        floating,
+        margin_policy == ChildMarginPolicy::Sequence,
+    )?;
     // A Sequence normal (B1 or a tail) may establish a new block formatting context
     // (CSS2.2 §9.4.1); the Sequence owner permits boundary contact with the float's
     // margin box and rejects strict nonempty intersection. Legacy contexts stay fixed.
@@ -609,7 +626,7 @@ pub(super) fn validate_outer(
     facts: OuterFacts<'_>,
     source: usize,
 ) -> Result<(), ClearanceOwnerError> {
-    display(facts.display, source, false)?;
+    display(facts.display, source, false, false)?;
     content(facts.content, facts.generated, source)
 }
 

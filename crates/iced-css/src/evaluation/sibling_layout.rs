@@ -46,6 +46,7 @@ use iced_css_core::{
             FirstChildOriginError, FirstChildOriginInput, FirstChildOriginPlacement,
             place_first_child_origin,
         },
+        relative::{RelativeInput, RelativeOffsets, relative_offsets},
     },
     source::SourceNode,
 };
@@ -109,6 +110,7 @@ pub struct PrincipalChildBox {
     margin_top: BoxLengthFact,
     margin_bottom: BoxLengthFact,
     clear: KeywordBoxFact<ClearSide>,
+    relative: RelativeOffsets,
 }
 
 impl PrincipalChildBox {
@@ -124,8 +126,10 @@ impl PrincipalChildBox {
     pub fn content(&self) -> PrincipalEdges {
         self.content
     }
-    /// The padding box: the border box moved in by the child's border widths. It
-    /// equals `border()` for a child without borders.
+    /// The padding box. Vertically, and for F on both axes, it is the core's published
+    /// padding span and band; horizontally, a normal's padding edges are its content
+    /// edges moved out by its padding, one f32 step each, from which `border()` steps
+    /// out again. It equals `border()` for a child without borders.
     pub fn padding(&self) -> PrincipalEdges {
         self.padding
     }
@@ -178,6 +182,13 @@ impl PrincipalChildBox {
     pub fn clear(&self) -> KeywordBoxFact<ClearSide> {
         self.clear
     }
+    /// REL: the used offsets of this child (CSS2.2 9.4.3), solved with P's direction;
+    /// four +0 offsets for a static child. Every other accessor keeps the normal-flow
+    /// value: the child's visual box is its normal-flow box translated by its own and
+    /// P's `left` and `top`.
+    pub fn relative_offset(&self) -> RelativeOffsets {
+        self.relative
+    }
 }
 
 /// Copied P observations derived once from actual CSS and published geometry.
@@ -195,6 +206,7 @@ pub struct SiblingParentGeometry {
     computed_margin_bottom: BoxLengthFact,
     clear: KeywordBoxFact<ClearSide>,
     clearance: ClearanceRequirement,
+    relative: RelativeOffsets,
 }
 
 impl SiblingParentGeometry {
@@ -233,6 +245,12 @@ impl SiblingParentGeometry {
     }
     pub fn clearance(&self) -> ClearanceRequirement {
         self.clearance
+    }
+    /// REL: P's used offsets (CSS2.2 9.4.3), solved with O's direction; four +0
+    /// offsets for a static P. P's other accessors keep the normal-flow values; the
+    /// offsets move P's boxes and its children's together.
+    pub fn relative_offset(&self) -> RelativeOffsets {
+        self.relative
     }
     pub fn content(&self) -> PrincipalEdges {
         PrincipalEdges {
@@ -361,7 +379,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `218 + 32*N + 134*(N-2) + 313*(N-3)` is prepaid before any
+/// Facade work `246 + 32*N + 172*(N-2) + 313*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -382,7 +400,9 @@ impl std::error::Error for SiblingLayoutError {
 /// for the float padding band and span, 8 per child for the copied padding box and
 /// 39 per normal for the two border reads, the two staged border-edge steps, the
 /// vertical padding-span read and the padding-edge assembly, prepaid on zero-border
-/// paths too.
+/// paths too. Relative positioning adds 28 fixed actions (P's offset solve 27 and
+/// its widened admission test 1) and 38 per child (its offset solve 27, the
+/// containment shift 10 and its widened admission test 1), prepaid on static paths.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -416,6 +436,17 @@ impl std::error::Error for SiblingLayoutError {
 /// is the padding box and equals `border()` for a child without borders. A zero-width
 /// child border of any style has the geometry of `border-style: none`. O's widths
 /// are captured and unused.
+/// P and every child (B1, F or a tail) also admit computed `position: relative`; O
+/// stays `static`, and `absolute` and `fixed` stay refused on every source (REL).
+/// Relative positioning acts after normal flow and floating (CSS2.2 9.4.3): every
+/// published normal-flow field, clearance, the Q1 contact check and P's Auto height
+/// read the unshifted boxes. The used offsets are published separately
+/// (`relative_offset()`), solved with O's direction for P and with P's direction for
+/// each child (`left` wins in `ltr`, `right` in `rtl`; `top` always wins). Under P
+/// `auto`, each child's border box and margin box, computed as above, are translated
+/// by the child's own `left` and `top`, one f32 addition per edge, before the
+/// containment test; P's own offset moves its content box with its children and is
+/// not applied. Under P `hidden` shifted children are admitted.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -490,7 +521,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
 
     for source in 0..node_count {
         let display = joined_display(projection, facts.display(), source).map_err(E::Captured)?;
-        if !admitted_display(display, source == 3) {
+        if !admitted_display(display, source == 3, source == 0) {
             return Err(E::Captured(unsupported(
                 source,
                 "display/position/float",
@@ -625,6 +656,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     .ok_or(E::Bytes)?;
     let outer_display = joined_display(projection, facts.display(), 0).map_err(E::Captured)?;
     let parent_display = joined_display(projection, facts.display(), 1).map_err(E::Captured)?;
+    // REL: P's containing block is O's content box, so O's direction resolves P's
+    // `left`/`right` overconstraint.
+    let parent_relative = used_relative_offsets(parent_display, parent_row, outer_direction, 1)?;
     let sequence = build_clearance_sequence(
         nodes,
         ClearanceSequenceInput {
@@ -675,6 +709,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 property: "child-facts",
             })?;
         let used_height = used_child_height(child, source)?;
+        // REL: a child's containing block is P's content box (P's direction).
+        let relative = used_relative_offsets(child.display, row, parent_direction, source)?;
         let principal = if source == 3 {
             let band = sequence.float_content();
             let span = sequence.float_content_vertical();
@@ -806,6 +842,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             margin_top: row.margin[0],
             margin_bottom: row.margin[2],
             clear: row.clear,
+            relative,
         });
     }
 
@@ -925,6 +962,11 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     bottom: border.bottom + child.used_margin_bottom(),
                 }
             };
+            // REL (Q4=C): the child's own offsets translate both boxes after they are
+            // computed as above, one f32 addition per edge; P's offset is not applied.
+            let (dx, dy) = (child.relative.left, child.relative.top);
+            let border = shift(border, dx, dy);
+            let margin = shift(margin, dx, dy);
             if !within(border, area) || !within(margin, area) {
                 return Err(E::ParentAutoOverflow {
                     source: child.source_index(),
@@ -946,6 +988,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         computed_margin_bottom: parent_row.margin[2],
         clear: parent_row.clear,
         clearance: parent_clearance,
+        relative: parent_relative,
     };
     let core_receipt = sequence.receipt();
     let retained_bytes = core_receipt
@@ -981,14 +1024,64 @@ struct Principal {
     used_margin_right: f32,
 }
 
-fn admitted_display(display: DisplayResolution, floating: bool) -> bool {
+/// `outer` (O) admits only `static`; P and the children also admit `relative` (REL).
+fn admitted_display(display: DisplayResolution, floating: bool, outer: bool) -> bool {
     display.display == Display::Block
-        && display.position == Position::Static
+        && (display.position == Position::Static
+            || (!outer && display.position == Position::Relative))
         && if floating {
             display.flow == Flow::Floating && matches!(display.float, Float::Left | Float::Right)
         } else {
             display.flow == Flow::Normal && display.float == Float::None
         }
+}
+
+/// REL: four +0 offsets, published for every static box.
+const NO_OFFSETS: RelativeOffsets = RelativeOffsets {
+    left: 0.0,
+    right: 0.0,
+    top: 0.0,
+    bottom: 0.0,
+};
+
+/// REL (CSS2.2 9.4.3): the used offsets of a relatively positioned box, solved with
+/// its containing block's `direction`; a static box gets `NO_OFFSETS` without reading
+/// any offset fact. The facts guarantee a resolved, finite offset row, so both
+/// failures are invariant breaches (Q-9).
+fn used_relative_offsets(
+    display: DisplayResolution,
+    row: &ClearanceBoxFact,
+    direction: Direction,
+    source: usize,
+) -> Result<RelativeOffsets, SiblingLayoutError> {
+    if display.position != Position::Relative {
+        return Ok(NO_OFFSETS);
+    }
+    let [top, right, bottom, left] = row.offset.ok_or(SiblingLayoutError::FactInvariant {
+        source,
+        property: "offset",
+    })?;
+    relative_offsets(RelativeInput {
+        left: auto_length(left),
+        right: auto_length(right),
+        top: auto_length(top),
+        bottom: auto_length(bottom),
+        containing_direction: direction,
+    })
+    .map_err(|_| SiblingLayoutError::FactInvariant {
+        source,
+        property: "relative-offset",
+    })
+}
+
+/// REL: `edges` translated by (`dx`, `dy`), one f32 addition per edge.
+fn shift(edges: PrincipalEdges, dx: f32, dy: f32) -> PrincipalEdges {
+    PrincipalEdges {
+        left: edges.left + dx,
+        right: edges.right + dx,
+        top: edges.top + dy,
+        bottom: edges.bottom + dy,
+    }
 }
 
 /// Every edge coordinate of `edges` lies in `area` on its own axis, bounds included.
@@ -1096,7 +1189,15 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // four assembly writes), charged on every path.
         .checked_add(10)?
         .checked_add(children.checked_mul(8)?)?
-        .checked_add(normals.checked_mul(39)?)
+        .checked_add(normals.checked_mul(39)?)?
+        // REL: 28 fixed (P's offset solve: position test 2, four offset reads 4, four
+        // category conversions 4, direction read 1, primitive call and return 4, two
+        // axis resolutions 8, four publication writes 4; and P's widened admission
+        // comparison 1) and 38 per child (its offset solve 27, the containment shift:
+        // two offset reads 2 and eight additions 8, and its widened admission
+        // comparison 1), charged on every path.
+        .checked_add(28)?
+        .checked_add(children.checked_mul(38)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1200,9 +1301,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(1406));
-        assert_eq!(facade_work(6), Some(1885));
-        assert_eq!(facade_work(7), Some(2364));
+        assert_eq!(facade_work(5), Some(1548));
+        assert_eq!(facade_work(6), Some(2065));
+        assert_eq!(facade_work(7), Some(2582));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
@@ -1285,7 +1386,7 @@ mod tests {
                 size_of::<PrincipalChildBox>(),
                 std::mem::align_of::<PrincipalChildBox>()
             ),
-            (280, 8)
+            (296, 8)
         );
     }
 
@@ -1354,6 +1455,7 @@ mod tests {
                 value: ClearSide::None,
                 origin: BoxFactOrigin::Specified,
             },
+            relative: NO_OFFSETS,
         }
     }
 

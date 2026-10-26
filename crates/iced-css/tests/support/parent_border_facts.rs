@@ -230,7 +230,7 @@ fn pbr_fact_representation_measurement() {
     assert!(row.0 >= 4 * width.0, "row {row:?} width {width:?}");
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     {
-        assert_eq!(row, (512, 8));
+        assert_eq!(row, (608, 8));
         assert_eq!(width, (24, 8));
     }
 }
@@ -719,13 +719,13 @@ fn work_css(nodes: usize) -> String {
     format!("{} {leading} #p {{ border-style:solid; }}", baseline_css())
 }
 
-/// W1 (M15a witness): Sequence work is `31 * n + 2 + r`, exact and one short.
+/// W1 (M15a witness): Sequence work is `35 * n + 2 + r`, exact and one short.
 #[test]
 fn pbr_w1_sequence_work_is_exact() {
     for nodes in [5, 6, 7] {
         let css = work_css(nodes);
         let run = facts(nodes, &css);
-        let work = 31 * nodes + 2 + run.rules;
+        let work = 35 * nodes + 2 + run.rules;
         assert_eq!(run.receipt.evaluation.work, work, "N{nodes}");
         let mut exact = sibling_fact_limits();
         exact.evaluation.work = nz(work);
@@ -744,14 +744,14 @@ fn pbr_w1_sequence_work_is_exact() {
     }
 }
 
-/// W2 (M15b witness, DR-7): the numeric allowance is `18 * n * numeric.work`, exact
+/// W2 (M15b witness, DR-7): the numeric allowance is `22 * n * numeric.work`, exact
 /// and one short.
 #[test]
 fn pbr_w2_sequence_numeric_allowance_is_exact() {
     for nodes in [5, 6, 7] {
         let css = work_css(nodes);
         let run = facts(nodes, &css);
-        let allowance = 18 * nodes * 100_000;
+        let allowance = 22 * nodes * 100_000;
         assert_eq!(run.receipt.evaluation.numeric_work, allowance, "N{nodes}");
         let mut exact = sibling_fact_limits();
         exact.evaluation.numeric_work = nz(allowance);
@@ -770,25 +770,25 @@ fn pbr_w2_sequence_numeric_allowance_is_exact() {
     }
 }
 
-/// W3: at N7 the exact-limit facts build at the exact facade and core work (CBR
-/// values 2364 and 1730).
+/// W3: at N7 the exact-limit facts build at the exact facade and core work (REL
+/// values 2582 and 1754).
 #[test]
 fn pbr_w3_exact_facts_build_at_the_exact_facade_and_core_work() {
     let css = work_css(7);
     sibling_fixture(7, &css, |projection, display| {
         let rules = display.bundle().rule_count();
         let mut exact = sibling_fact_limits();
-        exact.evaluation.work = nz(31 * 7 + 2 + rules);
-        exact.evaluation.numeric_work = nz(18 * 7 * 100_000);
+        exact.evaluation.work = nz(35 * 7 + 2 + rules);
+        exact.evaluation.numeric_work = nz(22 * 7 * 100_000);
         let facts = evaluate_sibling_box_facts(projection, display, exact).unwrap();
         assert_eq!(facts.row(1).unwrap().border_widths(), [3.0; 4]);
         let mut limits = layout_limits();
-        limits.work = nz(2364);
-        limits.core.work = nz(1730);
+        limits.work = nz(2582);
+        limits.core.work = nz(1754);
         let layout =
             default_outer_layout(&facts, &projection.nodes()[0], 0.0, 100.0, 10.0, limits).unwrap();
-        assert_eq!(layout.receipt().work, 2364);
-        assert_eq!(layout.receipt().core.work, 1730);
+        assert_eq!(layout.receipt().work, 2582);
+        assert_eq!(layout.receipt().core.work, 1754);
         assert_eq!(layout.parent().origin().content_top, 14.0);
     });
 }

@@ -1,12 +1,13 @@
 //! CBR: nonzero child borders (B1, F and the tails) and the unisolated parent in the
 //! Sequence facade.
 //!
-//! This module compiles against the predecessor API: it reads only
-//! `PrincipalChildBox::padding()`, `border()`, `content()` and records that already
-//! exist (at 154b09ba `padding()` returns the border box). Every literal below is
-//! derived from `baseline_css()` (O content left 0, width 100, top 10; P `hidden`,
-//! padding-top 1 and padding-bottom 1) by the CBR plan's exact-rational model; twin
-//! comparisons are additional, never the only oracle.
+//! These rows read `PrincipalChildBox::padding()`, `border()` and `content()` and the
+//! core's published spans and records. Since CBR (ed315c83) `padding()` is the
+//! child's padding box, which differs from `border()` exactly when the child has
+//! borders. Every literal below is derived from `baseline_css()` (O content left 0,
+//! width 100, top 10; P `hidden`, padding-top 1 and padding-bottom 1) by the CBR
+//! plan's exact-rational model; twin comparisons are additional, never the only
+//! oracle.
 
 use super::*;
 
@@ -931,17 +932,17 @@ fn cbr_m_c_decorated_float_paths() {
 #[test]
 fn cbr_work_thresholds_with_child_borders_and_an_unisolated_parent() {
     for (nodes, facade, core, p_bottom) in [
-        (5, 1406, 1233, 29.0),
-        (6, 1885, 1481, 34.0),
-        (7, 2364, 1730, 38.0),
+        (5, 1548, 1249, 29.0),
+        (6, 2065, 1501, 34.0),
+        (7, 2582, 1754, 38.0),
     ] {
         assert_eq!(
             facade,
-            218 + 32 * nodes + 134 * (nodes - 2) + 313 * (nodes - 3)
+            246 + 32 * nodes + 172 * (nodes - 2) + 313 * (nodes - 3)
         );
         assert_eq!(
             core,
-            706 + 8 * nodes
+            702 + 12 * nodes
                 + nodes * (nodes - 1) / 2
                 + 54 * (nodes - 4)
                 + 61 * (nodes - 2)

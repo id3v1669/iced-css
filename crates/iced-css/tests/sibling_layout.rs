@@ -511,7 +511,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            218 + 32 * 6 + 134 * (6 - 2) + 313 * (6 - 3)
+            246 + 32 * 6 + 172 * (6 - 2) + 313 * (6 - 3)
         );
     });
 }
@@ -3342,8 +3342,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 1885;
-        for short in [1, 1884] {
+        let work = 2065;
+        for short in [1, 2064] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3372,12 +3372,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            1406,
+            1548,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            2364,
+            2582,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3405,7 +3405,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             let normals = source_count - 3;
             assert_eq!(
                 work,
-                218 + 32 * source_count + 134 * children + 313 * normals
+                246 + 32 * source_count + 172 * children + 313 * normals
             );
         });
     }
@@ -3414,7 +3414,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
     for (source_count, facade_work, core_work) in
-        [(5, 1406, 1233), (6, 1885, 1481), (7, 2364, 1730)]
+        [(5, 1548, 1249), (6, 2065, 1501), (7, 2582, 1754)]
     {
         let mut receipts = Vec::new();
         for width in [10, 140] {
@@ -3464,22 +3464,22 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            1406,
-            1233,
+            1548,
+            1249,
             419,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            1885,
-            1481,
+            2065,
+            1501,
             501,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            2364,
-            1730,
+            2582,
+            1754,
             584,
         ),
     ] {
@@ -5616,12 +5616,12 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [1406, 1885, 2364][case.nodes - 5],
+        [1548, 2065, 2582][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
         layout.receipt().core.work,
-        [1233, 1481, 1730][case.nodes - 5],
+        [1249, 1501, 1754][case.nodes - 5],
         "{id}"
     );
 }
@@ -6353,7 +6353,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 1406, "#b2"), (6, 1885, "#b3"), (7, 2364, "#b4")] {
+    for (source_count, work, selector) in [(5, 1548, "#b2"), (6, 2065, "#b3"), (7, 2582, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6617,9 +6617,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 1406, 475, 1233, 419),
-        (6, 1885, 616, 1481, 501),
-        (7, 2364, 757, 1730, 584),
+        (5, 1548, 475, 1249, 419),
+        (6, 2065, 616, 1501, 501),
+        (7, 2582, 757, 1754, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -7466,9 +7466,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 1406, 475, 1233, 419),
-        (6, 1885, 616, 1481, 501),
-        (7, 2364, 757, 1730, 584),
+        (5, 1548, 475, 1249, 419),
+        (6, 2065, 616, 1501, 501),
+        (7, 2582, 757, 1754, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8543,9 +8543,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 1406, 475, 1233, 419),
-        (6, 1885, 616, 1481, 501),
-        (7, 2364, 757, 1730, 584),
+        (5, 1548, 475, 1249, 419),
+        (6, 2065, 616, 1501, 501),
+        (7, 2582, 757, 1754, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -9453,9 +9453,9 @@ fn float_overflow_build<'p>(
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
     for (nodes, exact, lc, core) in [
-        (5, 1406, 481, 1233),
-        (6, 1885, 622, 1481),
-        (7, 2364, 763, 1730),
+        (5, 1548, 481, 1249),
+        (6, 2065, 622, 1501),
+        (7, 2582, 763, 1754),
     ] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
@@ -9479,7 +9479,7 @@ fn float_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                218 + 32 * nodes + 134 * (nodes - 2) + 313 * (nodes - 3)
+                246 + 32 * nodes + 172 * (nodes - 2) + 313 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9493,11 +9493,11 @@ fn float_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 1884),
+            float_overflow_build(&facts, &projection.nodes()[0], 2064),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 1885).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 2065).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -9900,7 +9900,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 1406, 1233), (6, 1885, 1481), (7, 2364, 1730)] {
+    for (nodes, exact, core) in [(5, 1548, 1249), (6, 2065, 1501), (7, 2582, 1754)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -9922,7 +9922,7 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                218 + 32 * nodes + 134 * (nodes - 2) + 313 * (nodes - 3)
+                246 + 32 * nodes + 172 * (nodes - 2) + 313 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9936,11 +9936,11 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 1884),
+            float_overflow_build(&facts, &projection.nodes()[0], 2064),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 1885).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 2065).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10501,7 +10501,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 1406, 1233), (6, 1885, 1481), (7, 2364, 1730)] {
+    for (nodes, exact, core) in [(5, 1548, 1249), (6, 2065, 1501), (7, 2582, 1754)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -10523,7 +10523,7 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                218 + 32 * nodes + 134 * (nodes - 2) + 313 * (nodes - 3)
+                246 + 32 * nodes + 172 * (nodes - 2) + 313 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -10537,11 +10537,11 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 1884),
+            float_overflow_build(&facts, &projection.nodes()[0], 2064),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 1885).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 2065).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -11259,7 +11259,7 @@ fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn parent_overflow_auto_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 1406, 1233), (6, 1885, 1481), (7, 2364, 1730)] {
+    for (nodes, exact, core) in [(5, 1548, 1249), (6, 2065, 1501), (7, 2582, 1754)] {
         let css = format!(
             "{} {} #p {{ overflow:auto; }}",
             baseline_css(),
@@ -11281,7 +11281,7 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                218 + 32 * nodes + 134 * (nodes - 2) + 313 * (nodes - 3)
+                246 + 32 * nodes + 172 * (nodes - 2) + 313 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -11295,11 +11295,11 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 1884),
+            float_overflow_build(&facts, &projection.nodes()[0], 2064),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 1885).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 2065).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -30035,7 +30035,7 @@ fn cfh_css_cascade_and_copied_auto() {
 
 #[test]
 fn cfh_css_auto_work_thresholds() {
-    for (nodes, facade_work, core_work) in [(5, 1406, 1233), (6, 1885, 1481), (7, 2364, 1730)] {
+    for (nodes, facade_work, core_work) in [(5, 1548, 1249), (6, 2065, 1501), (7, 2582, 1754)] {
         let css = cfh_css(nodes, "right", true, "height:inherit;");
         sibling_fixture(nodes, &css, |projection, display| {
             let facts =
@@ -30085,6 +30085,9 @@ mod parent_border_facts;
 
 #[path = "support/child_borders.rs"]
 mod child_borders;
+
+#[path = "support/relative_positioning.rs"]
+mod relative_positioning;
 
 fn snv_assert_facade_oracle(layout: &CapturedSiblingLayout<'_>, oracle: &str) {
     let (borders, clearances, height, bottom) = match oracle {

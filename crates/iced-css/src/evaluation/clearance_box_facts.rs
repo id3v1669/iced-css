@@ -12,7 +12,7 @@ use iced_css_core::{
         rule::{RuleBatchError, RuleBatchLimits, RuleTarget, cascade_positioned_rules},
         winner_table::PropertyWinners,
     },
-    formatting::{clearance::ClearSide, table_borders::BorderStyle},
+    formatting::{clearance::ClearSide, display::Position, table_borders::BorderStyle},
     selectors::PseudoElement,
     source::selector_tree::SelectorTreeLimits,
     values::{
@@ -91,6 +91,13 @@ pub struct BorderWidthFact {
 /// 1/3/5, an absolute length is the nearest f32 (ties to even, saturating at
 /// `f32::MAX`), and `inherit` copies the parent's computed fact. Sequence width facts
 /// carry true provenance.
+///
+/// `offset` (REL) holds the computed `top`, `right`, `bottom` and `left` of a Sequence
+/// row whose computed `position` is `relative`: `auto`, or an absolute length
+/// converted like a signed margin (zero is +0), or the parent row's offset for
+/// `inherit`. It is `None` for every other row (CSS2.2 9.3.1: the offsets do not apply
+/// to a static box; absolute and fixed boxes are refused later) and for every Legacy
+/// row, whose offsets are never resolved.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,
@@ -104,6 +111,8 @@ pub struct ClearanceBoxFact {
     pub border_width: [BorderWidthFact; 4],
     pub before: PseudoAbsence,
     pub after: PseudoAbsence,
+    /// Computed offsets of a relatively positioned Sequence row; see the type contract.
+    pub offset: Option<[BoxLengthFact; 4]>,
 }
 impl ClearanceBoxFact {
     /// Computed border widths in pixels, top, right, bottom, left.
@@ -151,6 +160,10 @@ pub enum BoxFactUnsupported {
     NondefaultMinMax,
     BorderStyle,
     GeneratedContent,
+    /// REL: `inherit` on an offset of a relatively positioned row whose parent row is
+    /// not relatively positioned. CSS2.2 9.3.2 defines a computed value there; this is
+    /// a supported-subset refusal, because only relative rows resolve their offsets.
+    InheritedOffset,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum ClearanceBoxFactsError {
@@ -284,12 +297,13 @@ pub(super) enum BoxFactMode {
     /// `evaluate_clearance_box_facts`: indices 0-19, `none`/`hidden` styles only,
     /// width facts never computed.
     Legacy,
-    /// `evaluate_sibling_box_facts`: indices 0-23, every style, computed widths.
+    /// `evaluate_sibling_box_facts`: indices 0-23, every style, computed widths, and
+    /// the offsets 25-28 of relatively positioned rows (REL).
     Sequence,
 }
 
 pub(super) struct PreparedBoxFacts {
-    pub(super) ids: [PropertyId; 25],
+    pub(super) ids: [PropertyId; 29],
     pub(super) receipt: ClearanceBoxFactsReceipt,
     pub(super) per_target: RuleBatchLimits,
     /// Private to this module: the Sequence entry can neither build nor change it.
@@ -350,12 +364,13 @@ pub(super) fn prepare_box_facts<'h>(
         }
     }
     // Per node: one row, three target dispatches, one unit per resolved longhand (20
-    // Legacy, 24 Sequence) and two pseudos; plus one. The numeric allowance reserves
-    // one conversion per length-valued longhand: 14 Legacy, 18 Sequence (four widths).
-    // Both are charged on every path of the mode, without credit.
+    // Legacy, 28 Sequence with the four REL offsets) and two pseudos; plus one. The
+    // numeric allowance reserves one conversion per length-valued longhand: 14 Legacy,
+    // 22 Sequence (four widths, four offsets). Both are charged on every path of the
+    // mode, static rows included, without credit.
     let (per_node, numeric_per_node) = match mode {
         BoxFactMode::Legacy => (26, 14),
-        BoxFactMode::Sequence => (30, 18),
+        BoxFactMode::Sequence => (34, 22),
     };
     charge(
         &mut remaining,
@@ -483,6 +498,24 @@ pub(super) fn evaluate_box_rows<'h>(
             mode,
             &mut receipt.numeric_calls,
         )?;
+        // REL (CSS2.2 9.3.2, 9.4.3): only a Sequence row whose computed `position` is
+        // `relative` resolves its offsets, after its other longhands and before its
+        // pseudos; the offsets do not apply to any other row (9.3.1). The position is
+        // proven present by `prepare_box_facts`; an absence is the existing join error.
+        let position = display
+            .resolution(original)
+            .ok_or(E::SourceJoin { projected })?
+            .position;
+        if mode == BoxFactMode::Sequence && position == Position::Relative {
+            row.offset = Some(resolve::offsets(
+                &winners,
+                ids,
+                original,
+                parent,
+                limits.numeric,
+                &mut receipt.numeric_calls,
+            )?);
+        }
         for (target, pseudo) in [
             (BoxFactTarget::Before, PseudoElement::Before),
             (BoxFactTarget::After, PseudoElement::After),

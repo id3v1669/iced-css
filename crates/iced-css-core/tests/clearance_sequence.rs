@@ -1178,7 +1178,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 1233, 419), (6, 1481, 501), (7, 1730, 584)] {
+    for (count, work, old_work) in [(5, 1249, 419), (6, 1501, 501), (7, 1754, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1206,7 +1206,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            706 + 8 * count
+            702 + 12 * count
                 + count * (count - 1) / 2
                 + 54 * tail_count
                 + 61 * child_count
@@ -1286,7 +1286,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(1480).unwrap();
+    short.work = NonZeroUsize::new(1500).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1335,7 +1335,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].border.left = -1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(1480).unwrap();
+    one_short.work = NonZeroUsize::new(1500).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -2280,7 +2280,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 1233, 419), (6, 1481, 501), (7, 1730, 584)] {
+    for (count, work, old_work) in [(5, 1249, 419), (6, 1501, 501), (7, 1754, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2746,7 +2746,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 1233, 419), (6, 1481, 501), (7, 1730, 584)] {
+    for (count, work, old_work) in [(5, 1249, 419), (6, 1501, 501), (7, 1754, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -3128,7 +3128,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 1233, 419), (6, 1481, 501), (7, 1730, 584)] {
+    for (count, work, old_work) in [(5, 1249, 419), (6, 1501, 501), (7, 1754, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3486,7 +3486,7 @@ fn tnb_core_tail_guards_follow_source_order() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 1233), (6, 1481), (7, 1730)] {
+    for (count, work) in [(5, 1249), (6, 1501), (7, 1754)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3501,7 +3501,7 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
         assert_eq!(owner.receipt().work, work);
         assert_eq!(
             work,
-            706 + 8 * count
+            702 + 12 * count
                 + count * (count - 1) / 2
                 + 54 * (count - 4)
                 + 61 * (count - 2)
@@ -4378,7 +4378,7 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 1233), (6, 1481), (7, 1730)] {
+    for (count, work) in [(5, 1249), (6, 1501), (7, 1754)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
@@ -4633,7 +4633,7 @@ fn cfh_core_exact_extent_and_later_profile_order() {
 
 #[test]
 fn cfh_core_auto_work_thresholds() {
-    for (count, work) in [(5, 1233), (6, 1481), (7, 1730)] {
+    for (count, work) in [(5, 1249), (6, 1501), (7, 1754)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[1].height = OwnerHeight::Auto;
@@ -5108,6 +5108,54 @@ fn cbr_core_border_terms_reach_the_named_stages() {
                 }) if source == slot + 2 && actual == stage
             ),
             "slot {slot} top {top}: {result:?}"
+        );
+    }
+}
+
+/// REL M-C (M4 witness): the Sequence owner admits `position: relative` on P and on
+/// each child, and publishes the static control's normal-flow geometry.
+#[test]
+fn rel_m_c_sequence_admits_relative_parent_and_children() {
+    for count in [5, 6] {
+        let nodes = sources(count);
+        let (outer, parent, children) = facts(&nodes);
+        let control = format!(
+            "{:?}",
+            build(&nodes, outer, parent, &children, limits(count)).unwrap()
+        );
+        for source in 1..count {
+            let (outer, mut parent, mut children) = facts(&nodes);
+            if source == 1 {
+                parent.display.position = Position::Relative;
+            } else {
+                children[source - 2].display.position = Position::Relative;
+            }
+            let owner = build(&nodes, outer, parent, &children, limits(count))
+                .unwrap_or_else(|error| panic!("N{count} source {source}: {error:?}"));
+            assert_eq!(format!("{owner:?}"), control, "N{count} source {source}");
+        }
+    }
+}
+
+/// REL M-C (M6 witness): a relatively positioned O stays `DisplayOrFlow` at source 0.
+#[test]
+fn rel_m_c_relative_outer_stays_display_or_flow() {
+    for count in [5, 6] {
+        let nodes = sources(count);
+        let (mut outer, parent, children) = facts(&nodes);
+        outer.display.position = Position::Relative;
+        let result = build(&nodes, outer, parent, &children, limits(count));
+        assert!(
+            matches!(
+                result,
+                Err(ClearanceSequenceError::Profile(
+                    ClearanceOwnerError::Unsupported {
+                        source: 0,
+                        reason: OwnerProfileReason::DisplayOrFlow,
+                    }
+                ))
+            ),
+            "N{count}: {result:?}"
         );
     }
 }

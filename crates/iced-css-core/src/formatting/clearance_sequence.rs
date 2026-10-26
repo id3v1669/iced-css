@@ -236,10 +236,14 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// source. Contact and empty intervals pass (Q1); signed margins make rejection reachable.
 /// Childless F admits computed Auto height with positive-zero used content height;
 /// normal children retain positive explicit height and Legacy admission is unchanged.
-/// Work `706 + 8*N + N*(N-1)/2 + 54*(N-4) + 61*(N-2) + 120*(N-3)` is prepaid,
+/// P and every child may be relatively positioned (REL, CSS2.2 9.4.3); the owner
+/// publishes their normal-flow geometry, which the offsets do not change, and the
+/// outer source stays static.
+/// Work `702 + 12*N + N*(N-1)/2 + 54*(N-4) + 61*(N-2) + 120*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
-/// vertical content stages, and every child's border terms and padding publications.
+/// vertical content stages, every child's border terms and padding publications, and
+/// the widened display test of P and every child.
 ///
 /// # Errors
 /// Returns bounded admission/allocation failures, complete-profile failures, or a
@@ -536,7 +540,10 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         // four widened terms 16 and four border reads 4, and P's policy argument 1 and
         // comparison 2.
         .checked_add(146)?
-        .checked_add(nodes.checked_sub(3)?.checked_mul(56)?)
+        .checked_add(nodes.checked_sub(3)?.checked_mul(56)?)?
+        // REL: 4 per P and child, charged on every path: the policy flag test 2 and the
+        // relative position comparison 2 of the widened display test.
+        .checked_add(nodes.checked_sub(1)?.checked_mul(4)?)
 }
 
 fn retained_bytes(capacity: usize) -> Option<usize> {
@@ -582,7 +589,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(1233).unwrap(),
+            work: NonZeroUsize::new(1249).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -1006,7 +1013,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [1232, 480, 419, 337, 269, 213] {
+        for short in [1248, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -1022,7 +1029,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(1233).unwrap();
+        limits.work = NonZeroUsize::new(1249).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -1042,7 +1049,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 1233);
+        assert_eq!(owner.receipt().work, 1249);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -1070,9 +1077,9 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(1233));
-        assert_eq!(sequence_work(6, 2), Some(1481));
-        assert_eq!(sequence_work(7, 3), Some(1730));
+        assert_eq!(sequence_work(5, 1), Some(1249));
+        assert_eq!(sequence_work(6, 2), Some(1501));
+        assert_eq!(sequence_work(7, 3), Some(1754));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
