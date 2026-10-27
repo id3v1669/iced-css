@@ -861,7 +861,14 @@ fn rel_cr_l1_border_step_publication_witness() {
     sibling_fixture(5, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits())
             .unwrap_or_else(|error| panic!("{css}: producer error {error:?}"));
-        assert_eq!(facts.row(2).unwrap().padding[3].pixels.to_bits(), 0);
+        assert_eq!(
+            facts.row(2).unwrap().padding[3]
+                .absolute()
+                .unwrap()
+                .pixels
+                .to_bits(),
+            0
+        );
         let error = default_outer_layout(
             &facts,
             &projection.nodes()[0],
@@ -1062,10 +1069,10 @@ fn rel_facts_numeric_allowance_is_exact_with_relative_rows() {
 /// a relative P and relative children.
 #[test]
 fn rel_work_thresholds_with_relative_boxes() {
-    for (nodes, facade, core) in [(5, 2116, 1249), (6, 2779, 1501), (7, 3442, 1754)] {
+    for (nodes, facade, core) in [(5, 2492, 1249), (6, 3259, 1501), (7, 4026, 1754)] {
         assert_eq!(
             facade,
-            376 + 32 * nodes + 318 * (nodes - 2) + 313 * (nodes - 3)
+            440 + 32 * nodes + 422 * (nodes - 2) + 313 * (nodes - 3)
         );
         assert_eq!(
             core,

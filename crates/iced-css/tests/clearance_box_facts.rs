@@ -15,7 +15,11 @@ fn actual_css_capture_computes_box_facts() {
         assert!(std::ptr::eq(batch.projection(), projection));
         assert!(std::ptr::eq(batch.display(), display));
         assert_eq!(
-            batch.row(0).unwrap().padding.map(|v| v.pixels),
+            batch
+                .row(0)
+                .unwrap()
+                .padding
+                .map(|v| v.absolute().unwrap().pixels),
             [1., 0., 1., 0.]
         );
         assert_eq!(px(batch.row(1).unwrap().height), 1.);
@@ -63,7 +67,10 @@ fn actual_cascade_shorthands_important_and_inheritance() {
                 let b = evaluate_clearance_box_facts(p, d, fact_limits()).unwrap();
                 let r = b.row(1).unwrap();
                 assert_eq!(r.margin.map(px), [parent_margin as f32, 5., 2., 2.]);
-                assert_eq!(r.padding.map(|v| v.pixels), [1., 2., 3., 4.]);
+                assert_eq!(
+                    r.padding.map(|v| v.absolute().unwrap().pixels),
+                    [1., 2., 3., 4.]
+                );
                 assert_eq!(r.clear.value, ClearSide::Right);
                 assert_eq!(r.overflow.value, BoxOverflow::Scroll);
                 assert!(
@@ -73,7 +80,7 @@ fn actual_cascade_shorthands_important_and_inheritance() {
                 );
                 let origin = BoxFactOrigin::Inherited { original_parent: 3 };
                 assert_eq!(r.clear.origin, origin);
-                assert_eq!(r.padding[0].origin, origin);
+                assert_eq!(r.padding[0].absolute().unwrap().origin, origin);
                 assert_eq!(r.border_style[0].origin, origin);
                 assert_eq!(
                     b.row(0).unwrap().width,
@@ -514,9 +521,12 @@ fn nested_facts_follow_actual_ancestors_and_charge_fifteen_targets() {
     let bundle = DisplayRuleBundle::new(&ua, &bindings, &sheets, bundle_limits()).unwrap();
     let display = evaluate_source_display(snapshot, &bundle, display_limits()).unwrap();
     let facts = evaluate_clearance_box_facts(&projection, &display, fact_limits()).unwrap();
-    assert_eq!(facts.row(1).unwrap().padding[0].pixels, 7.);
     assert_eq!(
-        facts.row(1).unwrap().padding[0].origin,
+        facts.row(1).unwrap().padding[0].absolute().unwrap().pixels,
+        7.
+    );
+    assert_eq!(
+        facts.row(1).unwrap().padding[0].absolute().unwrap().origin,
         BoxFactOrigin::Inherited { original_parent: 4 }
     );
     assert_eq!(

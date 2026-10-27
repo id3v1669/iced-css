@@ -199,9 +199,11 @@ pub struct CompactDecimal {
     scale: u32,
 }
 impl CompactDecimal {
+    /// Whether the decimal is negative; `-0` is stored as +0, so a zero is never negative.
     pub fn is_negative(self) -> bool {
         self.negative
     }
+    /// Whether the decimal is zero (either sign).
     pub fn is_zero(self) -> bool {
         self.coefficient == 0
     }

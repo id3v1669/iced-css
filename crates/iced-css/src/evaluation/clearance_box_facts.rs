@@ -60,11 +60,34 @@ pub enum BoxLengthFact {
     /// `ClearanceBoxFact` contract for the rows and longhands that may hold it.
     Percentage(PercentageBoxFact),
 }
-/// A computed `max-width` or `max-height` (MMX): an absolute length, or `none`.
+/// A computed `max-width` or `max-height` (MMX): an absolute length, or `none`; a
+/// Sequence `max-width` may also be a percentage (PPM).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BoxMaxFact {
     Absolute(AbsoluteBoxFact),
-    None { origin: BoxFactOrigin },
+    None {
+        origin: BoxFactOrigin,
+    },
+    /// PPM: a computed `max-width` percentage of the containing block's width (CSS2.2
+    /// 10.4); `max_height` never holds it.
+    Percentage(PercentageBoxFact),
+}
+/// A computed `<length> | <percentage>` (PPM): the four paddings and `min-width`
+/// (CSS2.2 8.4, 10.4). Only a Sequence row may hold a percentage; see the
+/// `ClearanceBoxFact` contract.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LengthPercentageBoxFact {
+    Absolute(AbsoluteBoxFact),
+    Percentage(PercentageBoxFact),
+}
+impl LengthPercentageBoxFact {
+    /// The absolute fact, or `None` for a percentage.
+    pub fn absolute(self) -> Option<AbsoluteBoxFact> {
+        match self {
+            Self::Absolute(value) => Some(value),
+            Self::Percentage(_) => None,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoxOverflow {
@@ -105,7 +128,8 @@ pub struct BorderWidthFact {
 /// `None { Initial }`, and that `origin` is not provenance. A Sequence row carries the
 /// computed constraints with true provenance (CSS2.2 10.4, 10.7): an absolute
 /// nonnegative length converted once (zero is +0), `none` for a max, or the parent
-/// row's fact for `inherit`; percentages and `em`/`ex` stay refused.
+/// row's fact for `inherit`; a `min-width` or `max-width` percentage is kept exactly
+/// (PPM, see below), while height-constraint percentages and `em`/`ex` stay refused.
 ///
 /// Border facts depend on the entry. `evaluate_clearance_box_facts` (Legacy) admits
 /// only `none`/`hidden` styles and never computes a width: every Legacy width fact is
@@ -124,25 +148,27 @@ pub struct BorderWidthFact {
 /// to a static box; absolute and fixed boxes are refused later) and for every Legacy
 /// row, whose offsets are never resolved.
 ///
-/// Percentage facts (PCT) depend on the entry. A Legacy row never holds
-/// `BoxLengthFact::Percentage`: `evaluate_clearance_box_facts` refuses every percentage
-/// with `PercentageLength`. A Sequence row may hold it only in `width`, `margin` and,
-/// on a relatively positioned row, `offset[1]` (`right`) and `offset[3]` (`left`): the
-/// authored percentage kept exactly (CSS2.2 10.2, 8.3, 9.3.2), or the parent row's
-/// fact for `inherit`. It is resolved later against the containing block's width;
-/// percentages of every other longhand stay refused.
+/// Percentage facts (PCT, PPM) depend on the entry. A Legacy row never holds
+/// `BoxLengthFact::Percentage`, `LengthPercentageBoxFact::Percentage` or
+/// `BoxMaxFact::Percentage`: `evaluate_clearance_box_facts` refuses every percentage
+/// with `PercentageLength`. A Sequence row may hold one only in `width`, `margin`,
+/// `padding`, `min_width`, `max_width` and, on a relatively positioned row, `offset[1]`
+/// (`right`) and `offset[3]` (`left`): the authored percentage kept exactly (CSS2.2
+/// 10.2, 8.3, 8.4, 10.4, 9.3.2), or the parent row's fact for `inherit`. It is resolved
+/// later against the containing block's width; percentages of every other longhand
+/// stay refused.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,
     pub height: BoxLengthFact,
     /// Computed `min-width`, `min-height`, `max-width` and `max-height`; see the type
     /// contract for Legacy and Sequence rows.
-    pub min_width: AbsoluteBoxFact,
+    pub min_width: LengthPercentageBoxFact,
     pub min_height: AbsoluteBoxFact,
     pub max_width: BoxMaxFact,
     pub max_height: BoxMaxFact,
     pub margin: [BoxLengthFact; 4],
-    pub padding: [AbsoluteBoxFact; 4],
+    pub padding: [LengthPercentageBoxFact; 4],
     pub clear: KeywordBoxFact<ClearSide>,
     pub overflow: KeywordBoxFact<BoxOverflow>,
     pub border_style: [KeywordBoxFact<BorderStyle>; 4],

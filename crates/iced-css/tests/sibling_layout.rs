@@ -56,6 +56,12 @@ fn sibling_fact_limits() -> SiblingBoxFactsLimits {
     }
 }
 
+/// PPM: the absolute fact of a padding fact that holds no percentage (the rows these
+/// tests read are absolute).
+fn ppm_abs(fact: LengthPercentageBoxFact) -> AbsoluteBoxFact {
+    fact.absolute().unwrap()
+}
+
 fn baseline_css() -> &'static str {
     "
         #o { width: 100px; }
@@ -511,7 +517,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            376 + 32 * 6 + 318 * (6 - 2) + 313 * (6 - 3)
+            440 + 32 * 6 + 422 * (6 - 2) + 313 * (6 - 3)
         );
     });
 }
@@ -3342,8 +3348,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 2779;
-        for short in [1, 2778] {
+        let work = 3259;
+        for short in [1, 3258] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3372,12 +3378,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            2116,
+            2492,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            3442,
+            4026,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3405,7 +3411,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             let normals = source_count - 3;
             assert_eq!(
                 work,
-                376 + 32 * source_count + 318 * children + 313 * normals
+                440 + 32 * source_count + 422 * children + 313 * normals
             );
         });
     }
@@ -3414,7 +3420,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
     for (source_count, facade_work, core_work) in
-        [(5, 2116, 1249), (6, 2779, 1501), (7, 3442, 1754)]
+        [(5, 2492, 1249), (6, 3259, 1501), (7, 4026, 1754)]
     {
         let mut receipts = Vec::new();
         for width in [10, 140] {
@@ -3464,21 +3470,21 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            2116,
+            2492,
             1249,
             419,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            2779,
+            3259,
             1501,
             501,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            3442,
+            4026,
             1754,
             584,
         ),
@@ -5616,7 +5622,7 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [2116, 2779, 3442][case.nodes - 5],
+        [2492, 3259, 4026][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
@@ -6353,7 +6359,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 2116, "#b2"), (6, 2779, "#b3"), (7, 3442, "#b4")] {
+    for (source_count, work, selector) in [(5, 2492, "#b2"), (6, 3259, "#b3"), (7, 4026, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6617,9 +6623,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 2116, 475, 1249, 419),
-        (6, 2779, 616, 1501, 501),
-        (7, 3442, 757, 1754, 584),
+        (5, 2492, 475, 1249, 419),
+        (6, 3259, 616, 1501, 501),
+        (7, 4026, 757, 1754, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -7466,9 +7472,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 2116, 475, 1249, 419),
-        (6, 2779, 616, 1501, 501),
-        (7, 3442, 757, 1754, 584),
+        (5, 2492, 475, 1249, 419),
+        (6, 3259, 616, 1501, 501),
+        (7, 4026, 757, 1754, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8543,9 +8549,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 2116, 475, 1249, 419),
-        (6, 2779, 616, 1501, 501),
-        (7, 3442, 757, 1754, 584),
+        (5, 2492, 475, 1249, 419),
+        (6, 3259, 616, 1501, 501),
+        (7, 4026, 757, 1754, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -9453,9 +9459,9 @@ fn float_overflow_build<'p>(
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
     for (nodes, exact, lc, core) in [
-        (5, 2116, 481, 1249),
-        (6, 2779, 622, 1501),
-        (7, 3442, 763, 1754),
+        (5, 2492, 481, 1249),
+        (6, 3259, 622, 1501),
+        (7, 4026, 763, 1754),
     ] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
@@ -9479,7 +9485,7 @@ fn float_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                376 + 32 * nodes + 318 * (nodes - 2) + 313 * (nodes - 3)
+                440 + 32 * nodes + 422 * (nodes - 2) + 313 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9493,11 +9499,11 @@ fn float_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 2778),
+            float_overflow_build(&facts, &projection.nodes()[0], 3258),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 2779).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 3259).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -9900,7 +9906,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 2116, 1249), (6, 2779, 1501), (7, 3442, 1754)] {
+    for (nodes, exact, core) in [(5, 2492, 1249), (6, 3259, 1501), (7, 4026, 1754)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -9922,7 +9928,7 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                376 + 32 * nodes + 318 * (nodes - 2) + 313 * (nodes - 3)
+                440 + 32 * nodes + 422 * (nodes - 2) + 313 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9936,11 +9942,11 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 2778),
+            float_overflow_build(&facts, &projection.nodes()[0], 3258),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 2779).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 3259).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10501,7 +10507,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 2116, 1249), (6, 2779, 1501), (7, 3442, 1754)] {
+    for (nodes, exact, core) in [(5, 2492, 1249), (6, 3259, 1501), (7, 4026, 1754)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -10523,7 +10529,7 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                376 + 32 * nodes + 318 * (nodes - 2) + 313 * (nodes - 3)
+                440 + 32 * nodes + 422 * (nodes - 2) + 313 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -10537,11 +10543,11 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 2778),
+            float_overflow_build(&facts, &projection.nodes()[0], 3258),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 2779).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 3259).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -11259,7 +11265,7 @@ fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn parent_overflow_auto_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 2116, 1249), (6, 2779, 1501), (7, 3442, 1754)] {
+    for (nodes, exact, core) in [(5, 2492, 1249), (6, 3259, 1501), (7, 4026, 1754)] {
         let css = format!(
             "{} {} #p {{ overflow:auto; }}",
             baseline_css(),
@@ -11281,7 +11287,7 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                376 + 32 * nodes + 318 * (nodes - 2) + 313 * (nodes - 3)
+                440 + 32 * nodes + 422 * (nodes - 2) + 313 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -11295,11 +11301,11 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 2778),
+            float_overflow_build(&facts, &projection.nodes()[0], 3258),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 2779).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 3259).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -13010,7 +13016,6 @@ fn cp_css_unsupported_padding_categories_keep_fact_source_and_property() {
                 for (value, reason) in [
                     ("0em", BoxFactUnsupported::RelativeLength),
                     ("2ex", BoxFactUnsupported::RelativeLength),
-                    ("0%", BoxFactUnsupported::PercentageLength),
                 ] {
                     let css = format!("{} {selector} {{{property}:{value};}}", baseline_css());
                     sibling_fixture(nodes, &css, |projection, display| {
@@ -13145,41 +13150,41 @@ fn cp_witness_case_19198() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -13231,41 +13236,41 @@ fn cp_witness_case_19198() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -13312,41 +13317,41 @@ fn cp_witness_case_19198() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -13807,41 +13812,41 @@ fn cp_witness_case_19199() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -13893,41 +13898,41 @@ fn cp_witness_case_19199() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -13974,41 +13979,41 @@ fn cp_witness_case_19199() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -14469,41 +14474,41 @@ fn cp_witness_case_19200() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -14555,41 +14560,41 @@ fn cp_witness_case_19200() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -14636,41 +14641,41 @@ fn cp_witness_case_19200() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -15131,41 +15136,41 @@ fn cp_witness_case_19201() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -15217,41 +15222,41 @@ fn cp_witness_case_19201() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -15298,41 +15303,41 @@ fn cp_witness_case_19201() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -15793,41 +15798,41 @@ fn cp_witness_case_19203() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -15879,41 +15884,41 @@ fn cp_witness_case_19203() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -15960,41 +15965,41 @@ fn cp_witness_case_19203() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -16455,41 +16460,41 @@ fn cp_witness_case_19206() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x40000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x40a00000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -16541,41 +16546,41 @@ fn cp_witness_case_19206() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -16622,41 +16627,41 @@ fn cp_witness_case_19206() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -17117,41 +17122,41 @@ fn cp_witness_case_19207() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -17203,41 +17208,41 @@ fn cp_witness_case_19207() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -17284,41 +17289,41 @@ fn cp_witness_case_19207() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x40000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x40a00000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -17779,41 +17784,41 @@ fn cp_witness_case_19208() {
             BoxFactOrigin::Specified
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x40000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -17865,41 +17870,41 @@ fn cp_witness_case_19208() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -17946,41 +17951,41 @@ fn cp_witness_case_19208() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -18428,41 +18433,41 @@ fn cp_witness_case_19209() {
             BoxFactOrigin::Specified
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x40000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -18514,41 +18519,41 @@ fn cp_witness_case_19209() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -18595,41 +18600,41 @@ fn cp_witness_case_19209() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -18750,41 +18755,41 @@ fn cp_witness_case_19234() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -18836,41 +18841,41 @@ fn cp_witness_case_19234() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -18917,41 +18922,41 @@ fn cp_witness_case_19234() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -18998,41 +19003,41 @@ fn cp_witness_case_19234() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -19607,41 +19612,41 @@ fn cp_witness_case_19236() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -19693,41 +19698,41 @@ fn cp_witness_case_19236() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -19774,41 +19779,41 @@ fn cp_witness_case_19236() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -19855,41 +19860,41 @@ fn cp_witness_case_19236() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -20464,41 +20469,41 @@ fn cp_witness_case_19238() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -20550,41 +20555,41 @@ fn cp_witness_case_19238() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -20631,41 +20636,41 @@ fn cp_witness_case_19238() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -20712,41 +20717,41 @@ fn cp_witness_case_19238() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -21321,41 +21326,41 @@ fn cp_witness_case_19240() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -21407,41 +21412,41 @@ fn cp_witness_case_19240() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -21488,41 +21493,41 @@ fn cp_witness_case_19240() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -21569,41 +21574,41 @@ fn cp_witness_case_19240() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -22183,41 +22188,41 @@ fn cp_witness_case_19248() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x40000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -22269,41 +22274,41 @@ fn cp_witness_case_19248() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -22350,41 +22355,41 @@ fn cp_witness_case_19248() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -22431,41 +22436,41 @@ fn cp_witness_case_19248() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -23053,41 +23058,41 @@ fn cp_witness_case_19249() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x40000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x40a00000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -23139,41 +23144,41 @@ fn cp_witness_case_19249() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x40000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -23220,41 +23225,41 @@ fn cp_witness_case_19249() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x40000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -23301,41 +23306,41 @@ fn cp_witness_case_19249() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -23923,41 +23928,41 @@ fn cp_witness_case_19255() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x00000000u32);
@@ -24009,41 +24014,41 @@ fn cp_witness_case_19255() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -24090,41 +24095,41 @@ fn cp_witness_case_19255() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -24171,41 +24176,41 @@ fn cp_witness_case_19255() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -24320,41 +24325,41 @@ fn cp_witness_case_19256() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x42b40000u32);
@@ -24406,41 +24411,41 @@ fn cp_witness_case_19256() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -24487,41 +24492,41 @@ fn cp_witness_case_19256() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -24568,41 +24573,41 @@ fn cp_witness_case_19256() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -24717,41 +24722,41 @@ fn cp_witness_case_19258() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x00000000u32);
@@ -24803,41 +24808,41 @@ fn cp_witness_case_19258() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -24884,41 +24889,41 @@ fn cp_witness_case_19258() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -24965,41 +24970,41 @@ fn cp_witness_case_19258() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -25574,41 +25579,41 @@ fn cp_witness_case_19259() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -25660,41 +25665,41 @@ fn cp_witness_case_19259() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -25741,41 +25746,41 @@ fn cp_witness_case_19259() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -25822,41 +25827,41 @@ fn cp_witness_case_19259() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -26431,41 +26436,41 @@ fn cp_witness_case_19260() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x3f800000u32);
@@ -26517,41 +26522,41 @@ fn cp_witness_case_19260() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x7f7fffffu32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -26598,41 +26603,41 @@ fn cp_witness_case_19260() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -26679,41 +26684,41 @@ fn cp_witness_case_19260() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -27288,41 +27293,41 @@ fn cp_witness_case_19261() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -27374,41 +27379,41 @@ fn cp_witness_case_19261() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x7f7fffffu32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -27455,41 +27460,41 @@ fn cp_witness_case_19261() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -27536,41 +27541,41 @@ fn cp_witness_case_19261() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -28145,41 +28150,41 @@ fn cp_witness_case_19273() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x00000000u32);
@@ -28231,41 +28236,41 @@ fn cp_witness_case_19273() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x3f800000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -28312,41 +28317,41 @@ fn cp_witness_case_19273() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -28393,41 +28398,41 @@ fn cp_witness_case_19273() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -28555,41 +28560,41 @@ fn cp_witness_case_19276() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x7f7fffffu32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -28641,41 +28646,41 @@ fn cp_witness_case_19276() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -28722,41 +28727,41 @@ fn cp_witness_case_19276() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -28803,41 +28808,41 @@ fn cp_witness_case_19276() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -28959,41 +28964,41 @@ fn cp_witness_case_19283() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(2).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[0].origin,
+            ppm_abs(facts.row(2).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[1].origin,
+            ppm_abs(facts.row(2).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[2].origin,
+            ppm_abs(facts.row(2).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(2).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(2).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(2).unwrap().padding[3].origin,
+            ppm_abs(facts.row(2).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(2).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(2).unwrap().padding[3]).rounded_to_zero));
         match facts.row(3).unwrap().width {
             BoxLengthFact::Absolute(value) => {
                 assert_eq!((value.pixels).to_bits(), 0x41200000u32);
@@ -29045,41 +29050,41 @@ fn cp_witness_case_19283() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(3).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[0].origin,
+            ppm_abs(facts.row(3).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[1].origin,
+            ppm_abs(facts.row(3).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[2]).pixels).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[2].origin,
+            ppm_abs(facts.row(3).unwrap().padding[2]).origin,
             BoxFactOrigin::Specified
         );
-        assert!(!(facts.row(3).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(3).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(3).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(3).unwrap().padding[3].origin,
+            ppm_abs(facts.row(3).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(3).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(3).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(4).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -29126,41 +29131,41 @@ fn cp_witness_case_19283() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(4).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[0].origin,
+            ppm_abs(facts.row(4).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[1].origin,
+            ppm_abs(facts.row(4).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[2].origin,
+            ppm_abs(facts.row(4).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(4).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(4).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(4).unwrap().padding[3].origin,
+            ppm_abs(facts.row(4).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(4).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(4).unwrap().padding[3]).rounded_to_zero));
         assert!(
             matches!(facts.row(5).unwrap().width, BoxLengthFact::Auto { origin } if origin == BoxFactOrigin::Initial)
         );
@@ -29207,41 +29212,41 @@ fn cp_witness_case_19283() {
             BoxFactOrigin::Initial
         );
         assert_eq!(
-            (facts.row(5).unwrap().padding[0].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[0]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[0].origin,
+            ppm_abs(facts.row(5).unwrap().padding[0]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[0].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[0]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[1].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[1]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[1].origin,
+            ppm_abs(facts.row(5).unwrap().padding[1]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[1].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[1]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[2].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[2]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[2].origin,
+            ppm_abs(facts.row(5).unwrap().padding[2]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[2].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[2]).rounded_to_zero));
         assert_eq!(
-            (facts.row(5).unwrap().padding[3].pixels).to_bits(),
+            (ppm_abs(facts.row(5).unwrap().padding[3]).pixels).to_bits(),
             0x00000000u32
         );
         assert_eq!(
-            facts.row(5).unwrap().padding[3].origin,
+            ppm_abs(facts.row(5).unwrap().padding[3]).origin,
             BoxFactOrigin::Initial
         );
-        assert!(!(facts.row(5).unwrap().padding[3].rounded_to_zero));
+        assert!(!(ppm_abs(facts.row(5).unwrap().padding[3]).rounded_to_zero));
         let result = build_captured_sibling_layout(
             &facts,
             ClearanceOuterContentGeometry {
@@ -30035,7 +30040,7 @@ fn cfh_css_cascade_and_copied_auto() {
 
 #[test]
 fn cfh_css_auto_work_thresholds() {
-    for (nodes, facade_work, core_work) in [(5, 2116, 1249), (6, 2779, 1501), (7, 3442, 1754)] {
+    for (nodes, facade_work, core_work) in [(5, 2492, 1249), (6, 3259, 1501), (7, 4026, 1754)] {
         let css = cfh_css(nodes, "right", true, "height:inherit;");
         sibling_fixture(nodes, &css, |projection, display| {
             let facts =

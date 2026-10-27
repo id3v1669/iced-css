@@ -114,9 +114,11 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 /// and `max-height` (absolute, or `none` for a maximum, or inherited) and can fail there
 /// with `Unsupported` (`PercentageLength` or `RelativeLength`), `InvalidValue` or a
 /// `Length` conversion error. A percentage `width`, margin, `right` or `left` (PCT) is
-/// kept exactly as `BoxLengthFact::Percentage`, without a conversion, and can fail
-/// with `InvalidValue` (a negative `width`) or `Unsupported` (`PercentagePrecision`);
-/// every other percentage keeps `PercentageLength`.
+/// kept exactly as `BoxLengthFact::Percentage`, and a percentage padding or `min-width`
+/// (PPM) as `LengthPercentageBoxFact::Percentage` and `max-width` as
+/// `BoxMaxFact::Percentage`, without a conversion; each can fail with `InvalidValue` (a
+/// negative value) or `Unsupported` (`PercentagePrecision`). Every other percentage
+/// (`height`, `min-height`, `max-height`, `top`, `bottom`) keeps `PercentageLength`.
 ///
 /// Shared registry/rule/declaration preflight and aggregate service reservations finish
 /// before row allocation. Actual row capacity is then charged before row initialization

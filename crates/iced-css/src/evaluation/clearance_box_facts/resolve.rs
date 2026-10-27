@@ -77,12 +77,12 @@ pub(super) fn initial_row() -> ClearanceBoxFact {
         height: BoxLengthFact::Auto {
             origin: BoxFactOrigin::Initial,
         },
-        min_width: ZERO,
+        min_width: LengthPercentageBoxFact::Absolute(ZERO),
         min_height: ZERO,
         max_width: NO_MAX,
         max_height: NO_MAX,
         margin: [BoxLengthFact::Absolute(ZERO); 4],
-        padding: [ZERO; 4],
+        padding: [LengthPercentageBoxFact::Absolute(ZERO); 4],
         clear: KeywordBoxFact {
             value: ClearSide::None,
             origin: BoxFactOrigin::Initial,
@@ -119,6 +119,22 @@ fn inherited_max(v: BoxMaxFact, origin: BoxFactOrigin) -> BoxMaxFact {
     match v {
         BoxMaxFact::Absolute(v) => BoxMaxFact::Absolute(AbsoluteBoxFact { origin, ..v }),
         BoxMaxFact::None { .. } => BoxMaxFact::None { origin },
+        BoxMaxFact::Percentage(v) => BoxMaxFact::Percentage(PercentageBoxFact { origin, ..v }),
+    }
+}
+/// PPM: an inherited padding or `min-width` fact keeps the parent's value, absolute or
+/// percentage, with the new origin.
+fn inherited_length_percentage(
+    v: LengthPercentageBoxFact,
+    origin: BoxFactOrigin,
+) -> LengthPercentageBoxFact {
+    match v {
+        LengthPercentageBoxFact::Absolute(v) => {
+            LengthPercentageBoxFact::Absolute(AbsoluteBoxFact { origin, ..v })
+        }
+        LengthPercentageBoxFact::Percentage(v) => {
+            LengthPercentageBoxFact::Percentage(PercentageBoxFact { origin, ..v })
+        }
     }
 }
 struct Resolver {
@@ -144,7 +160,8 @@ impl Resolver {
     /// margins and the REL offsets), a negative absolute length only when `signed` is
     /// set (margins and offsets); an absolute length is one counted conversion. A
     /// percentage is kept exactly, without conversion, only when `percentage` is set
-    /// (PCT: Sequence `width`, margins, `right`, `left`): a negative one only when
+    /// (PCT: Sequence `width`, margins, `right`, `left`; PPM: Sequence paddings,
+    /// `min-width`, `max-width`): a negative one only when
     /// `signed` is set, and a value outside the bounded representation is
     /// `PercentagePrecision`; otherwise it is `PercentageLength`.
     fn length(
@@ -312,12 +329,7 @@ pub(super) fn element(
                     1 => row.height = inherited(p.height, origin),
                     // MMX: a Sequence row copies the parent row's computed constraint.
                     2..=5 if mode == BoxFactMode::Sequence => match index {
-                        2 => {
-                            row.min_width = AbsoluteBoxFact {
-                                origin,
-                                ..p.min_width
-                            }
-                        }
+                        2 => row.min_width = inherited_length_percentage(p.min_width, origin),
                         3 => {
                             row.min_height = AbsoluteBoxFact {
                                 origin,
@@ -331,10 +343,8 @@ pub(super) fn element(
                     2..=5 => {}
                     6..=9 => row.margin[index - 6] = inherited(p.margin[index - 6], origin),
                     10..=13 => {
-                        row.padding[index - 10] = AbsoluteBoxFact {
-                            origin,
-                            ..p.padding[index - 10]
-                        }
+                        row.padding[index - 10] =
+                            inherited_length_percentage(p.padding[index - 10], origin)
                     }
                     14..=17 => {
                         row.border_style[index - 14] = KeywordBoxFact {
@@ -374,8 +384,10 @@ pub(super) fn element(
                 if index < 14 {
                     // MMX (CSS2.2 10.4, 10.7): a Sequence row stores its computed
                     // constraint: `none` for a max, else one counted conversion of an
-                    // absolute nonnegative length (percentages, `em`/`ex`, `auto` and
-                    // negative values keep their refusals). Legacy keeps the refusals below.
+                    // absolute nonnegative length; PPM keeps a `min-width` or `max-width`
+                    // percentage exactly (height-constraint percentages, `em`/`ex`, `auto`
+                    // and negative values keep their refusals). Legacy keeps the refusals
+                    // below.
                     if mode == BoxFactMode::Sequence && (2..6).contains(&index) {
                         if index >= 4
                             && matches!(value,SpecifiedValue::Keyword(k) if k.as_str()=="none")
@@ -390,16 +402,27 @@ pub(super) fn element(
                             }
                             continue;
                         }
+                        let percentage = index == 2 || index == 4;
                         let length =
-                            resolver.length(value, property, false, false, false, calls)?;
-                        let BoxLengthFact::Absolute(v) = length else {
-                            return Err(resolver.invalid(property));
-                        };
-                        match index {
-                            2 => row.min_width = v,
-                            3 => row.min_height = v,
-                            4 => row.max_width = BoxMaxFact::Absolute(v),
-                            _ => row.max_height = BoxMaxFact::Absolute(v),
+                            resolver.length(value, property, false, false, percentage, calls)?;
+                        match (index, length) {
+                            (2, BoxLengthFact::Absolute(v)) => {
+                                row.min_width = LengthPercentageBoxFact::Absolute(v)
+                            }
+                            (2, BoxLengthFact::Percentage(v)) => {
+                                row.min_width = LengthPercentageBoxFact::Percentage(v)
+                            }
+                            (3, BoxLengthFact::Absolute(v)) => row.min_height = v,
+                            (4, BoxLengthFact::Absolute(v)) => {
+                                row.max_width = BoxMaxFact::Absolute(v)
+                            }
+                            (4, BoxLengthFact::Percentage(v)) => {
+                                row.max_width = BoxMaxFact::Percentage(v)
+                            }
+                            (5, BoxLengthFact::Absolute(v)) => {
+                                row.max_height = BoxMaxFact::Absolute(v)
+                            }
+                            _ => return Err(resolver.invalid(property)),
                         }
                         continue;
                     }
@@ -427,8 +450,10 @@ pub(super) fn element(
                     }
                     let auto = index < 2 || (6..10).contains(&index);
                     let signed = (6..10).contains(&index);
-                    // PCT: Sequence keeps `width` and margin percentages (CSS2.2 10.2, 8.3).
-                    let percentage = mode == BoxFactMode::Sequence && (index == 0 || signed);
+                    // PCT: Sequence keeps `width` and margin percentages (CSS2.2 10.2, 8.3),
+                    // and PPM its padding percentages (8.4).
+                    let percentage = mode == BoxFactMode::Sequence
+                        && (index == 0 || signed || (10..14).contains(&index));
                     let length =
                         resolver.length(value, property, auto, signed, percentage, calls)?;
                     match index {
@@ -442,10 +467,15 @@ pub(super) fn element(
                         }
                         6..=9 => row.margin[index - 6] = length,
                         10..=13 => {
-                            let BoxLengthFact::Absolute(v) = length else {
-                                return Err(resolver.invalid(property));
+                            row.padding[index - 10] = match length {
+                                BoxLengthFact::Absolute(v) => LengthPercentageBoxFact::Absolute(v),
+                                BoxLengthFact::Percentage(v) => {
+                                    LengthPercentageBoxFact::Percentage(v)
+                                }
+                                BoxLengthFact::Auto { .. } => {
+                                    return Err(resolver.invalid(property));
+                                }
                             };
-                            row.padding[index - 10] = v;
                         }
                         _ => return Err(resolver.invalid(property)),
                     }

@@ -105,6 +105,32 @@ pub(super) fn edges([top, right, bottom, left]: [f32; 4]) -> OwnerEdges {
         left,
     }
 }
+/// PPM: the solver edges of `row`'s computed paddings. A percentage side is refused
+/// fail-closed with `PercentageLength`: Legacy rows never hold one and the Sequence
+/// facade passes resolved rows, so the refusal is unreachable.
+fn padding_edges(
+    row: &ClearanceBoxFact,
+    projected: usize,
+) -> Result<OwnerEdges, CapturedClearanceError> {
+    let side = |index: usize, property: &'static str| {
+        row.padding[index]
+            .absolute()
+            .map(|value| value.pixels)
+            .ok_or_else(|| {
+                unsupported(
+                    projected,
+                    property,
+                    CapturedClearanceUnsupported::PercentageLength,
+                )
+            })
+    };
+    Ok(OwnerEdges {
+        top: side(0, "padding-top")?,
+        right: side(1, "padding-right")?,
+        bottom: side(2, "padding-bottom")?,
+        left: side(3, "padding-left")?,
+    })
+}
 /// Derive the finite nonroot region from real computed CSS facts without allocation.
 /// The result borrows projection storage, independently of temporary fact/style
 /// wrappers. The full five-node source graph remains intact.
@@ -289,7 +315,7 @@ pub(super) fn child_facts_from_row<'p>(
         height,
         margin,
         border: edges(row.border_widths()),
-        padding: edges(row.padding.map(|value| value.pixels)),
+        padding: padding_edges(row, projected)?,
         clear: row.clear.value,
     })
 }
@@ -380,7 +406,7 @@ fn admit_captured_region<'p>(
         },
         parent_display: display(1)?,
         parent_border: edges(p.border_widths()),
-        parent_padding: edges(p.padding.map(|v| v.pixels)),
+        parent_padding: padding_edges(p, 1)?,
         margin_top: p.margin[0],
         parent_clear: p.clear.value,
         width: auto_length(p.width).ok_or_else(|| unsupported(1, "width", U::PercentageLength))?,
@@ -812,7 +838,13 @@ pub fn build_captured_clearance_with_parent_bottom<'p, 'h, 'd, 's, 'b, 'r>(
     let computed_margin_bottom = row.margin[2];
     let bottom = place_block_bottom(BlockBottomInput {
         content_bottom: parent.height().content_bottom,
-        padding_bottom: row.padding[2].pixels,
+        padding_bottom: row.padding[2]
+            .absolute()
+            .ok_or(E::FactInvariant {
+                projected: 1,
+                property: "padding-bottom",
+            })?
+            .pixels,
         border_bottom: row.border_widths()[2],
         margin_bottom: auto_length(computed_margin_bottom).ok_or(E::FactInvariant {
             projected: 1,

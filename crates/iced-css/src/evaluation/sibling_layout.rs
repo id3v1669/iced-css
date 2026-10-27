@@ -7,6 +7,7 @@
 use super::{
     clearance_box_facts::{
         AbsoluteBoxFact, BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact, KeywordBoxFact,
+        LengthPercentageBoxFact, PercentageBoxFact,
     },
     clearance_bridge::{
         CapturedClearanceError, CapturedClearanceUnsupported, ChildMarginMode,
@@ -346,8 +347,9 @@ pub enum SiblingLayoutError {
     ParentAutoOverflow {
         source: usize,
     },
-    /// PCT: a percentage `width`, margin, `right` or `left` of `source` (`property` is
-    /// its CSS name) cannot be resolved against its containing block's width.
+    /// PCT: a percentage `width`, margin, `right` or `left` of `source` (PPM: also a
+    /// padding, `min-width` or `max-width`; `property` is its CSS name) cannot be
+    /// resolved against its containing block's width.
     Percentage {
         source: usize,
         property: &'static str,
@@ -395,7 +397,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `376 + 32*N + 318*(N-2) + 313*(N-3)` is prepaid before any
+/// Facade work `440 + 32*N + 422*(N-2) + 313*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -428,6 +430,10 @@ impl std::error::Error for SiblingLayoutError {
 /// width resolved again 9) and 124 per child (its first resolution 57, the held-result
 /// test 2, its second resolution 57 and four margin comparisons 8); a resolution is
 /// seven longhands of 8 and the basis read, prepaid when no value is a percentage.
+/// Padding and width-constraint percentages (PPM) add six longhands to each
+/// resolution (105 in all): 64 fixed actions (P's resolution 48 and F's `min-width`
+/// and `max-width` resolved again 16) and 104 per child (its two resolutions 96 and
+/// four padding comparisons 8), prepaid when no value is a percentage.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -485,7 +491,8 @@ impl std::error::Error for SiblingLayoutError {
 /// bottom read the constrained boxes, so a constraint that makes a child leave P's
 /// content box under P `auto` is `ParentAutoOverflow`.
 /// Every Sequence row's percentage `width`, margins, `right` and `left` (PCT, CSS2.2
-/// 10.2, 8.3, 9.3.2) resolve against its containing block's width: P's against O's
+/// 10.2, 8.3, 9.3.2), paddings, `min-width` and `max-width` (PPM, CSS2.2 8.4, 10.4)
+/// resolve against its containing block's width: P's against O's
 /// content width, each child's (F included) against P's used content width, by one
 /// exact product rounded once to the nearest f32 (`SiblingBoxFacts::numeric_limits()`);
 /// the solvers then run unchanged on the resolved values, and the computed accessors
@@ -494,8 +501,10 @@ impl std::error::Error for SiblingLayoutError {
 /// error occurred before, so every earlier error keeps its order. An invalid O basis
 /// keeps the solver's own error. A child's percentages resolve after its admission
 /// tests (a failure is `Percentage` at that child); the placement loop and F's width
-/// resolve each row again, and a failure or a margin that differs there is
-/// `FactInvariant`.
+/// resolve each row again, and a failure or a margin or padding that differs there is
+/// `FactInvariant`. Every reader of a padding or a width constraint reads a resolved
+/// row (PPM): P's solve, origin and bottom, each normal's solve and padding edges, the
+/// core's child facts and F's `constrain`.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -620,7 +629,10 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // height is +0 (Q-6); a normal with a positive `min-height` is admitted with
         // that height (it cannot collapse through, 8.3.1), any other Auto normal stays
         // `HeightKind`.
-        let (min_height, max_height) = (row.min_height.pixels, max_value(row.max_height));
+        let (min_height, max_height) = (
+            row.min_height.pixels,
+            max_value(row.max_height, source, "max-height")?,
+        );
         let auto_height = constrain(0.0, min_height, max_height);
         let height = match row.height {
             BoxLengthFact::Absolute(value) => {
@@ -688,19 +700,33 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         padding: parent_padding,
         horizontal,
     } = parent_solve?;
-    let float_width = match resolve_length(float_row.width, horizontal.used.width, numeric) {
-        Ok(BoxLengthFact::Absolute(value)) => constrain(
-            value.pixels,
-            float_row.min_width.pixels,
-            max_value(float_row.max_width),
-        ),
-        _ => {
-            return Err(E::FactInvariant {
-                source: 3,
-                property: "width",
-            });
-        }
+    // PPM (PL-18): F's `min-width` and `max-width` are resolved there too, so
+    // `constrain` reads resolved values only.
+    let Ok(BoxLengthFact::Absolute(float_width)) =
+        resolve_length(float_row.width, horizontal.used.width, numeric)
+    else {
+        return Err(E::FactInvariant {
+            source: 3,
+            property: "width",
+        });
     };
+    let float_min = resolve_length_percentage(float_row.min_width, horizontal.used.width, numeric)
+        .map_err(|_| E::FactInvariant {
+            source: 3,
+            property: "min-width",
+        })?;
+    let float_max =
+        resolve_max(float_row.max_width, horizontal.used.width, numeric).map_err(|_| {
+            E::FactInvariant {
+                source: 3,
+                property: "max-width",
+            }
+        })?;
+    let float_width = constrain(
+        float_width.pixels,
+        length_operand(float_min, 3, "min-width")?,
+        max_value(float_max, 3, "max-width")?,
+    );
     let origin = place_first_child_origin(FirstChildOriginInput {
         containing_top: outer.content_top,
         margin_top: operand(parent_used.margin[0], 1, "margin-top")?,
@@ -786,8 +812,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             })?;
         let used_height = used_child_height(child, source)?;
         // PCT (C-1): the row is resolved again against P's used content width; a failure,
-        // or a margin that differs from the first resolution (kept in `child`), is an
-        // invariant breach.
+        // or a margin (PPM: or a padding) that differs from the first resolution (kept in
+        // `child`), is an invariant breach.
         let used = resolved_row(row, horizontal.used.width, numeric, source).map_err(|_| {
             E::FactInvariant {
                 source,
@@ -800,7 +826,15 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             child.margin.bottom,
             child.margin.left,
         ];
-        if used.margin.map(auto_length) != margins.map(Some) {
+        let paddings = [
+            child.padding.top,
+            child.padding.right,
+            child.padding.bottom,
+            child.padding.left,
+        ];
+        if used.margin.map(auto_length) != margins.map(Some)
+            || padding_operands(&used, source)? != paddings
+        {
             return Err(E::FactInvariant {
                 source,
                 property: "percentage",
@@ -943,9 +977,11 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
 
     let computed_height = parent_row.height;
+    // PPM (PL-18): P's height constraints are read from its resolved row (they are never
+    // percentages, so the values are the computed ones).
     let (parent_min_height, parent_max_height) = (
-        parent_row.min_height.pixels,
-        max_value(parent_row.max_height),
+        parent_used.min_height.pixels,
+        max_value(parent_used.max_height, 1, "max-height")?,
     );
     let tentative = if matches!(computed_height, BoxLengthFact::Auto { .. })
         && children.iter().any(|child| {
@@ -1047,10 +1083,11 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         .map_err(E::Height)?,
         BoxLengthFact::Absolute(_) | BoxLengthFact::Percentage(_) => tentative,
     };
+    // PPM (PL-18): P's bottom reads its resolved row and border edges.
     let bottom = place_block_bottom(BlockBottomInput {
         content_bottom: height.content_bottom,
-        padding_bottom: parent_row.padding[2].pixels,
-        border_bottom: parent_row.border_widths()[2],
+        padding_bottom: length_operand(parent_used.padding[2], 1, "padding-bottom")?,
+        border_bottom: parent_border.bottom,
         margin_bottom: operand(parent_used.margin[2], 1, "margin-bottom")?,
     })
     .map_err(E::Bottom)?;
@@ -1229,12 +1266,41 @@ fn constrain(value: f32, min: f32, max: Option<f32>) -> f32 {
     if value == 0.0 { 0.0 } else { value }
 }
 
-/// MMX: a computed `max-*` fact as the solver's optional maximum.
-fn max_value(fact: BoxMaxFact) -> Option<f32> {
+/// MMX: a computed `max-*` fact as the solver's optional maximum. PPM: a percentage
+/// left in a row resolved by `resolved_row` is an invariant breach.
+fn max_value(
+    fact: BoxMaxFact,
+    source: usize,
+    property: &'static str,
+) -> Result<Option<f32>, SiblingLayoutError> {
     match fact {
-        BoxMaxFact::Absolute(value) => Some(value.pixels),
-        BoxMaxFact::None { .. } => None,
+        BoxMaxFact::Absolute(value) => Ok(Some(value.pixels)),
+        BoxMaxFact::None { .. } => Ok(None),
+        BoxMaxFact::Percentage(_) => Err(SiblingLayoutError::FactInvariant { source, property }),
     }
+}
+
+/// PPM: the solver operand of a padding or `min-width` fact of a row resolved by
+/// `resolved_row`; a percentage left there is an invariant breach.
+fn length_operand(
+    fact: LengthPercentageBoxFact,
+    source: usize,
+    property: &'static str,
+) -> Result<f32, SiblingLayoutError> {
+    fact.absolute()
+        .map(|value| value.pixels)
+        .ok_or(SiblingLayoutError::FactInvariant { source, property })
+}
+
+/// PPM: the four paddings (top, right, bottom, left) of a resolved row as solver
+/// operands.
+fn padding_operands(row: &ClearanceBoxFact, source: usize) -> Result<[f32; 4], SiblingLayoutError> {
+    Ok([
+        length_operand(row.padding[0], source, "padding-top")?,
+        length_operand(row.padding[1], source, "padding-right")?,
+        length_operand(row.padding[2], source, "padding-bottom")?,
+        length_operand(row.padding[3], source, "padding-left")?,
+    ])
 }
 
 /// PCT: P's resolved row and horizontal solve, held by the caller (Q-6).
@@ -1253,7 +1319,9 @@ struct ParentSolve {
 /// nonfinite left, or a width that is nonfinite or negative) keeps the solver's own
 /// error unconditionally: P's percentages are then never resolved (they become +0, see
 /// `zeroed_row`) and the solver refuses the origin or `containing_width` before it reads
-/// any operand.
+/// any operand. PPM: P's paddings, `min-width` and `max-width` are resolved, and zeroed,
+/// with the others, so every operand read below succeeds before the solver. This
+/// mirrors `place_block_horizontal`'s first checks; T18 and R18 pin the order.
 fn solve_parent(
     facts: &SiblingBoxFacts<'_, '_, '_, '_, '_, '_>,
     content_left: f32,
@@ -1271,7 +1339,7 @@ fn solve_parent(
         zeroed_row(parent_row)
     };
     let border = edges(used.border_widths());
-    let padding = edges(used.padding.map(|value| value.pixels));
+    let padding = edges(padding_operands(&used, 1)?);
     let horizontal = place_block_horizontal(
         content_left,
         BlockWidthInput {
@@ -1284,8 +1352,8 @@ fn solve_parent(
             border_right: border.right,
             padding_left: padding.left,
             padding_right: padding.right,
-            min_width: used.min_width.pixels,
-            max_width: max_value(used.max_width),
+            min_width: length_operand(used.min_width, 1, "min-width")?,
+            max_width: max_value(used.max_width, 1, "max-width")?,
         },
     )
     .map_err(E::ParentHorizontal)?;
@@ -1299,29 +1367,72 @@ fn solve_parent(
     })
 }
 
-/// PCT (CSS2.2 10.2, 8.3, 9.3.2): `fact` with a percentage resolved against `basis`, the
-/// containing block's width, by one exact product rounded once to the nearest f32 (zero
-/// is +0), keeping its origin and rounding flag; any other fact is returned unchanged.
+/// PCT (CSS2.2 10.2, 8.3, 9.3.2) and PPM (8.4, 10.4): `percentage` resolved against
+/// `basis`, the containing block's width, by one exact product rounded once to the
+/// nearest f32 (zero is +0), keeping its origin and recording the rounding flag.
+fn resolve_percentage(
+    percentage: PercentageBoxFact,
+    basis: f32,
+    limits: NumericLimits,
+) -> Result<AbsoluteBoxFact, ConversionError> {
+    let resolved = percentage.value.percentage_finite_f32(basis, limits)?;
+    Ok(AbsoluteBoxFact {
+        pixels: resolved.value,
+        rounded_to_zero: resolved.rounded_to_zero,
+        origin: percentage.origin,
+    })
+}
+
+/// PCT: `fact` with a percentage resolved (`resolve_percentage`); any other fact is
+/// returned unchanged.
 fn resolve_length(
     fact: BoxLengthFact,
     basis: f32,
     limits: NumericLimits,
 ) -> Result<BoxLengthFact, ConversionError> {
-    let BoxLengthFact::Percentage(percentage) = fact else {
-        return Ok(fact);
-    };
-    let resolved = percentage.value.percentage_finite_f32(basis, limits)?;
-    Ok(BoxLengthFact::Absolute(AbsoluteBoxFact {
-        pixels: resolved.value,
-        rounded_to_zero: resolved.rounded_to_zero,
-        origin: percentage.origin,
-    }))
+    match fact {
+        BoxLengthFact::Percentage(percentage) => Ok(BoxLengthFact::Absolute(resolve_percentage(
+            percentage, basis, limits,
+        )?)),
+        other => Ok(other),
+    }
+}
+
+/// PPM: a padding or `min-width` fact with a percentage resolved; an absolute fact is
+/// returned unchanged.
+fn resolve_length_percentage(
+    fact: LengthPercentageBoxFact,
+    basis: f32,
+    limits: NumericLimits,
+) -> Result<LengthPercentageBoxFact, ConversionError> {
+    match fact {
+        LengthPercentageBoxFact::Percentage(percentage) => Ok(LengthPercentageBoxFact::Absolute(
+            resolve_percentage(percentage, basis, limits)?,
+        )),
+        other => Ok(other),
+    }
+}
+
+/// PPM: a `max-width` fact with a percentage resolved; an absolute or `none` fact is
+/// returned unchanged.
+fn resolve_max(
+    fact: BoxMaxFact,
+    basis: f32,
+    limits: NumericLimits,
+) -> Result<BoxMaxFact, ConversionError> {
+    match fact {
+        BoxMaxFact::Percentage(percentage) => Ok(BoxMaxFact::Absolute(resolve_percentage(
+            percentage, basis, limits,
+        )?)),
+        other => Ok(other),
+    }
 }
 
 /// PCT: a copy of `row` whose percentages are resolved against `basis`, in the fixed
 /// order `width`, `margin-top`, `margin-right`, `margin-bottom`, `margin-left`, `right`,
-/// `left`, so that the first failing property is deterministic; a failure is
-/// `Percentage` at `source`.
+/// `left`, then (PPM) `padding-top`, `padding-right`, `padding-bottom`, `padding-left`,
+/// `min-width`, `max-width`, so that the first failing property is deterministic; a
+/// failure is `Percentage` at `source`.
 fn resolved_row(
     row: &ClearanceBoxFact,
     basis: f32,
@@ -1335,6 +1446,15 @@ fn resolved_row(
             error,
         })
     };
+    let resolve_lp = |fact: LengthPercentageBoxFact, property: &'static str| {
+        resolve_length_percentage(fact, basis, limits).map_err(|error| {
+            SiblingLayoutError::Percentage {
+                source,
+                property,
+                error,
+            }
+        })
+    };
     let mut used = *row;
     used.width = resolve(row.width, "width")?;
     used.margin[0] = resolve(row.margin[0], "margin-top")?;
@@ -1345,25 +1465,49 @@ fn resolved_row(
         offset[1] = resolve(offset[1], "right")?;
         offset[3] = resolve(offset[3], "left")?;
     }
+    used.padding[0] = resolve_lp(row.padding[0], "padding-top")?;
+    used.padding[1] = resolve_lp(row.padding[1], "padding-right")?;
+    used.padding[2] = resolve_lp(row.padding[2], "padding-bottom")?;
+    used.padding[3] = resolve_lp(row.padding[3], "padding-left")?;
+    used.min_width = resolve_lp(row.min_width, "min-width")?;
+    used.max_width = resolve_max(row.max_width, basis, limits).map_err(|error| {
+        SiblingLayoutError::Percentage {
+            source,
+            property: "max-width",
+            error,
+        }
+    })?;
     Ok(used)
 }
 
-/// PCT (plan 2, K-1): a copy of `row` whose percentages are +0 with their origin, without
+/// PCT: a copy of `row` whose percentages are +0 with their origin, without
 /// the percentage primitive, for an invalid O basis that the P solver refuses before it
-/// reads any operand.
+/// reads any operand (PPM: paddings, `min-width` and `max-width` included).
 fn zeroed_row(row: &ClearanceBoxFact) -> ClearanceBoxFact {
+    let absolute = |percentage: PercentageBoxFact| AbsoluteBoxFact {
+        pixels: 0.0,
+        rounded_to_zero: false,
+        origin: percentage.origin,
+    };
     let zero = |fact| match fact {
-        BoxLengthFact::Percentage(percentage) => BoxLengthFact::Absolute(AbsoluteBoxFact {
-            pixels: 0.0,
-            rounded_to_zero: false,
-            origin: percentage.origin,
-        }),
+        BoxLengthFact::Percentage(percentage) => BoxLengthFact::Absolute(absolute(percentage)),
+        other => other,
+    };
+    let zero_lp = |fact| match fact {
+        LengthPercentageBoxFact::Percentage(percentage) => {
+            LengthPercentageBoxFact::Absolute(absolute(percentage))
+        }
         other => other,
     };
     let mut used = *row;
     used.width = zero(row.width);
     used.margin = row.margin.map(zero);
     used.offset = row.offset.map(|offset| offset.map(zero));
+    used.padding = row.padding.map(zero_lp);
+    used.min_width = zero_lp(row.min_width);
+    if let BoxMaxFact::Percentage(percentage) = row.max_width {
+        used.max_width = BoxMaxFact::Absolute(absolute(percentage));
+    }
     used
 }
 
@@ -1406,6 +1550,7 @@ fn place_child_horizontal(
     source: usize,
 ) -> Result<BlockHorizontalPlacement, SiblingLayoutError> {
     let border = row.border_widths();
+    let padding = padding_operands(row, source)?;
     place_block_horizontal(
         parent.content.left,
         BlockWidthInput {
@@ -1416,10 +1561,10 @@ fn place_child_horizontal(
             margin_right: operand(row.margin[1], source, "margin-right")?,
             border_left: border[3],
             border_right: border[1],
-            padding_left: row.padding[3].pixels,
-            padding_right: row.padding[1].pixels,
-            min_width: row.min_width.pixels,
-            max_width: max_value(row.max_width),
+            padding_left: padding[3],
+            padding_right: padding[1],
+            min_width: length_operand(row.min_width, source, "min-width")?,
+            max_width: max_value(row.max_width, source, "max-width")?,
         },
     )
     .map_err(|error| SiblingLayoutError::ChildHorizontal { source, error })
@@ -1502,7 +1647,13 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // (one longhand and the basis read). Per child: its first resolution 57, the
         // held-result test 2, its second resolution 57 and four margin comparisons 8.
         .checked_add(72)?
-        .checked_add(children.checked_mul(124)?)
+        .checked_add(children.checked_mul(124)?)?
+        // PPM: a resolution covers six more longhands of 8 (the four paddings,
+        // `min-width` and `max-width`; 105 in all): 64 fixed (P's resolution 48 and F's
+        // `min-width` and `max-width` resolved again 16) and 104 per child (its two
+        // resolutions 96 and four padding comparisons 8), charged on every path.
+        .checked_add(64)?
+        .checked_add(children.checked_mul(104)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1606,9 +1757,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(2116));
-        assert_eq!(facade_work(6), Some(2779));
-        assert_eq!(facade_work(7), Some(3442));
+        assert_eq!(facade_work(5), Some(2492));
+        assert_eq!(facade_work(6), Some(3259));
+        assert_eq!(facade_work(7), Some(4026));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
