@@ -95,8 +95,12 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 ///
 /// This is the Sequence fact mode: every CSS2.2 border style is admitted and every row
 /// carries computed `border-*-width` facts with true provenance (see `ClearanceBoxFact`).
-/// Work is `31*N+2+r` for N sources and r rules, and the numeric allowance is `18*N`
-/// conversions; the Legacy entry keeps `27*N+2+r` and `14*N`.
+/// Work is `35*N+2+r` for N sources and r rules, and the numeric allowance is `22*N`
+/// conversions; the Legacy entry keeps `27*N+2+r` and `14*N`. A Sequence row whose
+/// computed `position` is `relative` (O included) also resolves `top`, `right`, `bottom`
+/// and `left`, after its other longhands and before its pseudos, and can fail there with
+/// `Unsupported` (`PercentageLength`, `RelativeLength` or `InheritedOffset`),
+/// `InvalidValue`, `Defaulting`, `InitialRecipe` or a `Length` conversion error.
 ///
 /// Shared registry/rule/declaration preflight and aggregate service reservations finish
 /// before row allocation. Actual row capacity is then charged before row initialization

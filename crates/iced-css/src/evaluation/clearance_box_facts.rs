@@ -48,6 +48,12 @@ pub enum BoxLengthFact {
     Absolute(AbsoluteBoxFact),
     Auto { origin: BoxFactOrigin },
 }
+/// A computed `max-width` or `max-height` (MMX): an absolute length, or `none`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BoxMaxFact {
+    Absolute(AbsoluteBoxFact),
+    None { origin: BoxFactOrigin },
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoxOverflow {
     Visible,
@@ -77,10 +83,17 @@ pub struct BorderWidthFact {
     pub event: Option<RangeEvent>,
     pub origin: BoxFactOrigin,
 }
-/// Computed facts only. Construction guarantees min-width/min-height zero and
-/// max-width/max-height none. Edge arrays use top, right, bottom, left order. An
-/// inherited rounding flag or range event describes the original conversion;
-/// inheritance does not emit a new warning.
+/// Computed facts only. Edge arrays use top, right, bottom, left order. An inherited
+/// rounding flag or range event describes the original conversion; inheritance does not
+/// emit a new warning.
+///
+/// Min/max facts (MMX) depend on the entry. Legacy construction refuses every
+/// nondefault `min-*`/`max-*` value and never stores one: every Legacy row carries
+/// `min_width`/`min_height` (+0, `Initial`) and `max_width`/`max_height`
+/// `None { Initial }`, and that `origin` is not provenance. A Sequence row carries the
+/// computed constraints with true provenance (CSS2.2 10.4, 10.7): an absolute
+/// nonnegative length converted once (zero is +0), `none` for a max, or the parent
+/// row's fact for `inherit`; percentages and `em`/`ex` stay refused.
 ///
 /// Border facts depend on the entry. `evaluate_clearance_box_facts` (Legacy) admits
 /// only `none`/`hidden` styles and never computes a width: every Legacy width fact is
@@ -102,6 +115,12 @@ pub struct BorderWidthFact {
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,
     pub height: BoxLengthFact,
+    /// Computed `min-width`, `min-height`, `max-width` and `max-height`; see the type
+    /// contract for Legacy and Sequence rows.
+    pub min_width: AbsoluteBoxFact,
+    pub min_height: AbsoluteBoxFact,
+    pub max_width: BoxMaxFact,
+    pub max_height: BoxMaxFact,
     pub margin: [BoxLengthFact; 4],
     pub padding: [AbsoluteBoxFact; 4],
     pub clear: KeywordBoxFact<ClearSide>,
@@ -500,21 +519,24 @@ pub(super) fn evaluate_box_rows<'h>(
         )?;
         // REL (CSS2.2 9.3.2, 9.4.3): only a Sequence row whose computed `position` is
         // `relative` resolves its offsets, after its other longhands and before its
-        // pseudos; the offsets do not apply to any other row (9.3.1). The position is
-        // proven present by `prepare_box_facts`; an absence is the existing join error.
-        let position = display
-            .resolution(original)
-            .ok_or(E::SourceJoin { projected })?
-            .position;
-        if mode == BoxFactMode::Sequence && position == Position::Relative {
-            row.offset = Some(resolve::offsets(
-                &winners,
-                ids,
-                original,
-                parent,
-                limits.numeric,
-                &mut receipt.numeric_calls,
-            )?);
+        // pseudos; the offsets do not apply to any other row (9.3.1). Only the Sequence
+        // entry reads the position (MMX K-2), which `prepare_box_facts` proves present;
+        // an absence is the existing join error.
+        if mode == BoxFactMode::Sequence {
+            let position = display
+                .resolution(original)
+                .ok_or(E::SourceJoin { projected })?
+                .position;
+            if position == Position::Relative {
+                row.offset = Some(resolve::offsets(
+                    &winners,
+                    ids,
+                    original,
+                    parent,
+                    limits.numeric,
+                    &mut receipt.numeric_calls,
+                )?);
+            }
         }
         for (target, pseudo) in [
             (BoxFactTarget::Before, PseudoElement::Before),

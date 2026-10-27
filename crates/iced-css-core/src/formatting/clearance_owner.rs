@@ -54,10 +54,12 @@ pub enum ChildContext {
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OwnerHeight {
-    /// Used CSS height after applicable upstream min/max processing. For B1/B2,
-    /// this also asserts a positive explicit *computed* height category: callers
-    /// must not relabel auto, percentage, zero-computed, or native-derived height.
-    /// SourceNode cannot prove that provenance; the owner checks the used payload.
+    /// Used CSS height after applicable upstream min/max processing (CSS2.2 10.7). For
+    /// B1/B2 this also asserts a positive used height of an explicit computed height,
+    /// or (MMX, Sequence only) of a normal whose computed Auto or zero height is raised
+    /// by a positive `min-height` (10.6.3 gives the tentative zero; such a box cannot
+    /// collapse through, 8.3.1); callers must not relabel percentage or native-derived
+    /// height. SourceNode cannot prove that provenance; the owner checks the used payload.
     Explicit(f32),
     /// Computed Auto: only the childless Sequence float resolves this to positive zero.
     /// Legacy owners and every normal child reject this category.

@@ -59,6 +59,10 @@ const ZERO: AbsoluteBoxFact = AbsoluteBoxFact {
     rounded_to_zero: false,
     origin: BoxFactOrigin::Initial,
 };
+/// The initial `max-width`/`max-height` (MMX); every Legacy row keeps it.
+const NO_MAX: BoxMaxFact = BoxMaxFact::None {
+    origin: BoxFactOrigin::Initial,
+};
 /// Every Legacy width fact, and every Sequence width before its longhand is resolved.
 const ZERO_WIDTH: BorderWidthFact = BorderWidthFact {
     pixels: 0.,
@@ -73,6 +77,10 @@ pub(super) fn initial_row() -> ClearanceBoxFact {
         height: BoxLengthFact::Auto {
             origin: BoxFactOrigin::Initial,
         },
+        min_width: ZERO,
+        min_height: ZERO,
+        max_width: NO_MAX,
+        max_height: NO_MAX,
         margin: [BoxLengthFact::Absolute(ZERO); 4],
         padding: [ZERO; 4],
         clear: KeywordBoxFact {
@@ -101,6 +109,13 @@ fn inherited(v: BoxLengthFact, origin: BoxFactOrigin) -> BoxLengthFact {
     match v {
         BoxLengthFact::Absolute(v) => BoxLengthFact::Absolute(AbsoluteBoxFact { origin, ..v }),
         BoxLengthFact::Auto { .. } => BoxLengthFact::Auto { origin },
+    }
+}
+/// MMX: an inherited `max-*` fact keeps the parent's value with the new origin.
+fn inherited_max(v: BoxMaxFact, origin: BoxFactOrigin) -> BoxMaxFact {
+    match v {
+        BoxMaxFact::Absolute(v) => BoxMaxFact::Absolute(AbsoluteBoxFact { origin, ..v }),
+        BoxMaxFact::None { .. } => BoxMaxFact::None { origin },
     }
 }
 struct Resolver {
@@ -275,6 +290,23 @@ pub(super) fn element(
                 match index {
                     0 => row.width = inherited(p.width, origin),
                     1 => row.height = inherited(p.height, origin),
+                    // MMX: a Sequence row copies the parent row's computed constraint.
+                    2..=5 if mode == BoxFactMode::Sequence => match index {
+                        2 => {
+                            row.min_width = AbsoluteBoxFact {
+                                origin,
+                                ..p.min_width
+                            }
+                        }
+                        3 => {
+                            row.min_height = AbsoluteBoxFact {
+                                origin,
+                                ..p.min_height
+                            }
+                        }
+                        4 => row.max_width = inherited_max(p.max_width, origin),
+                        _ => row.max_height = inherited_max(p.max_height, origin),
+                    },
                     // A successful parent's constraints are already computed zero/none.
                     2..=5 => {}
                     6..=9 => row.margin[index - 6] = inherited(p.margin[index - 6], origin),
@@ -320,6 +352,36 @@ pub(super) fn element(
             }
             DefaultedValueRef::Compute(value) => {
                 if index < 14 {
+                    // MMX (CSS2.2 10.4, 10.7): a Sequence row stores its computed
+                    // constraint: `none` for a max, else one counted conversion of an
+                    // absolute nonnegative length (percentages, `em`/`ex`, `auto` and
+                    // negative values keep their refusals). Legacy keeps the refusals below.
+                    if mode == BoxFactMode::Sequence && (2..6).contains(&index) {
+                        if index >= 4
+                            && matches!(value,SpecifiedValue::Keyword(k) if k.as_str()=="none")
+                        {
+                            let none = BoxMaxFact::None {
+                                origin: BoxFactOrigin::Specified,
+                            };
+                            if index == 4 {
+                                row.max_width = none;
+                            } else {
+                                row.max_height = none;
+                            }
+                            continue;
+                        }
+                        let length = resolver.length(value, property, false, false, calls)?;
+                        let BoxLengthFact::Absolute(v) = length else {
+                            return Err(resolver.invalid(property));
+                        };
+                        match index {
+                            2 => row.min_width = v,
+                            3 => row.min_height = v,
+                            4 => row.max_width = BoxMaxFact::Absolute(v),
+                            _ => row.max_height = BoxMaxFact::Absolute(v),
+                        }
+                        continue;
+                    }
                     if (4..6).contains(&index) {
                         if matches!(value,SpecifiedValue::Keyword(k) if k.as_str()=="none") {
                             continue;

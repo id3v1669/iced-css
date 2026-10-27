@@ -236,6 +236,9 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// source. Contact and empty intervals pass (Q1); signed margins make rejection reachable.
 /// Childless F admits computed Auto height with positive-zero used content height;
 /// normal children retain positive explicit height and Legacy admission is unchanged.
+/// The facade passes used heights after `min-height`/`max-height` (MMX, CSS2.2 10.7):
+/// an F whose constrained Auto height is positive, and a normal whose computed Auto or
+/// zero height is raised by a positive `min-height`, arrive as explicit heights.
 /// P and every child may be relatively positioned (REL, CSS2.2 9.4.3); the owner
 /// publishes their normal-flow geometry, which the offsets do not change, and the
 /// outer source stays static.

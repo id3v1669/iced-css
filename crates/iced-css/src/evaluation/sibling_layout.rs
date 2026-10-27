@@ -5,7 +5,9 @@
 //! temporary child-fact scratch.
 
 use super::{
-    clearance_box_facts::{BoxLengthFact, BoxOverflow, ClearanceBoxFact, KeywordBoxFact},
+    clearance_box_facts::{
+        BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact, KeywordBoxFact,
+    },
     clearance_bridge::{
         CapturedClearanceError, CapturedClearanceUnsupported, ChildMarginMode,
         ClearanceOuterContentGeometry, auto_length, child_facts_from_row, edges, joined_direction,
@@ -18,8 +20,8 @@ use iced_css_core::{
         bfc_height::{
             BfcHeightError, BfcHeightInput, BfcHeightMode, BfcHeightPlacement,
             SignedBfcHeightError, SignedBfcHeightInput, SignedNormalMarginError,
-            SignedNormalMarginInput, publish_signed_normal_margin_edges, solve_bfc_height,
-            solve_signed_bfc_height,
+            SignedNormalMarginInput, constrain_bfc_height, publish_signed_normal_margin_edges,
+            solve_bfc_height, solve_signed_bfc_height,
         },
         block::{
             BlockHorizontalError, BlockHorizontalPlacement, BlockWidthInput, BlockWidthResult,
@@ -379,7 +381,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `246 + 32*N + 172*(N-2) + 313*(N-3)` is prepaid before any
+/// Facade work `304 + 32*N + 194*(N-2) + 313*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -403,6 +405,11 @@ impl std::error::Error for SiblingLayoutError {
 /// paths too. Relative positioning adds 28 fixed actions (P's offset solve 27 and
 /// its widened admission test 1) and 38 per child (its offset solve 27, the
 /// containment shift 10 and its widened admission test 1), prepaid on static paths.
+/// Absolute min/max constraints (MMX) add 22 actions per box (P and each child: four
+/// constraint reads, two max category conversions, the width hand-off with a possible
+/// max-width rerun, and the height constraint) and, for P alone, 8 for its possible
+/// min-width rerun and 28 for its Auto height step: 58 fixed and 22 per child,
+/// prepaid when every constraint is default.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -447,6 +454,18 @@ impl std::error::Error for SiblingLayoutError {
 /// by the child's own `left` and `top`, one f32 addition per edge, before the
 /// containment test; P's own offset moves its content box with its children and is
 /// not applied. Under P `hidden` shifted children are admitted.
+/// Every Sequence row's absolute `min-width`, `max-width`, `min-height` and
+/// `max-height` apply (MMX, CSS2.2 10.4 and 10.7; O's are captured and unused). P and
+/// every normal pass their width constraints to the 10.4 category solver, whose reruns
+/// show in `passes`; F's used width is its computed width after the max, then the min
+/// rerun. An explicit height of P or of a child is replaced the same way. A child's
+/// computed Auto height is tentatively +0: F keeps the Auto category when its
+/// constrained height is +0, and a normal with a positive `min-height` is admitted with
+/// that used height; any other Auto normal stays refused. P's Auto height is the
+/// tentative placement of either route, then `constrain_bfc_height`: a limit that
+/// applies reruns the explicit route on P's content top. Containment, offsets and P's
+/// bottom read the constrained boxes, so a constraint that makes a child leave P's
+/// content box under P `auto` is `ParentAutoOverflow`.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -561,9 +580,20 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 )));
             }
         }
+        // MMX (CSS2.2 10.7): the core receives the used height after the min/max
+        // reruns. A computed Auto height is tentatively +0 (10.6.3 for a normal, 10.6.7
+        // for F without content): F keeps the Auto category when its constrained
+        // height is +0 (Q-6); a normal with a positive `min-height` is admitted with
+        // that height (it cannot collapse through, 8.3.1), any other Auto normal stays
+        // `HeightKind`.
+        let (min_height, max_height) = (row.min_height.pixels, max_value(row.max_height));
+        let auto_height = constrain(0.0, min_height, max_height);
         let height = match row.height {
-            BoxLengthFact::Absolute(value) => OwnerHeight::Explicit(value.pixels),
-            BoxLengthFact::Auto { .. } if source == 3 => OwnerHeight::Auto,
+            BoxLengthFact::Absolute(value) => {
+                OwnerHeight::Explicit(constrain(value.pixels, min_height, max_height))
+            }
+            BoxLengthFact::Auto { .. } if source == 3 && auto_height == 0.0 => OwnerHeight::Auto,
+            BoxLengthFact::Auto { .. } if auto_height > 0.0 => OwnerHeight::Explicit(auto_height),
             BoxLengthFact::Auto { .. } => {
                 return Err(E::Captured(unsupported(
                     source,
@@ -591,8 +621,15 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         }
         child_facts.push(child);
     }
-    let float_width = match fact_row(facts, 3, "width")?.width {
-        BoxLengthFact::Absolute(value) => value.pixels,
+    // MMX (CSS2.2 10.3.5 with 10.4): F's margins do not depend on its width, so the
+    // min/max reruns only replace the width.
+    let float_row = fact_row(facts, 3, "width")?;
+    let float_width = match float_row.width {
+        BoxLengthFact::Absolute(value) => constrain(
+            value.pixels,
+            float_row.min_width.pixels,
+            max_value(float_row.max_width),
+        ),
         BoxLengthFact::Auto { .. } => {
             return Err(E::Captured(unsupported(
                 3,
@@ -620,8 +657,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             border_right: parent_border.right,
             padding_left: parent_padding.left,
             padding_right: parent_padding.right,
-            min_width: 0.0,
-            max_width: None,
+            min_width: parent_row.min_width.pixels,
+            max_width: max_value(parent_row.max_width),
         },
     )
     .map_err(E::ParentHorizontal)?;
@@ -847,7 +884,11 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
 
     let computed_height = parent_row.height;
-    let height = if matches!(computed_height, BoxLengthFact::Auto { .. })
+    let (parent_min_height, parent_max_height) = (
+        parent_row.min_height.pixels,
+        max_value(parent_row.max_height),
+    );
+    let tentative = if matches!(computed_height, BoxLengthFact::Auto { .. })
         && children.iter().any(|child| {
             child.kind() == PrincipalChildKind::Normal
                 && (child.used_margin_top() < 0.0 || child.used_margin_bottom() < 0.0)
@@ -885,7 +926,12 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         .map_err(E::SignedHeight)?
     } else {
         let height_mode = match computed_height {
-            BoxLengthFact::Absolute(value) => BfcHeightMode::Explicit(value.pixels),
+            // MMX (CSS2.2 10.7): the rerun with an explicit computed height yields it.
+            BoxLengthFact::Absolute(value) => BfcHeightMode::Explicit(constrain(
+                value.pixels,
+                parent_min_height,
+                parent_max_height,
+            )),
             BoxLengthFact::Auto { .. } => {
                 let last_source = node_count - 1;
                 let last_child = children.last().ok_or(E::FactInvariant {
@@ -921,6 +967,19 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             mode: height_mode,
         })
         .map_err(E::Height)?
+    };
+    // MMX (CSS2.2 10.7): either Auto route above gives the tentative placement, which
+    // is constrained once by `min-height`/`max-height`; P's bottom and the `auto`
+    // containment use the result. An explicit height is already constrained.
+    let height = match computed_height {
+        BoxLengthFact::Auto { .. } => constrain_bfc_height(
+            origin.content_top,
+            tentative,
+            parent_min_height,
+            parent_max_height,
+        )
+        .map_err(E::Height)?,
+        BoxLengthFact::Absolute(_) => tentative,
     };
     let bottom = place_block_bottom(BlockBottomInput {
         content_bottom: height.content_bottom,
@@ -1094,6 +1153,24 @@ fn within(edges: PrincipalEdges, area: PrincipalEdges) -> bool {
             .all(|y| (area.top..=area.bottom).contains(&y))
 }
 
+/// MMX (CSS2.2 10.4, 10.7): the used size after the min/max reruns of a size whose
+/// rules give the computed value back (an explicit size, F's width, a tentative Auto
+/// height): greater than `max` gives `max`, then smaller than `min` gives `min`, so
+/// `min` wins. No arithmetic, so no rounding; zero is +0.
+fn constrain(value: f32, min: f32, max: Option<f32>) -> f32 {
+    let value = max.filter(|&max| value > max).unwrap_or(value);
+    let value = if value < min { min } else { value };
+    if value == 0.0 { 0.0 } else { value }
+}
+
+/// MMX: a computed `max-*` fact as the solver's optional maximum.
+fn max_value(fact: BoxMaxFact) -> Option<f32> {
+    match fact {
+        BoxMaxFact::Absolute(value) => Some(value.pixels),
+        BoxMaxFact::None { .. } => None,
+    }
+}
+
 fn fact_row<'a>(
     facts: &'a SiblingBoxFacts<'_, '_, '_, '_, '_, '_>,
     source: usize,
@@ -1133,8 +1210,8 @@ fn place_child_horizontal(
             border_right: border[1],
             padding_left: row.padding[3].pixels,
             padding_right: row.padding[1].pixels,
-            min_width: 0.0,
-            max_width: None,
+            min_width: row.min_width.pixels,
+            max_width: max_value(row.max_width),
         },
     )
 }
@@ -1197,7 +1274,18 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // two offset reads 2 and eight additions 8, and its widened admission
         // comparison 1), charged on every path.
         .checked_add(28)?
-        .checked_add(children.checked_mul(38)?)
+        .checked_add(children.checked_mul(38)?)?
+        // MMX: 58 fixed and 22 per child, charged on every path. Per box (P and each
+        // child) 22: four constraint reads 4, two max category conversions 2, the width
+        // hand-off 10 (P and normals: two solver input transfers 2 and a possible
+        // max-width rerun 8, a normal's possible min-width rerun being prepaid in its 66;
+        // F: two clamp comparisons 4, the result transfer 1 and the category tests 5)
+        // and the height constraint 6 (two comparisons 4, the Auto category test and
+        // label 2). P also: its possible min-width rerun 8 (D-9; no existing unit covers
+        // P) and its Auto height step 28 (primitive call and return 4, exact span 4, two
+        // exact comparisons 4, a possible explicit rerun publication 16).
+        .checked_add(58)?
+        .checked_add(children.checked_mul(22)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1301,9 +1389,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(1548));
-        assert_eq!(facade_work(6), Some(2065));
-        assert_eq!(facade_work(7), Some(2582));
+        assert_eq!(facade_work(5), Some(1672));
+        assert_eq!(facade_work(6), Some(2211));
+        assert_eq!(facade_work(7), Some(2750));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

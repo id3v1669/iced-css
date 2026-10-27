@@ -1062,10 +1062,10 @@ fn rel_facts_numeric_allowance_is_exact_with_relative_rows() {
 /// a relative P and relative children.
 #[test]
 fn rel_work_thresholds_with_relative_boxes() {
-    for (nodes, facade, core) in [(5, 1548, 1249), (6, 2065, 1501), (7, 2582, 1754)] {
+    for (nodes, facade, core) in [(5, 1672, 1249), (6, 2211, 1501), (7, 2750, 1754)] {
         assert_eq!(
             facade,
-            246 + 32 * nodes + 172 * (nodes - 2) + 313 * (nodes - 3)
+            304 + 32 * nodes + 194 * (nodes - 2) + 313 * (nodes - 3)
         );
         assert_eq!(
             core,

@@ -1,7 +1,10 @@
 //! Bounded content height for caller-established block-containing BFC membership.
-//! The caller proves membership and min-height zero/max-height none. The legacy
-//! scalar entry point requires nonnegative margins and its designated first edge;
-//! the signed entry points publish all normal edges and accept their extrema.
+//! The caller proves membership. The entry points compute the height without
+//! `min-height`/`max-height`: an explicit height is the caller's used height, and an
+//! Auto height is the tentative height of CSS2.2 10.6.7. `constrain_bfc_height` is
+//! the 10.7 step for a tentative Auto placement. The legacy scalar entry point
+//! requires nonnegative margins and its designated first edge; the signed entry
+//! points publish all normal edges and accept their extrema.
 //! Scalars cannot establish source eligibility or describe a general BFC tree.
 use super::arithmetic::Exact;
 
@@ -136,6 +139,66 @@ pub fn solve_bfc_height(input: BfcHeightInput) -> Result<BfcHeightPlacement, Bfc
             })
         }
     }
+}
+
+/// CSS2.2 10.7 for a tentative Auto placement (MMX): if the tentative height is greater
+/// than `max_height`, the height rules are applied again with `max_height` as the
+/// computed height; if the resulting height is smaller than `min_height`, they are
+/// applied again with `min_height`, so `min_height` wins. A rerun is the explicit
+/// placement `solve_bfc_height(Explicit(limit))` (`auto_extent: None`); when no limit
+/// applies, `tentative` is returned bit for bit, equality included.
+///
+/// The tentative height compared is the exact span of the published tentative content
+/// box, `content_bottom - content_top`, not the rounded `used_height`. This publication
+/// policy is an engineering choice, as the endpoint policies above, not a CSS rounding
+/// rule: it decides exactly over the published endpoints that later steps consume.
+/// `tentative.used_height` and `tentative.auto_extent` are not read.
+/// # Errors
+/// Validates, before any arithmetic and in this order: `content_top` finite
+/// (`InvalidInput("content_top")`); `min_height` finite and nonnegative
+/// (`"min_height"`); `max_height`, when present, finite and nonnegative
+/// (`"max_height"`); `tentative.content_bottom` finite and not below `content_top`
+/// (`"tentative_content_bottom"`). A rerun reports the explicit route's
+/// `Unrepresentable { stage: ContentBottom }`.
+pub fn constrain_bfc_height(
+    content_top: f32,
+    tentative: BfcHeightPlacement,
+    min_height: f32,
+    max_height: Option<f32>,
+) -> Result<BfcHeightPlacement, BfcHeightError> {
+    use BfcHeightError as E;
+    if !content_top.is_finite() {
+        return Err(E::InvalidInput("content_top"));
+    }
+    if !min_height.is_finite() || min_height < 0. {
+        return Err(E::InvalidInput("min_height"));
+    }
+    if let Some(max) = max_height
+        && (!max.is_finite() || max < 0.)
+    {
+        return Err(E::InvalidInput("max_height"));
+    }
+    let bottom = tentative.content_bottom;
+    if !bottom.is_finite() || bottom < content_top {
+        return Err(E::InvalidInput("tentative_content_bottom"));
+    }
+    let span = Exact::from_f32(bottom).sub(Exact::from_f32(content_top));
+    let mut limit = None;
+    if let Some(max) = max_height
+        && span > Exact::from_f32(max)
+    {
+        limit = Some(max);
+    }
+    if limit.map_or(span, Exact::from_f32) < Exact::from_f32(min_height) {
+        limit = Some(min_height);
+    }
+    let Some(limit) = limit else {
+        return Ok(tentative);
+    };
+    solve_bfc_height(BfcHeightInput {
+        content_top,
+        mode: BfcHeightMode::Explicit(limit),
+    })
 }
 
 /// Published normal margin edge, in top-before-bottom evaluation order.
