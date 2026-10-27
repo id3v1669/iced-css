@@ -108,19 +108,19 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 /// conversions; the Legacy entry keeps `27*N+2+r` and `14*N`. A Sequence row whose
 /// computed `position` is `relative` (O included) also resolves `top`, `right`, `bottom`
 /// and `left`, after its other longhands and before its pseudos, and can fail there with
-/// `Unsupported` (`PercentageLength`, `RelativeLength` or `InheritedOffset`),
+/// `Unsupported` (`RelativeLength`, `InheritedOffset` or `PercentagePrecision`),
 /// `InvalidValue`, `Defaulting`, `InitialRecipe` or a `Length` conversion error.
 /// Every Sequence row also carries its computed `min-width`, `min-height`, `max-width`
 /// and `max-height` (absolute, a percentage for `min-width`/`max-width` (PPM) and
 /// `min-height`/`max-height` (PHT), `none` for a maximum, or inherited) and can fail there
 /// with `Unsupported` (`RelativeLength` or `PercentagePrecision`), `InvalidValue` or a
-/// `Length` conversion error. A percentage `width`, margin, `right` or `left` (PCT) or
+/// `Length` conversion error. A percentage `width`, margin or offset (PCT, PTB) or
 /// `height` (PHT) is kept exactly as `BoxLengthFact::Percentage`, a percentage padding,
 /// `min-width` (PPM) or `min-height` (PHT) as `LengthPercentageBoxFact::Percentage`, and
 /// a `max-width` (PPM) or `max-height` (PHT) as `BoxMaxFact::Percentage`, without a
 /// conversion; each can fail with `InvalidValue` (a negative value) or `Unsupported`
-/// (`PercentagePrecision`). Every other percentage (`top`, `bottom`) keeps
-/// `PercentageLength`.
+/// (`PercentagePrecision`). No Sequence longhand keeps `PercentageLength` (Legacy refuses
+/// every percentage).
 ///
 /// Shared registry/rule/declaration preflight and aggregate service reservations finish
 /// before row allocation. Actual row capacity is then charged before row initialization

@@ -350,7 +350,8 @@ pub enum SiblingLayoutError {
     /// PCT: a percentage `width`, margin, `right` or `left` of `source` (PPM: also a
     /// padding, `min-width` or `max-width`; `property` is its CSS name) cannot be
     /// resolved against its containing block's width, or (PHT) a child's percentage
-    /// `height`, `min-height` or `max-height` against P's explicit used content height.
+    /// `height`, `min-height` or `max-height` (PTB: `top` or `bottom`) against P's
+    /// explicit used content height.
     Percentage {
         source: usize,
         property: &'static str,
@@ -398,7 +399,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `461 + 32*N + 449*(N-2) + 313*(N-3)` is prepaid before any
+/// Facade work `469 + 32*N + 491*(N-2) + 313*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -441,6 +442,10 @@ impl std::error::Error for SiblingLayoutError {
 /// comparisons and the basis write 7) and 27 per child (its vertical resolution: three
 /// longhands of 8 and the basis read 1, and the basis-presence test 2), prepaid when no
 /// value is a percentage.
+/// Offset percentages (PTB) add 8 fixed actions (P's offset presence test 2, its two
+/// category tests 4 and the refusal decision 2) and 42 per child (two vertical offset
+/// resolutions of 21: the offset presence test 2, two longhands of 8, the basis read 1
+/// and the basis-presence test 2), prepaid when no value is a percentage.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -484,7 +489,14 @@ impl std::error::Error for SiblingLayoutError {
 /// `auto`, each child's border box and margin box, computed as above, are translated
 /// by the child's own `left` and `top`, one f32 addition per edge, before the
 /// containment test; P's own offset moves its content box with its children and is
-/// not applied. Under P `hidden` shifted children are admitted.
+/// not applied. Under P `hidden` shifted children are admitted. A child's `top` or
+/// `bottom` percentage (PTB, CSS2.2 9.3.2) resolves against P's explicit used content
+/// height (the PHT basis below) by one exact product rounded once; without that basis it
+/// is refused with `IndefiniteOffsetBasis`. P's own `top` or `bottom` percentage has no
+/// basis here (O's used content height is not a facade input): it is refused with
+/// `OuterHeightBasis` under an explicit O and with `IndefiniteOffsetBasis` otherwise.
+/// Each side is resolved or refused on its own, even when 9.4.3 then ignores `bottom`
+/// because `top` is not `auto` (a conservative over-refusal).
 /// Every Sequence row's absolute `min-width`, `max-width`, `min-height` and
 /// `max-height` apply (MMX, CSS2.2 10.4 and 10.7; O's are captured and unused). P and
 /// every normal pass their width constraints to the 10.4 category solver, whose reruns
@@ -527,7 +539,10 @@ impl std::error::Error for SiblingLayoutError {
 /// does not depend on P's horizontal solve); a failure is `Percentage` at that child.
 /// P's height routes and `constrain_bfc_height` select on P's used height category and
 /// limits. The computed accessors publish the percentage facts. Vertical paddings and
-/// margins keep the width basis.
+/// margins keep the width basis. P's `top`/`bottom` percentage refusal (PTB) follows
+/// its height-percentage refusal and precedes every child error. A child's `top` and
+/// `bottom` percentages resolve after its height facts and category, before the held P
+/// check; they resolve again in the placement loop, where a failure is `FactInvariant`.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -628,9 +643,16 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     // PHT (CSS2.2 10.5, 10.7): P's containing block is O, whose used content height is not
     // a facade input: P's height percentages are refused unless O's computed `height` is
     // `auto`, when they take the indefinite rules. The children's basis is P's explicit
-    // used content height, known here.
+    // used content height, known here. PTB (CSS2.2 9.3.2): P's `top`/`bottom` percentages
+    // are refused here too (no basis): after the height family under an explicit O, and
+    // with `IndefiniteOffsetBasis` under an `auto` O.
     let outer_row = fact_row(facts, 0, "height")?;
     let parent_vertical = resolve_heights(parent_row, None, numeric, 1)?;
+    let parent_offset = match parent_row.offset {
+        Some([BoxLengthFact::Percentage(_), ..]) => Some("top"),
+        Some([_, _, BoxLengthFact::Percentage(_), _]) => Some("bottom"),
+        _ => None,
+    };
     if !matches!(outer_row.height, BoxLengthFact::Auto { .. }) {
         let property = if matches!(parent_row.height, BoxLengthFact::Percentage(_)) {
             Some("height")
@@ -642,7 +664,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         } else if matches!(parent_row.max_height, BoxMaxFact::Percentage(_)) {
             Some("max-height")
         } else {
-            None
+            parent_offset
         };
         if let Some(property) = property {
             return Err(E::Captured(unsupported(
@@ -651,6 +673,13 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 CapturedClearanceUnsupported::OuterHeightBasis,
             )));
         }
+    }
+    if let Some(property) = parent_offset {
+        return Err(E::Captured(unsupported(
+            1,
+            property,
+            CapturedClearanceUnsupported::IndefiniteOffsetBasis,
+        )));
     }
     let child_basis = match parent_vertical.height {
         BoxLengthFact::Absolute(value) => Some(constrain(
@@ -713,6 +742,11 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 });
             }
         };
+        // PTB (CSS2.2 9.3.2): `top` and `bottom` percentages resolve against the same
+        // basis, after the height facts and category and before the held P check; without
+        // a basis they are refused (`IndefiniteOffsetBasis`). This pass fixes the error
+        // order; the placement loop resolves them again for the used offsets.
+        resolve_vertical_offsets(row.offset, child_basis, numeric, source)?;
         let display = joined_display(projection, facts.display(), source).map_err(E::Captured)?;
         // PCT: after its admission tests and its height facts (PHT), the child's width-axis
         // percentages resolve against P's used content width; while P's failure is held,
@@ -873,7 +907,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // PCT (C-1): the row is resolved again against P's used content width; a failure,
         // or a margin (PPM: or a padding) that differs from the first resolution (kept in
         // `child`), is an invariant breach.
-        let used = resolved_row(row, horizontal.used.width, numeric, source).map_err(|_| {
+        let mut used = resolved_row(row, horizontal.used.width, numeric, source).map_err(|_| {
             E::FactInvariant {
                 source,
                 property: "percentage",
@@ -899,6 +933,13 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 property: "percentage",
             });
         }
+        // PTB: `top` and `bottom` percentages are resolved again against the same basis; a
+        // failure here, after the first pass succeeded, is an invariant breach.
+        let offset = resolve_vertical_offsets(used.offset, child_basis, numeric, source);
+        used.offset = offset.map_err(|_| E::FactInvariant {
+            source,
+            property: "percentage",
+        })?;
         // REL: a child's containing block is P's content box (P's direction).
         let relative = used_relative_offsets(child.display, &used, parent_direction, source)?;
         let principal = if source == 3 {
@@ -1138,7 +1179,14 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             parent_max_height,
         )
         .map_err(E::Height)?,
-        BoxLengthFact::Absolute(_) | BoxLengthFact::Percentage(_) => tentative,
+        BoxLengthFact::Absolute(_) => tentative,
+        // PHT: `resolve_heights` leaves no height percentage.
+        BoxLengthFact::Percentage(_) => {
+            return Err(E::FactInvariant {
+                source: 1,
+                property: "height",
+            });
+        }
     };
     // PPM (PL-18): P's bottom reads its resolved row and border edges.
     let bottom = place_block_bottom(BlockBottomInput {
@@ -1396,6 +1444,47 @@ fn resolve_heights(
     Ok(VerticalUsed { height, min, max })
 }
 
+/// PTB (CSS2.2 9.3.2, 9.4.3): `offset` of a relatively positioned row with its `top` and
+/// `bottom` percentages resolved, in that order, against `basis`, the containing block's
+/// explicit used content height, by one exact product rounded once
+/// (`resolve_percentage`; a failure is `Percentage` at `source`); `right` and `left` are
+/// left as they are (`resolved_row`). With `None` (the containing block's height depends
+/// on content) CSS 2.2 gives no used value, so a `top` or `bottom` percentage is refused
+/// with `IndefiniteOffsetBasis`. Each side is resolved or refused on its own, even when
+/// 9.4.3 then ignores `bottom` because `top` is not `auto` (a conservative over-refusal,
+/// as REL refuses an ignored `bottom` in `em`). A static row (`None`) passes through.
+fn resolve_vertical_offsets(
+    offset: Option<[BoxLengthFact; 4]>,
+    basis: Option<f32>,
+    limits: NumericLimits,
+    source: usize,
+) -> Result<Option<[BoxLengthFact; 4]>, SiblingLayoutError> {
+    let Some(mut offset) = offset else {
+        return Ok(None);
+    };
+    for (side, property) in [(0, "top"), (2, "bottom")] {
+        let BoxLengthFact::Percentage(percentage) = offset[side] else {
+            continue;
+        };
+        let Some(basis) = basis else {
+            return Err(SiblingLayoutError::Captured(unsupported(
+                source,
+                property,
+                CapturedClearanceUnsupported::IndefiniteOffsetBasis,
+            )));
+        };
+        let resolved = resolve_percentage(percentage, basis, limits).map_err(|error| {
+            SiblingLayoutError::Percentage {
+                source,
+                property,
+                error,
+            }
+        })?;
+        offset[side] = BoxLengthFact::Absolute(resolved);
+    }
+    Ok(Some(offset))
+}
+
 /// PPM: the solver operand of a padding or `min-width` fact of a row resolved by
 /// `resolved_row`; a percentage left there is an invariant breach.
 fn length_operand(
@@ -1549,7 +1638,8 @@ fn resolve_max(
 /// `left`, then (PPM) `padding-top`, `padding-right`, `padding-bottom`, `padding-left`,
 /// `min-width`, `max-width`, so that the first failing property is deterministic; a
 /// failure is `Percentage` at `source`. PHT: the height facts are not resolved here (see
-/// `resolve_heights`); vertical paddings keep the width basis (CSS2.2 8.4).
+/// `resolve_heights`); vertical paddings keep the width basis (CSS2.2 8.4). PTB: `top`
+/// and `bottom` are not resolved here either (see `resolve_vertical_offsets`).
 fn resolved_row(
     row: &ClearanceBoxFact,
     basis: f32,
@@ -1600,7 +1690,8 @@ fn resolved_row(
 /// PCT: a copy of `row` whose percentages are +0 with their origin, without
 /// the percentage primitive, for an invalid O basis that the P solver refuses before it
 /// reads any operand (PPM: paddings, `min-width` and `max-width` included). PHT: the
-/// height facts are left as they are; no height reader reads this row.
+/// height facts are left as they are; no height reader reads this row. PTB: P's `top` and
+/// `bottom` percentages are refused before this row exists.
 fn zeroed_row(row: &ClearanceBoxFact) -> ClearanceBoxFact {
     let absolute = |percentage: PercentageBoxFact| AbsoluteBoxFact {
         pixels: 0.0,
@@ -1780,7 +1871,14 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // result write 1, origin copy 1) and the basis read 1, and the basis-presence
         // test 2.
         .checked_add(21)?
-        .checked_add(children.checked_mul(27)?)
+        .checked_add(children.checked_mul(27)?)?
+        // PTB: 8 fixed and 42 per child, charged on every path. P: its offset presence
+        // test 2, the two category tests 4 and the refusal decision 2. Per child: two
+        // vertical offset resolutions of 21 (the offset presence test 2, two longhands of
+        // 8 (category test 2, primitive call and return 4, result write 1, origin copy 1),
+        // the basis read 1 and the basis-presence test 2).
+        .checked_add(8)?
+        .checked_add(children.checked_mul(42)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1884,9 +1982,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(2594));
-        assert_eq!(facade_work(6), Some(3388));
-        assert_eq!(facade_work(7), Some(4182));
+        assert_eq!(facade_work(5), Some(2728));
+        assert_eq!(facade_work(6), Some(3564));
+        assert_eq!(facade_work(7), Some(4400));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

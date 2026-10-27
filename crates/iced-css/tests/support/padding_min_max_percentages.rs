@@ -83,28 +83,6 @@ fn ppm_red_r3_parent_min_width_percentage_widens_p() {
     );
 }
 
-/// FX5 (guard; M5 witness): `top` and `bottom` percentages keep `PercentageLength` at
-/// B1's own index on a Sequence row (PHT admits `height`, `min-height` and
-/// `max-height`). Passes at RED and after PPM and PHT.
-#[test]
-fn ppm_red_guard_fx5_height_constraint_and_vertical_offset_percentages_stay_refused() {
-    for (fragment, name) in [
-        ("#b1 { position:relative; top:10%; }", "top"),
-        ("#b1 { position:relative; bottom:10%; }", "bottom"),
-    ] {
-        let css = pct_css(5, fragment);
-        let (error, originals) = pct_fact_error(5, &css);
-        assert_eq!(
-            pct_sequence_describe(&error),
-            format!(
-                "Evaluation({})",
-                pct_refusal(originals[2], name, BoxFactUnsupported::PercentageLength)
-            ),
-            "{css}"
-        );
-    }
-}
-
 /// LG2 (Legacy guard; M4 witness): the Legacy entry refuses padding and width-constraint
 /// percentages unchanged: B2's `padding-left` and `min-width` (original 2) and F's
 /// `max-width` (original 1), each alone. Passes at RED and after PPM.
@@ -819,14 +797,14 @@ const PPM_WORK_FRAGMENT: &str = "#p { padding-top:1%; padding-bottom:1%; min-wid
                                  #f { max-width:100%; }";
 
 /// Facade and core work (M18 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `461 + 32N + 449(N-2) +
+/// percentages on every source; the facade charge is `469 + 32N + 491(N-2) +
 /// 313(N-3)`; the layout equals the baseline's.
 #[test]
 fn ppm_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2594, 1249), (6, 3388, 1501), (7, 4182, 1754)] {
+    for (nodes, facade, core) in [(5, 2728, 1249), (6, 3564, 1501), (7, 4400, 1754)] {
         assert_eq!(
             facade,
-            461 + 32 * nodes + 449 * (nodes - 2) + 313 * (nodes - 3)
+            469 + 32 * nodes + 491 * (nodes - 2) + 313 * (nodes - 3)
         );
         let css = pct_css(nodes, &format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT}"));
         assert_pct_view(

@@ -122,8 +122,8 @@ fn inherited_max(v: BoxMaxFact, origin: BoxFactOrigin) -> BoxMaxFact {
         BoxMaxFact::Percentage(v) => BoxMaxFact::Percentage(PercentageBoxFact { origin, ..v }),
     }
 }
-/// PPM: an inherited padding or `min-width` fact keeps the parent's value, absolute or
-/// percentage, with the new origin.
+/// PPM: an inherited padding or `min-width` (PHT: or `min-height`) fact keeps the
+/// parent's value, absolute or percentage, with the new origin.
 fn inherited_length_percentage(
     v: LengthPercentageBoxFact,
     origin: BoxFactOrigin,
@@ -161,9 +161,10 @@ impl Resolver {
     /// set (margins and offsets); an absolute length is one counted conversion. A
     /// percentage is kept exactly, without conversion, only when `percentage` is set
     /// (PCT: Sequence `width`, margins, `right`, `left`; PPM: Sequence paddings,
-    /// `min-width`, `max-width`; PHT: Sequence `height`, `min-height`, `max-height`): a
-    /// negative one only when `signed` is set, and a value outside the bounded
-    /// representation is `PercentagePrecision`; otherwise it is `PercentageLength`.
+    /// `min-width`, `max-width`; PHT: Sequence `height`, `min-height`, `max-height`; PTB:
+    /// `top`, `bottom` of a relative Sequence row): a negative one only when `signed` is
+    /// set, and a value outside the bounded representation is `PercentagePrecision`;
+    /// otherwise it is `PercentageLength`.
     fn length(
         &self,
         value: &SpecifiedValue,
@@ -539,9 +540,9 @@ pub(super) fn element(
 }
 /// REL (CSS2.2 9.3.2, 9.4.3): the computed `top`, `right`, `bottom` and `left` (25-28)
 /// of a relatively positioned Sequence row, in index order: `auto`, or an absolute
-/// length converted like a signed margin (one counted conversion), a `right` or `left`
-/// percentage kept exactly (PCT), or, for `inherit`, the parent row's computed offset
-/// (`auto`, an absolute length or a `right`/`left` percentage).
+/// length converted like a signed margin (one counted conversion), a percentage kept
+/// exactly (PCT: `right`, `left`; PTB: `top`, `bottom`), or, for `inherit`, the parent
+/// row's computed offset (`auto`, an absolute length or a percentage).
 pub(super) fn offsets(
     winners: &PropertyWinners<'_>,
     ids: &[PropertyId; 29],
@@ -581,10 +582,10 @@ pub(super) fn offsets(
                     BoxFactOrigin::Inherited { original_parent },
                 )
             }
-            // PCT: `right` and `left` keep a percentage of the containing block's width
-            // (CSS2.2 9.3.2); `top` and `bottom` stay refused.
+            // PCT: `right` and `left` keep a percentage of the containing block's width,
+            // PTB `top` and `bottom` one of its height (CSS2.2 9.3.2).
             DefaultedValueRef::Compute(value) => {
-                resolver.length(value, property, true, true, side % 2 == 1, calls)?
+                resolver.length(value, property, true, true, true, calls)?
             }
         };
     }

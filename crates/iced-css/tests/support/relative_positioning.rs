@@ -316,16 +316,17 @@ fn rel_legacy_guard_relative_b1_keeps_display_or_flow() {
 }
 
 /// E10b (C-2): offsets are resolved for every relative Sequence row, O included, so a
-/// relative O with a percentage offset is a fact error before the facade's O fence.
-/// Predecessor at ed315c83: facts Ok and `Captured(Unsupported { projected: 0,
-/// property: "display/position/float", reason: DisplayOrFlow })`.
+/// relative O with an `em` offset is a fact error before the facade's O fence (PTB keeps
+/// O's percentage offsets; `percentage_offsets` FX12 covers them). Predecessor at
+/// ed315c83: facts Ok and `Captured(Unsupported { projected: 0, property:
+/// "display/position/float", reason: DisplayOrFlow })`.
 #[test]
 fn rel_red_e10b_relative_outer_offsets_are_resolved() {
-    let css = rel_css(5, "#o { position:relative; top:10%; }");
+    let css = rel_css(5, "#o { position:relative; top:1em; }");
     let (error, originals) = rel_fact_error(5, &css);
     assert_rel_refusal(
         &error,
-        (originals[0], "top", BoxFactUnsupported::PercentageLength),
+        (originals[0], "top", BoxFactUnsupported::RelativeLength),
         &css,
     );
 }
@@ -624,15 +625,16 @@ fn rel_e10_relative_outer_stays_refused() {
     );
 }
 
-/// E11 (M15 witness): a percentage offset on a relative row is refused.
+/// E11 (PTB M5 witness; it witnessed REL M15 while the producer refused every offset
+/// percentage): the facts keep B1's `top:10%` (PTB), and the facade refuses it under the
+/// Auto P, whose height depends on content: `IndefiniteOffsetBasis` at projected 2.
 #[test]
 fn rel_e11_percentage_offset_is_refused() {
     let css = rel_css(5, "#b1 { position:relative; top:10%; }");
-    let (error, originals) = rel_fact_error(5, &css);
-    assert_rel_refusal(
-        &error,
-        (originals[2], "top", BoxFactUnsupported::PercentageLength),
-        &css,
+    assert_eq!(
+        format!("{:?}", rel_error(5, &css)),
+        "Captured(Unsupported { projected: 2, property: \"top\", reason: IndefiniteOffsetBasis })",
+        "{css}"
     );
 }
 
@@ -1069,10 +1071,10 @@ fn rel_facts_numeric_allowance_is_exact_with_relative_rows() {
 /// a relative P and relative children.
 #[test]
 fn rel_work_thresholds_with_relative_boxes() {
-    for (nodes, facade, core) in [(5, 2594, 1249), (6, 3388, 1501), (7, 4182, 1754)] {
+    for (nodes, facade, core) in [(5, 2728, 1249), (6, 3564, 1501), (7, 4400, 1754)] {
         assert_eq!(
             facade,
-            461 + 32 * nodes + 449 * (nodes - 2) + 313 * (nodes - 3)
+            469 + 32 * nodes + 491 * (nodes - 2) + 313 * (nodes - 3)
         );
         assert_eq!(
             core,

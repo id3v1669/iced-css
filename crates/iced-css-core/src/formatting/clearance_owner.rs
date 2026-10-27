@@ -58,12 +58,17 @@ pub enum OwnerHeight {
     /// B1/B2 this also asserts a positive used height of an explicit computed height,
     /// or (MMX, Sequence only) of a normal whose computed Auto or zero height is raised
     /// by a positive `min-height` (10.6.3 gives the tentative zero; such a box cannot
-    /// collapse through, 8.3.1); callers must not relabel percentage or native-derived
-    /// height. SourceNode cannot prove that provenance; the owner checks the used payload.
+    /// collapse through, 8.3.1). A Sequence percentage `height` resolved by the caller
+    /// against its containing block's explicit used content height (PHT, CSS2.2 10.5) is
+    /// such a used length; callers must not relabel native-derived height. SourceNode
+    /// cannot prove that provenance; the owner checks the used payload.
     Explicit(f32),
-    /// Computed Auto: only the childless Sequence float resolves this to positive zero.
+    /// Used as Auto: a computed Auto height, or a Sequence percentage `height` used as
+    /// `auto` because its containing block's height depends on content (PHT, CSS2.2
+    /// 10.5); only the childless Sequence float resolves this to positive zero.
     /// Legacy owners and every normal child reject this category.
     Auto,
+    /// An unresolved percentage: every owner rejects it (`HeightKind`).
     Percentage(f32),
 }
 #[derive(Debug, Clone, Copy, PartialEq)]

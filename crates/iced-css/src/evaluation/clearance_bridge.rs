@@ -58,10 +58,15 @@ pub enum CapturedClearanceUnsupported {
     /// facts never hold one and the Sequence facade passes resolved rows, so this
     /// fail-closed refusal is unreachable.
     PercentageLength,
-    /// PHT: a percentage `height`, `min-height` or `max-height` of P whose containing
-    /// block (O) has an explicit height (a computed `height` other than `auto`): O's used
-    /// content height is not a facade input (CSS2.2 10.5, 10.7).
+    /// PHT, PTB: a percentage `height`, `min-height` or `max-height` (PHT), or `top` or
+    /// `bottom` (PTB), of P whose containing block (O) has an explicit height (a computed
+    /// `height` other than `auto`): O's used content height is not a facade input
+    /// (CSS2.2 10.5, 10.7, 9.3.2).
     OuterHeightBasis,
+    /// PTB: a `top` or `bottom` percentage of a relatively positioned box whose containing
+    /// block's height depends on content (P with a used `auto` height for a child; O with
+    /// a computed `auto` height for P). CSS2.2 9.3.2 gives no used value there.
+    IndefiniteOffsetBasis,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapturedClearanceError {

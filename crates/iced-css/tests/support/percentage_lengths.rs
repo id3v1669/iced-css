@@ -353,29 +353,6 @@ fn pct_red_t2_parent_margin_left_percentage_moves_p() {
     );
 }
 
-/// FX2 (guard; M4, M5, M6 witness): every percentage outside `width`, the margins,
-/// `right` and `left` and, after PPM and PHT, the paddings, `min-width`, `max-width`,
-/// `height`, `min-height` and `max-height` keeps `PercentageLength` at its own index on
-/// a Sequence row: `top` and `bottom`. Passes at RED and after PCT, PPM and PHT.
-#[test]
-fn pct_red_guard_fx2_other_percentages_stay_refused() {
-    for (fragment, name) in [
-        ("#b1 { position:relative; top:10%; }", "top"),
-        ("#b1 { position:relative; bottom:10%; }", "bottom"),
-    ] {
-        let css = pct_css(5, fragment);
-        let (error, originals) = pct_fact_error(5, &css);
-        assert_eq!(
-            pct_sequence_describe(&error),
-            format!(
-                "Evaluation({})",
-                pct_refusal(originals[2], name, BoxFactUnsupported::PercentageLength)
-            ),
-            "{css}"
-        );
-    }
-}
-
 /// LG (Legacy guard, C-6; M3 witness): the Legacy entry refuses every percentage
 /// unchanged, here B2's `margin-left` (original 2) and F's `width` (original 1), each
 /// alone. Passes at RED and after PCT.
@@ -1050,14 +1027,14 @@ const PCT_WORK_FRAGMENT: &str = "#o { width:100%; margin-left:0%; } \
                                  #b1, #b2, #b3, #b4 { margin-left:0%; margin-right:0%; }";
 
 /// Facade and core work (M19 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `461 + 32N + 449(N-2) +
+/// percentages on every source; the facade charge is `469 + 32N + 491(N-2) +
 /// 313(N-3)`; the layout equals the baseline's.
 #[test]
 fn pct_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2594, 1249), (6, 3388, 1501), (7, 4182, 1754)] {
+    for (nodes, facade, core) in [(5, 2728, 1249), (6, 3564, 1501), (7, 4400, 1754)] {
         assert_eq!(
             facade,
-            461 + 32 * nodes + 449 * (nodes - 2) + 313 * (nodes - 3)
+            469 + 32 * nodes + 491 * (nodes - 2) + 313 * (nodes - 3)
         );
         let css = pct_css(nodes, PCT_WORK_FRAGMENT);
         assert_pct_view(
