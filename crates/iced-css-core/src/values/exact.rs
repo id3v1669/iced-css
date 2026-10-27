@@ -33,6 +33,18 @@ impl Natural {
     fn is_zero(&self) -> bool {
         self.0.is_empty()
     }
+    /// PCT: the limbs of a `u64` (at most three base-10^9 limbs).
+    fn from_u64(mut value: u64) -> Result<Self, NumericError> {
+        let mut limbs = Vec::new();
+        limbs
+            .try_reserve_exact(3)
+            .map_err(|_| NumericError::Allocation)?;
+        while value != 0 {
+            limbs.push((value % BASE) as u32);
+            value /= BASE;
+        }
+        Ok(Self(limbs))
+    }
     fn multiply_small(&mut self, factor: u32, budget: &mut Budget) -> Result<(), NumericError> {
         budget.spend(self.0.len())?;
         self.0
@@ -157,6 +169,41 @@ impl Decimal {
     }
     pub fn is_zero(&self) -> bool {
         self.coefficient.is_zero()
+    }
+    /// The bounded `Copy` form of this decimal (PCT), or `None` when its canonical
+    /// coefficient exceeds `u64::MAX` or its scale exceeds `u32::MAX`.
+    pub fn compact(&self) -> Option<CompactDecimal> {
+        let mut coefficient = 0u64;
+        for &limb in self.coefficient.0.iter().rev() {
+            coefficient = coefficient
+                .checked_mul(BASE)?
+                .checked_add(u64::from(limb))?;
+        }
+        Some(CompactDecimal {
+            negative: self.is_negative(),
+            coefficient,
+            scale: u32::try_from(self.scale).ok()?,
+        })
+    }
+}
+
+/// A bounded `Copy` decimal (PCT): the canonical coefficient of a [`Decimal`] that
+/// fits `u64`, its scale and its sign, with `-0` stored as +0. It is built only by
+/// [`Decimal::compact`], so equality is exact decimal equality, and
+/// [`CompactDecimal::percentage_finite_f32`] resolves it on the exact path of
+/// [`Decimal::percentage_finite_f32`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactDecimal {
+    negative: bool,
+    coefficient: u64,
+    scale: u32,
+}
+impl CompactDecimal {
+    pub fn is_negative(self) -> bool {
+        self.negative
+    }
+    pub fn is_zero(self) -> bool {
+        self.coefficient == 0
     }
 }
 

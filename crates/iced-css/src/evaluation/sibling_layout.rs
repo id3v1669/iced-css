@@ -6,7 +6,7 @@
 
 use super::{
     clearance_box_facts::{
-        BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact, KeywordBoxFact,
+        AbsoluteBoxFact, BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact, KeywordBoxFact,
     },
     clearance_bridge::{
         CapturedClearanceError, CapturedClearanceUnsupported, ChildMarginMode,
@@ -24,8 +24,8 @@ use iced_css_core::{
             solve_bfc_height, solve_signed_bfc_height,
         },
         block::{
-            BlockHorizontalError, BlockHorizontalPlacement, BlockWidthInput, BlockWidthResult,
-            Direction, place_block_horizontal,
+            AutoLength, BlockHorizontalError, BlockHorizontalPlacement, BlockWidthInput,
+            BlockWidthResult, Direction, place_block_horizontal,
         },
         block_bottom::{
             BlockBottomError, BlockBottomInput, BlockBottomPlacement, place_block_bottom,
@@ -35,8 +35,8 @@ use iced_css_core::{
             classify_clearance, lowest_clearance_float_bottom,
         },
         clearance_owner::{
-            ChildContext, ChildFacts, OuterFacts, OwnerContent, OwnerGenerated, OwnerHeight,
-            ParentBfc, ParentFacts,
+            ChildContext, ChildFacts, OuterFacts, OwnerContent, OwnerEdges, OwnerGenerated,
+            OwnerHeight, ParentBfc, ParentFacts,
         },
         clearance_sequence::{
             ClearanceSequenceError, ClearanceSequenceInput, ClearanceSequenceLimits,
@@ -51,6 +51,7 @@ use iced_css_core::{
         relative::{RelativeInput, RelativeOffsets, relative_offsets},
     },
     source::SourceNode,
+    values::{ConversionError, NumericLimits},
 };
 use std::{collections::TryReserveError, mem::size_of, num::NonZeroUsize};
 
@@ -224,6 +225,9 @@ impl SiblingParentGeometry {
     pub fn origin(&self) -> FirstChildOriginPlacement {
         self.origin
     }
+    /// P's content height placement. For a computed Auto P whose `min-height` or
+    /// `max-height` applied (CSS2.2 10.7), this is the explicit rerun: `auto_extent` is
+    /// `None`.
     pub fn height(&self) -> BfcHeightPlacement {
         self.height
     }
@@ -326,6 +330,8 @@ pub enum SiblingLayoutError {
         source: usize,
         stage: ChildBorderStage,
     },
+    /// A failure of the nonnegative Auto or explicit height route, or of the
+    /// `min-height`/`max-height` step (`constrain_bfc_height`) after either Auto route.
     Height(BfcHeightError),
     /// Signed Auto normal edge publication, visited in projected source order.
     NormalMargin {
@@ -339,6 +345,13 @@ pub enum SiblingLayoutError {
     /// first child, in source order, that is not proven contained.
     ParentAutoOverflow {
         source: usize,
+    },
+    /// PCT: a percentage `width`, margin, `right` or `left` of `source` (`property` is
+    /// its CSS name) cannot be resolved against its containing block's width.
+    Percentage {
+        source: usize,
+        property: &'static str,
+        error: ConversionError,
     },
     FactInvariant {
         source: usize,
@@ -367,6 +380,7 @@ impl std::error::Error for SiblingLayoutError {
             Self::NormalMargin { error, .. } => Some(error),
             Self::SignedHeight(error) => Some(error),
             Self::Bottom(error) => Some(error),
+            Self::Percentage { error, .. } => Some(error),
             Self::Sources
             | Self::Work
             | Self::Bytes
@@ -381,7 +395,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `304 + 32*N + 194*(N-2) + 313*(N-3)` is prepaid before any
+/// Facade work `376 + 32*N + 318*(N-2) + 313*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -409,7 +423,11 @@ impl std::error::Error for SiblingLayoutError {
 /// constraint reads, two max category conversions, the width hand-off with a possible
 /// max-width rerun, and the height constraint) and, for P alone, 8 for its possible
 /// min-width rerun and 28 for its Auto height step: 58 fixed and 22 per child,
-/// prepaid when every constraint is default.
+/// prepaid when every constraint is default. Percentages (PCT) add 72 fixed actions
+/// (P's resolution 57, its two basis validity tests 4, the held-result test 2 and F's
+/// width resolved again 9) and 124 per child (its first resolution 57, the held-result
+/// test 2, its second resolution 57 and four margin comparisons 8); a resolution is
+/// seven longhands of 8 and the basis read, prepaid when no value is a percentage.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -466,6 +484,18 @@ impl std::error::Error for SiblingLayoutError {
 /// applies reruns the explicit route on P's content top. Containment, offsets and P's
 /// bottom read the constrained boxes, so a constraint that makes a child leave P's
 /// content box under P `auto` is `ParentAutoOverflow`.
+/// Every Sequence row's percentage `width`, margins, `right` and `left` (PCT, CSS2.2
+/// 10.2, 8.3, 9.3.2) resolve against its containing block's width: P's against O's
+/// content width, each child's (F included) against P's used content width, by one
+/// exact product rounded once to the nearest f32 (`SiblingBoxFacts::numeric_limits()`);
+/// the solvers then run unchanged on the resolved values, and the computed accessors
+/// publish the percentage facts. P's horizontal solve runs before the child loop and a
+/// failure there is held: it is returned after F's `FloatWidth` test, where P's solver
+/// error occurred before, so every earlier error keeps its order. An invalid O basis
+/// keeps the solver's own error. A child's percentages resolve after its admission
+/// tests (a failure is `Percentage` at that child); the placement loop and F's width
+/// resolve each row again, and a failure or a margin that differs there is
+/// `FactInvariant`.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -562,6 +592,10 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             CapturedClearanceUnsupported::ParentOverflow,
         )));
     }
+    // PCT (Q-6): P's horizontal solve runs here, before the children whose basis it is;
+    // a failure is held and returned at F's width step.
+    let numeric = facts.numeric_limits();
+    let parent_solve = solve_parent(facts, outer.content_left, outer.content_width, parent_row);
     for source in 2..node_count {
         let row = fact_row(facts, source, "row")?;
         // CSS2.2 §9.4.1: the float establishes a block formatting context, and so does
@@ -601,12 +635,25 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     CapturedClearanceUnsupported::HeightKind,
                 )));
             }
+            // PCT: the facts refuse a height percentage.
+            BoxLengthFact::Percentage(_) => {
+                return Err(E::FactInvariant {
+                    source,
+                    property: "height",
+                });
+            }
         };
         let display = joined_display(projection, facts.display(), source).map_err(E::Captured)?;
+        // PCT: after its admission tests, the child's percentages resolve against P's used
+        // content width; while P's failure is held, only admission continues.
+        let Ok(parent) = &parent_solve else {
+            continue;
+        };
+        let used = resolved_row(row, parent.horizontal.used.width, numeric, source)?;
         let mut child = child_facts_from_row(
             nodes,
             display,
-            row,
+            &used,
             source,
             height,
             ChildMarginMode::Sequence,
@@ -624,47 +671,39 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     // MMX (CSS2.2 10.3.5 with 10.4): F's margins do not depend on its width, so the
     // min/max reruns only replace the width.
     let float_row = fact_row(facts, 3, "width")?;
-    let float_width = match float_row.width {
-        BoxLengthFact::Absolute(value) => constrain(
+    if matches!(float_row.width, BoxLengthFact::Auto { .. }) {
+        return Err(E::Captured(unsupported(
+            3,
+            "width",
+            CapturedClearanceUnsupported::FloatWidth,
+        )));
+    }
+    // PCT: the held P solve is returned here (Q-6); F's width is then resolved again
+    // against P's used content width (C-1), where a failure is an invariant breach.
+    let ParentSolve {
+        outer_direction,
+        parent_direction,
+        used: parent_used,
+        border: parent_border,
+        padding: parent_padding,
+        horizontal,
+    } = parent_solve?;
+    let float_width = match resolve_length(float_row.width, horizontal.used.width, numeric) {
+        Ok(BoxLengthFact::Absolute(value)) => constrain(
             value.pixels,
             float_row.min_width.pixels,
             max_value(float_row.max_width),
         ),
-        BoxLengthFact::Auto { .. } => {
-            return Err(E::Captured(unsupported(
-                3,
-                "width",
-                CapturedClearanceUnsupported::FloatWidth,
-            )));
+        _ => {
+            return Err(E::FactInvariant {
+                source: 3,
+                property: "width",
+            });
         }
     };
-
-    // Direction joins are deliberately ordered O then P. O governs P's width
-    // equation; P governs every normal child's width equation.
-    let outer_direction = joined_direction(projection, facts.display(), 0).map_err(E::Captured)?;
-    let parent_direction = joined_direction(projection, facts.display(), 1).map_err(E::Captured)?;
-    let parent_border = edges(parent_row.border_widths());
-    let parent_padding = edges(parent_row.padding.map(|value| value.pixels));
-    let horizontal = place_block_horizontal(
-        outer.content_left,
-        BlockWidthInput {
-            containing_width: outer.content_width,
-            direction: outer_direction,
-            width: auto_length(parent_row.width),
-            margin_left: auto_length(parent_row.margin[3]),
-            margin_right: auto_length(parent_row.margin[1]),
-            border_left: parent_border.left,
-            border_right: parent_border.right,
-            padding_left: parent_padding.left,
-            padding_right: parent_padding.right,
-            min_width: parent_row.min_width.pixels,
-            max_width: max_value(parent_row.max_width),
-        },
-    )
-    .map_err(E::ParentHorizontal)?;
     let origin = place_first_child_origin(FirstChildOriginInput {
         containing_top: outer.content_top,
-        margin_top: auto_length(parent_row.margin[0]),
+        margin_top: operand(parent_used.margin[0], 1, "margin-top")?,
         border_top: parent_border.top,
         padding_top: parent_padding.top,
     })
@@ -695,7 +734,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     let parent_display = joined_display(projection, facts.display(), 1).map_err(E::Captured)?;
     // REL: P's containing block is O's content box, so O's direction resolves P's
     // `left`/`right` overconstraint.
-    let parent_relative = used_relative_offsets(parent_display, parent_row, outer_direction, 1)?;
+    let parent_relative = used_relative_offsets(parent_display, &parent_used, outer_direction, 1)?;
     let sequence = build_clearance_sequence(
         nodes,
         ClearanceSequenceInput {
@@ -746,8 +785,29 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 property: "child-facts",
             })?;
         let used_height = used_child_height(child, source)?;
+        // PCT (C-1): the row is resolved again against P's used content width; a failure,
+        // or a margin that differs from the first resolution (kept in `child`), is an
+        // invariant breach.
+        let used = resolved_row(row, horizontal.used.width, numeric, source).map_err(|_| {
+            E::FactInvariant {
+                source,
+                property: "percentage",
+            }
+        })?;
+        let margins = [
+            child.margin.top,
+            child.margin.right,
+            child.margin.bottom,
+            child.margin.left,
+        ];
+        if used.margin.map(auto_length) != margins.map(Some) {
+            return Err(E::FactInvariant {
+                source,
+                property: "percentage",
+            });
+        }
         // REL: a child's containing block is P's content box (P's direction).
-        let relative = used_relative_offsets(child.display, row, parent_direction, source)?;
+        let relative = used_relative_offsets(child.display, &used, parent_direction, source)?;
         let principal = if source == 3 {
             let band = sequence.float_content();
             let span = sequence.float_content_vertical();
@@ -804,8 +864,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     record.content_vertical(),
                 )
             };
-            let placed = place_child_horizontal(horizontal, parent_direction, row)
-                .map_err(|error| E::ChildHorizontal { source, error })?;
+            let placed = place_child_horizontal(horizontal, parent_direction, &used, source)?;
             // CBR D3: the padding edges move out from the solver's content edges, then the
             // border edges move out from the published padding edges (staged, inside-out).
             let padding_left = child_border_edge(
@@ -932,6 +991,13 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 parent_min_height,
                 parent_max_height,
             )),
+            // PCT: the facts refuse a height percentage.
+            BoxLengthFact::Percentage(_) => {
+                return Err(E::FactInvariant {
+                    source: 1,
+                    property: "height",
+                });
+            }
             BoxLengthFact::Auto { .. } => {
                 let last_source = node_count - 1;
                 let last_child = children.last().ok_or(E::FactInvariant {
@@ -979,13 +1045,13 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             parent_max_height,
         )
         .map_err(E::Height)?,
-        BoxLengthFact::Absolute(_) => tentative,
+        BoxLengthFact::Absolute(_) | BoxLengthFact::Percentage(_) => tentative,
     };
     let bottom = place_block_bottom(BlockBottomInput {
         content_bottom: height.content_bottom,
         padding_bottom: parent_row.padding[2].pixels,
         border_bottom: parent_row.border_widths()[2],
-        margin_bottom: auto_length(parent_row.margin[2]),
+        margin_bottom: operand(parent_used.margin[2], 1, "margin-bottom")?,
     })
     .map_err(E::Bottom)?;
 
@@ -1121,10 +1187,10 @@ fn used_relative_offsets(
         property: "offset",
     })?;
     relative_offsets(RelativeInput {
-        left: auto_length(left),
-        right: auto_length(right),
-        top: auto_length(top),
-        bottom: auto_length(bottom),
+        left: operand(left, source, "left")?,
+        right: operand(right, source, "right")?,
+        top: operand(top, source, "top")?,
+        bottom: operand(bottom, source, "bottom")?,
         containing_direction: direction,
     })
     .map_err(|_| SiblingLayoutError::FactInvariant {
@@ -1171,6 +1237,146 @@ fn max_value(fact: BoxMaxFact) -> Option<f32> {
     }
 }
 
+/// PCT: P's resolved row and horizontal solve, held by the caller (Q-6).
+struct ParentSolve {
+    outer_direction: Direction,
+    parent_direction: Direction,
+    used: ClearanceBoxFact,
+    border: OwnerEdges,
+    padding: OwnerEdges,
+    horizontal: BlockHorizontalPlacement,
+}
+
+/// PCT: the two direction joins (deliberately ordered O then P: O governs P's width
+/// equation, P every normal child's), then P's percentages resolved against O's content
+/// width and P's horizontal solve, in their order before PCT. An invalid O basis (a
+/// nonfinite left, or a width that is nonfinite or negative) keeps the solver's own
+/// error unconditionally: P's percentages are then never resolved (they become +0, see
+/// `zeroed_row`) and the solver refuses the origin or `containing_width` before it reads
+/// any operand.
+fn solve_parent(
+    facts: &SiblingBoxFacts<'_, '_, '_, '_, '_, '_>,
+    content_left: f32,
+    content_width: f32,
+    parent_row: &ClearanceBoxFact,
+) -> Result<ParentSolve, SiblingLayoutError> {
+    use SiblingLayoutError as E;
+    let projection = facts.projection();
+    let outer_direction = joined_direction(projection, facts.display(), 0).map_err(E::Captured)?;
+    let parent_direction = joined_direction(projection, facts.display(), 1).map_err(E::Captured)?;
+    let valid = content_left.is_finite() && content_width.is_finite() && content_width >= 0.0;
+    let used = if valid {
+        resolved_row(parent_row, content_width, facts.numeric_limits(), 1)?
+    } else {
+        zeroed_row(parent_row)
+    };
+    let border = edges(used.border_widths());
+    let padding = edges(used.padding.map(|value| value.pixels));
+    let horizontal = place_block_horizontal(
+        content_left,
+        BlockWidthInput {
+            containing_width: content_width,
+            direction: outer_direction,
+            width: operand(used.width, 1, "width")?,
+            margin_left: operand(used.margin[3], 1, "margin-left")?,
+            margin_right: operand(used.margin[1], 1, "margin-right")?,
+            border_left: border.left,
+            border_right: border.right,
+            padding_left: padding.left,
+            padding_right: padding.right,
+            min_width: used.min_width.pixels,
+            max_width: max_value(used.max_width),
+        },
+    )
+    .map_err(E::ParentHorizontal)?;
+    Ok(ParentSolve {
+        outer_direction,
+        parent_direction,
+        used,
+        border,
+        padding,
+        horizontal,
+    })
+}
+
+/// PCT (CSS2.2 10.2, 8.3, 9.3.2): `fact` with a percentage resolved against `basis`, the
+/// containing block's width, by one exact product rounded once to the nearest f32 (zero
+/// is +0), keeping its origin and rounding flag; any other fact is returned unchanged.
+fn resolve_length(
+    fact: BoxLengthFact,
+    basis: f32,
+    limits: NumericLimits,
+) -> Result<BoxLengthFact, ConversionError> {
+    let BoxLengthFact::Percentage(percentage) = fact else {
+        return Ok(fact);
+    };
+    let resolved = percentage.value.percentage_finite_f32(basis, limits)?;
+    Ok(BoxLengthFact::Absolute(AbsoluteBoxFact {
+        pixels: resolved.value,
+        rounded_to_zero: resolved.rounded_to_zero,
+        origin: percentage.origin,
+    }))
+}
+
+/// PCT: a copy of `row` whose percentages are resolved against `basis`, in the fixed
+/// order `width`, `margin-top`, `margin-right`, `margin-bottom`, `margin-left`, `right`,
+/// `left`, so that the first failing property is deterministic; a failure is
+/// `Percentage` at `source`.
+fn resolved_row(
+    row: &ClearanceBoxFact,
+    basis: f32,
+    limits: NumericLimits,
+    source: usize,
+) -> Result<ClearanceBoxFact, SiblingLayoutError> {
+    let resolve = |fact: BoxLengthFact, property: &'static str| {
+        resolve_length(fact, basis, limits).map_err(|error| SiblingLayoutError::Percentage {
+            source,
+            property,
+            error,
+        })
+    };
+    let mut used = *row;
+    used.width = resolve(row.width, "width")?;
+    used.margin[0] = resolve(row.margin[0], "margin-top")?;
+    used.margin[1] = resolve(row.margin[1], "margin-right")?;
+    used.margin[2] = resolve(row.margin[2], "margin-bottom")?;
+    used.margin[3] = resolve(row.margin[3], "margin-left")?;
+    if let Some(offset) = used.offset.as_mut() {
+        offset[1] = resolve(offset[1], "right")?;
+        offset[3] = resolve(offset[3], "left")?;
+    }
+    Ok(used)
+}
+
+/// PCT (plan 2, K-1): a copy of `row` whose percentages are +0 with their origin, without
+/// the percentage primitive, for an invalid O basis that the P solver refuses before it
+/// reads any operand.
+fn zeroed_row(row: &ClearanceBoxFact) -> ClearanceBoxFact {
+    let zero = |fact| match fact {
+        BoxLengthFact::Percentage(percentage) => BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels: 0.0,
+            rounded_to_zero: false,
+            origin: percentage.origin,
+        }),
+        other => other,
+    };
+    let mut used = *row;
+    used.width = zero(row.width);
+    used.margin = row.margin.map(zero);
+    used.offset = row.offset.map(|offset| offset.map(zero));
+    used
+}
+
+/// PCT: the solver operand of a fact of a row resolved by `resolved_row`; a percentage
+/// left there is an invariant breach.
+fn operand(
+    fact: BoxLengthFact,
+    source: usize,
+    property: &'static str,
+) -> Result<AutoLength, SiblingLayoutError> {
+    auto_length(fact).ok_or(SiblingLayoutError::FactInvariant { source, property })
+}
+
 fn fact_row<'a>(
     facts: &'a SiblingBoxFacts<'_, '_, '_, '_, '_, '_>,
     source: usize,
@@ -1192,20 +1398,22 @@ fn used_child_height(child: ChildFacts<'_>, source: usize) -> Result<f32, Siblin
     }
 }
 
+/// A normal child's horizontal solve on its resolved row (PCT: `resolved_row`).
 fn place_child_horizontal(
     parent: BlockHorizontalPlacement,
     direction: Direction,
     row: &ClearanceBoxFact,
-) -> Result<BlockHorizontalPlacement, BlockHorizontalError> {
+    source: usize,
+) -> Result<BlockHorizontalPlacement, SiblingLayoutError> {
     let border = row.border_widths();
     place_block_horizontal(
         parent.content.left,
         BlockWidthInput {
             containing_width: parent.used.width,
             direction,
-            width: auto_length(row.width),
-            margin_left: auto_length(row.margin[3]),
-            margin_right: auto_length(row.margin[1]),
+            width: operand(row.width, source, "width")?,
+            margin_left: operand(row.margin[3], source, "margin-left")?,
+            margin_right: operand(row.margin[1], source, "margin-right")?,
             border_left: border[3],
             border_right: border[1],
             padding_left: row.padding[3].pixels,
@@ -1214,6 +1422,7 @@ fn place_child_horizontal(
             max_width: max_value(row.max_width),
         },
     )
+    .map_err(|error| SiblingLayoutError::ChildHorizontal { source, error })
 }
 
 /// Moves a published edge outward by a nonnegative width (a padding, then a border):
@@ -1285,7 +1494,15 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // P) and its Auto height step 28 (primitive call and return 4, exact span 4, two
         // exact comparisons 4, a possible explicit rerun publication 16).
         .checked_add(58)?
-        .checked_add(children.checked_mul(22)?)
+        .checked_add(children.checked_mul(22)?)?
+        // PCT: 72 fixed and 124 per child, charged on every path. A resolution is 57:
+        // seven longhands of 8 (category test 2, primitive call and return 4, result
+        // write 1, origin copy 1) and the basis read 1. P: its resolution 57, the two
+        // basis validity tests 4, the held-result test 2 and F's width resolved again 9
+        // (one longhand and the basis read). Per child: its first resolution 57, the
+        // held-result test 2, its second resolution 57 and four margin comparisons 8.
+        .checked_add(72)?
+        .checked_add(children.checked_mul(124)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1389,9 +1606,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(1672));
-        assert_eq!(facade_work(6), Some(2211));
-        assert_eq!(facade_work(7), Some(2750));
+        assert_eq!(facade_work(5), Some(2116));
+        assert_eq!(facade_work(6), Some(2779));
+        assert_eq!(facade_work(7), Some(3442));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
@@ -1474,7 +1691,7 @@ mod tests {
                 size_of::<PrincipalChildBox>(),
                 std::mem::align_of::<PrincipalChildBox>()
             ),
-            (296, 8)
+            (344, 8)
         );
     }
 

@@ -9,6 +9,7 @@ use super::{
     sibling_source_projection::SiblingSourceProjection,
     source_display::SourceDisplay,
 };
+use iced_css_core::values::NumericLimits;
 use std::{collections::TryReserveError, mem::size_of, num::NonZeroUsize};
 
 /// Independent source-count, row-storage, and evaluation service limits.
@@ -67,6 +68,8 @@ pub struct SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
     display: &'d SourceDisplay<'s, 'b, 'r>,
     rows: Vec<ClearanceBoxFact>,
     receipt: SiblingBoxFactsReceipt,
+    /// PCT: the numeric limits the rows were evaluated with.
+    numeric: NumericLimits,
 }
 
 impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
@@ -89,6 +92,12 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
     pub fn receipt(&self) -> SiblingBoxFactsReceipt {
         self.receipt
     }
+
+    /// PCT: the numeric limits of this evaluation (`limits.evaluation.numeric`), with
+    /// which a later stage resolves the rows' percentage facts.
+    pub fn numeric_limits(&self) -> NumericLimits {
+        self.numeric
+    }
 }
 
 /// Evaluates all element, `::before`, and `::after` targets in a complete sibling capture.
@@ -101,6 +110,13 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 /// and `left`, after its other longhands and before its pseudos, and can fail there with
 /// `Unsupported` (`PercentageLength`, `RelativeLength` or `InheritedOffset`),
 /// `InvalidValue`, `Defaulting`, `InitialRecipe` or a `Length` conversion error.
+/// Every Sequence row also carries its computed `min-width`, `min-height`, `max-width`
+/// and `max-height` (absolute, or `none` for a maximum, or inherited) and can fail there
+/// with `Unsupported` (`PercentageLength` or `RelativeLength`), `InvalidValue` or a
+/// `Length` conversion error. A percentage `width`, margin, `right` or `left` (PCT) is
+/// kept exactly as `BoxLengthFact::Percentage`, without a conversion, and can fail
+/// with `InvalidValue` (a negative `width`) or `Unsupported` (`PercentagePrecision`);
+/// every other percentage keeps `PercentageLength`.
 ///
 /// Shared registry/rule/declaration preflight and aggregate service reservations finish
 /// before row allocation. Actual row capacity is then charged before row initialization
@@ -162,6 +178,7 @@ fn evaluate_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         display,
         rows,
         receipt,
+        numeric: limits.evaluation.numeric,
     })
 }
 

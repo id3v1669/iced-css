@@ -109,6 +109,9 @@ fn inherited(v: BoxLengthFact, origin: BoxFactOrigin) -> BoxLengthFact {
     match v {
         BoxLengthFact::Absolute(v) => BoxLengthFact::Absolute(AbsoluteBoxFact { origin, ..v }),
         BoxLengthFact::Auto { .. } => BoxLengthFact::Auto { origin },
+        BoxLengthFact::Percentage(v) => {
+            BoxLengthFact::Percentage(PercentageBoxFact { origin, ..v })
+        }
     }
 }
 /// MMX: an inherited `max-*` fact keeps the parent's value with the new origin.
@@ -139,13 +142,18 @@ impl Resolver {
     }
     /// One length longhand: `auto` is admitted only when `auto` is set (width, height,
     /// margins and the REL offsets), a negative absolute length only when `signed` is
-    /// set (margins and offsets); an absolute length is one counted conversion.
+    /// set (margins and offsets); an absolute length is one counted conversion. A
+    /// percentage is kept exactly, without conversion, only when `percentage` is set
+    /// (PCT: Sequence `width`, margins, `right`, `left`): a negative one only when
+    /// `signed` is set, and a value outside the bounded representation is
+    /// `PercentagePrecision`; otherwise it is `PercentageLength`.
     fn length(
         &self,
         value: &SpecifiedValue,
         property: PropertyId,
         auto: bool,
         signed: bool,
+        percentage: bool,
         calls: &mut usize,
     ) -> Result<BoxLengthFact, E> {
         let SpecifiedValue::Length(target) = value else {
@@ -154,6 +162,18 @@ impl Resolver {
         match target {
             LengthTarget::Relative(..) => {
                 return Err(self.unsupported(property, BoxFactUnsupported::RelativeLength));
+            }
+            LengthTarget::Percentage(value) if percentage => {
+                if !signed && value.is_negative() {
+                    return Err(self.invalid(property));
+                }
+                let value = value.compact().ok_or_else(|| {
+                    self.unsupported(property, BoxFactUnsupported::PercentagePrecision)
+                })?;
+                return Ok(BoxLengthFact::Percentage(PercentageBoxFact {
+                    value,
+                    origin: BoxFactOrigin::Specified,
+                }));
             }
             LengthTarget::Percentage(..) => {
                 return Err(self.unsupported(property, BoxFactUnsupported::PercentageLength));
@@ -307,7 +327,7 @@ pub(super) fn element(
                         4 => row.max_width = inherited_max(p.max_width, origin),
                         _ => row.max_height = inherited_max(p.max_height, origin),
                     },
-                    // A successful parent's constraints are already computed zero/none.
+                    // Legacy: a successful parent's constraints are already computed zero/none.
                     2..=5 => {}
                     6..=9 => row.margin[index - 6] = inherited(p.margin[index - 6], origin),
                     10..=13 => {
@@ -370,7 +390,8 @@ pub(super) fn element(
                             }
                             continue;
                         }
-                        let length = resolver.length(value, property, false, false, calls)?;
+                        let length =
+                            resolver.length(value, property, false, false, false, calls)?;
                         let BoxLengthFact::Absolute(v) = length else {
                             return Err(resolver.invalid(property));
                         };
@@ -406,7 +427,10 @@ pub(super) fn element(
                     }
                     let auto = index < 2 || (6..10).contains(&index);
                     let signed = (6..10).contains(&index);
-                    let length = resolver.length(value, property, auto, signed, calls)?;
+                    // PCT: Sequence keeps `width` and margin percentages (CSS2.2 10.2, 8.3).
+                    let percentage = mode == BoxFactMode::Sequence && (index == 0 || signed);
+                    let length =
+                        resolver.length(value, property, auto, signed, percentage, calls)?;
                     match index {
                         0 => row.width = length,
                         1 => row.height = length,
@@ -481,8 +505,9 @@ pub(super) fn element(
 }
 /// REL (CSS2.2 9.3.2, 9.4.3): the computed `top`, `right`, `bottom` and `left` (25-28)
 /// of a relatively positioned Sequence row, in index order: `auto`, or an absolute
-/// length converted like a signed margin (one counted conversion), or, for `inherit`,
-/// the parent row's resolved offset.
+/// length converted like a signed margin (one counted conversion), a `right` or `left`
+/// percentage kept exactly (PCT), or, for `inherit`, the parent row's computed offset
+/// (`auto`, an absolute length or a `right`/`left` percentage).
 pub(super) fn offsets(
     winners: &PropertyWinners<'_>,
     ids: &[PropertyId; 29],
@@ -522,8 +547,10 @@ pub(super) fn offsets(
                     BoxFactOrigin::Inherited { original_parent },
                 )
             }
+            // PCT: `right` and `left` keep a percentage of the containing block's width
+            // (CSS2.2 9.3.2); `top` and `bottom` stay refused.
             DefaultedValueRef::Compute(value) => {
-                resolver.length(value, property, true, true, calls)?
+                resolver.length(value, property, true, true, side % 2 == 1, calls)?
             }
         };
     }

@@ -1,4 +1,4 @@
-use super::{Decimal, ExactLength, NumericError, NumericLimits};
+use super::{CompactDecimal, Decimal, ExactLength, NumericError, NumericLimits};
 
 /// Range events only; ordinary precision rounding does not produce an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,24 +322,13 @@ impl Decimal {
         if !context.is_finite() {
             return Err(ConversionError::InvalidFiniteContext);
         }
-        self.coefficient.check_digits(limits)?;
-        if context == 0.0 || self.is_zero() {
-            return Ok(FiniteF32 {
-                value: 0.0,
-                rounded_to_zero: false,
-            });
-        }
-        let mut budget = Budget::new(limits);
-        let mut rational = Rational::new(
+        resolve_finite_parts(
             &self.coefficient,
-            [self.scale, self.scale, 0, 0],
+            self.scale,
+            self.is_negative(),
+            context,
+            percentage,
             limits,
-            &mut budget,
-        )?;
-        rational.scale(context.abs(), percentage, limits, &mut budget)?;
-        finite_result(
-            rational.round(limits, &mut budget)?,
-            self.is_negative() ^ context.is_sign_negative(),
         )
     }
     /// Resolve an exact coefficient against a supplied f32 context before rounding.
@@ -384,6 +373,57 @@ impl Decimal {
         rational.scale(context, percentage, limits, &mut budget)?;
         Ok(rational.round(limits, &mut budget)?)
     }
+}
+
+impl CompactDecimal {
+    /// Exact signed percentage product (PCT): the shared exact path of
+    /// [`Decimal::percentage_finite_f32`] on the equal decimal, with division by 100
+    /// before one nearest/ties-even rounding; zero is +0 and a magnitude above
+    /// `f32::MAX` is `Unrepresentable`.
+    pub fn percentage_finite_f32(
+        self,
+        context: f32,
+        limits: NumericLimits,
+    ) -> Result<FiniteF32, ConversionError> {
+        if !context.is_finite() {
+            return Err(ConversionError::InvalidFiniteContext);
+        }
+        resolve_finite_parts(
+            &Natural::from_u64(self.coefficient)?,
+            self.scale as usize,
+            self.negative,
+            context,
+            true,
+            limits,
+        )
+    }
+}
+
+/// The one exact signed resolution path shared by `Decimal` and `CompactDecimal`
+/// (PCT): `|coefficient| / 10^scale * |context|` (and `/ 100` for a percentage),
+/// rounded once; `context` is finite.
+fn resolve_finite_parts(
+    coefficient: &Natural,
+    scale: usize,
+    negative: bool,
+    context: f32,
+    percentage: bool,
+    limits: NumericLimits,
+) -> Result<FiniteF32, ConversionError> {
+    coefficient.check_digits(limits)?;
+    if context == 0.0 || coefficient.is_zero() {
+        return Ok(FiniteF32 {
+            value: 0.0,
+            rounded_to_zero: false,
+        });
+    }
+    let mut budget = Budget::new(limits);
+    let mut rational = Rational::new(coefficient, [scale, scale, 0, 0], limits, &mut budget)?;
+    rational.scale(context.abs(), percentage, limits, &mut budget)?;
+    finite_result(
+        rational.round(limits, &mut budget)?,
+        negative ^ context.is_sign_negative(),
+    )
 }
 
 fn finite_result(magnitude: NonnegativeF32, negative: bool) -> Result<FiniteF32, ConversionError> {

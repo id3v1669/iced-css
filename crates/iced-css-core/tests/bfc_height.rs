@@ -257,3 +257,21 @@ fn mmx_cb5_validation_order() {
         );
     }
 }
+
+/// K2-C (MMX K-2, ML-10): a tentative Auto span of +0 at content top 2^103 is below
+/// `min_height` `f32::MAX`, so the explicit rerun publishes the content bottom 2^103 +
+/// `f32::MAX` = 2^128 - 2^103, the midpoint of `f32::MAX` and 2^128, whose tie goes to
+/// the even 2^128 (the mantissa of `f32::MAX` is odd): `Unrepresentable { stage:
+/// ContentBottom }`.
+#[test]
+fn pct_k2c_min_height_rerun_content_bottom_overflows() {
+    let top = f32::from_bits(0x7300_0000); // 2^103
+    assert_eq!(top, 2.0_f32.powi(103));
+    let tentative = mmx_tentative(0.0, top);
+    assert_eq!(
+        constrain_bfc_height(top, tentative, f32::MAX, None),
+        Err(BfcHeightError::Unrepresentable {
+            stage: BfcHeightStage::ContentBottom,
+        })
+    );
+}

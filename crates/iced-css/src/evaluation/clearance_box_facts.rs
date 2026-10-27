@@ -16,7 +16,7 @@ use iced_css_core::{
     selectors::PseudoElement,
     source::selector_tree::SelectorTreeLimits,
     values::{
-        LengthTarget, NumericLimits, RangeEvent,
+        CompactDecimal, LengthTarget, NumericLimits, RangeEvent,
         content_computation::{
             ContentComputationError, ContentSelection, ContentTarget, select_content,
         },
@@ -43,10 +43,22 @@ pub struct AbsoluteBoxFact {
     pub rounded_to_zero: bool,
     pub origin: BoxFactOrigin,
 }
+/// A computed percentage (PCT): the authored value exactly, as a bounded `Copy`
+/// decimal, and its origin (CSS2.2 6.1.2: the computed value is the percentage).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PercentageBoxFact {
+    pub value: CompactDecimal,
+    pub origin: BoxFactOrigin,
+}
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BoxLengthFact {
     Absolute(AbsoluteBoxFact),
-    Auto { origin: BoxFactOrigin },
+    Auto {
+        origin: BoxFactOrigin,
+    },
+    /// PCT: a computed percentage of the containing block's width; see the
+    /// `ClearanceBoxFact` contract for the rows and longhands that may hold it.
+    Percentage(PercentageBoxFact),
 }
 /// A computed `max-width` or `max-height` (MMX): an absolute length, or `none`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -111,6 +123,14 @@ pub struct BorderWidthFact {
 /// `inherit`. It is `None` for every other row (CSS2.2 9.3.1: the offsets do not apply
 /// to a static box; absolute and fixed boxes are refused later) and for every Legacy
 /// row, whose offsets are never resolved.
+///
+/// Percentage facts (PCT) depend on the entry. A Legacy row never holds
+/// `BoxLengthFact::Percentage`: `evaluate_clearance_box_facts` refuses every percentage
+/// with `PercentageLength`. A Sequence row may hold it only in `width`, `margin` and,
+/// on a relatively positioned row, `offset[1]` (`right`) and `offset[3]` (`left`): the
+/// authored percentage kept exactly (CSS2.2 10.2, 8.3, 9.3.2), or the parent row's
+/// fact for `inherit`. It is resolved later against the containing block's width;
+/// percentages of every other longhand stay refused.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,
@@ -176,6 +196,8 @@ pub enum BoxFactUnsupported {
     RelativeLength,
     PercentageLength,
     AutoForProperty,
+    /// Legacy only: `evaluate_clearance_box_facts` refuses every nondefault
+    /// `min-*`/`max-*`; the Sequence entry stores them.
     NondefaultMinMax,
     BorderStyle,
     GeneratedContent,
@@ -183,6 +205,9 @@ pub enum BoxFactUnsupported {
     /// not relatively positioned. CSS2.2 9.3.2 defines a computed value there; this is
     /// a supported-subset refusal, because only relative rows resolve their offsets.
     InheritedOffset,
+    /// PCT: an admitted percentage whose canonical coefficient exceeds `u64::MAX` or
+    /// whose scale exceeds `u32::MAX` (the bounded `Copy` representation).
+    PercentagePrecision,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum ClearanceBoxFactsError {

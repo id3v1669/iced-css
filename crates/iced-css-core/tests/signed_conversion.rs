@@ -105,3 +105,97 @@ fn out_of_range_and_invalid_contexts_are_errors_without_font_saturation() {
         Err(ConversionError::InvalidNegative)
     );
 }
+
+// PCT: the bounded `Copy` decimal and its resolution (CP1-CP7).
+use iced_css_core::values::CompactDecimal;
+
+fn decimal(text: &str) -> Decimal {
+    Decimal::parse(text, limits()).unwrap()
+}
+
+fn compact(text: &str) -> CompactDecimal {
+    decimal(text).compact().unwrap()
+}
+
+/// `text`% of `basis` through both resolvers, which must agree bit for bit.
+fn percentage_of(text: &str, basis: f32) -> Result<u32, ConversionError> {
+    let exact = decimal(text).percentage_finite_f32(basis, limits());
+    let bounded = compact(text).percentage_finite_f32(basis, limits());
+    let bits = |result: Result<iced_css_core::values::FiniteF32, ConversionError>| {
+        result.map(|value| (value.value.to_bits(), value.rounded_to_zero))
+    };
+    assert_eq!(bits(bounded), bits(exact), "{text}% of {basis}");
+    bounded.map(|value| value.value.to_bits())
+}
+
+/// CP1: 50% of 100 is 50; a zero basis or a zero percentage is +0; a non-finite basis
+/// is `InvalidFiniteContext`, on both paths.
+#[test]
+fn pct_cp1_shared_path_agrees_on_plain_values() {
+    assert_eq!(percentage_of("50", 100.0), Ok(50.0_f32.to_bits()));
+    assert_eq!(percentage_of("50", 0.0), Ok(0));
+    assert_eq!(percentage_of("-0", 100.0), Ok(0));
+    assert!(!compact("-0").is_negative() && compact("-0").is_zero());
+    assert_eq!(
+        percentage_of("50", f32::NAN),
+        Err(ConversionError::InvalidFiniteContext)
+    );
+    assert_eq!(
+        percentage_of("50", f32::INFINITY),
+        Err(ConversionError::InvalidFiniteContext)
+    );
+}
+
+/// CP2 (M23 witness): 0.007% of 100 is one nearest-even rounding of 0.007 (`3be56042`); the scale
+/// is kept.
+#[test]
+fn pct_cp2_scale_is_kept() {
+    assert_eq!(percentage_of("0.007", 100.0), Ok(0x3be56042));
+    assert_eq!(percentage_of("0.049", 100.0), Ok(0x3d48b439));
+}
+
+/// CP3: 1.001% of 7 is one rounding of 0.07007 (`3d8f80dc`).
+#[test]
+fn pct_cp3_one_rounding_of_the_exact_product() {
+    assert_eq!(percentage_of("1.001", 7.0), Ok(0x3d8f80dc));
+}
+
+/// CP4 (M22 witness): the sign is the percentage's sign times the basis's: -10% of 100 is -10 and of
+/// -100 is 10.
+#[test]
+fn pct_cp4_sign_of_the_product() {
+    assert!(compact("-10").is_negative());
+    assert_eq!(percentage_of("-10", 100.0), Ok((-10.0_f32).to_bits()));
+    assert_eq!(percentage_of("-10", -100.0), Ok(10.0_f32.to_bits()));
+}
+
+/// CP5: 200% of `f32::MAX` is `Unrepresentable` on both paths.
+#[test]
+fn pct_cp5_unrepresentable_product() {
+    assert_eq!(
+        percentage_of("200", f32::MAX),
+        Err(ConversionError::Unrepresentable)
+    );
+}
+
+/// CP6: the largest stored coefficient is `u64::MAX`; 18446744073709551615% of 100
+/// rounds once to 2^64.
+#[test]
+fn pct_cp6_largest_coefficient_is_stored() {
+    assert!(decimal("18446744073709551615").compact().is_some());
+    assert_eq!(
+        percentage_of("18446744073709551615", 100.0),
+        Ok(2.0_f32.powi(64).to_bits())
+    );
+}
+
+/// CP7: one more than `u64::MAX` (canonical coefficient) is not stored; trailing zeros
+/// of a fraction are not part of the coefficient.
+#[test]
+fn pct_cp7_coefficient_above_u64_is_refused() {
+    assert_eq!(decimal("18446744073709551616").compact(), None);
+    assert_eq!(
+        compact("1844674407370955161.50"),
+        compact("1844674407370955161.5")
+    );
+}

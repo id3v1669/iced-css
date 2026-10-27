@@ -2,9 +2,10 @@
 pub mod bidi;
 mod exact;
 pub use exact::{
-    ConversionError, CounterError, CounterLimits, CounterStyle, Decimal, DecimalArithmeticError,
-    DecimalScalingError, ExactLength, FiniteF32, Integer, IntegerInterpolationError, LengthTarget,
-    NonnegativeF32, RangeEvent, RelativeUnit, format_counter, format_counters,
+    CompactDecimal, ConversionError, CounterError, CounterLimits, CounterStyle, Decimal,
+    DecimalArithmeticError, DecimalScalingError, ExactLength, FiniteF32, Integer,
+    IntegerInterpolationError, LengthTarget, NonnegativeF32, RangeEvent, RelativeUnit,
+    format_counter, format_counters,
 };
 use std::num::NonZeroUsize;
 #[derive(Debug, Clone, Copy)]

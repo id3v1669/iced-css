@@ -54,6 +54,10 @@ pub enum CapturedClearanceUnsupported {
     BlockWidth,
     HeightKind,
     DisplayOrFlow,
+    /// PCT: a percentage fact where this entry reads an absolute or `auto` value. Legacy
+    /// facts never hold one and the Sequence facade passes resolved rows, so this
+    /// fail-closed refusal is unreachable.
+    PercentageLength,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapturedClearanceError {
@@ -187,10 +191,13 @@ impl<'p> AdmittedRegion<'p> {
         .map_err(CapturedClearanceError::Core)
     }
 }
-pub(super) fn auto_length(value: BoxLengthFact) -> AutoLength {
+/// The solver operand of an absolute or `auto` fact; `None` for a percentage (PCT),
+/// which every caller refuses fail-closed.
+pub(super) fn auto_length(value: BoxLengthFact) -> Option<AutoLength> {
     match value {
-        BoxLengthFact::Auto { .. } => AutoLength::Auto,
-        BoxLengthFact::Absolute(value) => AutoLength::Value(value.pixels),
+        BoxLengthFact::Auto { .. } => Some(AutoLength::Auto),
+        BoxLengthFact::Absolute(value) => Some(AutoLength::Value(value.pixels)),
+        BoxLengthFact::Percentage(_) => None,
     }
 }
 
@@ -257,6 +264,7 @@ pub(super) fn child_facts_from_row<'p>(
         BoxLengthFact::Absolute(value) => Ok(AutoLength::Value(value.pixels)),
         BoxLengthFact::Auto { .. } if mode == ChildMarginMode::Sequence => Ok(AutoLength::Auto),
         BoxLengthFact::Auto { .. } => Err(unsupported(projected, property, U::AutoMargin)),
+        BoxLengthFact::Percentage(_) => Err(unsupported(projected, property, U::PercentageLength)),
     };
     let top = edge(0, "margin-top")?;
     let right = edge(1, "margin-right")?;
@@ -340,12 +348,16 @@ fn admit_captured_region<'p>(
     }
     let height = |projected| match row(projected)?.height {
         BoxLengthFact::Absolute(value) => Ok(OwnerHeight::Explicit(value.pixels)),
-        BoxLengthFact::Auto { .. } => Err(unsupported(projected, "height", U::HeightKind)),
+        BoxLengthFact::Auto { .. } | BoxLengthFact::Percentage(_) => {
+            Err(unsupported(projected, "height", U::HeightKind))
+        }
     };
     let heights = [height(2)?, height(3)?, height(4)?];
     let float_width = match row(3)?.width {
         BoxLengthFact::Absolute(value) => value.pixels,
-        BoxLengthFact::Auto { .. } => return Err(unsupported(3, "width", U::FloatWidth)),
+        BoxLengthFact::Auto { .. } | BoxLengthFact::Percentage(_) => {
+            return Err(unsupported(3, "width", U::FloatWidth));
+        }
     };
     let child = |projected: usize| {
         let r = row(projected)?;
@@ -371,9 +383,11 @@ fn admit_captured_region<'p>(
         parent_padding: edges(p.padding.map(|v| v.pixels)),
         margin_top: p.margin[0],
         parent_clear: p.clear.value,
-        width: auto_length(p.width),
-        margin_left: auto_length(p.margin[3]),
-        margin_right: auto_length(p.margin[1]),
+        width: auto_length(p.width).ok_or_else(|| unsupported(1, "width", U::PercentageLength))?,
+        margin_left: auto_length(p.margin[3])
+            .ok_or_else(|| unsupported(1, "margin-left", U::PercentageLength))?,
+        margin_right: auto_length(p.margin[1])
+            .ok_or_else(|| unsupported(1, "margin-right", U::PercentageLength))?,
         before: child(2)?,
         float: child(3)?,
         after: child(4)?,
@@ -591,7 +605,13 @@ pub fn build_captured_clearance_from_outer<'p, 'h, 'd, 's, 'b, 'r>(
     let parent_clear = admitted.parent_clear;
     let parent_origin = place_first_child_origin(FirstChildOriginInput {
         containing_top: outer.content_top,
-        margin_top: auto_length(computed_margin_top),
+        margin_top: auto_length(computed_margin_top).ok_or_else(|| {
+            E::Captured(unsupported(
+                1,
+                "margin-top",
+                CapturedClearanceUnsupported::PercentageLength,
+            ))
+        })?,
         border_top: admitted.parent_border.top,
         padding_top: admitted.parent_padding.top,
     })
@@ -690,6 +710,12 @@ pub fn build_captured_clearance_with_parent_height<'p, 'h, 'd, 's, 'b, 'r>(
         .height;
     let mode = match computed_height {
         BoxLengthFact::Absolute(value) => BfcHeightMode::Explicit(value.pixels),
+        BoxLengthFact::Percentage(_) => {
+            return Err(E::FactInvariant {
+                projected: 1,
+                property: "height",
+            });
+        }
         BoxLengthFact::Auto { .. } => {
             let invariant = E::FactInvariant {
                 projected: 4,
@@ -788,7 +814,10 @@ pub fn build_captured_clearance_with_parent_bottom<'p, 'h, 'd, 's, 'b, 'r>(
         content_bottom: parent.height().content_bottom,
         padding_bottom: row.padding[2].pixels,
         border_bottom: row.border_widths()[2],
-        margin_bottom: auto_length(computed_margin_bottom),
+        margin_bottom: auto_length(computed_margin_bottom).ok_or(E::FactInvariant {
+            projected: 1,
+            property: "margin-bottom",
+        })?,
     })
     .map_err(E::Bottom)?;
     Ok(CapturedParentBottom {
