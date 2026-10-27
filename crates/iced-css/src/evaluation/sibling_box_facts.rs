@@ -111,14 +111,16 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 /// `Unsupported` (`PercentageLength`, `RelativeLength` or `InheritedOffset`),
 /// `InvalidValue`, `Defaulting`, `InitialRecipe` or a `Length` conversion error.
 /// Every Sequence row also carries its computed `min-width`, `min-height`, `max-width`
-/// and `max-height` (absolute, or `none` for a maximum, or inherited) and can fail there
-/// with `Unsupported` (`PercentageLength` or `RelativeLength`), `InvalidValue` or a
-/// `Length` conversion error. A percentage `width`, margin, `right` or `left` (PCT) is
-/// kept exactly as `BoxLengthFact::Percentage`, and a percentage padding or `min-width`
-/// (PPM) as `LengthPercentageBoxFact::Percentage` and `max-width` as
-/// `BoxMaxFact::Percentage`, without a conversion; each can fail with `InvalidValue` (a
-/// negative value) or `Unsupported` (`PercentagePrecision`). Every other percentage
-/// (`height`, `min-height`, `max-height`, `top`, `bottom`) keeps `PercentageLength`.
+/// and `max-height` (absolute, a percentage for `min-width`/`max-width` (PPM) and
+/// `min-height`/`max-height` (PHT), `none` for a maximum, or inherited) and can fail there
+/// with `Unsupported` (`RelativeLength` or `PercentagePrecision`), `InvalidValue` or a
+/// `Length` conversion error. A percentage `width`, margin, `right` or `left` (PCT) or
+/// `height` (PHT) is kept exactly as `BoxLengthFact::Percentage`, a percentage padding,
+/// `min-width` (PPM) or `min-height` (PHT) as `LengthPercentageBoxFact::Percentage`, and
+/// a `max-width` (PPM) or `max-height` (PHT) as `BoxMaxFact::Percentage`, without a
+/// conversion; each can fail with `InvalidValue` (a negative value) or `Unsupported`
+/// (`PercentagePrecision`). Every other percentage (`top`, `bottom`) keeps
+/// `PercentageLength`.
 ///
 /// Shared registry/rule/declaration preflight and aggregate service reservations finish
 /// before row allocation. Actual row capacity is then charged before row initialization

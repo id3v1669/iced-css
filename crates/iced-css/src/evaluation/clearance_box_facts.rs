@@ -56,12 +56,13 @@ pub enum BoxLengthFact {
     Auto {
         origin: BoxFactOrigin,
     },
-    /// PCT: a computed percentage of the containing block's width; see the
-    /// `ClearanceBoxFact` contract for the rows and longhands that may hold it.
+    /// PCT: a computed percentage of the containing block's width (PHT: of its height,
+    /// for `height`); see the `ClearanceBoxFact` contract for the rows and longhands that
+    /// may hold it.
     Percentage(PercentageBoxFact),
 }
 /// A computed `max-width` or `max-height` (MMX): an absolute length, or `none`; a
-/// Sequence `max-width` may also be a percentage (PPM).
+/// Sequence `max-width` (PPM) or `max-height` (PHT) may also be a percentage.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BoxMaxFact {
     Absolute(AbsoluteBoxFact),
@@ -69,12 +70,13 @@ pub enum BoxMaxFact {
         origin: BoxFactOrigin,
     },
     /// PPM: a computed `max-width` percentage of the containing block's width (CSS2.2
-    /// 10.4); `max_height` never holds it.
+    /// 10.4); a Sequence `max_height` may hold one too (PHT, CSS2.2 10.7), a percentage
+    /// of the containing block's height: the field gives its axis.
     Percentage(PercentageBoxFact),
 }
 /// A computed `<length> | <percentage>` (PPM): the four paddings and `min-width`
-/// (CSS2.2 8.4, 10.4). Only a Sequence row may hold a percentage; see the
-/// `ClearanceBoxFact` contract.
+/// (CSS2.2 8.4, 10.4), and `min-height` (PHT, 10.7). Only a Sequence row may hold a
+/// percentage; see the `ClearanceBoxFact` contract.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LengthPercentageBoxFact {
     Absolute(AbsoluteBoxFact),
@@ -128,8 +130,9 @@ pub struct BorderWidthFact {
 /// `None { Initial }`, and that `origin` is not provenance. A Sequence row carries the
 /// computed constraints with true provenance (CSS2.2 10.4, 10.7): an absolute
 /// nonnegative length converted once (zero is +0), `none` for a max, or the parent
-/// row's fact for `inherit`; a `min-width` or `max-width` percentage is kept exactly
-/// (PPM, see below), while height-constraint percentages and `em`/`ex` stay refused.
+/// row's fact for `inherit`; a `min-width` or `max-width` percentage (PPM) and a
+/// `min-height` or `max-height` percentage (PHT) are kept exactly (see below), while
+/// `em`/`ex` stay refused.
 ///
 /// Border facts depend on the entry. `evaluate_clearance_box_facts` (Legacy) admits
 /// only `none`/`hidden` styles and never computes a width: every Legacy width fact is
@@ -143,20 +146,23 @@ pub struct BorderWidthFact {
 ///
 /// `offset` (REL) holds the computed `top`, `right`, `bottom` and `left` of a Sequence
 /// row whose computed `position` is `relative`: `auto`, or an absolute length
-/// converted like a signed margin (zero is +0), or the parent row's offset for
-/// `inherit`. It is `None` for every other row (CSS2.2 9.3.1: the offsets do not apply
-/// to a static box; absolute and fixed boxes are refused later) and for every Legacy
-/// row, whose offsets are never resolved.
+/// converted like a signed margin (zero is +0), or a `right`/`left` percentage (PCT),
+/// or the parent row's offset for `inherit`. It is `None` for every other row (CSS2.2
+/// 9.3.1: the offsets do not apply to a static box; absolute and fixed boxes are
+/// refused later) and for every Legacy row, whose offsets are never resolved.
 ///
-/// Percentage facts (PCT, PPM) depend on the entry. A Legacy row never holds
+/// Percentage facts (PCT, PPM, PHT) depend on the entry. A Legacy row never holds
 /// `BoxLengthFact::Percentage`, `LengthPercentageBoxFact::Percentage` or
 /// `BoxMaxFact::Percentage`: `evaluate_clearance_box_facts` refuses every percentage
-/// with `PercentageLength`. A Sequence row may hold one only in `width`, `margin`,
-/// `padding`, `min_width`, `max_width` and, on a relatively positioned row, `offset[1]`
-/// (`right`) and `offset[3]` (`left`): the authored percentage kept exactly (CSS2.2
-/// 10.2, 8.3, 8.4, 10.4, 9.3.2), or the parent row's fact for `inherit`. It is resolved
-/// later against the containing block's width; percentages of every other longhand
-/// stay refused.
+/// with `PercentageLength`. A Sequence row may hold one only in `width`, `height`,
+/// `margin`, `padding`, `min_width`, `min_height`, `max_width`, `max_height` and, on a
+/// relatively positioned row, `offset[1]` (`right`) and `offset[3]` (`left`): the
+/// authored percentage kept exactly (CSS2.2 10.2, 10.5, 8.3, 8.4, 10.4, 10.7, 9.3.2),
+/// or the parent row's fact for `inherit`. A `height`, `min_height` or `max_height`
+/// percentage is resolved later against the containing block's height when that height
+/// is specified explicitly, and otherwise takes the CSS2.2 10.5/10.7 rule (`auto`, 0 or
+/// `none`); every other one is resolved against the containing block's width. `top`
+/// and `bottom` percentages stay refused.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,
@@ -164,7 +170,7 @@ pub struct ClearanceBoxFact {
     /// Computed `min-width`, `min-height`, `max-width` and `max-height`; see the type
     /// contract for Legacy and Sequence rows.
     pub min_width: LengthPercentageBoxFact,
-    pub min_height: AbsoluteBoxFact,
+    pub min_height: LengthPercentageBoxFact,
     pub max_width: BoxMaxFact,
     pub max_height: BoxMaxFact,
     pub margin: [BoxLengthFact; 4],

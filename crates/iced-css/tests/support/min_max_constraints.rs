@@ -440,12 +440,12 @@ fn mmx_constraints(
 ) {
     (
         row.min_width.absolute().unwrap(),
-        row.min_height,
+        row.min_height.absolute().unwrap(),
         row.max_width,
         row.max_height,
         [
             row.min_width.absolute().unwrap().pixels.to_bits(),
-            row.min_height.pixels.to_bits(),
+            row.min_height.absolute().unwrap().pixels.to_bits(),
         ],
     )
 }
@@ -884,15 +884,15 @@ fn mmx_fa2_inherit_copies_the_parent_constraint() {
     assert_mmx_row(5, fragment, "", &mmx_w6_expected());
 }
 
-/// FA3: height-constraint percentages and `em` keep their refusals on the Sequence
-/// rows (PPM admits `min-width` and `max-width` percentages).
+/// FA3: `em` and `ex` keep their refusals on the Sequence rows (PPM and PHT admit
+/// constraint percentages).
 #[test]
 fn mmx_fa3_percentage_and_relative_constraints_are_refused() {
     for (fragment, name, reason) in [
         (
-            "#b1 { max-height:10%; }",
+            "#b1 { max-height:1ex; }",
             "max-height",
-            BoxFactUnsupported::PercentageLength,
+            BoxFactUnsupported::RelativeLength,
         ),
         (
             "#b1 { min-height:1em; }",
@@ -1169,13 +1169,13 @@ const MMX_WORK_FRAGMENT: &str = "#o { min-width:1px; max-width:500px; min-height
                                  min-height:1px; max-height:50px; }";
 
 /// Facade and core work (M24 witness): exact and one short at N5, N6 and N7 with every
-/// constraint nondefault; the facade charge is `440 + 32N + 422(N-2) + 313(N-3)`.
+/// constraint nondefault; the facade charge is `461 + 32N + 449(N-2) + 313(N-3)`.
 #[test]
 fn mmx_work_thresholds_with_constraints() {
-    for (nodes, facade, core) in [(5, 2492, 1249), (6, 3259, 1501), (7, 4026, 1754)] {
+    for (nodes, facade, core) in [(5, 2594, 1249), (6, 3388, 1501), (7, 4182, 1754)] {
         assert_eq!(
             facade,
-            440 + 32 * nodes + 422 * (nodes - 2) + 313 * (nodes - 3)
+            461 + 32 * nodes + 449 * (nodes - 2) + 313 * (nodes - 3)
         );
         let css = mmx_css(nodes, MMX_WORK_FRAGMENT);
         assert_mmx_view(

@@ -932,13 +932,13 @@ fn cbr_m_c_decorated_float_paths() {
 #[test]
 fn cbr_work_thresholds_with_child_borders_and_an_unisolated_parent() {
     for (nodes, facade, core, p_bottom) in [
-        (5, 2492, 1249, 29.0),
-        (6, 3259, 1501, 34.0),
-        (7, 4026, 1754, 38.0),
+        (5, 2594, 1249, 29.0),
+        (6, 3388, 1501, 34.0),
+        (7, 4182, 1754, 38.0),
     ] {
         assert_eq!(
             facade,
-            440 + 32 * nodes + 422 * (nodes - 2) + 313 * (nodes - 3)
+            461 + 32 * nodes + 449 * (nodes - 2) + 313 * (nodes - 3)
         );
         assert_eq!(
             core,

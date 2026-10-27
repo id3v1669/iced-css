@@ -230,7 +230,7 @@ fn pbr_fact_representation_measurement() {
     assert!(row.0 >= 4 * width.0, "row {row:?} width {width:?}");
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     {
-        assert_eq!(row, (840, 8));
+        assert_eq!(row, (848, 8));
         assert_eq!(width, (24, 8));
     }
 }
@@ -770,8 +770,8 @@ fn pbr_w2_sequence_numeric_allowance_is_exact() {
     }
 }
 
-/// W3: at N7 the exact-limit facts build at the exact facade and core work (PPM
-/// values 4026 and 1754).
+/// W3: at N7 the exact-limit facts build at the exact facade and core work (PHT
+/// values 4182 and 1754).
 #[test]
 fn pbr_w3_exact_facts_build_at_the_exact_facade_and_core_work() {
     let css = work_css(7);
@@ -783,11 +783,11 @@ fn pbr_w3_exact_facts_build_at_the_exact_facade_and_core_work() {
         let facts = evaluate_sibling_box_facts(projection, display, exact).unwrap();
         assert_eq!(facts.row(1).unwrap().border_widths(), [3.0; 4]);
         let mut limits = layout_limits();
-        limits.work = nz(4026);
+        limits.work = nz(4182);
         limits.core.work = nz(1754);
         let layout =
             default_outer_layout(&facts, &projection.nodes()[0], 0.0, 100.0, 10.0, limits).unwrap();
-        assert_eq!(layout.receipt().work, 4026);
+        assert_eq!(layout.receipt().work, 4182);
         assert_eq!(layout.receipt().core.work, 1754);
         assert_eq!(layout.parent().origin().content_top, 14.0);
     });

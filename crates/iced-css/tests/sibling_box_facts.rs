@@ -270,7 +270,7 @@ fn evaluation_prepayment_finishes_before_row_reserve_and_selector_scratch() {
 fn actual_later_source_property_and_target_errors_publish_no_batch() {
     for (css, original, target, reason) in [
         (
-            "#b3 { height: 1%; }",
+            "#b3 { position: relative; top: 1%; }",
             3,
             BoxFactTarget::Element,
             BoxFactUnsupported::PercentageLength,

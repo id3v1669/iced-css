@@ -83,15 +83,12 @@ fn ppm_red_r3_parent_min_width_percentage_widens_p() {
     );
 }
 
-/// FX5 (guard; M5 witness): `height`, `min-height`, `max-height`, `top` and `bottom`
-/// percentages keep `PercentageLength` at B1's own index on a Sequence row. Passes at
-/// RED and after PPM.
+/// FX5 (guard; M5 witness): `top` and `bottom` percentages keep `PercentageLength` at
+/// B1's own index on a Sequence row (PHT admits `height`, `min-height` and
+/// `max-height`). Passes at RED and after PPM and PHT.
 #[test]
 fn ppm_red_guard_fx5_height_constraint_and_vertical_offset_percentages_stay_refused() {
     for (fragment, name) in [
-        ("#b1 { height:50%; }", "height"),
-        ("#b1 { min-height:10%; }", "min-height"),
-        ("#b1 { max-height:10%; }", "max-height"),
         ("#b1 { position:relative; top:10%; }", "top"),
         ("#b1 { position:relative; bottom:10%; }", "bottom"),
     ] {
@@ -822,14 +819,14 @@ const PPM_WORK_FRAGMENT: &str = "#p { padding-top:1%; padding-bottom:1%; min-wid
                                  #f { max-width:100%; }";
 
 /// Facade and core work (M18 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `440 + 32N + 422(N-2) +
+/// percentages on every source; the facade charge is `461 + 32N + 449(N-2) +
 /// 313(N-3)`; the layout equals the baseline's.
 #[test]
 fn ppm_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2492, 1249), (6, 3259, 1501), (7, 4026, 1754)] {
+    for (nodes, facade, core) in [(5, 2594, 1249), (6, 3388, 1501), (7, 4182, 1754)] {
         assert_eq!(
             facade,
-            440 + 32 * nodes + 422 * (nodes - 2) + 313 * (nodes - 3)
+            461 + 32 * nodes + 449 * (nodes - 2) + 313 * (nodes - 3)
         );
         let css = pct_css(nodes, &format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT}"));
         assert_pct_view(
@@ -893,6 +890,11 @@ fn ppm_representation_measurement() {
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     assert_eq!(
         measured.map(|(_, size, align)| (size, align)),
-        [(32, 8), (32, 8), (840, 8)]
+        [(32, 8), (32, 8), (848, 8)]
     );
 }
+
+// PHT: the height, `min-height` and `max-height` percentage rows reuse the `pct` and
+// `ppm` helpers as a child module of this one (design section 6).
+#[path = "percentage_heights.rs"]
+mod percentage_heights;

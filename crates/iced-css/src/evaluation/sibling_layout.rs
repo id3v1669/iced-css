@@ -349,7 +349,8 @@ pub enum SiblingLayoutError {
     },
     /// PCT: a percentage `width`, margin, `right` or `left` of `source` (PPM: also a
     /// padding, `min-width` or `max-width`; `property` is its CSS name) cannot be
-    /// resolved against its containing block's width.
+    /// resolved against its containing block's width, or (PHT) a child's percentage
+    /// `height`, `min-height` or `max-height` against P's explicit used content height.
     Percentage {
         source: usize,
         property: &'static str,
@@ -397,7 +398,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `440 + 32*N + 422*(N-2) + 313*(N-3)` is prepaid before any
+/// Facade work `461 + 32*N + 449*(N-2) + 313*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -428,12 +429,18 @@ impl std::error::Error for SiblingLayoutError {
 /// prepaid when every constraint is default. Percentages (PCT) add 72 fixed actions
 /// (P's resolution 57, its two basis validity tests 4, the held-result test 2 and F's
 /// width resolved again 9) and 124 per child (its first resolution 57, the held-result
-/// test 2, its second resolution 57 and four margin comparisons 8); a resolution is
+/// test 2, its second resolution 57 and four margin comparisons 8); a PCT resolution was
 /// seven longhands of 8 and the basis read, prepaid when no value is a percentage.
 /// Padding and width-constraint percentages (PPM) add six longhands to each
 /// resolution (105 in all): 64 fixed actions (P's resolution 48 and F's `min-width`
 /// and `max-width` resolved again 16) and 104 per child (its two resolutions 96 and
 /// four padding comparisons 8), prepaid when no value is a percentage.
+/// Height percentages (PHT) add 21 fixed actions (O's height read and its `auto` test
+/// 3, P's three category tests and the refusal decision 8, P's three treated-as writes
+/// 3, and the children's basis: P's height category test, the two `constrain`
+/// comparisons and the basis write 7) and 27 per child (its vertical resolution: three
+/// longhands of 8 and the basis read 1, and the basis-presence test 2), prepaid when no
+/// value is a percentage.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -499,12 +506,28 @@ impl std::error::Error for SiblingLayoutError {
 /// publish the percentage facts. P's horizontal solve runs before the child loop and a
 /// failure there is held: it is returned after F's `FloatWidth` test, where P's solver
 /// error occurred before, so every earlier error keeps its order. An invalid O basis
-/// keeps the solver's own error. A child's percentages resolve after its admission
-/// tests (a failure is `Percentage` at that child); the placement loop and F's width
-/// resolve each row again, and a failure or a margin or padding that differs there is
-/// `FactInvariant`. Every reader of a padding or a width constraint reads a resolved
-/// row (PPM): P's solve, origin and bottom, each normal's solve and padding edges, the
-/// core's child facts and F's `constrain`.
+/// keeps the solver's own error. A child's width-axis percentages resolve after its
+/// admission tests and its height facts, and not while P's failure is held (a failure
+/// is `Percentage` at that child); the placement loop and F's width resolve each row
+/// again, and a failure or a margin or padding that differs there is `FactInvariant`.
+/// Every reader of a padding or a width constraint reads a resolved row (PPM): P's
+/// solve, origin and bottom, each normal's solve and padding edges, the core's child
+/// facts and F's `constrain`.
+/// Every Sequence row's percentage `height`, `min-height` and `max-height` (PHT, CSS2.2
+/// 10.5, 10.7) resolves against its containing block's height when that height is
+/// specified explicitly; otherwise `height` is used as `auto`, `min-height` as 0 and
+/// `max-height` as `none`. P's containing block is O, whose used content height is not
+/// a facade input: P's height percentages are refused with `OuterHeightBasis` unless
+/// O's computed `height` is `auto`, when they take those indefinite rules. The refusal
+/// follows P's `overflow` test and precedes every child error and P's held horizontal
+/// error. Each child's basis is P's explicit used content height (P's computed `height`
+/// length after its limits), known before the child loop, or none when P's used height
+/// is `auto`. A child's height facts resolve in the order `height`, `min-height`,
+/// `max-height`, after its admission tests and before the held P check (their basis
+/// does not depend on P's horizontal solve); a failure is `Percentage` at that child.
+/// P's height routes and `constrain_bfc_height` select on P's used height category and
+/// limits. The computed accessors publish the percentage facts. Vertical paddings and
+/// margins keep the width basis.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -601,9 +624,44 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             CapturedClearanceUnsupported::ParentOverflow,
         )));
     }
+    let numeric = facts.numeric_limits();
+    // PHT (CSS2.2 10.5, 10.7): P's containing block is O, whose used content height is not
+    // a facade input: P's height percentages are refused unless O's computed `height` is
+    // `auto`, when they take the indefinite rules. The children's basis is P's explicit
+    // used content height, known here.
+    let outer_row = fact_row(facts, 0, "height")?;
+    let parent_vertical = resolve_heights(parent_row, None, numeric, 1)?;
+    if !matches!(outer_row.height, BoxLengthFact::Auto { .. }) {
+        let property = if matches!(parent_row.height, BoxLengthFact::Percentage(_)) {
+            Some("height")
+        } else if matches!(
+            parent_row.min_height,
+            LengthPercentageBoxFact::Percentage(_)
+        ) {
+            Some("min-height")
+        } else if matches!(parent_row.max_height, BoxMaxFact::Percentage(_)) {
+            Some("max-height")
+        } else {
+            None
+        };
+        if let Some(property) = property {
+            return Err(E::Captured(unsupported(
+                1,
+                property,
+                CapturedClearanceUnsupported::OuterHeightBasis,
+            )));
+        }
+    }
+    let child_basis = match parent_vertical.height {
+        BoxLengthFact::Absolute(value) => Some(constrain(
+            value.pixels,
+            parent_vertical.min,
+            parent_vertical.max,
+        )),
+        _ => None,
+    };
     // PCT (Q-6): P's horizontal solve runs here, before the children whose basis it is;
     // a failure is held and returned at F's width step.
-    let numeric = facts.numeric_limits();
     let parent_solve = solve_parent(facts, outer.content_left, outer.content_width, parent_row);
     for source in 2..node_count {
         let row = fact_row(facts, source, "row")?;
@@ -628,15 +686,15 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // for F without content): F keeps the Auto category when its constrained
         // height is +0 (Q-6); a normal with a positive `min-height` is admitted with
         // that height (it cannot collapse through, 8.3.1), any other Auto normal stays
-        // `HeightKind`.
-        let (min_height, max_height) = (
-            row.min_height.pixels,
-            max_value(row.max_height, source, "max-height")?,
-        );
-        let auto_height = constrain(0.0, min_height, max_height);
-        let height = match row.height {
+        // `HeightKind`. PHT (10.5, 10.7): the three height facts are first resolved against
+        // P's explicit used content height or take the indefinite rules, after the
+        // admission tests above and before the held P check below (the basis does not
+        // depend on P's horizontal solve).
+        let vertical = resolve_heights(row, child_basis, numeric, source)?;
+        let auto_height = constrain(0.0, vertical.min, vertical.max);
+        let height = match vertical.height {
             BoxLengthFact::Absolute(value) => {
-                OwnerHeight::Explicit(constrain(value.pixels, min_height, max_height))
+                OwnerHeight::Explicit(constrain(value.pixels, vertical.min, vertical.max))
             }
             BoxLengthFact::Auto { .. } if source == 3 && auto_height == 0.0 => OwnerHeight::Auto,
             BoxLengthFact::Auto { .. } if auto_height > 0.0 => OwnerHeight::Explicit(auto_height),
@@ -647,7 +705,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     CapturedClearanceUnsupported::HeightKind,
                 )));
             }
-            // PCT: the facts refuse a height percentage.
+            // PHT: `resolve_heights` leaves no height percentage.
             BoxLengthFact::Percentage(_) => {
                 return Err(E::FactInvariant {
                     source,
@@ -656,8 +714,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             }
         };
         let display = joined_display(projection, facts.display(), source).map_err(E::Captured)?;
-        // PCT: after its admission tests, the child's percentages resolve against P's used
-        // content width; while P's failure is held, only admission continues.
+        // PCT: after its admission tests and its height facts (PHT), the child's width-axis
+        // percentages resolve against P's used content width; while P's failure is held,
+        // only admission and the height facts continue.
         let Ok(parent) = &parent_solve else {
             continue;
         };
@@ -977,13 +1036,11 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
 
     let computed_height = parent_row.height;
-    // PPM (PL-18): P's height constraints are read from its resolved row (they are never
-    // percentages, so the values are the computed ones).
-    let (parent_min_height, parent_max_height) = (
-        parent_used.min_height.pixels,
-        max_value(parent_used.max_height, 1, "max-height")?,
-    );
-    let tentative = if matches!(computed_height, BoxLengthFact::Auto { .. })
+    // PHT (PM-19): P's routes select on its used height category and limits from its
+    // vertical step (a percentage `height` used as `auto` takes the Auto routes, a
+    // percentage limit is 0 or `none`); `computed_height` is published unchanged.
+    let (parent_min_height, parent_max_height) = (parent_vertical.min, parent_vertical.max);
+    let tentative = if matches!(parent_vertical.height, BoxLengthFact::Auto { .. })
         && children.iter().any(|child| {
             child.kind() == PrincipalChildKind::Normal
                 && (child.used_margin_top() < 0.0 || child.used_margin_bottom() < 0.0)
@@ -1020,14 +1077,14 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         })
         .map_err(E::SignedHeight)?
     } else {
-        let height_mode = match computed_height {
+        let height_mode = match parent_vertical.height {
             // MMX (CSS2.2 10.7): the rerun with an explicit computed height yields it.
             BoxLengthFact::Absolute(value) => BfcHeightMode::Explicit(constrain(
                 value.pixels,
                 parent_min_height,
                 parent_max_height,
             )),
-            // PCT: the facts refuse a height percentage.
+            // PHT: `resolve_heights` leaves no height percentage.
             BoxLengthFact::Percentage(_) => {
                 return Err(E::FactInvariant {
                     source: 1,
@@ -1073,7 +1130,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     // MMX (CSS2.2 10.7): either Auto route above gives the tentative placement, which
     // is constrained once by `min-height`/`max-height`; P's bottom and the `auto`
     // containment use the result. An explicit height is already constrained.
-    let height = match computed_height {
+    let height = match parent_vertical.height {
         BoxLengthFact::Auto { .. } => constrain_bfc_height(
             origin.content_top,
             tentative,
@@ -1280,6 +1337,65 @@ fn max_value(
     }
 }
 
+/// PHT: the used height facts of a row: `height` is `Absolute` or `Auto` (never a
+/// percentage), `min` the used `min-height` and `max` the used `max-height` (`None` for
+/// `none`).
+struct VerticalUsed {
+    height: BoxLengthFact,
+    min: f32,
+    max: Option<f32>,
+}
+
+/// PHT (CSS2.2 10.5, 10.7): the used `height`, `min-height` and `max-height` of `row` in
+/// the fixed order `height`, `min-height`, `max-height`, so that the first failing
+/// property is deterministic. With `Some(basis)`, the containing block's explicit used
+/// content height, a percentage resolves by one exact product rounded once
+/// (`resolve_percentage`; a failure is `Percentage` at `source`). With `None` (the
+/// containing block's height depends on content) a `height` percentage is used as `auto`
+/// with its origin, a `min-height` percentage as 0 and a `max-height` percentage as
+/// `none`. Absolute, `auto` and `none` facts pass through.
+fn resolve_heights(
+    row: &ClearanceBoxFact,
+    basis: Option<f32>,
+    limits: NumericLimits,
+    source: usize,
+) -> Result<VerticalUsed, SiblingLayoutError> {
+    let resolve = |percentage: PercentageBoxFact, basis: f32, property: &'static str| {
+        resolve_percentage(percentage, basis, limits).map_err(|error| {
+            SiblingLayoutError::Percentage {
+                source,
+                property,
+                error,
+            }
+        })
+    };
+    let height = match (row.height, basis) {
+        (BoxLengthFact::Percentage(percentage), Some(basis)) => {
+            BoxLengthFact::Absolute(resolve(percentage, basis, "height")?)
+        }
+        (BoxLengthFact::Percentage(percentage), None) => BoxLengthFact::Auto {
+            origin: percentage.origin,
+        },
+        (other, _) => other,
+    };
+    let min = match (row.min_height, basis) {
+        (LengthPercentageBoxFact::Absolute(value), _) => value.pixels,
+        (LengthPercentageBoxFact::Percentage(percentage), Some(basis)) => {
+            resolve(percentage, basis, "min-height")?.pixels
+        }
+        (LengthPercentageBoxFact::Percentage(_), None) => 0.0,
+    };
+    let max = match (row.max_height, basis) {
+        (BoxMaxFact::Absolute(value), _) => Some(value.pixels),
+        (BoxMaxFact::None { .. }, _) => None,
+        (BoxMaxFact::Percentage(percentage), Some(basis)) => {
+            Some(resolve(percentage, basis, "max-height")?.pixels)
+        }
+        (BoxMaxFact::Percentage(_), None) => None,
+    };
+    Ok(VerticalUsed { height, min, max })
+}
+
 /// PPM: the solver operand of a padding or `min-width` fact of a row resolved by
 /// `resolved_row`; a percentage left there is an invariant breach.
 fn length_operand(
@@ -1432,7 +1548,8 @@ fn resolve_max(
 /// order `width`, `margin-top`, `margin-right`, `margin-bottom`, `margin-left`, `right`,
 /// `left`, then (PPM) `padding-top`, `padding-right`, `padding-bottom`, `padding-left`,
 /// `min-width`, `max-width`, so that the first failing property is deterministic; a
-/// failure is `Percentage` at `source`.
+/// failure is `Percentage` at `source`. PHT: the height facts are not resolved here (see
+/// `resolve_heights`); vertical paddings keep the width basis (CSS2.2 8.4).
 fn resolved_row(
     row: &ClearanceBoxFact,
     basis: f32,
@@ -1482,7 +1599,8 @@ fn resolved_row(
 
 /// PCT: a copy of `row` whose percentages are +0 with their origin, without
 /// the percentage primitive, for an invalid O basis that the P solver refuses before it
-/// reads any operand (PPM: paddings, `min-width` and `max-width` included).
+/// reads any operand (PPM: paddings, `min-width` and `max-width` included). PHT: the
+/// height facts are left as they are; no height reader reads this row.
 fn zeroed_row(row: &ClearanceBoxFact) -> ClearanceBoxFact {
     let absolute = |percentage: PercentageBoxFact| AbsoluteBoxFact {
         pixels: 0.0,
@@ -1640,7 +1758,7 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // exact comparisons 4, a possible explicit rerun publication 16).
         .checked_add(58)?
         .checked_add(children.checked_mul(22)?)?
-        // PCT: 72 fixed and 124 per child, charged on every path. A resolution is 57:
+        // PCT: 72 fixed and 124 per child, charged on every path. A PCT resolution was 57:
         // seven longhands of 8 (category test 2, primitive call and return 4, result
         // write 1, origin copy 1) and the basis read 1. P: its resolution 57, the two
         // basis validity tests 4, the held-result test 2 and F's width resolved again 9
@@ -1653,7 +1771,16 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // `min-width` and `max-width` resolved again 16) and 104 per child (its two
         // resolutions 96 and four padding comparisons 8), charged on every path.
         .checked_add(64)?
-        .checked_add(children.checked_mul(104)?)
+        .checked_add(children.checked_mul(104)?)?
+        // PHT: 21 fixed and 27 per child, charged on every path. P: O's height read 1 and
+        // its `auto` test 2, P's three category tests 6 and the refusal decision 2, the
+        // three treated-as writes 3, and the children's basis (P's height category test 2,
+        // the two `constrain` comparisons 4 and the basis write 1). Per child: its vertical
+        // resolution, three longhands of 8 (category test 2, primitive call and return 4,
+        // result write 1, origin copy 1) and the basis read 1, and the basis-presence
+        // test 2.
+        .checked_add(21)?
+        .checked_add(children.checked_mul(27)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -1757,9 +1884,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(2492));
-        assert_eq!(facade_work(6), Some(3259));
-        assert_eq!(facade_work(7), Some(4026));
+        assert_eq!(facade_work(5), Some(2594));
+        assert_eq!(facade_work(6), Some(3388));
+        assert_eq!(facade_work(7), Some(4182));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
