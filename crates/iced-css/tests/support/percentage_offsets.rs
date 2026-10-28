@@ -562,13 +562,13 @@ const PTB_WORK_FRAGMENT: &str = "#p { height:20px; } \
 
 /// Facade and core work (M19 witness): exact and one short at N5, N6 and N7 with
 /// percentages on every source; the facade charge is `546 + 32N + 526(N-2) +
-/// 313(N-3)`; the layout equals the control with the children relative and no offsets.
+/// 371(N-3)`; the layout equals the control with the children relative and no offsets.
 #[test]
 fn ptb_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
+    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
+            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTB_WORK_FRAGMENT}"));
@@ -966,15 +966,15 @@ const PTA_WORK_FRAGMENT: &str = "#b1, #f, #b2, #b3, #b4 { position:relative; top
 
 /// Facade and core work under the Auto P (M16 witness): exact and one short at N5, N6 and
 /// N7 with PCT's, PPM's and PHT's percentages and the children's offset percentages
-/// resolved in the vertical pass; the facade charge is `546 + 32N + 526(N-2) + 313(N-3)`,
+/// resolved in the vertical pass; the facade charge is `546 + 32N + 526(N-2) + 371(N-3)`,
 /// as on the explicit path (`ptb_work_thresholds_with_percentages`); the layout equals the
 /// control with the children relative and no offsets.
 #[test]
 fn pta_work_thresholds_under_an_auto_parent() {
-    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
+    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
+            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTA_WORK_FRAGMENT}"));

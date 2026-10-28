@@ -7,7 +7,7 @@ use super::*;
 use iced_css_core::formatting::bfc_height::{SignedNormalMarginEdge, SignedNormalMarginError};
 
 /// (nodes, facade exact work, core exact work) from the TNB counted action table.
-const TNB_WORK: [(usize, usize, usize); 3] = [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)];
+const TNB_WORK: [(usize, usize, usize); 3] = [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)];
 
 /// Copied observations of one successful layout.
 #[derive(Debug)]
@@ -300,7 +300,7 @@ fn tnb_error_order_profile_rows() {
         },
     );
     // C1 (facade; ZHN Z2): a zero-height new-BFC tail after the tail's context is admitted
-    // (G6a); the core continuation it witnessed is ZC2 in the core suite.
+    // (G6a); the core continuation it witnessed is ZC1 in the core suite.
     let view = tnb_layout(
         6,
         &format!("{} #b3 {{ overflow:hidden; height:0; }}", baseline_css()),
@@ -663,7 +663,7 @@ fn tnb_exact_and_one_short_work_at_every_node_count() {
     for (nodes, facade, core) in TNB_WORK {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
+            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         assert_eq!(
             core,

@@ -798,13 +798,13 @@ const PPM_WORK_FRAGMENT: &str = "#p { padding-top:1%; padding-bottom:1%; min-wid
 
 /// Facade and core work (M18 witness): exact and one short at N5, N6 and N7 with
 /// percentages on every source; the facade charge is `546 + 32N + 526(N-2) +
-/// 313(N-3)`; the layout equals the baseline's.
+/// 371(N-3)`; the layout equals the baseline's.
 #[test]
 fn ppm_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
+    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
+            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         let css = pct_css(nodes, &format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT}"));
         assert_pct_view(

@@ -210,6 +210,13 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
         ),
         ("#b2 {width:1px;}", 4, "width", U::BlockWidth),
         ("#b1 {height:auto;}", 2, "height", U::HeightKind),
+        // DAZ DL1: the Legacy bridge keeps a decorated Auto-height normal `HeightKind`.
+        (
+            "#b1 {height:auto; padding-top:1px;}",
+            2,
+            "height",
+            U::HeightKind,
+        ),
         ("#f {width:auto;}", 3, "width", U::FloatWidth),
         ("#b2 {margin-top:auto;}", 4, "margin-top", U::AutoMargin),
         ("#b1 {margin-left:auto;}", 2, "margin-left", U::AutoMargin),

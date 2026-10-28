@@ -402,7 +402,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `546 + 32*N + 526*(N-2) + 313*(N-3)` is prepaid before any
+/// Facade work `546 + 32*N + 526*(N-2) + 371*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -463,6 +463,12 @@ impl std::error::Error for SiblingLayoutError {
 /// 27 (three longhands of 8, the basis read 1 and the basis-presence test 2), P's
 /// offsets against it 21 (the PTB unit), the copy of P's resolved `top` and `bottom`
 /// into its used row 7 and the vertical pass's basis selection 3.
+/// Decorated Auto normals (DAZ, G6b) add 58 actions per normal, prepaid on every path:
+/// the separation test of an Auto normal whose constrained tentative height is +0 (call
+/// and return 4, the overflow read and comparison 3, the border accessor with two reads
+/// and two comparisons 10, two vertical paddings of 13 at their percentage maximum, two
+/// padding comparisons 4, the connectives 6, the read of P's solve 2) and the arm's
+/// branch and write 3.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -529,14 +535,19 @@ impl std::error::Error for SiblingLayoutError {
 /// rerun. An explicit height of P or of a child is replaced the same way. A child's
 /// computed Auto height is tentatively +0: F keeps the Auto category when its
 /// constrained height is +0, and a normal with a positive `min-height` is admitted with
-/// that used height; any other Auto normal stays refused. An explicit used height of +0
-/// (G6a) is admitted by the core for a normal whose own top and bottom margins are not
-/// adjoining (CSS2.2 8.3.1: `hidden` or `auto`, or a nonzero top or bottom border or
-/// padding); any other zero-height normal is `NonpositiveBlockHeight`. P's Auto height is the
-/// tentative placement of either route, then `constrain_bfc_height`: a limit that
-/// applies reruns the explicit route on P's content top. Containment, offsets and P's
-/// bottom read the constrained boxes, so a constraint that makes a child leave P's
-/// content box under P `auto` is `ParentAutoOverflow`.
+/// that used height. An ordinary (`visible`) Auto normal whose constrained height is +0
+/// is passed to the core as an explicit +0 when a positive top or bottom border or
+/// padding separates its own margins (DAZ, G6b; CSS2.2 10.6.3 "zero, otherwise" and
+/// 8.3.1); a vertical padding percentage is read against P's used content width, and it
+/// does not separate without P's solve or when it does not resolve. Any other Auto
+/// normal stays refused (`HeightKind`), a `hidden` or `auto` one included. An explicit
+/// used height of +0 (G6a) is admitted by the core for a normal whose own top and bottom
+/// margins are not adjoining (CSS2.2 8.3.1: `hidden` or `auto`, or a positive top or
+/// bottom border or padding); any other zero-height normal is `NonpositiveBlockHeight`.
+/// P's Auto height is the tentative placement of either route, then
+/// `constrain_bfc_height`: a limit that applies reruns the explicit route on P's content
+/// top. Containment, offsets and P's bottom read the constrained boxes, so a constraint
+/// that makes a child leave P's content box under P `auto` is `ParentAutoOverflow`.
 /// Every Sequence row's percentage `width`, margins, `right` and `left` (PCT, CSS2.2
 /// 10.2, 8.3, 9.3.2), paddings, `min-width` and `max-width` (PPM, CSS2.2 8.4, 10.4)
 /// resolve against its containing block's width: P's against O's
@@ -552,7 +563,12 @@ impl std::error::Error for SiblingLayoutError {
 /// again, and a failure or a margin or padding that differs there is `FactInvariant`.
 /// Every reader of a padding or a width constraint reads a resolved row (PPM): P's
 /// solve, origin and bottom, each normal's solve and padding edges, the core's child
-/// facts and F's `constrain`.
+/// facts and F's `constrain`. The one exception is DAZ's height-category probe (G6b): it
+/// reads a decorated Auto normal's vertical padding percentages from the fact row and
+/// resolves them itself, earlier, against the same width with the same primitive and
+/// without failing; one that does not resolve, or that rounds to +0, does not separate,
+/// so that normal keeps `HeightKind`, and the resolved row read later holds the same
+/// values.
 /// Every Sequence row's percentage `height`, `min-height` and `max-height` (PHT, CSS2.2
 /// 10.5, 10.7) resolves against its containing block's height when that height is
 /// specified explicitly; otherwise `height` is used as `auto`, `min-height` as 0 and
@@ -776,6 +792,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     // PCT (Q-6): P's horizontal solve runs here, before the children whose basis it is;
     // a failure is held and returned at F's width step.
     let parent_solve = solve_parent(facts, outer.content_left, outer.content_width, parent_row);
+    // DAZ (G6b): the height category's view of P's solve (the vertical padding basis).
+    let parent_solved = parent_solve.as_ref().ok();
     for source in 2..node_count {
         let row = fact_row(facts, source, "row")?;
         // CSS2.2 §9.4.1: the float establishes a block formatting context, and so does
@@ -798,7 +816,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // reruns. A computed Auto height is tentatively +0 (10.6.3 for a normal, 10.6.7
         // for F without content): F keeps the Auto category when its constrained
         // height is +0 (Q-6); a normal with a positive `min-height` is admitted with
-        // that height (it cannot collapse through, 8.3.1), any other Auto normal stays
+        // that height (it cannot collapse through, 8.3.1); DAZ (G6b): an ordinary one
+        // whose positive top or bottom border or padding separates its own margins is
+        // an explicit +0 ("zero, otherwise", 10.6.3); any other Auto normal stays
         // `HeightKind`. PHT (10.5, 10.7): the three height facts are first resolved against
         // P's explicit used content height or take the indefinite rules, after the
         // admission tests above and before the held P check below (the basis does not
@@ -811,6 +831,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             }
             BoxLengthFact::Auto { .. } if source == 3 && auto_height == 0.0 => OwnerHeight::Auto,
             BoxLengthFact::Auto { .. } if auto_height > 0.0 => OwnerHeight::Explicit(auto_height),
+            BoxLengthFact::Auto { .. } if separated_auto(row, parent_solved, numeric) => {
+                OwnerHeight::Explicit(auto_height)
+            }
             BoxLengthFact::Auto { .. } => {
                 return Err(E::Captured(unsupported(
                     source,
@@ -1570,6 +1593,37 @@ fn resolve_heights(
     Ok(VerticalUsed { height, min, max })
 }
 
+/// DAZ (G6b; CSS2.2 10.6.3, 8.3.1): an ordinary (`visible`) Auto normal has no in-flow
+/// children or line boxes, so its tentative height is zero ("zero, otherwise"); the
+/// caller reaches this test only when the constrained height is +0. A positive top or
+/// bottom border or padding separates its own top and bottom margins, so it cannot
+/// collapse through and goes to the core as an explicit +0 (G6a). A new-BFC Auto normal
+/// has no defined height without children (10.6.7). A vertical padding percentage
+/// resolves against P's used content width as in `resolved_row` (CSS2.2 8.4); without
+/// P's solve (held, PCT Q-6), when it does not resolve, or when it rounds to +0, it does
+/// not separate (the core's `vertical_decoration` tests the same edges with `> 0.`) and
+/// the caller's `HeightKind` stands.
+fn separated_auto(
+    row: &ClearanceBoxFact,
+    parent: Option<&ParentSolve>,
+    limits: NumericLimits,
+) -> bool {
+    let padding = |fact: LengthPercentageBoxFact| match (fact, parent) {
+        (LengthPercentageBoxFact::Absolute(value), _) => value.pixels,
+        (LengthPercentageBoxFact::Percentage(percentage), Some(parent)) => {
+            resolve_percentage(percentage, parent.horizontal.used.width, limits)
+                .map_or(0.0, |value| value.pixels)
+        }
+        (LengthPercentageBoxFact::Percentage(_), None) => 0.0,
+    };
+    let border = row.border_widths();
+    row.overflow.value == BoxOverflow::Visible
+        && (border[0] > 0.0
+            || border[2] > 0.0
+            || padding(row.padding[0]) > 0.0
+            || padding(row.padding[2]) > 0.0)
+}
+
 /// PTB, PTA (CSS2.2 9.3.2, 9.4.3): `offset` of a relatively positioned row with its `top`
 /// and `bottom` percentages resolved, in that order, against `basis`, the containing
 /// block's used content height, by one exact product rounded once (`resolve_percentage`;
@@ -2037,6 +2091,13 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // resolutions 8 and two publication writes 2.
         .checked_add(2)?
         .checked_add(children.checked_mul(35)?)?
+        // DAZ (G6b): 58 per normal, charged on every path: the separation test (call and
+        // return 4, the overflow read and comparison 3, the border accessor with two reads
+        // and two comparisons 10, two vertical paddings of 13 at their percentage maximum:
+        // read 1, category test 2, solve presence test 2, width read 1, primitive call and
+        // return 4, result test 2, value read 1; two padding comparisons 4, the connectives
+        // 6 and the read of P's solve 2) and the arm's branch and write 3.
+        .checked_add(normals.checked_mul(58)?)?
         // OCH: 75 fixed, charged on every path (the old entry passes `None`; the entry
         // delegation is not charged, as no entry call was before). P: the input transfer
         // 1, O's explicit-height write 1, the basis selection 4 (input read 1,
@@ -2152,9 +2213,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(2910));
-        assert_eq!(facade_work(6), Some(3781));
-        assert_eq!(facade_work(7), Some(4652));
+        assert_eq!(facade_work(5), Some(3026));
+        assert_eq!(facade_work(6), Some(3955));
+        assert_eq!(facade_work(7), Some(4884));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

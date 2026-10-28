@@ -1,10 +1,13 @@
 //! ZHN: zero-height Sequence normals whose own top and bottom margins are not adjoining
 //! (CSS2.2 8.3.1): a normal (B1 or a tail) with used height +0 is admitted by the core when
 //! it establishes a new block formatting context (`overflow:hidden` or `auto`) or when a
-//! nonzero top or bottom border or padding separates its margins, so it cannot collapse
+//! positive top or bottom border or padding separates its margins, so it cannot collapse
 //! through; a zero-height new-BFC border box strictly inside F's margin interval is
 //! `NewBfcFloatContact` (CSS2.2 9.5, Q-3). Every other zero-height normal stays
-//! `NonpositiveBlockHeight` and every Auto-height normal stays `HeightKind`.
+//! `NonpositiveBlockHeight`, and every new-BFC, undecorated or undecidable Auto-height
+//! normal stays `HeightKind` (a decorated ordinary Auto normal is admitted since DAZ, G6b;
+//! undecidable: its only separation is a vertical padding percentage without P's solve
+//! or one that does not resolve, DAZ Q-2).
 //!
 //! A child module of `em_lengths` (ZHN design section 6): it reuses the `pct`, `pht`, `och`
 //! and `eml` helpers (`pct_css`, `pct_with`, `pct_view`, `assert_pct_view`, `pct_lit`,
@@ -123,14 +126,14 @@ fn zhn_red_guard_z7c_a_borderless_top_width_does_not_separate() {
     );
 }
 
-/// Z7d (RED guard): every Auto-height normal stays `HeightKind` at the facade, a new-BFC
-/// one (10.6.7 childless, the Q3=A analog) and a decorated ordinary one (G6b). Passes
-/// before and after ZHN.
+/// Z7d (RED guard): a new-BFC Auto-height normal stays `HeightKind` at the facade,
+/// undecorated or decorated (10.6.7 childless, the Q3=A analog; G6c). Since DAZ (G6b) a
+/// decorated ordinary one is admitted (DAZ D3). Passes before and after ZHN and DAZ.
 #[test]
 fn zhn_red_guard_z7d_auto_heights_stay_height_kind() {
     for fragment in [
         "#b1 { overflow:hidden; height:auto; }",
-        "#b1 { height:auto; padding-top:1px; }",
+        "#b1 { overflow:auto; height:auto; padding-top:1px; }",
     ] {
         assert_eq!(
             zhn_error(5, fragment),
@@ -427,7 +430,7 @@ fn zhn_z11_a_zero_height_tail_with_a_negative_margin_takes_the_signed_route() {
 /// is `Core(Work)`; the facade work is unchanged.
 #[test]
 fn zhn_z12_core_work_charges_62_per_normal() {
-    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
+    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
         assert_eq!(
             core,
             702 + 12 * nodes
@@ -467,3 +470,8 @@ fn zhn_z15_parent_auto_contains_a_zero_height_b1() {
         "#b1 { overflow:hidden; height:0; }",
     );
 }
+
+// DAZ: decorated Auto-height normals used as zero (G6b) reuse the `pct`, `pht`, `eml` and
+// `zhn` helpers as a child module of this one (DAZ design section 6).
+#[path = "decorated_auto_normals.rs"]
+mod decorated_auto_normals;
