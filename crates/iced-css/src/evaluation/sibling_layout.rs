@@ -469,7 +469,8 @@ impl std::error::Error for SiblingLayoutError {
 /// formatting context and has no content, so nothing is clipped, nothing overflows
 /// and `auto` presents no scrollbar. The facade labels each such normal child, B1 or a
 /// tail, `ChildContext::OtherNewBfc`; the core permits border/margin boundary contact
-/// and rejects strict intersection of nonempty intervals at that child's source
+/// and rejects strict intersection of nonempty intervals, and a zero-height border box
+/// strictly inside F's margin interval (G6a), at that child's source
 /// (CSS2.2 §9.5, Q1). P admits `hidden`, and `auto`
 /// only when every child's border box and margin box lie within P's published
 /// content box (CSS2.2 §11.1), so that nothing overflows P and `auto` presents no
@@ -528,7 +529,10 @@ impl std::error::Error for SiblingLayoutError {
 /// rerun. An explicit height of P or of a child is replaced the same way. A child's
 /// computed Auto height is tentatively +0: F keeps the Auto category when its
 /// constrained height is +0, and a normal with a positive `min-height` is admitted with
-/// that used height; any other Auto normal stays refused. P's Auto height is the
+/// that used height; any other Auto normal stays refused. An explicit used height of +0
+/// (G6a) is admitted by the core for a normal whose own top and bottom margins are not
+/// adjoining (CSS2.2 8.3.1: `hidden` or `auto`, or a nonzero top or bottom border or
+/// padding); any other zero-height normal is `NonpositiveBlockHeight`. P's Auto height is the
 /// tentative placement of either route, then `constrain_bfc_height`: a limit that
 /// applies reruns the explicit route on P's content top. Containment, offsets and P's
 /// bottom read the constrained boxes, so a constraint that makes a child leave P's
@@ -798,7 +802,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // `HeightKind`. PHT (10.5, 10.7): the three height facts are first resolved against
         // P's explicit used content height or take the indefinite rules, after the
         // admission tests above and before the held P check below (the basis does not
-        // depend on P's horizontal solve).
+        // depend on P's horizontal solve). An explicit +0 goes to the core (G6a).
         let vertical = resolve_heights(row, child_basis, numeric, source)?;
         let auto_height = constrain(0.0, vertical.min, vertical.max);
         let height = match vertical.height {

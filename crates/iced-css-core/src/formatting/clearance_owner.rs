@@ -7,8 +7,10 @@
 //! independent top/bottom isolation (a nonzero border or padding on each side); the
 //! Sequence owner does not, because a new BFC root never collapses margins with its
 //! in-flow children (CSS2.2 8.3.1). Ordinary positive-height B1/B2 cannot collapse
-//! through. The Sequence owner also admits a relatively positioned P or child (REL,
-//! CSS2.2 9.4.3) and computes its normal-flow geometry, which the offsets do not
+//! through; nor can a Sequence normal whose own top and bottom margins are not adjoining
+//! (G6a), which may have zero height. The Sequence owner also admits a relatively
+//! positioned P or child (REL, CSS2.2 9.4.3) and computes its normal-flow geometry, which
+//! the offsets do not
 //! change; the outer source and every Legacy source stay static. This is not full
 //! layout.
 use super::{
@@ -58,8 +60,11 @@ pub enum OwnerHeight {
     /// B1/B2 this also asserts a positive used height of an explicit computed height,
     /// or (MMX, Sequence only) of a normal whose computed Auto or zero height is raised
     /// by a positive `min-height` (10.6.3 gives the tentative zero; such a box cannot
-    /// collapse through, 8.3.1). A Sequence percentage `height` resolved by the caller
-    /// against its containing block's explicit used content height (PHT, CSS2.2 10.5) is
+    /// collapse through, 8.3.1). (G6a) A Sequence normal may also assert +0 when its own
+    /// top and bottom margins are not adjoining (8.3.1): it establishes a new block
+    /// formatting context or has a nonzero top or bottom border or padding. A Sequence
+    /// percentage `height` resolved by the caller against its containing block's explicit
+    /// used content height (PHT, CSS2.2 10.5) is
     /// such a used length; callers must not relabel native-derived height. SourceNode
     /// cannot prove that provenance; the owner checks the used payload.
     Explicit(f32),
@@ -197,6 +202,8 @@ pub enum OwnerProfileReason {
     /// side. Not produced by the Sequence owner, whose P is a new BFC root.
     ParentIsolation,
     HeightKind,
+    /// A normal's used height is negative, or +0 while its own top and bottom margins may
+    /// adjoin (Sequence, G6a) or always (Legacy).
     NonpositiveBlockHeight,
     NegativeMargin,
     AutoVerticalMargin,
@@ -254,8 +261,9 @@ pub enum ClearanceOwnerError {
     UnsupportedEquality,
     /// Sequence-only rejection of intersecting nonempty border and F margin intervals
     /// when a normal (B1 or a tail) establishes a BFC; the placement source names that
-    /// normal. Edge contact and empty intervals pass. Signed margins make this
-    /// conservative vertical guard reachable.
+    /// normal. (G6a, Q-3) A zero-height border box of such a normal strictly inside F's
+    /// margin interval is rejected too. Edge contact and the other empty intervals pass.
+    /// Signed margins make this conservative vertical guard reachable.
     NewBfcFloatContact,
     /// The presence classifier required clearance without a selected float.
     /// This indicates an internal primitive contract inconsistency.
@@ -495,6 +503,21 @@ enum ChildMarginPolicy {
     Sequence,
 }
 
+/// G6a (CSS2.2 8.3.1): a nonzero top or bottom border or padding separates a box's own
+/// top and bottom margins, so they are not adjoining. Left and right edges never do.
+pub(super) fn vertical_decoration(f: ChildFacts<'_>) -> bool {
+    f.border.top > 0. || f.border.bottom > 0. || f.padding.top > 0. || f.padding.bottom > 0.
+}
+
+/// G6a (CSS2.2 8.3.1): the own top and bottom margins of a Sequence normal are not
+/// adjoining when it establishes a new block formatting context or a top or bottom
+/// border or padding separates them, so its zero used height cannot collapse through.
+/// Legacy normals never qualify.
+fn own_margins_separated(f: ChildFacts<'_>, policy: ChildMarginPolicy) -> bool {
+    policy == ChildMarginPolicy::Sequence
+        && (f.context == ChildContext::OtherNewBfc || vertical_decoration(f))
+}
+
 fn child(
     f: ChildFacts<'_>,
     source: usize,
@@ -509,7 +532,8 @@ fn child(
     )?;
     // A Sequence normal (B1 or a tail) may establish a new block formatting context
     // (CSS2.2 §9.4.1); the Sequence owner permits boundary contact with the float's
-    // margin box and rejects strict nonempty intersection. Legacy contexts stay fixed.
+    // margin box and rejects strict nonempty intersection, and a zero-height border box
+    // strictly inside that margin box (G6a). Legacy contexts stay fixed.
     if f.context
         != if floating {
             ChildContext::FloatBfc
@@ -531,7 +555,7 @@ fn child(
     finite(height, source, "height")?;
     if floating {
         nonnegative(height, source, "height")?;
-    } else if height <= 0. {
+    } else if height < 0. || (height == 0. && !own_margins_separated(f, margin_policy)) {
         return Err(unsupported(
             source,
             OwnerProfileReason::NonpositiveBlockHeight,

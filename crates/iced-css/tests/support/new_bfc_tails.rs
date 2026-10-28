@@ -7,7 +7,7 @@ use super::*;
 use iced_css_core::formatting::bfc_height::{SignedNormalMarginEdge, SignedNormalMarginError};
 
 /// (nodes, facade exact work, core exact work) from the TNB counted action table.
-const TNB_WORK: [(usize, usize, usize); 3] = [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)];
+const TNB_WORK: [(usize, usize, usize); 3] = [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)];
 
 /// Copied observations of one successful layout.
 #[derive(Debug)]
@@ -299,23 +299,13 @@ fn tnb_error_order_profile_rows() {
             reason: U::FloatWidth,
         },
     );
-    // C1 (facade): core profile continuation after the tail's context.
-    let error = tnb_error(
+    // C1 (facade; ZHN Z2): a zero-height new-BFC tail after the tail's context is admitted
+    // (G6a); the core continuation it witnessed is ZC2 in the core suite.
+    let view = tnb_layout(
         6,
         &format!("{} #b3 {{ overflow:hidden; height:0; }}", baseline_css()),
     );
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 5,
-                    reason: OwnerProfileReason::NonpositiveBlockHeight,
-                }
-            ))
-        ),
-        "{error:?}"
-    );
+    assert_eq!(view.borders[3], (22.0, 22.0));
 }
 
 #[test]
@@ -681,7 +671,7 @@ fn tnb_exact_and_one_short_work_at_every_node_count() {
                 + nodes * (nodes - 1) / 2
                 + 54 * (nodes - 4)
                 + 61 * (nodes - 2)
-                + 120 * (nodes - 3)
+                + 182 * (nodes - 3)
         );
         for tails in ["", "#b2, #b3, #b4 { overflow:hidden; }"] {
             let css = format!(

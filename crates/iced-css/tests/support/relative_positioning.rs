@@ -1072,7 +1072,7 @@ fn rel_facts_numeric_allowance_is_exact_with_relative_rows() {
 /// a relative P and relative children.
 #[test]
 fn rel_work_thresholds_with_relative_boxes() {
-    for (nodes, facade, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         assert_eq!(
             facade,
             546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
@@ -1083,7 +1083,7 @@ fn rel_work_thresholds_with_relative_boxes() {
                 + nodes * (nodes - 1) / 2
                 + 54 * (nodes - 4)
                 + 61 * (nodes - 2)
-                + 120 * (nodes - 3)
+                + 182 * (nodes - 3)
         );
         let css = rel_css(nodes, REL_WORK_FRAGMENT);
         let limits = |work: usize, core_work: usize| {

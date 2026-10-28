@@ -735,3 +735,77 @@ fn eml_representation_measurement() {
         [(872, 8), (24, 8)]
     );
 }
+
+// ZHN: the carried EML rows (EM-10: EMX1, EMX2; F-4: EMX3) first; then the zero-height
+// normal rows as a child module of this one (ZHN design section 6).
+
+/// The Legacy facts rows of the five-source capture `css`, built as `pct_legacy_error`
+/// builds the Legacy projection; a Legacy producer error is a failure.
+fn eml_legacy_rows(css: &str) -> Vec<ClearanceBoxFact> {
+    let mut out = None;
+    sibling_fixture(5, css, |projection, display| {
+        let legacy_projection = prepare_clearance_source_projection(
+            projection.host(),
+            projection.snapshot(),
+            ClearanceProjectionLimits {
+                work: nz(36),
+                retained_bytes: bound(),
+            },
+        )
+        .unwrap();
+        let facts = evaluate_clearance_box_facts(&legacy_projection, display, fact_limits())
+            .unwrap_or_else(|error| panic!("{css}: Legacy producer error {error:?}"));
+        out = Some(
+            (0..5)
+                .map(|projected| *facts.row(projected).unwrap())
+                .collect(),
+        );
+    });
+    out.unwrap()
+}
+
+/// EMX1 (EM-10, EML plan review F-2; MX1 witness): B1's `font-size` of 1e-47px, below half
+/// the smallest f32 subnormal, is +0 with `PositiveRoundedToZero` (origin `Specified`).
+/// Passes before and after ZHN.
+#[test]
+fn zhn_red_guard_emx1_a_font_size_below_half_the_smallest_subnormal_is_zero() {
+    let fragment = "#b1 { font-size:0.00000000000000000000000000000000000000000000001px; }";
+    assert_eml_font(
+        eml_facts(fragment).0[2].font_size,
+        eml_font(
+            0.0,
+            Some(RangeEvent::PositiveRoundedToZero),
+            BoxFactOrigin::Specified,
+        ),
+        fragment,
+    );
+}
+
+/// EMX2 (EM-10, EML plan review F-3; MX2 witness): the system font of `font: caption`
+/// reaches `compute_font_size` as an unresolved value and is
+/// `Evaluation(FontSize { original: 0, error: UnresolvedValue })` at B1. Passes before and
+/// after ZHN.
+#[test]
+fn zhn_red_guard_emx2_a_system_font_is_a_font_size_error() {
+    assert_eq!(
+        eml_error("#b1 { font: caption; }"),
+        "Evaluation(FontSize { original: 0, error: UnresolvedValue })"
+    );
+}
+
+/// EMX3 (EML plan review F-4): the Legacy facts of `#b1 { font-size:20px; }` are Ok and
+/// every Legacy row has `font_size: None`. Passes before and after ZHN.
+#[test]
+fn zhn_red_guard_emx3_legacy_rows_carry_no_font_size() {
+    let css = pct_css(5, "#b1 { font-size:20px; }");
+    let rows = eml_legacy_rows(&css);
+    assert_eq!(rows.len(), 5, "{css}");
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(row.font_size, None, "{css}: Legacy row {index}");
+    }
+}
+
+// ZHN: zero-height Sequence normals whose own margins are not adjoining reuse the `pct`,
+// `pht`, `och` and `eml` helpers as a child module of this one (ZHN design section 6).
+#[path = "zero_height_normals.rs"]
+mod zero_height_normals;

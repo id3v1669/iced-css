@@ -10,7 +10,7 @@ use super::{
         BlockVertical, ChildContext, ChildFacts, ClearanceOwnerError, FirstFloatInput, KernelError,
         MarginGroup, NormalKernel, OuterFacts, ParentFacts, place_first_float, place_next_normal,
         validate_outer, validate_sequence_child, validate_sequence_float_extents,
-        validate_sequence_float_width, validate_sequence_parent,
+        validate_sequence_float_width, validate_sequence_parent, vertical_decoration,
     },
     floats::{Band, PlacedFloat},
 };
@@ -233,16 +233,19 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// normal-flow block that establishes a new block formatting context. Right after
 /// that normal's placement, `NewBfcFloatContact` rejects intersection of its nonempty
 /// published border interval with F's nonempty margin interval, tagged with its
-/// source. Contact and empty intervals pass (Q1); signed margins make rejection reachable.
-/// Childless F admits computed Auto height with positive-zero used content height;
-/// normal children retain positive explicit height and Legacy admission is unchanged.
+/// source. Contact and empty intervals pass (Q1), except that (G6a, Q-3) a zero-height
+/// new-BFC border box strictly inside F's margin interval is `NewBfcFloatContact`; signed
+/// margins make rejection reachable. Childless F admits computed Auto height with
+/// positive-zero used content height; a normal keeps a positive explicit height, or +0
+/// when its own top and bottom margins are not adjoining (G6a, CSS2.2 8.3.1), and Legacy
+/// admission is unchanged.
 /// The facade passes used heights after `min-height`/`max-height` (MMX, CSS2.2 10.7):
 /// an F whose constrained Auto height is positive, and a normal whose computed Auto or
 /// zero height is raised by a positive `min-height`, arrive as explicit heights.
 /// P and every child may be relatively positioned (REL, CSS2.2 9.4.3); the owner
 /// publishes their normal-flow geometry, which the offsets do not change, and the
 /// outer source stays static.
-/// Work `702 + 12*N + N*(N-1)/2 + 54*(N-4) + 61*(N-2) + 120*(N-3)` is prepaid,
+/// Work `702 + 12*N + N*(N-1)/2 + 54*(N-4) + 61*(N-2) + 182*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages, every child's border terms and padding publications, and
@@ -381,9 +384,12 @@ fn build_with_reserve<'s>(
     .map_err(placement)?;
     // CSS2.2 §9.5, Q1: reject intersection of nonempty published intervals.
     // This bounded core has no normal horizontal geometry for avoidance search.
-    // Signed margins may put F above B1; rounded-empty B1 and F remain admitted.
+    // Signed margins may put F above B1; rounded-empty B1 and F remain admitted. G6a: a
+    // zero-height border box strictly inside F's margin interval is rejected too;
+    // rounded-empty boxes with a positive height or a vertical border or padding stay
+    // admitted.
     if input.children[0].context == ChildContext::OtherNewBfc
-        && new_bfc_intersects_float(first.before, first.placed_float)
+        && new_bfc_intersects_float(input.children[0], first.before, first.placed_float)
     {
         return Err(ClearanceSequenceError::Placement {
             source: 2,
@@ -408,7 +414,7 @@ fn build_with_reserve<'s>(
         // CSS2.2 §9.5, Q1: a new-BFC tail obeys the B1 rule, checked right after its own
         // placement so that the first failing source in source order is reported.
         if facts.context == ChildContext::OtherNewBfc
-            && new_bfc_intersects_float(next.vertical, first.placed_float)
+            && new_bfc_intersects_float(facts, next.vertical, first.placed_float)
         {
             return Err(ClearanceSequenceError::Placement {
                 source,
@@ -459,11 +465,24 @@ fn placement(failure: KernelError) -> ClearanceSequenceError {
 }
 
 /// Both published intervals are nonempty and strictly intersect (CSS2.2 §9.5, Q1).
-fn new_bfc_intersects_float(border: BlockVertical, float: PlacedFloat) -> bool {
-    border.top < border.bottom
+/// Or (G6a, Q-3) the normal's border box has zero height and its position lies strictly
+/// inside F's margin interval; contact with either edge of that interval passes (Q1).
+fn new_bfc_intersects_float(
+    facts: ChildFacts<'_>,
+    border: BlockVertical,
+    float: PlacedFloat,
+) -> bool {
+    (border.top < border.bottom || zero_border_box(facts))
         && float.top < float.bottom
         && float.top < border.bottom
         && border.top < float.bottom
+}
+
+/// G6a (Q-3): a zero-height border box (CSS2.2 8.1): zero used height and no top or
+/// bottom border or padding. A positive height rounded to an empty interval is not one
+/// (PR-5).
+fn zero_border_box(facts: ChildFacts<'_>) -> bool {
+    explicit_height(facts) == 0.0 && !vertical_decoration(facts)
 }
 
 fn explicit_height(facts: ChildFacts<'_>) -> f32 {
@@ -544,6 +563,13 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         // comparison 2.
         .checked_add(146)?
         .checked_add(nodes.checked_sub(3)?.checked_mul(56)?)?
+        // G6a: 62 per normal, charged on every path: the admission predicate 30 (zero
+        // test 2, policy comparison 2, context comparison 2, the decoration test 20 (call
+        // and return 4, four reads 4, four comparisons 8, disjunction chain 4), two
+        // connectives 4) and the widened contact guard 32 (facts transfer 1, call and
+        // return 4, height read and zero test 3, the decoration test 20, negation and
+        // conjunction 2, the widened disjunction 2).
+        .checked_add(nodes.checked_sub(3)?.checked_mul(62)?)?
         // REL: 4 per P and child, charged on every path: the policy flag test 2 and the
         // relative position comparison 2 of the widened display test.
         .checked_add(nodes.checked_sub(1)?.checked_mul(4)?)
@@ -592,7 +618,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(1249).unwrap(),
+            work: NonZeroUsize::new(1373).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -1016,7 +1042,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [1248, 480, 419, 337, 269, 213] {
+        for short in [1372, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -1032,7 +1058,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(1249).unwrap();
+        limits.work = NonZeroUsize::new(1373).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -1052,7 +1078,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 1249);
+        assert_eq!(owner.receipt().work, 1373);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -1080,9 +1106,9 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(1249));
-        assert_eq!(sequence_work(6, 2), Some(1501));
-        assert_eq!(sequence_work(7, 3), Some(1754));
+        assert_eq!(sequence_work(5, 1), Some(1373));
+        assert_eq!(sequence_work(6, 2), Some(1687));
+        assert_eq!(sequence_work(7, 3), Some(2002));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]

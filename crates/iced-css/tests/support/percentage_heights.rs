@@ -874,7 +874,7 @@ const PHT_WORK_FRAGMENT: &str = "#p { min-height:0%; max-height:100%; } \
 /// 313(N-3)`; the layout equals the baseline's.
 #[test]
 fn pht_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         assert_eq!(
             facade,
             546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)

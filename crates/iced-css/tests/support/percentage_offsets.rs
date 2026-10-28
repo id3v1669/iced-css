@@ -565,7 +565,7 @@ const PTB_WORK_FRAGMENT: &str = "#p { height:20px; } \
 /// 313(N-3)`; the layout equals the control with the children relative and no offsets.
 #[test]
 fn ptb_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         assert_eq!(
             facade,
             546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
@@ -971,7 +971,7 @@ const PTA_WORK_FRAGMENT: &str = "#b1, #f, #b2, #b3, #b4 { position:relative; top
 /// control with the children relative and no offsets.
 #[test]
 fn pta_work_thresholds_under_an_auto_parent() {
-    for (nodes, facade, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         assert_eq!(
             facade,
             546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)

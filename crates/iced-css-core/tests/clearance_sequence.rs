@@ -1178,7 +1178,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 1249, 419), (6, 1501, 501), (7, 1754, 584)] {
+    for (count, work, old_work) in [(5, 1373, 419), (6, 1687, 501), (7, 2002, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1210,7 +1210,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
                 + count * (count - 1) / 2
                 + 54 * tail_count
                 + 61 * child_count
-                + 120 * (count - 3)
+                + 182 * (count - 3)
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert_eq!(
@@ -1286,7 +1286,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(1500).unwrap();
+    short.work = NonZeroUsize::new(1686).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1335,7 +1335,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].border.left = -1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(1500).unwrap();
+    one_short.work = NonZeroUsize::new(1686).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -2280,7 +2280,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 1249, 419), (6, 1501, 501), (7, 1754, 584)] {
+    for (count, work, old_work) in [(5, 1373, 419), (6, 1687, 501), (7, 2002, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2746,7 +2746,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 1249, 419), (6, 1501, 501), (7, 1754, 584)] {
+    for (count, work, old_work) in [(5, 1373, 419), (6, 1687, 501), (7, 2002, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -3128,7 +3128,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 1249, 419), (6, 1501, 501), (7, 1754, 584)] {
+    for (count, work, old_work) in [(5, 1373, 419), (6, 1687, 501), (7, 2002, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3486,7 +3486,7 @@ fn tnb_core_tail_guards_follow_source_order() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 1249), (6, 1501), (7, 1754)] {
+    for (count, work) in [(5, 1373), (6, 1687), (7, 2002)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3505,7 +3505,7 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
                 + count * (count - 1) / 2
                 + 54 * (count - 4)
                 + 61 * (count - 2)
-                + 120 * (count - 3)
+                + 182 * (count - 3)
         );
     }
 }
@@ -4378,7 +4378,7 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 1249), (6, 1501), (7, 1754)] {
+    for (count, work) in [(5, 1373), (6, 1687), (7, 2002)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
@@ -4633,7 +4633,7 @@ fn cfh_core_exact_extent_and_later_profile_order() {
 
 #[test]
 fn cfh_core_auto_work_thresholds() {
-    for (count, work) in [(5, 1249), (6, 1501), (7, 1754)] {
+    for (count, work) in [(5, 1373), (6, 1687), (7, 2002)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[1].height = OwnerHeight::Auto;
@@ -5158,4 +5158,36 @@ fn rel_m_c_relative_outer_stays_display_or_flow() {
             "N{count}: {result:?}"
         );
     }
+}
+
+/// ZHN ZC1 (RED guard; MA10 witness): a negative used height stays
+/// `NonpositiveBlockHeight` even on a new-BFC normal (G6a admits only +0 and -0).
+/// Passes before and after ZHN.
+#[test]
+fn zhn_red_guard_zc1_a_negative_height_new_bfc_tail_stays_refused() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[2].context = ChildContext::OtherNewBfc;
+    children[2].height = OwnerHeight::Explicit(-1.0);
+    let result = build(&sources, outer, parent, &children, limits(6));
+    assert_eq!(
+        format!("{:?}", result.map(|_| ())),
+        "Err(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))"
+    );
+}
+
+/// ZHN ZC2 (RED guard; MA11 witness): the height step precedes the edge validation, so a
+/// zero-height ordinary B1 whose top padding is NaN is `NonpositiveBlockHeight` (a NaN
+/// edge never separates the margins), not `InvalidNumber`. Passes before and after ZHN.
+#[test]
+fn zhn_red_guard_zc2_a_nan_padding_does_not_separate_the_margins() {
+    let sources = sources(6);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(0.0);
+    children[0].padding.top = f32::NAN;
+    let result = build(&sources, outer, parent, &children, limits(6));
+    assert_eq!(
+        format!("{:?}", result.map(|_| ())),
+        "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
+    );
 }

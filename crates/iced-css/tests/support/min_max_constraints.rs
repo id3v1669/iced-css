@@ -1172,7 +1172,7 @@ const MMX_WORK_FRAGMENT: &str = "#o { min-width:1px; max-width:500px; min-height
 /// constraint nondefault; the facade charge is `546 + 32N + 526(N-2) + 313(N-3)`.
 #[test]
 fn mmx_work_thresholds_with_constraints() {
-    for (nodes, facade, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         assert_eq!(
             facade,
             546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)

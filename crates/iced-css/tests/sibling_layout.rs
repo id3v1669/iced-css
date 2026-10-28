@@ -3420,7 +3420,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
     for (source_count, facade_work, core_work) in
-        [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)]
+        [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)]
     {
         let mut receipts = Vec::new();
         for width in [10, 140] {
@@ -3471,21 +3471,21 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
             2910,
-            1249,
+            1373,
             419,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
             3781,
-            1501,
+            1687,
             501,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
             4652,
-            1754,
+            2002,
             584,
         ),
     ] {
@@ -5627,7 +5627,7 @@ fn assert_inventory_layout(
     );
     assert_eq!(
         layout.receipt().core.work,
-        [1249, 1501, 1754][case.nodes - 5],
+        [1373, 1687, 2002][case.nodes - 5],
         "{id}"
     );
 }
@@ -6623,9 +6623,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 2910, 475, 1249, 419),
-        (6, 3781, 616, 1501, 501),
-        (7, 4652, 757, 1754, 584),
+        (5, 2910, 475, 1373, 419),
+        (6, 3781, 616, 1687, 501),
+        (7, 4652, 757, 2002, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -7472,9 +7472,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 2910, 475, 1249, 419),
-        (6, 3781, 616, 1501, 501),
-        (7, 4652, 757, 1754, 584),
+        (5, 2910, 475, 1373, 419),
+        (6, 3781, 616, 1687, 501),
+        (7, 4652, 757, 2002, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8549,9 +8549,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 2910, 475, 1249, 419),
-        (6, 3781, 616, 1501, 501),
-        (7, 4652, 757, 1754, 584),
+        (5, 2910, 475, 1373, 419),
+        (6, 3781, 616, 1687, 501),
+        (7, 4652, 757, 2002, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -9459,9 +9459,9 @@ fn float_overflow_build<'p>(
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
     for (nodes, exact, lc, core) in [
-        (5, 2910, 481, 1249),
-        (6, 3781, 622, 1501),
-        (7, 4652, 763, 1754),
+        (5, 2910, 481, 1373),
+        (6, 3781, 622, 1687),
+        (7, 4652, 763, 2002),
     ] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
@@ -9906,7 +9906,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, exact, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -10507,7 +10507,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, exact, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -11265,7 +11265,7 @@ fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn parent_overflow_auto_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, exact, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         let css = format!(
             "{} {} #p {{ overflow:auto; }}",
             baseline_css(),
@@ -30040,7 +30040,7 @@ fn cfh_css_cascade_and_copied_auto() {
 
 #[test]
 fn cfh_css_auto_work_thresholds() {
-    for (nodes, facade_work, core_work) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, facade_work, core_work) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         let css = cfh_css(nodes, "right", true, "height:inherit;");
         sibling_fixture(nodes, &css, |projection, display| {
             let facts =

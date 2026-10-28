@@ -122,11 +122,13 @@ pub struct BorderWidthFact {
     pub origin: BoxFactOrigin,
 }
 /// EML (CSS2.2 15.7, 6.1.2): one computed `font-size` in pixels, finite and non-negative
-/// and +0 when zero: a keyword table entry, the parent's fact for inheritance, or one
+/// and +0 when zero: a keyword table entry, the parent's fact for inheritance, one
 /// nearest/ties-even conversion of a length, `em` or percentage, saturating at
-/// `f32::MAX`. `event` is the range event of the computation (upper saturation, or a
-/// positive size rounded to +0); an inherited fact keeps the parent's pixels and event,
-/// as an inherited border width does.
+/// `f32::MAX`, or `larger` or `smaller` through the relative mapping against the parent's
+/// size (architecture 29), an interpolation of several f32 steps that is neither a table
+/// entry nor one conversion and can saturate. `event` is the range event of the
+/// computation (upper saturation, or a positive size rounded to +0); an inherited fact
+/// keeps the parent's pixels and event, as an inherited border width does.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FontSizeFact {
     pub pixels: f32,

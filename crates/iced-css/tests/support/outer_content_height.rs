@@ -529,7 +529,7 @@ const OCH_WORK_FRAGMENT: &str = "#o { height:200px; } #p { height:10%; min-heigh
 /// percentages replaced by their values and the children relative without offsets.
 #[test]
 fn och_work_thresholds_with_the_host_height() {
-    for (nodes, facade, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
+    for (nodes, facade, core) in [(5, 2910, 1373), (6, 3781, 1687), (7, 4652, 2002)] {
         assert_eq!(
             facade,
             546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)

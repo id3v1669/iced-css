@@ -167,11 +167,15 @@ pub fn evaluate_sibling_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
 /// # Errors
 ///
 /// [`SiblingBoxFactsError::FontMedium`] (`InvalidMedium` or `InvalidTable`) first, before
-/// every other check; then as `evaluate_sibling_box_facts`, plus, per row before its
-/// other longhands, `Evaluation(FontSize { .. })` for a `font-size` computation failure,
-/// `Defaulting` or `InitialRecipe` for `font-size`, and `Unsupported` (`RelativeLength`)
-/// for an `ex` `font-size`; an `em` length outside the finite f32 range is
-/// `Evaluation(Length { .. })` at its property. Failure publishes no partial batch.
+/// every other check; then as `evaluate_sibling_box_facts`, plus
+/// `Evaluation(PropertyRegistry { name: "font-size" })` when the property registry has no
+/// `font-size`, and, per row before its other longhands, `Evaluation(FontSize { .. })` for
+/// a `font-size` computation failure, `Evaluation(Defaulting { .. })` or
+/// `Evaluation(InitialRecipe { .. })` for `font-size`, and `Evaluation(Unsupported { .. })`
+/// (`RelativeLength`) for an `ex` `font-size`; an `em` width, height, constraint, margin,
+/// padding or offset outside the finite f32 range is `Evaluation(Length { .. })` at its
+/// property (an `em` border width or `font-size` saturates at `f32::MAX` with
+/// `UpperSaturation`). Failure publishes no partial batch.
 pub fn evaluate_sibling_box_facts_with_font_medium<'p, 'h, 'd, 's, 'b, 'r>(
     projection: &'p SiblingSourceProjection<'h>,
     display: &'d SourceDisplay<'s, 'b, 'r>,

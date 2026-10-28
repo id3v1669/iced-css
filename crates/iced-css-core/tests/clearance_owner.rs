@@ -1580,3 +1580,22 @@ fn cbr_legacy_child_border_is_still_child_decoration() {
         }
     }
 }
+
+/// ZHN ZL3 (RED guard; MA2 witness at the core): the Legacy owner keeps refusing a
+/// zero-height B1 with a bottom border at the height step (`NonpositiveBlockHeight`, not
+/// `ChildDecoration`): Legacy normals never qualify for the G6a admission. Passes before
+/// and after ZHN.
+#[test]
+fn zhn_red_guard_zl3_legacy_zero_height_with_a_border_stays_refused() {
+    let s = sources();
+    let mut f = input(&s);
+    f.before.border.bottom = 1.0;
+    f.before.height = OwnerHeight::Explicit(0.0);
+    assert_eq!(
+        build_clearance_owner(&s, f).unwrap_err(),
+        ClearanceOwnerError::Unsupported {
+            source: 1,
+            reason: OwnerProfileReason::NonpositiveBlockHeight
+        }
+    );
+}

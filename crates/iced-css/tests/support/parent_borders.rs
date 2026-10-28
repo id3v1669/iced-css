@@ -1074,10 +1074,14 @@ fn pbr_x05_admitted_child_border_leaves_the_later_height_fault() {
 }
 
 /// X6: within one child, the height check precedes the border check, which admits
-/// any finite nonnegative width.
+/// any finite nonnegative width. (ZHN) Left and right borders do not separate the
+/// margins, so the zero height stays refused.
 #[test]
 fn pbr_x06_own_height_with_an_own_border() {
-    for fragment in ["#b1 { border:1px solid; height:0; }", "#b1 { height:0; }"] {
+    for fragment in [
+        "#b1 { border-left:1px solid; border-right:1px solid; height:0; }",
+        "#b1 { height:0; }",
+    ] {
         let css = pbr_css(5, fragment);
         assert_profile(
             &pbr_error(5, &css),

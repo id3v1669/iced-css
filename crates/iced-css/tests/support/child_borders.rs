@@ -932,9 +932,9 @@ fn cbr_m_c_decorated_float_paths() {
 #[test]
 fn cbr_work_thresholds_with_child_borders_and_an_unisolated_parent() {
     for (nodes, facade, core, p_bottom) in [
-        (5, 2910, 1249, 29.0),
-        (6, 3781, 1501, 34.0),
-        (7, 4652, 1754, 38.0),
+        (5, 2910, 1373, 29.0),
+        (6, 3781, 1687, 34.0),
+        (7, 4652, 2002, 38.0),
     ] {
         assert_eq!(
             facade,
@@ -946,7 +946,7 @@ fn cbr_work_thresholds_with_child_borders_and_an_unisolated_parent() {
                 + nodes * (nodes - 1) / 2
                 + 54 * (nodes - 4)
                 + 61 * (nodes - 2)
-                + 120 * (nodes - 3)
+                + 182 * (nodes - 3)
         );
         let css = cbr_css(nodes, CBR_WORK_FRAGMENT);
         let view = cbr_run_with(nodes, &css, cbr_limits(facade, core))

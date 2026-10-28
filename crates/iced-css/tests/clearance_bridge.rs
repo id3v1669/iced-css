@@ -263,6 +263,18 @@ fn computed_categories_and_core_profile_failures_keep_projected_indices() {
             4,
             OwnerProfileReason::NonpositiveBlockHeight,
         ),
+        // ZHN ZL1, ZL2 (MA2 witness): a Legacy normal never qualifies for the G6a
+        // admission; the height step precedes the decoration test.
+        (
+            "#b2 {padding-top:1px; height:0;}",
+            4,
+            OwnerProfileReason::NonpositiveBlockHeight,
+        ),
+        (
+            "#b1 {padding-bottom:1px; height:0;}",
+            2,
+            OwnerProfileReason::NonpositiveBlockHeight,
+        ),
         (
             "#p {padding-top:0;}",
             1,
