@@ -16,10 +16,11 @@ use iced_css_core::{
     selectors::PseudoElement,
     source::selector_tree::SelectorTreeLimits,
     values::{
-        CompactDecimal, LengthTarget, NumericLimits, RangeEvent,
+        CompactDecimal, LengthTarget, NumericLimits, RangeEvent, RelativeUnit,
         content_computation::{
             ContentComputationError, ContentSelection, ContentTarget, select_content,
         },
+        font_size::{FontSizeContext, FontSizeError, FontSizeTable, compute_font_size},
         geometry::{LengthContext, LengthEvaluation, LengthEvaluationError, evaluate_length},
         property::SpecifiedValue,
         registry::PropertyId,
@@ -120,6 +121,18 @@ pub struct BorderWidthFact {
     pub event: Option<RangeEvent>,
     pub origin: BoxFactOrigin,
 }
+/// EML (CSS2.2 15.7, 6.1.2): one computed `font-size` in pixels, finite and non-negative
+/// and +0 when zero: a keyword table entry, the parent's fact for inheritance, or one
+/// nearest/ties-even conversion of a length, `em` or percentage, saturating at
+/// `f32::MAX`. `event` is the range event of the computation (upper saturation, or a
+/// positive size rounded to +0); an inherited fact keeps the parent's pixels and event,
+/// as an inherited border width does.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontSizeFact {
+    pub pixels: f32,
+    pub event: Option<RangeEvent>,
+    pub origin: BoxFactOrigin,
+}
 /// Computed facts only. Edge arrays use top, right, bottom, left order. An inherited
 /// rounding flag or range event describes the original conversion; inheritance does not
 /// emit a new warning.
@@ -131,8 +144,9 @@ pub struct BorderWidthFact {
 /// computed constraints with true provenance (CSS2.2 10.4, 10.7): an absolute
 /// nonnegative length converted once (zero is +0), `none` for a max, or the parent
 /// row's fact for `inherit`; a `min-width` or `max-width` percentage (PPM) and a
-/// `min-height` or `max-height` percentage (PHT) are kept exactly (see below), while
-/// `em`/`ex` stay refused.
+/// `min-height` or `max-height` percentage (PHT) are kept exactly (see below), and an
+/// `em` length of a row with a computed `font_size` (EML) is converted once like an
+/// absolute one, while `ex`, and `em` on any other row, stay refused.
 ///
 /// Border facts depend on the entry. `evaluate_clearance_box_facts` (Legacy) admits
 /// only `none`/`hidden` styles and never computes a width: every Legacy width fact is
@@ -140,9 +154,10 @@ pub struct BorderWidthFact {
 /// `border_widths()` is zero. `evaluate_sibling_box_facts` (Sequence) admits every
 /// CSS2.2 style and computes each side (CSS2.2 8.5.1): +0 without conversion when the
 /// side's own style is `none` or `hidden`; otherwise `thin`/`medium`/`thick` are
-/// 1/3/5, an absolute length is the nearest f32 (ties to even, saturating at
-/// `f32::MAX`), and `inherit` copies the parent's computed fact. Sequence width facts
-/// carry true provenance.
+/// 1/3/5, an absolute length, or (EML) an `em` length against the row's computed
+/// `font_size`, is the nearest f32 (ties to even, saturating at `f32::MAX`), and
+/// `inherit` copies the parent's computed fact. Sequence width facts carry true
+/// provenance.
 ///
 /// `offset` (REL) holds the computed `top`, `right`, `bottom` and `left` of a Sequence
 /// row whose computed `position` is `relative`: `auto`, or an absolute length
@@ -151,6 +166,15 @@ pub struct BorderWidthFact {
 /// every other row (CSS2.2 9.3.1: the offsets do not apply to a static box; absolute
 /// and fixed boxes are refused later) and for every Legacy row, whose offsets are
 /// never resolved.
+///
+/// `font_size` (EML) is the computed `font-size` (CSS2.2 15.7) of every row from
+/// `evaluate_sibling_box_facts_with_font_medium`, computed before the row's other
+/// longhands, and `None` for every other row (`evaluate_sibling_box_facts`, Legacy),
+/// whose `em` lengths stay refused. An `em` in a length longhand of a row with a computed
+/// `font_size` (a width, height, constraint, margin, padding, border width or offset) is
+/// that size times the authored number, one exact product rounded once (CSS2.2 6.1.2:
+/// `em` computes to an absolute length), so `inherit` copies the parent's absolute fact.
+/// `ex` stays refused on every row.
 ///
 /// Percentage facts (PCT, PPM, PHT, PTB) depend on the entry. A Legacy row never holds
 /// `BoxLengthFact::Percentage`, `LengthPercentageBoxFact::Percentage` or
@@ -163,12 +187,13 @@ pub struct BorderWidthFact {
 /// containing block's height when that height is specified explicitly; otherwise it
 /// takes the CSS2.2 10.5/10.7 rule (`auto`, 0 or `none`). A child's `top` or `bottom`
 /// percentage (PTB, PTA) resolves against P's used content height, explicit or Auto
-/// (CSS2.2 9.3.2, 9.4.3: offsets apply after layout). P's height and offset percentages
-/// under an explicit O resolve against O's used content height when the host supplies it
+/// (CSS2.2 9.3.2, 9.4.3: offsets apply after layout). P's `height`, `min-height`,
+/// `max-height`, `top` and `bottom` percentages under an explicit O resolve against O's
+/// used content height when the host supplies it
 /// (`build_captured_sibling_layout_with_outer_height`, OCH) and are refused
-/// (`OuterHeightBasis`) otherwise; P's offset percentages under an `auto` O are refused
-/// (`IndefiniteOffsetBasis`): O's final used height is not computed here. Every other one
-/// is resolved against the containing block's width.
+/// (`OuterHeightBasis`) otherwise; P's `top` and `bottom` percentages under an `auto` O
+/// are refused (`IndefiniteOffsetBasis`): O's final used height is not computed here.
+/// Every other one is resolved against the containing block's width.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,
@@ -190,6 +215,8 @@ pub struct ClearanceBoxFact {
     pub after: PseudoAbsence,
     /// Computed offsets of a relatively positioned Sequence row; see the type contract.
     pub offset: Option<[BoxLengthFact; 4]>,
+    /// Computed `font-size` of a row of the font entry (EML); see the type contract.
+    pub font_size: Option<FontSizeFact>,
 }
 impl ClearanceBoxFact {
     /// Computed border widths in pixels, top, right, bottom, left.
@@ -301,6 +328,12 @@ pub enum ClearanceBoxFactsError {
         target: BoxFactTarget,
         error: ContentComputationError,
     },
+    /// EML: the `font-size` computation of the element at `original` failed (font entry
+    /// only).
+    FontSize {
+        original: usize,
+        error: FontSizeError,
+    },
 }
 impl std::fmt::Display for ClearanceBoxFactsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -315,6 +348,7 @@ impl std::error::Error for ClearanceBoxFactsError {
             Self::Defaulting { error, .. } => Some(error),
             Self::Length { error, .. } => Some(error),
             Self::Content { error, .. } => Some(error),
+            Self::FontSize { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -352,7 +386,7 @@ pub fn evaluate_clearance_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
     display: &'d SourceDisplay<'s, 'b, 'r>,
     limits: ClearanceBoxFactsLimits,
 ) -> Result<ClearanceBoxFacts<'p, 'h, 'd, 's, 'b, 'r>, ClearanceBoxFactsError> {
-    let mut prepared = prepare_box_facts(projection, display, limits, BoxFactMode::Legacy)?;
+    let mut prepared = prepare_box_facts(projection, display, limits, BoxFactMode::Legacy, None)?;
     let mut rows = match projection.shape() {
         ClearanceProjectionShape::RootRegion => ClearanceSlots::Four([resolve::initial_row(); 4]),
         ClearanceProjectionShape::NestedRegion => ClearanceSlots::Five([resolve::initial_row(); 5]),
@@ -390,6 +424,18 @@ pub(super) struct PreparedBoxFacts {
     pub(super) per_target: RuleBatchLimits,
     /// Private to this module: the Sequence entry can neither build nor change it.
     mode: BoxFactMode,
+    /// EML: the font entry's keyword table and the `font-size` id, bound with the mode;
+    /// `None` for the other entries.
+    font: Option<FontContext>,
+}
+
+/// EML: the keyword table built from the font entry's `medium` (architecture 27) and the
+/// `font-size` property, looked up outside the 29 captured longhands (whose indices 25-28
+/// are the offsets).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FontContext {
+    table: FontSizeTable,
+    property: PropertyId,
 }
 
 pub(super) fn initial_box_fact() -> ClearanceBoxFact {
@@ -401,6 +447,7 @@ pub(super) fn prepare_box_facts<'h>(
     display: &SourceDisplay<'_, '_, '_>,
     limits: ClearanceBoxFactsLimits,
     mode: BoxFactMode,
+    font: Option<FontSizeTable>,
 ) -> Result<PreparedBoxFacts, ClearanceBoxFactsError> {
     use ClearanceBoxFactsError as E;
     let mut remaining = limits.work.get();
@@ -434,6 +481,14 @@ pub(super) fn prepare_box_facts<'h>(
         }
     }
     let ids = resolve::property_ids()?;
+    let font = match font {
+        Some(table) => Some(FontContext {
+            table,
+            property: PropertyId::lookup("font-size")
+                .ok_or(E::PropertyRegistry { name: "font-size" })?,
+        }),
+        None => None,
+    };
     let bundle = display.bundle();
     let r = bundle.rule_count();
     if r > limits.per_target.rules.get() {
@@ -449,10 +504,12 @@ pub(super) fn prepare_box_facts<'h>(
     // Legacy, 28 Sequence with the four REL offsets) and two pseudos; plus one. The
     // numeric allowance reserves one conversion per length-valued longhand: 14 Legacy,
     // 22 Sequence (four widths, four offsets). Both are charged on every path of the
-    // mode, static rows included, without credit.
-    let (per_node, numeric_per_node) = match mode {
-        BoxFactMode::Legacy => (26, 14),
-        BoxFactMode::Sequence => (34, 22),
+    // mode, static rows included, without credit. EML: the font entry also resolves
+    // `font-size` on every row (one unit) and reserves one conversion for it.
+    let (per_node, numeric_per_node) = match (mode, font.is_some()) {
+        (BoxFactMode::Legacy, _) => (26, 14),
+        (BoxFactMode::Sequence, false) => (34, 22),
+        (BoxFactMode::Sequence, true) => (35, 23),
     };
     charge(
         &mut remaining,
@@ -514,6 +571,7 @@ pub(super) fn prepare_box_facts<'h>(
         receipt,
         per_target,
         mode,
+        font,
     })
 }
 
@@ -527,6 +585,7 @@ pub(super) fn evaluate_box_rows<'h>(
     use ClearanceBoxFactsError as E;
     // The mode bound by `prepare_box_facts` selects both the charge and the loop.
     let mode = prepared.mode;
+    let font = prepared.font;
     let per_target = prepared.per_target;
     let ids = &prepared.ids;
     let receipt = &mut prepared.receipt;
@@ -571,15 +630,30 @@ pub(super) fn evaluate_box_rows<'h>(
             target: BoxFactTarget::Element,
             error,
         })?;
+        // EML (CSS2.2 15.7, 6.1.2): the font entry computes the row's `font-size` first;
+        // its other longhands and its offsets resolve an `em` against it.
+        let font_size = match font {
+            Some(font) => Some(resolve::font_size(
+                &winners,
+                font,
+                original,
+                parent,
+                limits.numeric,
+                &mut receipt.numeric_calls,
+            )?),
+            None => None,
+        };
+        let resolver =
+            resolve::Resolver::new(original, limits.numeric, font_size.map(|fact| fact.pixels));
         let mut row = resolve::element(
             &winners,
             ids,
-            original,
             parent,
-            limits.numeric,
+            resolver,
             mode,
             &mut receipt.numeric_calls,
         )?;
+        row.font_size = font_size;
         // REL (CSS2.2 9.3.2, 9.4.3): only a Sequence row whose computed `position` is
         // `relative` resolves its offsets, after its other longhands and before its
         // pseudos; the offsets do not apply to any other row (9.3.1). Only the Sequence
@@ -594,9 +668,8 @@ pub(super) fn evaluate_box_rows<'h>(
                 row.offset = Some(resolve::offsets(
                     &winners,
                     ids,
-                    original,
                     parent,
-                    limits.numeric,
+                    resolver,
                     &mut receipt.numeric_calls,
                 )?);
             }

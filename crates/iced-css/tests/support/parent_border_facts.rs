@@ -230,7 +230,7 @@ fn pbr_fact_representation_measurement() {
     assert!(row.0 >= 4 * width.0, "row {row:?} width {width:?}");
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     {
-        assert_eq!(row, (848, 8));
+        assert_eq!(row, (872, 8));
         assert_eq!(width, (24, 8));
     }
 }

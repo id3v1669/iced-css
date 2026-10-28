@@ -605,3 +605,47 @@ fn och_work_thresholds_with_the_host_height() {
         );
     }
 }
+
+// EML: the carried OCH rows (OC-10) first; then the `em` length rows as a child module of
+// this one (EML design section 6).
+
+/// OCX1 (OC-10, OCH plan review F-1; MV witness): under an `auto` O the host value is not
+/// read, so `Some(NAN)`, `Some(INFINITY)` and `Some(-1.0)` give the `None` view for P's
+/// `height:50%` and for P's `min-height:50%; max-height:50%` under O's `min-height:200px`
+/// (P's used content height 11 in both). Passes before and after EML.
+#[test]
+fn eml_red_guard_ocx1_an_invalid_host_height_under_an_auto_outer_is_not_read() {
+    for fragment in [
+        "#p { height:50%; }",
+        "#o { min-height:200px; } #p { min-height:50%; max-height:50%; }",
+    ] {
+        let control = och_layout(fragment, None);
+        for height in [f32::NAN, f32::INFINITY, -1.0] {
+            assert_pct_view(
+                &och_layout(fragment, Some(height)),
+                &control,
+                &[pct_lit("p.used_height", 11.0)],
+                &format!("{fragment} with {height}"),
+            );
+        }
+    }
+}
+
+/// OCX2 (OC-10): under an `auto` O, P's `top:10%` stays `IndefiniteOffsetBasis` with each
+/// of the three invalid host values. Passes before and after EML.
+#[test]
+fn eml_red_guard_ocx2_parent_top_percentage_under_an_auto_outer_stays_refused() {
+    for height in [f32::NAN, f32::INFINITY, -1.0] {
+        assert_eq!(
+            och_error("#p { position:relative; top:10%; }", Some(height)),
+            pht_refusal(1, "top", "IndefiniteOffsetBasis"),
+            "{height}"
+        );
+    }
+}
+
+// EML: `em` lengths in the Sequence facts against a host-supplied medium reuse the `pct`,
+// `ppm`, `pht`, `ptb` and `och` helpers as a child module of this one (EML design
+// section 6).
+#[path = "em_lengths.rs"]
+mod em_lengths;

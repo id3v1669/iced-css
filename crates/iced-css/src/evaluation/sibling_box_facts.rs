@@ -9,7 +9,10 @@ use super::{
     sibling_source_projection::SiblingSourceProjection,
     source_display::SourceDisplay,
 };
-use iced_css_core::values::NumericLimits;
+use iced_css_core::values::{
+    NumericLimits,
+    font_size::{FontSizeError, FontSizeTable},
+};
 use std::{collections::TryReserveError, mem::size_of, num::NonZeroUsize};
 
 /// Independent source-count, row-storage, and evaluation service limits.
@@ -43,6 +46,10 @@ pub enum SiblingBoxFactsError {
     Allocation(TryReserveError),
     /// Existing source join, budget, cascade, defaulting, or property evaluation failed.
     Evaluation(ClearanceBoxFactsError),
+    /// EML: the font entry's `medium` is not finite and positive (`InvalidMedium`), or
+    /// its keyword table is not positive, finite and strictly increasing
+    /// (`InvalidTable`); tested before every other check.
+    FontMedium(FontSizeError),
 }
 
 impl std::fmt::Display for SiblingBoxFactsError {
@@ -56,6 +63,7 @@ impl std::error::Error for SiblingBoxFactsError {
         match self {
             Self::Allocation(error) => Some(error),
             Self::Evaluation(error) => Some(error),
+            Self::FontMedium(error) => Some(error),
             Self::Sources | Self::Bytes => None,
         }
     }
@@ -120,7 +128,9 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 /// a `max-width` (PPM) or `max-height` (PHT) as `BoxMaxFact::Percentage`, without a
 /// conversion; each can fail with `InvalidValue` (a negative value) or `Unsupported`
 /// (`PercentagePrecision`). No Sequence longhand keeps `PercentageLength` (Legacy refuses
-/// every percentage).
+/// every percentage). Every row carries `font_size: None`, and an `em` length is refused
+/// (`RelativeLength`) like `ex`; `evaluate_sibling_box_facts_with_font_medium` computes
+/// `font-size` and resolves `em` (EML).
 ///
 /// Shared registry/rule/declaration preflight and aggregate service reservations finish
 /// before row allocation. Actual row capacity is then charged before row initialization
@@ -137,14 +147,51 @@ pub fn evaluate_sibling_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
     display: &'d SourceDisplay<'s, 'b, 'r>,
     limits: SiblingBoxFactsLimits,
 ) -> Result<SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>, SiblingBoxFactsError> {
-    evaluate_with_reserve(projection, display, limits, |rows, requested| {
+    evaluate_with_reserve(projection, display, None, limits, |rows, requested| {
         rows.try_reserve_exact(requested)
     })
+}
+
+/// EML (CSS2.2 15.7, 4.3.2, 6.1.2): `evaluate_sibling_box_facts` with the resolved
+/// `medium` font-size preference (architecture 27: the host's preference, else the
+/// provider's, else iced's default text size), from which the keyword table is built.
+/// Every row then carries its computed `font-size` (`ClearanceBoxFact::font_size`),
+/// computed before its other longhands, and resolves `em` in every captured length
+/// longhand against it; `ex` stays `RelativeLength`. O, the captured root, takes `medium`
+/// as its initial `font-size` and as the parent basis of its own `em`, percentage,
+/// `larger` and `smaller` (CSS22-001338): a host whose O is not the root of its CSS
+/// document must not use this entry. Work is `36*N+2+r` and the numeric allowance `23*N`
+/// conversions (one more unit and one more conversion per source than
+/// `evaluate_sibling_box_facts`).
+///
+/// # Errors
+///
+/// [`SiblingBoxFactsError::FontMedium`] (`InvalidMedium` or `InvalidTable`) first, before
+/// every other check; then as `evaluate_sibling_box_facts`, plus, per row before its
+/// other longhands, `Evaluation(FontSize { .. })` for a `font-size` computation failure,
+/// `Defaulting` or `InitialRecipe` for `font-size`, and `Unsupported` (`RelativeLength`)
+/// for an `ex` `font-size`; an `em` length outside the finite f32 range is
+/// `Evaluation(Length { .. })` at its property. Failure publishes no partial batch.
+pub fn evaluate_sibling_box_facts_with_font_medium<'p, 'h, 'd, 's, 'b, 'r>(
+    projection: &'p SiblingSourceProjection<'h>,
+    display: &'d SourceDisplay<'s, 'b, 'r>,
+    medium: f32,
+    limits: SiblingBoxFactsLimits,
+) -> Result<SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>, SiblingBoxFactsError> {
+    let table = FontSizeTable::new(medium).map_err(SiblingBoxFactsError::FontMedium)?;
+    evaluate_with_reserve(
+        projection,
+        display,
+        Some(table),
+        limits,
+        |rows, requested| rows.try_reserve_exact(requested),
+    )
 }
 
 fn evaluate_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     projection: &'p SiblingSourceProjection<'h>,
     display: &'d SourceDisplay<'s, 'b, 'r>,
+    font: Option<FontSizeTable>,
     limits: SiblingBoxFactsLimits,
     reserve: impl FnOnce(&mut Vec<ClearanceBoxFact>, usize) -> Result<(), TryReserveError>,
 ) -> Result<SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>, SiblingBoxFactsError> {
@@ -160,6 +207,7 @@ fn evaluate_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         display,
         limits.evaluation,
         BoxFactMode::Sequence,
+        font,
     )
     .map_err(E::Evaluation)?;
     let (mut rows, owned_heap_bytes) = allocate_rows(count, limits.retained_bytes, reserve)?;

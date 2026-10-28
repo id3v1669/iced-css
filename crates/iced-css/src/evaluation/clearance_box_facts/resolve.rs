@@ -103,6 +103,7 @@ pub(super) fn initial_row() -> ClearanceBoxFact {
             origin: BoxFactOrigin::Initial,
         },
         offset: None,
+        font_size: None,
     }
 }
 fn inherited(v: BoxLengthFact, origin: BoxFactOrigin) -> BoxLengthFact {
@@ -137,11 +138,22 @@ fn inherited_length_percentage(
         }
     }
 }
-struct Resolver {
+/// One row's longhand resolver: its original index, the numeric limits and (EML) its
+/// computed font size, the basis of an `em` length (`None`: `em` stays `RelativeLength`).
+#[derive(Clone, Copy)]
+pub(super) struct Resolver {
     original: usize,
     numeric: NumericLimits,
+    font_size: Option<f32>,
 }
 impl Resolver {
+    pub(super) fn new(original: usize, numeric: NumericLimits, font_size: Option<f32>) -> Self {
+        Self {
+            original,
+            numeric,
+            font_size,
+        }
+    }
     fn invalid(&self, property: PropertyId) -> E {
         E::InvalidValue {
             original: self.original,
@@ -164,7 +176,10 @@ impl Resolver {
     /// `min-width`, `max-width`; PHT: Sequence `height`, `min-height`, `max-height`; PTB:
     /// `top`, `bottom` of a relative Sequence row): a negative one only when `signed` is
     /// set, and a value outside the bounded representation is `PercentagePrecision`;
-    /// otherwise it is `PercentageLength`.
+    /// otherwise it is `PercentageLength`. EML: with a font size an `em` length is
+    /// converted like an absolute one (the sign test, one counted conversion, one exact
+    /// product with the font size rounded once); `ex`, and `em` without a font size, are
+    /// `RelativeLength`.
     fn length(
         &self,
         value: &SpecifiedValue,
@@ -178,6 +193,7 @@ impl Resolver {
             return Err(self.invalid(property));
         };
         match target {
+            LengthTarget::Relative(_, RelativeUnit::Em) if self.font_size.is_some() => {}
             LengthTarget::Relative(..) => {
                 return Err(self.unsupported(property, BoxFactUnsupported::RelativeLength));
             }
@@ -211,13 +227,15 @@ impl Resolver {
             return Err(self.invalid(property));
         }
         *calls += 1;
+        let context = LengthContext {
+            font_size: self.font_size,
+            ..LengthContext::default()
+        };
         let evaluated =
-            evaluate_length(target, LengthContext::default(), self.numeric).map_err(|error| {
-                E::Length {
-                    original: self.original,
-                    property,
-                    error,
-                }
+            evaluate_length(target, context, self.numeric).map_err(|error| E::Length {
+                original: self.original,
+                property,
+                error,
             })?;
         let LengthEvaluation::Value(v) = evaluated else {
             return Err(self.invalid(property));
@@ -231,7 +249,8 @@ impl Resolver {
     /// One `border-*-width` side in Sequence mode (CSS2.2 8.5.1; architecture 34).
     /// The side's own computed style is tested first: a `none` or `hidden` side is +0
     /// with no event, no `RelativeLength` and no conversion, whatever its value.
-    /// `RelativeLength` is raised before any conversion; an absolute length is one
+    /// `ex`, or `em` without a font size, is `RelativeLength` before any conversion; an
+    /// absolute length, or (EML) an `em` length against the row's font size, is one
     /// counted conversion to the nearest non-negative f32, ties to even, saturating.
     fn border_width(
         &self,
@@ -255,31 +274,36 @@ impl Resolver {
                 "thick" => Ok(specified(5., None)),
                 _ => Err(self.invalid(property)),
             },
-            SpecifiedValue::Length(target) => match target {
-                LengthTarget::Relative(..) => {
-                    Err(self.unsupported(property, BoxFactUnsupported::RelativeLength))
-                }
-                LengthTarget::Absolute(_) if target.is_negative() => Err(self.invalid(property)),
-                LengthTarget::Absolute(length) => {
-                    *calls += 1;
-                    let converted =
-                        length
-                            .to_nonnegative_f32(self.numeric)
-                            .map_err(|error| E::Length {
-                                original: self.original,
-                                property,
-                                error: LengthEvaluationError::Conversion(error),
-                            })?;
-                    // Zero is canonical +0.
-                    let pixels = if converted.value == 0. {
-                        0.
-                    } else {
-                        converted.value
-                    };
-                    Ok(specified(pixels, converted.event))
-                }
-                LengthTarget::Percentage(..) | LengthTarget::Auto => Err(self.invalid(property)),
-            },
+            SpecifiedValue::Length(target) => {
+                let converted = match (target, self.font_size) {
+                    (LengthTarget::Relative(_, RelativeUnit::Ex), _)
+                    | (LengthTarget::Relative(_, RelativeUnit::Em), None) => {
+                        return Err(self.unsupported(property, BoxFactUnsupported::RelativeLength));
+                    }
+                    (LengthTarget::Percentage(..) | LengthTarget::Auto, _) => {
+                        return Err(self.invalid(property));
+                    }
+                    _ if target.is_negative() => return Err(self.invalid(property)),
+                    // EML: an `em` width against the row's computed font size.
+                    (LengthTarget::Relative(value, _), Some(size)) => {
+                        value.scaled_nonnegative_f32(size, self.numeric)
+                    }
+                    (LengthTarget::Absolute(length), _) => length.to_nonnegative_f32(self.numeric),
+                };
+                *calls += 1;
+                let converted = converted.map_err(|error| E::Length {
+                    original: self.original,
+                    property,
+                    error: LengthEvaluationError::Conversion(error),
+                })?;
+                // Zero is canonical +0.
+                let pixels = if converted.value == 0. {
+                    0.
+                } else {
+                    converted.value
+                };
+                Ok(specified(pixels, converted.event))
+            }
             _ => Err(self.invalid(property)),
         }
     }
@@ -291,13 +315,12 @@ fn suppressed(style: BorderStyle) -> bool {
 pub(super) fn element(
     winners: &PropertyWinners<'_>,
     ids: &[PropertyId; 29],
-    original: usize,
     parent: Option<(usize, ClearanceBoxFact)>,
-    numeric: NumericLimits,
+    resolver: Resolver,
     mode: BoxFactMode,
     calls: &mut usize,
 ) -> Result<ClearanceBoxFact, E> {
-    let resolver = Resolver { original, numeric };
+    let original = resolver.original;
     let mut row = initial_row();
     // Legacy resolves indices 0-19 only and never computes a width. Sequence also
     // resolves the widths 20-23, each after its own side's style (14-17).
@@ -381,9 +404,10 @@ pub(super) fn element(
                     // MMX (CSS2.2 10.4, 10.7): a Sequence row stores its computed
                     // constraint: `none` for a max, else one counted conversion of an
                     // absolute nonnegative length; PPM keeps a `min-width` or `max-width`
-                    // and PHT a `min-height` or `max-height` percentage exactly (`em`/`ex`,
-                    // `auto` and negative values keep their refusals). Legacy keeps the
-                    // refusals below.
+                    // and PHT a `min-height` or `max-height` percentage exactly, and
+                    // (EML) an `em` length with a font size like an absolute one (`ex`,
+                    // `em` without a font size, `auto` and negative values keep their
+                    // refusals). Legacy keeps the refusals below.
                     if mode == BoxFactMode::Sequence && (2..6).contains(&index) {
                         if index >= 4
                             && matches!(value,SpecifiedValue::Keyword(k) if k.as_str()=="none")
@@ -538,20 +562,93 @@ pub(super) fn element(
     }
     Ok(row)
 }
-/// REL (CSS2.2 9.3.2, 9.4.3): the computed `top`, `right`, `bottom` and `left` (25-28)
-/// of a relatively positioned Sequence row, in index order: `auto`, or an absolute
-/// length converted like a signed margin (one counted conversion), a percentage kept
-/// exactly (PCT: `right`, `left`; PTB: `top`, `bottom`), or, for `inherit`, the parent
-/// row's computed offset (`auto`, an absolute length or a percentage).
-pub(super) fn offsets(
+/// EML (CSS2.2 15.7, 6.2, 4.3.2): the computed `font-size` of an element of the font
+/// entry, before its other longhands. No declaration and `inherit` copy the parent's
+/// fact; the root (O, no parent) takes `initial` (`medium`, the table's middle entry), as
+/// `initial` does on every row. A keyword, a length, an `em` or a percentage resolves
+/// against the parent's computed size, or against `medium` for the root (CSS22-001338):
+/// one counted conversion for a length, `em` or percentage, none for a keyword. `ex`
+/// stays `RelativeLength` and never reaches `compute_font_size`.
+pub(super) fn font_size(
     winners: &PropertyWinners<'_>,
-    ids: &[PropertyId; 29],
+    font: FontContext,
     original: usize,
     parent: Option<(usize, ClearanceBoxFact)>,
     numeric: NumericLimits,
     calls: &mut usize,
+) -> Result<FontSizeFact, E> {
+    let property = font.property;
+    let resolver = Resolver::new(original, numeric, None);
+    let medium = font.table.entries()[3];
+    let parent_fact = match parent {
+        Some((original_parent, p)) => Some((
+            original_parent,
+            p.font_size.ok_or_else(|| resolver.invalid(property))?,
+        )),
+        None => None,
+    };
+    let defaulted = winners
+        .defaulted(property, parent.is_some())
+        .map_err(|error| E::Defaulting {
+            original,
+            property,
+            error,
+        })?;
+    let value = match defaulted {
+        DefaultedValueRef::Initial(_) => {
+            if property.descriptor().initial != "medium" {
+                return Err(E::InitialRecipe { property });
+            }
+            return Ok(FontSizeFact {
+                pixels: medium,
+                event: None,
+                origin: BoxFactOrigin::Initial,
+            });
+        }
+        DefaultedValueRef::ParentComputed => {
+            let (original_parent, fact) = parent_fact.ok_or_else(|| resolver.invalid(property))?;
+            return Ok(FontSizeFact {
+                origin: BoxFactOrigin::Inherited { original_parent },
+                ..fact
+            });
+        }
+        DefaultedValueRef::Compute(value) => value,
+    };
+    if let SpecifiedValue::Length(target) = value {
+        if matches!(target, LengthTarget::Relative(_, RelativeUnit::Ex)) {
+            return Err(resolver.unsupported(property, BoxFactUnsupported::RelativeLength));
+        }
+        if !matches!(target, LengthTarget::Auto) {
+            *calls += 1;
+        }
+    }
+    let context = FontSizeContext {
+        table: font.table,
+        parent_size: parent_fact.map_or(medium, |(_, fact)| fact.pixels),
+        parent_x_height: f32::NAN,
+    };
+    let size = compute_font_size(value, context, numeric)
+        .map_err(|error| E::FontSize { original, error })?;
+    Ok(FontSizeFact {
+        pixels: if size.value == 0. { 0. } else { size.value },
+        event: size.event,
+        origin: BoxFactOrigin::Specified,
+    })
+}
+/// REL (CSS2.2 9.3.2, 9.4.3): the computed `top`, `right`, `bottom` and `left` (25-28)
+/// of a relatively positioned Sequence row, in index order: `auto`, or an absolute
+/// length converted like a signed margin (one counted conversion), a percentage kept
+/// exactly (PCT: `right`, `left`; PTB: `top`, `bottom`), (EML) an `em` length against the
+/// row's computed font size, converted like a signed margin, or, for `inherit`, the
+/// parent row's computed offset (`auto`, an absolute length or a percentage).
+pub(super) fn offsets(
+    winners: &PropertyWinners<'_>,
+    ids: &[PropertyId; 29],
+    parent: Option<(usize, ClearanceBoxFact)>,
+    resolver: Resolver,
+    calls: &mut usize,
 ) -> Result<[BoxLengthFact; 4], E> {
-    let resolver = Resolver { original, numeric };
+    let original = resolver.original;
     let mut offset = [BoxLengthFact::Auto {
         origin: BoxFactOrigin::Initial,
     }; 4];

@@ -868,7 +868,7 @@ fn ppm_representation_measurement() {
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     assert_eq!(
         measured.map(|(_, size, align)| (size, align)),
-        [(32, 8), (32, 8), (848, 8)]
+        [(32, 8), (32, 8), (872, 8)]
     );
 }
 

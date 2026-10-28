@@ -352,9 +352,9 @@ pub enum SiblingLayoutError {
     /// resolved against its containing block's width, or (PHT) a child's percentage
     /// `height`, `min-height` or `max-height` against P's explicit used content height, a
     /// child's `top` or `bottom` (PTB, PTA) against P's used content height (explicit, or
-    /// after P's bottom under an Auto P), or (OCH) P's height or offset percentage against
-    /// O's used content height (`InvalidContext` when that value is not finite and
-    /// nonnegative).
+    /// after P's bottom under an Auto P), or (OCH) P's `height`, `min-height`,
+    /// `max-height`, `top` or `bottom` percentage against O's used content height
+    /// (`InvalidContext` when that value is not finite and nonnegative).
     Percentage {
         source: usize,
         property: &'static str,
@@ -563,18 +563,17 @@ impl std::error::Error for SiblingLayoutError {
 /// child's basis is P's explicit used content height (P's `height` length, or its
 /// percentage resolved against O's, after its limits), known before the child loop, or
 /// none when P's used height is `auto`. A child's height facts resolve in the order
-/// `height`, `min-height`,
-/// `max-height`, after its admission tests and before the held P check (their basis
-/// does not depend on P's horizontal solve); a failure is `Percentage` at that child.
-/// P's height routes and `constrain_bfc_height` select on P's used height category and
-/// limits. The computed accessors publish the percentage facts. Vertical paddings and
-/// margins keep the width basis. P's `top`/`bottom` percentage resolution or refusal
-/// (PTB, OCH) follows its height-percentage resolution or refusal and precedes every
-/// child error. A child's `top` and
-/// `bottom` percentages resolve, under an explicit P, after its height facts and category
-/// and before the held P check, and again in the vertical pass after P's bottom (PTA);
-/// under an Auto P they resolve only in that pass, after P's bottom and before the
-/// `auto` containment test, where a failure is `Percentage`.
+/// `height`, `min-height`, `max-height`, after its admission tests and before the held P
+/// check (their basis does not depend on P's horizontal solve); a failure is `Percentage`
+/// at that child. P's height routes and `constrain_bfc_height` select on P's used height
+/// category and limits. The computed accessors publish the percentage facts. Vertical
+/// paddings and margins keep the width basis. P's `top`/`bottom` percentage resolution or
+/// refusal (PTB, OCH) follows its height-percentage resolution or refusal and precedes
+/// every child error. A child's `top` and `bottom` percentages resolve, under an explicit
+/// P, after its height facts and category and before the held P check, and again in the
+/// vertical pass after P's bottom (PTA); under an Auto P they resolve only in that pass,
+/// after P's bottom and before the `auto` containment test, where a failure is
+/// `Percentage`.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -597,14 +596,18 @@ pub fn build_captured_sibling_layout<'p, 'h, 'd, 's, 'b, 'r>(
 /// explicitly because O is the captured root, whose containing block is the initial
 /// containing block (CSS2.2 10.1, 10.5); a host whose O is not the root of its CSS
 /// document, so that O's percentage height would be used as `auto`, must pass `None`.
-/// Only P's `top` and `bottom` take this basis; its `left` and `right` keep O's content
-/// width. Agreement with upstream CSS layout remains the caller's assertion, as for
-/// `ClearanceOuterContentGeometry`.
+/// Of P's offsets, only `top` and `bottom` take this basis; its `left` and `right` keep
+/// O's content width. Agreement with upstream CSS layout remains the caller's assertion,
+/// as for `ClearanceOuterContentGeometry`.
 ///
 /// # Errors
 /// As `build_captured_sibling_layout`; a supplied value that is not finite and
 /// nonnegative is `Percentage { source: 1, .. }` with `InvalidContext` when P holds such
-/// a percentage, at the position of the `OuterHeightBasis` refusal.
+/// a percentage, at the position of the `OuterHeightBasis` refusal. With a valid value,
+/// P's `height`, `min-height`, `max-height`, `top` or `bottom` percentage (in that order)
+/// whose resolved value exceeds the finite f32 range is `Percentage { source: 1,
+/// property, error: Unrepresentable }`, at the same position; the old entry cannot
+/// produce these.
 pub fn build_captured_sibling_layout_with_outer_height<'p, 'h, 'd, 's, 'b, 'r>(
     facts: &SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
     outer: ClearanceOuterContentGeometry<'p>,
@@ -1756,7 +1759,12 @@ fn resolve_max(
 /// `min-width`, `max-width`, so that the first failing property is deterministic; a
 /// failure is `Percentage` at `source`. PHT: the height facts are not resolved here (see
 /// `resolve_heights`); vertical paddings keep the width basis (CSS2.2 8.4). PTB: `top`
-/// and `bottom` are not resolved here either (see `resolve_vertical_offsets`).
+/// and `bottom` are not resolved here either (see `resolve_vertical_offsets`). It never
+/// rewrites offset sides 0 and 2: every reader of P's and the children's `top` and
+/// `bottom` (P's vertical step, the copy of P's resolved sides into P's used row, the
+/// child loop and the vertical pass) takes them from the fact row. EML: an `em` offset is
+/// already absolute in the fact row (a computed value, CSS2.2 6.1.2), so no unit is
+/// converted here.
 fn resolved_row(
     row: &ClearanceBoxFact,
     basis: f32,
@@ -1808,9 +1816,10 @@ fn resolved_row(
 /// the percentage primitive, for an invalid O basis that the P solver refuses before it
 /// reads any operand (PPM: paddings, `min-width` and `max-width` included). PHT: the
 /// height facts are left as they are; no height reader reads this row. PTB: P's `top` and
-/// `bottom` percentages are refused before this row exists, or (OCH) resolved there
-/// against O's used content height; the P solver error this row leads to is returned
-/// before P's resolved `top` and `bottom` are copied into P's used row.
+/// `bottom` percentages are refused at P's vertical step, before this row exists, or
+/// (OCH) resolved at that step against O's used content height; the P solver error this
+/// row leads to is returned before P's resolved `top` and `bottom` are copied into P's
+/// used row.
 fn zeroed_row(row: &ClearanceBoxFact) -> ClearanceBoxFact {
     let absolute = |percentage: PercentageBoxFact| AbsoluteBoxFact {
         pixels: 0.0,
