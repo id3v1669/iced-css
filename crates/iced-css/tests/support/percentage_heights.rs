@@ -87,7 +87,7 @@ fn pht_red_h3_float_max_height_percentage_of_an_explicit_parent() {
     );
 }
 
-/// The layout error of each N5 `fragment` under P's `width:<f32::MAX>px` must be
+/// The layout error of each N5 `fragment` under the given `parent` declarations must be
 /// `Percentage { source: 2, property, error: Unrepresentable }`.
 fn pht_assert_unrepresentable(cases: &[(&str, &str)], parent: &str) {
     for &(fragment, property) in cases {
@@ -870,14 +870,14 @@ const PHT_WORK_FRAGMENT: &str = "#p { min-height:0%; max-height:100%; } \
                                  #b1, #f, #b2, #b3, #b4 { min-height:0%; max-height:100%; }";
 
 /// Facade and core work (M24 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `469 + 32N + 491(N-2) +
+/// percentages on every source; the facade charge is `471 + 32N + 526(N-2) +
 /// 313(N-3)`; the layout equals the baseline's.
 #[test]
 fn pht_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2728, 1249), (6, 3564, 1501), (7, 4400, 1754)] {
+    for (nodes, facade, core) in [(5, 2835, 1249), (6, 3706, 1501), (7, 4577, 1754)] {
         assert_eq!(
             facade,
-            469 + 32 * nodes + 491 * (nodes - 2) + 313 * (nodes - 3)
+            471 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
         );
         let css = pct_css(
             nodes,

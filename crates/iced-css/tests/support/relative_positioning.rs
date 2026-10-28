@@ -625,15 +625,16 @@ fn rel_e10_relative_outer_stays_refused() {
     );
 }
 
-/// E11 (PTB M5 witness; it witnessed REL M15 while the producer refused every offset
-/// percentage): the facts keep B1's `top:10%` (PTB), and the facade refuses it under the
-/// Auto P, whose height depends on content: `IndefiniteOffsetBasis` at projected 2.
+/// E11 (PTB M11 witness; it witnessed REL M15 while the producer refused every offset
+/// percentage, and PTB M5 while a child's was refused): a percentage offset of P under
+/// the Auto O is refused (`IndefiniteOffsetBasis` at projected 1, the case of `ptb` V9);
+/// a child's resolves after P's bottom (PTA, `ptb` A1).
 #[test]
 fn rel_e11_percentage_offset_is_refused() {
-    let css = rel_css(5, "#b1 { position:relative; top:10%; }");
+    let css = rel_css(5, "#p { position:relative; top:10%; }");
     assert_eq!(
         format!("{:?}", rel_error(5, &css)),
-        "Captured(Unsupported { projected: 2, property: \"top\", reason: IndefiniteOffsetBasis })",
+        "Captured(Unsupported { projected: 1, property: \"top\", reason: IndefiniteOffsetBasis })",
         "{css}"
     );
 }
@@ -1071,10 +1072,10 @@ fn rel_facts_numeric_allowance_is_exact_with_relative_rows() {
 /// a relative P and relative children.
 #[test]
 fn rel_work_thresholds_with_relative_boxes() {
-    for (nodes, facade, core) in [(5, 2728, 1249), (6, 3564, 1501), (7, 4400, 1754)] {
+    for (nodes, facade, core) in [(5, 2835, 1249), (6, 3706, 1501), (7, 4577, 1754)] {
         assert_eq!(
             facade,
-            469 + 32 * nodes + 491 * (nodes - 2) + 313 * (nodes - 3)
+            471 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
         );
         assert_eq!(
             core,

@@ -159,13 +159,14 @@ pub struct BorderWidthFact {
 /// `margin`, `padding`, `min_width`, `min_height`, `max_width`, `max_height` and, on a
 /// relatively positioned row, `offset`: the authored percentage kept exactly (CSS2.2
 /// 10.2, 10.5, 8.3, 8.4, 10.4, 10.7, 9.3.2), or the parent row's fact for `inherit`. A
-/// `height`, `min_height` or `max_height` percentage, and a `top` or `bottom` percentage
-/// (PTB), is resolved later against the containing block's height when that height is
-/// specified explicitly; otherwise the height family takes the CSS2.2 10.5/10.7 rule
-/// (`auto`, 0 or `none`) and `top`/`bottom` are refused (`IndefiniteOffsetBasis`). P's
-/// height and offset percentages under an explicit O are refused (`OuterHeightBasis`:
-/// O's used content height is not a facade input). Every other one is resolved against
-/// the containing block's width.
+/// `height`, `min_height` or `max_height` percentage is resolved later against the
+/// containing block's height when that height is specified explicitly; otherwise it
+/// takes the CSS2.2 10.5/10.7 rule (`auto`, 0 or `none`). A child's `top` or `bottom`
+/// percentage (PTB, PTA) resolves against P's used content height, explicit or Auto
+/// (CSS2.2 9.3.2, 9.4.3: offsets apply after layout). P's height and offset percentages
+/// under an explicit O are refused (`OuterHeightBasis`) and P's offset percentages under
+/// an `auto` O too (`IndefiniteOffsetBasis`): O's used content height is not a facade
+/// input. Every other one is resolved against the containing block's width.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,

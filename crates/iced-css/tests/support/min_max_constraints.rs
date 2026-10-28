@@ -1169,13 +1169,13 @@ const MMX_WORK_FRAGMENT: &str = "#o { min-width:1px; max-width:500px; min-height
                                  min-height:1px; max-height:50px; }";
 
 /// Facade and core work (M24 witness): exact and one short at N5, N6 and N7 with every
-/// constraint nondefault; the facade charge is `469 + 32N + 491(N-2) + 313(N-3)`.
+/// constraint nondefault; the facade charge is `471 + 32N + 526(N-2) + 313(N-3)`.
 #[test]
 fn mmx_work_thresholds_with_constraints() {
-    for (nodes, facade, core) in [(5, 2728, 1249), (6, 3564, 1501), (7, 4400, 1754)] {
+    for (nodes, facade, core) in [(5, 2835, 1249), (6, 3706, 1501), (7, 4577, 1754)] {
         assert_eq!(
             facade,
-            469 + 32 * nodes + 491 * (nodes - 2) + 313 * (nodes - 3)
+            471 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
         );
         let css = mmx_css(nodes, MMX_WORK_FRAGMENT);
         assert_mmx_view(

@@ -55,17 +55,18 @@ pub enum CapturedClearanceUnsupported {
     HeightKind,
     DisplayOrFlow,
     /// PCT: a percentage fact where this entry reads an absolute or `auto` value. Legacy
-    /// facts never hold one and the Sequence facade passes resolved rows, so this
-    /// fail-closed refusal is unreachable.
+    /// facts never hold one, and the Sequence facade passes rows whose fields read here
+    /// are resolved (the `offset` facts, which the bridge does not read, may still hold
+    /// `top`/`bottom` percentages), so this fail-closed refusal is unreachable.
     PercentageLength,
     /// PHT, PTB: a percentage `height`, `min-height` or `max-height` (PHT), or `top` or
     /// `bottom` (PTB), of P whose containing block (O) has an explicit height (a computed
     /// `height` other than `auto`): O's used content height is not a facade input
     /// (CSS2.2 10.5, 10.7, 9.3.2).
     OuterHeightBasis,
-    /// PTB: a `top` or `bottom` percentage of a relatively positioned box whose containing
-    /// block's height depends on content (P with a used `auto` height for a child; O with
-    /// a computed `auto` height for P). CSS2.2 9.3.2 gives no used value there.
+    /// PTB, PTA: a `top` or `bottom` percentage of P whose containing block (O) has a
+    /// computed `auto` height: O's used content height is not a facade input (CSS2.2
+    /// 9.3.2). A child's resolves against P's used content height (PTA).
     IndefiniteOffsetBasis,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

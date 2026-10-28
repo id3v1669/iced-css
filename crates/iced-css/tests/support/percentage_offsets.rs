@@ -131,18 +131,13 @@ fn ptb_v3_top_wins_over_bottom() {
     );
 }
 
-/// V3b (review F-1, ruling PB-2; M23 witness): a `bottom` percentage is resolved or
-/// refused even when 9.4.3 ignores it (`top` is not `auto`), a conservative over-refusal:
-/// under the Auto P, B1's `top:0px; bottom:10%` is `IndefiniteOffsetBasis` with property
-/// `bottom`; under P's `height:<f32::MAX>px`, B1's `top:0px; bottom:200%` is
-/// `Percentage { source: 2, property: "bottom", error: Unrepresentable }`.
+/// V3b (review F-1, ruling PB-2; PTB M23 witness): a `bottom` percentage is resolved even
+/// when 9.4.3 ignores it (`top` is not `auto`), a conservative choice: under P's
+/// `height:<f32::MAX>px`, B1's `top:0px; bottom:200%` is `Percentage { source: 2,
+/// property: "bottom", error: Unrepresentable }`. Its former Auto-P case resolves under PTA
+/// (A8).
 #[test]
 fn ptb_v3b_an_ignored_bottom_percentage_is_still_resolved_or_refused() {
-    ptb_assert_indefinite(&[(
-        "#b1 { position:relative; top:0px; bottom:10%; }",
-        2,
-        "bottom",
-    )]);
     pht_assert_unrepresentable(
         &[("#b1 { position:relative; top:0px; bottom:200%; }", "bottom")],
         &format!("#p {{ height:{PCT_F32_MAX_PX}; }}"),
@@ -182,54 +177,26 @@ fn ptb_v4b_child_basis_includes_the_parent_minimum() {
     );
 }
 
-/// V5: P's `height:50%` under an Auto O is used as `auto` (PHT), so B1's `top:10%` has no
-/// basis: `IndefiniteOffsetBasis` at projected 2.
-#[test]
-fn ptb_v5_parent_used_as_auto_gives_no_offset_basis() {
-    ptb_assert_indefinite(&[(
-        "#p { height:50%; } #b1 { position:relative; top:10%; }",
-        2,
-        "top",
-    )]);
-}
-
-/// V6 (M5, M8, M17 witness): under the Auto P every child's `top` or `bottom` percentage
-/// is refused at its own source (a 0 basis gives an offset 0, P's width 10).
-#[test]
-fn ptb_v6_auto_parent_gives_no_offset_basis() {
-    ptb_assert_indefinite(&[
-        ("#b1 { position:relative; top:10%; }", 2, "top"),
-        ("#b2 { position:relative; bottom:10%; }", 4, "bottom"),
-        ("#f { position:relative; top:10%; }", 3, "top"),
-    ]);
-}
-
-/// V6b: an Auto P with a length `min-height` still gives no basis (PHT H9e).
-#[test]
-fn ptb_v6b_auto_parent_with_a_minimum_gives_no_offset_basis() {
-    ptb_assert_indefinite(&[(
-        "#p { min-height:20px; } #b1 { position:relative; top:10%; }",
-        2,
-        "top",
-    )]);
-}
-
-/// V7 (M6 witness): a child's `top` is resolved before its `bottom`.
-#[test]
-fn ptb_v7_child_offset_order() {
-    ptb_assert_indefinite(&[("#b1 { position:relative; top:10%; bottom:10%; }", 2, "top")]);
-}
-
-/// V8 (M7 witness): a child's offsets resolve after its height category: B1's `height:auto`
-/// is `HeightKind` before its `top:10%` is refused.
+/// V8 (PTB M7 witness, kept by its explicit-P case): a child's offsets resolve after its
+/// height category: B1's `height:auto` is `HeightKind` before its `top` percentage
+/// resolves, under the Auto P (where `top:10%` resolves only after P's bottom, PTA) and
+/// under P's `height:<f32::MAX>px` (where `top:200%` would be `Percentage`).
 #[test]
 fn ptb_v8_offsets_follow_the_height_category() {
-    pht_assert_refusals(&[(
-        "#b1 { height:auto; position:relative; top:10%; }",
-        2,
-        "height",
-        "HeightKind",
-    )]);
+    for (parent, top) in [
+        (String::new(), "10%"),
+        (format!("#p {{ height:{PCT_F32_MAX_PX}; }}"), "200%"),
+    ] {
+        let css = pct_css(
+            5,
+            &format!("{parent} #b1 {{ height:auto; position:relative; top:{top}; }}"),
+        );
+        assert_eq!(
+            pht_error_in(&css, PCT_OUTER),
+            pht_refusal(2, "height", "HeightKind"),
+            "{css}"
+        );
+    }
 }
 
 /// V9 (M11, M20, M22 witness): under an Auto O, P's `top` or `bottom` percentage is refused
@@ -312,15 +279,26 @@ fn ptb_v11b_parent_overflow_precedes_the_offset_refusal() {
     )]);
 }
 
-/// V12 (M15 witness): a child's admission tests precede its offset refusal.
+/// V12 (PTB M15 witness, kept by its explicit-P case): a child's admission tests precede
+/// its offset resolution: B1's `overflow:scroll` is `ChildOverflow` under the Auto P
+/// (where `top:10%` resolves only after P's bottom, PTA) and under P's
+/// `height:<f32::MAX>px` (where `top:200%` would be `Percentage`).
 #[test]
 fn ptb_v12_child_admission_precedes_the_offset_refusal() {
-    pht_assert_refusals(&[(
-        "#b1 { overflow:scroll; position:relative; top:10%; }",
-        2,
-        "overflow",
-        "ChildOverflow",
-    )]);
+    for (parent, top) in [
+        (String::new(), "10%"),
+        (format!("#p {{ height:{PCT_F32_MAX_PX}; }}"), "200%"),
+    ] {
+        let css = pct_css(
+            5,
+            &format!("{parent} #b1 {{ overflow:scroll; position:relative; top:{top}; }}"),
+        );
+        assert_eq!(
+            pht_error_in(&css, PCT_OUTER),
+            pht_refusal(2, "overflow", "ChildOverflow"),
+            "{css}"
+        );
+    }
 }
 
 /// V13: under P's `height:<f32::MAX>px` a child's `top:200%` or `bottom:200%` is
@@ -582,14 +560,14 @@ const PTB_WORK_FRAGMENT: &str = "#p { height:20px; } \
                                  #b1, #f, #b2, #b3, #b4 { position:relative; top:0%; bottom:0%; }";
 
 /// Facade and core work (M19 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `469 + 32N + 491(N-2) +
+/// percentages on every source; the facade charge is `471 + 32N + 526(N-2) +
 /// 313(N-3)`; the layout equals the control with the children relative and no offsets.
 #[test]
 fn ptb_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2728, 1249), (6, 3564, 1501), (7, 4400, 1754)] {
+    for (nodes, facade, core) in [(5, 2835, 1249), (6, 3706, 1501), (7, 4577, 1754)] {
         assert_eq!(
             facade,
-            469 + 32 * nodes + 491 * (nodes - 2) + 313 * (nodes - 3)
+            471 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTB_WORK_FRAGMENT}"));
@@ -658,4 +636,378 @@ fn ptb_representation_measurement() {
         measured.map(|(_, size, align)| (size, align)),
         [(848, 8), (1, 1)]
     );
+}
+
+// PTA rows (G4d-3b child part, reading (b)): a child's `top` and `bottom` percentages under
+// an Auto P resolve against P's final used content height, after P's bottom and before
+// the `auto` containment test (CSS2.2 9.3.2, 9.4.3). Baseline vertical model (MMX): P
+// content [11, 22], so the Auto P's used content height is 11; B1 [11, 12] with
+// margin-bottom 4; F [16, 18]; B2 [18, 19] with margins 3. The RED part (PB9 and A1)
+// compiles against the PTB commit ea24b2b7.
+
+/// PB9 (carried PTB plan review F-1, ruling PB-9; M17 witness, the narrowed-arm mutant
+/// MPB9): P's ignored `bottom:10%` (P's `top:1px` is not `auto`) is still refused at P:
+/// `IndefiniteOffsetBasis` under the Auto O and `OuterHeightBasis` under O's
+/// `height:200px`, property `bottom` (the reviewer's validated row). Passes at RED and
+/// after PTA (PTA does not change P's step).
+#[test]
+fn pta_red_guard_pb9_parent_ignored_bottom_percentage_is_refused() {
+    pht_assert_refusals(&[
+        (
+            "#p { position:relative; top:1px; bottom:10%; }",
+            1,
+            "bottom",
+            "IndefiniteOffsetBasis",
+        ),
+        (
+            "#o { height:200px; } #p { position:relative; top:1px; bottom:10%; }",
+            1,
+            "bottom",
+            "OuterHeightBasis",
+        ),
+    ]);
+}
+
+/// A1 (RED; M1, M2, M3, M5, M6, M7, M11, M14 witness): under the Auto P, B1's `top:50%`
+/// of P's used content height 11 is 5.5, so `bottom` is -5.5 (P's width 100 gives 50,
+/// P's content bottom 22 gives 11, P's border-box height 13 gives 6.5, a 0 basis gives
+/// 0); every normal-flow number is the control's (9.4.3). Predecessor at ea24b2b7:
+/// `Captured(Unsupported { projected: 2, property: "top", reason: IndefiniteOffsetBasis
+/// })`.
+#[test]
+fn pta_red_a1_child_top_percentage_of_an_auto_parent() {
+    let expected = [
+        pct_lit("c0.offset.top", 5.5),
+        pct_lit("c0.offset.bottom", -5.5),
+    ];
+    assert_pct_row(
+        "#b1 { position:relative; top:50%; }",
+        "#b1 { position:relative; }",
+        "#b1 { position:relative; top:5.5px; }",
+        &expected,
+    );
+}
+
+// PTA FLIP rows: they need the vertical pass after P's bottom.
+
+/// A2 (M12 witness): under the Auto P, B2's `bottom:50%` of 11 is 5.5, so `top` is -5.5.
+#[test]
+fn pta_a2_tail_bottom_percentage_of_an_auto_parent() {
+    let expected = [
+        pct_lit("c2.offset.bottom", 5.5),
+        pct_lit("c2.offset.top", -5.5),
+    ];
+    assert_pct_row(
+        "#b2 { position:relative; bottom:50%; }",
+        "#b2 { position:relative; }",
+        "#b2 { position:relative; bottom:5.5px; }",
+        &expected,
+    );
+}
+
+/// A3: under the Auto P, F's `top:100%` of 11 is 11, so `bottom` is -11.
+#[test]
+fn pta_a3_float_top_percentage_of_an_auto_parent() {
+    let expected = [
+        pct_lit("c1.offset.top", 11.0),
+        pct_lit("c1.offset.bottom", -11.0),
+    ];
+    assert_pct_row(
+        "#f { position:relative; top:100%; }",
+        "#f { position:relative; }",
+        "#f { position:relative; top:11px; }",
+        &expected,
+    );
+}
+
+/// A4 (M4 witness): the basis is P's used content height after the 10.7 rerun: P's
+/// `min-height:20px` raises the tentative 11 to 20, so B1's `top:50%` is 10 (the tentative
+/// height gives 5.5).
+#[test]
+fn pta_a4_basis_after_the_parent_minimum() {
+    let expected = [
+        pct_lit("c0.offset.top", 10.0),
+        pct_lit("c0.offset.bottom", -10.0),
+    ];
+    assert_pct_row(
+        "#p { min-height:20px; } #b1 { position:relative; top:50%; }",
+        "#p { min-height:20px; } #b1 { position:relative; }",
+        "#p { min-height:20px; } #b1 { position:relative; top:10px; }",
+        &expected,
+    );
+}
+
+/// A5: P's `max-height:5px` lowers the tentative 11 to 5, so B1's `top:50%` is 2.5 (the
+/// tentative height gives 5.5); P `hidden` admits the children below its content box.
+#[test]
+fn pta_a5_basis_after_the_parent_maximum() {
+    let expected = [
+        pct_lit("c0.offset.top", 2.5),
+        pct_lit("c0.offset.bottom", -2.5),
+    ];
+    assert_pct_row(
+        "#p { max-height:5px; } #b1 { position:relative; top:50%; }",
+        "#p { max-height:5px; } #b1 { position:relative; }",
+        "#p { max-height:5px; } #b1 { position:relative; top:2.5px; }",
+        &expected,
+    );
+}
+
+/// A6: P's `height:50%` under the Auto O is used as `auto` (PHT, CSS2.2 10.5), so P takes
+/// the Auto route (used content height 11) and B1's `top:50%` is 5.5.
+#[test]
+fn pta_a6_parent_height_used_as_auto_gives_the_auto_basis() {
+    let expected = [
+        pct_lit("c0.offset.top", 5.5),
+        pct_lit("c0.offset.bottom", -5.5),
+    ];
+    assert_pct_row(
+        "#p { height:50%; } #b1 { position:relative; top:50%; }",
+        "#p { height:50%; } #b1 { position:relative; }",
+        "#p { height:50%; } #b1 { position:relative; top:5.5px; }",
+        &expected,
+    );
+}
+
+/// A7 (precedence, 9.4.3): with `top:100%` and `bottom:50%` under the Auto P, `top` wins:
+/// B1's used `top` 11 and `bottom` -11 (a `bottom`-wins result is -5.5 and 5.5).
+#[test]
+fn pta_a7_top_wins_over_bottom() {
+    let expected = [
+        pct_lit("c0.offset.top", 11.0),
+        pct_lit("c0.offset.bottom", -11.0),
+    ];
+    assert_pct_row(
+        "#b1 { position:relative; top:100%; bottom:50%; }",
+        "#b1 { position:relative; }",
+        "#b1 { position:relative; top:11px; bottom:5.5px; }",
+        &expected,
+    );
+}
+
+/// A8 (ruling PB-2; the migrated first case of V3b): under the Auto P, B1's ignored
+/// `bottom:10%` (`top:0px` wins) is resolved, not refused: a layout with `top` 0 and
+/// `bottom` +0; the twin's `bottom:1.1px` is the same f32 as 10% of 11.
+#[test]
+fn pta_a8_an_ignored_bottom_percentage_is_resolved() {
+    let expected = [
+        pct_lit("c0.offset.top", 0.0),
+        pct_lit("c0.offset.bottom", 0.0),
+    ];
+    assert_pct_row(
+        "#b1 { position:relative; top:0px; bottom:10%; }",
+        "#b1 { position:relative; }",
+        "#b1 { position:relative; top:0px; bottom:1.1px; }",
+        &expected,
+    );
+}
+
+/// RS (signed route, MMX P6): under `#b2 { margin-bottom:-3px; }` P's Auto height takes
+/// the float-extended signed route with selected bottom 18, so its used content height is
+/// 7 and B1's `top:50%` is 3.5 (P's content bottom 18 gives 9).
+#[test]
+fn pta_rs_signed_route_basis() {
+    let expected = [
+        pct_lit("c0.offset.top", 3.5),
+        pct_lit("c0.offset.bottom", -3.5),
+    ];
+    assert_pct_row(
+        "#b2 { margin-bottom:-3px; } #b1 { position:relative; top:50%; }",
+        "#b2 { margin-bottom:-3px; } #b1 { position:relative; }",
+        "#b2 { margin-bottom:-3px; } #b1 { position:relative; top:3.5px; }",
+        &expected,
+    );
+}
+
+/// A10 (Q4=C): under P `overflow:auto`, B1's `top:50%` (5.5) moves its border box to
+/// [16.5, 17.5] and its margin box bottom to 21.5, inside P's content box [11, 22]
+/// (admitted); `top:100%` (11) moves its border box to [22, 23]:
+/// `ParentAutoOverflow { source: 2 }`.
+#[test]
+fn pta_a10_auto_parent_containment_of_shifted_children() {
+    let expected = [
+        pct_lit("c0.offset.top", 5.5),
+        pct_lit("c0.offset.bottom", -5.5),
+    ];
+    assert_pct_row(
+        "#p { overflow:auto; } #b1 { position:relative; top:50%; }",
+        "#p { overflow:auto; } #b1 { position:relative; }",
+        "#p { overflow:auto; } #b1 { position:relative; top:5.5px; }",
+        &expected,
+    );
+    let css = pct_css(
+        5,
+        "#p { overflow:auto; } #b1 { position:relative; top:100%; }",
+    );
+    assert_eq!(
+        pht_error_in(&css, PCT_OUTER),
+        "ParentAutoOverflow { source: 2 }",
+        "{css}"
+    );
+}
+
+/// A11 (M10 witness; ruling PB-2): under P's `min-height:<f32::MAX>px` the 10.7 rerun
+/// gives P's content bottom f32(11 + MAX) = MAX and the used content height MAX, so every
+/// `200%` is unrepresentable: `top`; an ignored `bottom` is still resolved: `bottom`;
+/// `top` before `bottom`; source 2 before source 4. A finite offset under the same P is a
+/// layout.
+#[test]
+fn pta_a11_unrepresentable_offsets_of_an_auto_parent_and_their_order() {
+    let parent = format!("#p {{ min-height:{PCT_F32_MAX_PX}; }}");
+    pht_assert_unrepresentable(
+        &[
+            ("#b1 { position:relative; top:200%; }", "top"),
+            ("#b1 { position:relative; top:0px; bottom:200%; }", "bottom"),
+            ("#b1 { position:relative; top:200%; bottom:200%; }", "top"),
+            (
+                "#b1 { position:relative; top:200%; } #b2 { position:relative; bottom:200%; }",
+                "top",
+            ),
+        ],
+        &parent,
+    );
+    pct_layout(
+        5,
+        &pct_css(
+            5,
+            &format!("{parent} #b1 {{ position:relative; top:1px; }}"),
+        ),
+    );
+}
+
+/// A12 (M8 witness): the vertical pass follows P's bottom: under P's
+/// `min-height:<f32::MAX>px; margin-bottom:<f32::MAX>px`, P's border bottom MAX plus its
+/// margin MAX overflows first, before B1's unrepresentable `top:200%`.
+#[test]
+fn pta_a12_parent_bottom_precedes_the_vertical_pass() {
+    let css = pct_css(
+        5,
+        &format!(
+            "#p {{ min-height:{PCT_F32_MAX_PX}; margin-bottom:{PCT_F32_MAX_PX}; }} \
+             #b1 {{ position:relative; top:200%; }}"
+        ),
+    );
+    assert_eq!(
+        pht_error_in(&css, PCT_OUTER),
+        "Bottom(Unrepresentable { stage: MarginBottom })",
+        "{css}"
+    );
+}
+
+/// A13 (M9 witness): the vertical pass precedes the `auto` containment test: under P's
+/// `overflow:auto; min-height:<f32::MAX>px`, B1's `top:200%` is `Percentage` at source 2
+/// although B2's `left:-20px` leaves P's content box; with B1's `top:1px` the containment
+/// test gives `ParentAutoOverflow { source: 4 }`.
+#[test]
+fn pta_a13_vertical_pass_precedes_the_containment_test() {
+    let parent = format!("#p {{ overflow:auto; min-height:{PCT_F32_MAX_PX}; }}");
+    pht_assert_unrepresentable(
+        &[(
+            "#b1 { position:relative; top:200%; } #b2 { position:relative; left:-20px; }",
+            "top",
+        )],
+        &parent,
+    );
+    let css = pct_css(
+        5,
+        &format!(
+            "{parent} #b1 {{ position:relative; top:1px; }} \
+             #b2 {{ position:relative; left:-20px; }}"
+        ),
+    );
+    assert_eq!(
+        pht_error_in(&css, PCT_OUTER),
+        "ParentAutoOverflow { source: 4 }",
+        "{css}"
+    );
+}
+
+/// A14 (both axes under the Auto P; with V16 it separates the M13 and M18 masks): B1's
+/// `left:10%` is 10 of P's width 100 in the placement loop, its `top:50%` 5.5 of P's used
+/// content height in the vertical pass.
+#[test]
+fn pta_a14_both_axes_of_an_auto_parent() {
+    let expected = [
+        pct_lit("c0.offset.top", 5.5),
+        pct_lit("c0.offset.bottom", -5.5),
+        pct_lit("c0.offset.left", 10.0),
+        pct_lit("c0.offset.right", -10.0),
+    ];
+    assert_pct_row(
+        "#b1 { position:relative; top:50%; left:10%; }",
+        "#b1 { position:relative; }",
+        "#b1 { position:relative; top:5.5px; left:10px; }",
+        &expected,
+    );
+}
+
+/// RW7 (M15 witness): B1's `top:0.001%` of 11 is one nearest-even rounding of the exact
+/// 0.00011 (`38e6afcd`, `bottom` `b8e6afcd`), equal to the `top:0.00011px` twin in every
+/// number; the f32 pipeline f32(f32(f32(p) * 11) / 100) gives `38e6afce`.
+#[test]
+fn pta_rw7_one_rounding_offset_of_an_auto_parent() {
+    assert_eq!((0.001_f32 * 11.0 / 100.0).to_bits(), 0x38e6afce);
+    let expected = [
+        pct_lit("c0.offset.top", f32::from_bits(0x38e6afcd)),
+        pct_lit("c0.offset.bottom", f32::from_bits(0xb8e6afcd)),
+    ];
+    assert_pct_row(
+        "#b1 { position:relative; top:0.001%; }",
+        "#b1 { position:relative; }",
+        "#b1 { position:relative; top:0.00011px; }",
+        &expected,
+    );
+}
+
+/// The PTA work fixture: under the Auto P, a relative child at every source with `top` and
+/// `bottom` percentages that resolve to 0 against P's used content height.
+const PTA_WORK_FRAGMENT: &str = "#b1, #f, #b2, #b3, #b4 { position:relative; top:0%; bottom:0%; }";
+
+/// Facade and core work under the Auto P (M16 witness): exact and one short at N5, N6 and
+/// N7 with PCT's, PPM's and PHT's percentages and the children's offset percentages
+/// resolved in the vertical pass; the facade charge is `471 + 32N + 526(N-2) + 313(N-3)`,
+/// as on the explicit path (`ptb_work_thresholds_with_percentages`); the layout equals the
+/// control with the children relative and no offsets.
+#[test]
+fn pta_work_thresholds_under_an_auto_parent() {
+    for (nodes, facade, core) in [(5, 2835, 1249), (6, 3706, 1501), (7, 4577, 1754)] {
+        assert_eq!(
+            facade,
+            471 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
+        );
+        let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
+        let css = pct_css(nodes, &format!("{earlier} {PTA_WORK_FRAGMENT}"));
+        let control = format!("{earlier} #b1, #f, #b2, #b3, #b4 {{ position:relative; }}");
+        assert_pct_view(
+            &pct_layout(nodes, &css),
+            &pct_layout(nodes, &pct_css(nodes, &control)),
+            &[],
+            &css,
+        );
+        let limits = |work: usize, core_work: usize| {
+            let mut limits = layout_limits();
+            limits.work = nz(work);
+            limits.core.work = nz(core_work);
+            limits
+        };
+        let receipt = pct_with(nodes, &css, PCT_OUTER, limits(facade, core), |layout| {
+            (layout.receipt().work, layout.receipt().core.work)
+        })
+        .unwrap_or_else(|error| panic!("N{nodes}: expected a layout, got {error:?}"));
+        assert_eq!(receipt, (facade, core), "N{nodes}");
+        assert!(
+            matches!(
+                pct_with(nodes, &css, PCT_OUTER, limits(facade - 1, core), |_| ()),
+                Err(SiblingLayoutError::Work)
+            ),
+            "N{nodes} facade one short"
+        );
+        assert!(
+            matches!(
+                pct_with(nodes, &css, PCT_OUTER, limits(facade, core - 1), |_| ()),
+                Err(SiblingLayoutError::Core(ClearanceSequenceError::Work))
+            ),
+            "N{nodes} core one short"
+        );
+    }
 }
