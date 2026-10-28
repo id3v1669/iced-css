@@ -211,7 +211,8 @@ fn ptb_v9_parent_offsets_under_an_auto_outer_height_are_refused() {
 }
 
 /// V10 (M12 witness): under O's `height:200px`, P's `top` or `bottom` percentage is refused
-/// with `OuterHeightBasis` (O's used content height is not a facade input).
+/// with `OuterHeightBasis` (`build_captured_sibling_layout` supplies no O content height;
+/// OCH).
 #[test]
 fn ptb_v10_parent_offsets_under_an_explicit_outer_height_are_refused() {
     pht_assert_refusals(&[
@@ -560,14 +561,14 @@ const PTB_WORK_FRAGMENT: &str = "#p { height:20px; } \
                                  #b1, #f, #b2, #b3, #b4 { position:relative; top:0%; bottom:0%; }";
 
 /// Facade and core work (M19 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `471 + 32N + 526(N-2) +
+/// percentages on every source; the facade charge is `546 + 32N + 526(N-2) +
 /// 313(N-3)`; the layout equals the control with the children relative and no offsets.
 #[test]
 fn ptb_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 2835, 1249), (6, 3706, 1501), (7, 4577, 1754)] {
+    for (nodes, facade, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
         assert_eq!(
             facade,
-            471 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
+            546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTB_WORK_FRAGMENT}"));
@@ -965,15 +966,15 @@ const PTA_WORK_FRAGMENT: &str = "#b1, #f, #b2, #b3, #b4 { position:relative; top
 
 /// Facade and core work under the Auto P (M16 witness): exact and one short at N5, N6 and
 /// N7 with PCT's, PPM's and PHT's percentages and the children's offset percentages
-/// resolved in the vertical pass; the facade charge is `471 + 32N + 526(N-2) + 313(N-3)`,
+/// resolved in the vertical pass; the facade charge is `546 + 32N + 526(N-2) + 313(N-3)`,
 /// as on the explicit path (`ptb_work_thresholds_with_percentages`); the layout equals the
 /// control with the children relative and no offsets.
 #[test]
 fn pta_work_thresholds_under_an_auto_parent() {
-    for (nodes, facade, core) in [(5, 2835, 1249), (6, 3706, 1501), (7, 4577, 1754)] {
+    for (nodes, facade, core) in [(5, 2910, 1249), (6, 3781, 1501), (7, 4652, 1754)] {
         assert_eq!(
             facade,
-            471 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
+            546 + 32 * nodes + 526 * (nodes - 2) + 313 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTA_WORK_FRAGMENT}"));
@@ -1011,3 +1012,9 @@ fn pta_work_thresholds_under_an_auto_parent() {
         );
     }
 }
+
+// OCH: P's height and offset percentages against a host-supplied O content height reuse
+// the `pct`, `ppm`, `pht` and `ptb` helpers as a child module of this one (design
+// section 6).
+#[path = "outer_content_height.rs"]
+mod outer_content_height;

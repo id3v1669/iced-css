@@ -61,11 +61,12 @@ pub enum CapturedClearanceUnsupported {
     PercentageLength,
     /// PHT, PTB: a percentage `height`, `min-height` or `max-height` (PHT), or `top` or
     /// `bottom` (PTB), of P whose containing block (O) has an explicit height (a computed
-    /// `height` other than `auto`): O's used content height is not a facade input
-    /// (CSS2.2 10.5, 10.7, 9.3.2).
+    /// `height` other than `auto`) and whose used content height the host did not supply
+    /// (`build_captured_sibling_layout`, or `None` in
+    /// `build_captured_sibling_layout_with_outer_height`; OCH) (CSS2.2 10.5, 10.7, 9.3.2).
     OuterHeightBasis,
     /// PTB, PTA: a `top` or `bottom` percentage of P whose containing block (O) has a
-    /// computed `auto` height: O's used content height is not a facade input (CSS2.2
+    /// computed `auto` height: O's final used height is not computed by the facade (CSS2.2
     /// 9.3.2). A child's resolves against P's used content height (PTA).
     IndefiniteOffsetBasis,
 }

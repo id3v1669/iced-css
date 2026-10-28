@@ -164,9 +164,11 @@ pub struct BorderWidthFact {
 /// takes the CSS2.2 10.5/10.7 rule (`auto`, 0 or `none`). A child's `top` or `bottom`
 /// percentage (PTB, PTA) resolves against P's used content height, explicit or Auto
 /// (CSS2.2 9.3.2, 9.4.3: offsets apply after layout). P's height and offset percentages
-/// under an explicit O are refused (`OuterHeightBasis`) and P's offset percentages under
-/// an `auto` O too (`IndefiniteOffsetBasis`): O's used content height is not a facade
-/// input. Every other one is resolved against the containing block's width.
+/// under an explicit O resolve against O's used content height when the host supplies it
+/// (`build_captured_sibling_layout_with_outer_height`, OCH) and are refused
+/// (`OuterHeightBasis`) otherwise; P's offset percentages under an `auto` O are refused
+/// (`IndefiniteOffsetBasis`): O's final used height is not computed here. Every other one
+/// is resolved against the containing block's width.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {
     pub width: BoxLengthFact,

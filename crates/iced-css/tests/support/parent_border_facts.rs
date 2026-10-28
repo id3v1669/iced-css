@@ -770,8 +770,8 @@ fn pbr_w2_sequence_numeric_allowance_is_exact() {
     }
 }
 
-/// W3: at N7 the exact-limit facts build at the exact facade and core work (PTB
-/// values 4577 and 1754).
+/// W3: at N7 the exact-limit facts build at the exact facade and core work (OCH
+/// values 4652 and 1754).
 #[test]
 fn pbr_w3_exact_facts_build_at_the_exact_facade_and_core_work() {
     let css = work_css(7);
@@ -783,11 +783,11 @@ fn pbr_w3_exact_facts_build_at_the_exact_facade_and_core_work() {
         let facts = evaluate_sibling_box_facts(projection, display, exact).unwrap();
         assert_eq!(facts.row(1).unwrap().border_widths(), [3.0; 4]);
         let mut limits = layout_limits();
-        limits.work = nz(4577);
+        limits.work = nz(4652);
         limits.core.work = nz(1754);
         let layout =
             default_outer_layout(&facts, &projection.nodes()[0], 0.0, 100.0, 10.0, limits).unwrap();
-        assert_eq!(layout.receipt().work, 4577);
+        assert_eq!(layout.receipt().work, 4652);
         assert_eq!(layout.receipt().core.work, 1754);
         assert_eq!(layout.parent().origin().content_top, 14.0);
     });
