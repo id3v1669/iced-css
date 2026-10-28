@@ -199,15 +199,35 @@ fn ptb_v8_offsets_follow_the_height_category() {
     }
 }
 
-/// V9 (M11, M20, M22 witness): under an Auto O, P's `top` or `bottom` percentage is refused
-/// at P (`top` before `bottom`).
+/// V9 (a refusal and the PTB M11, M20, M22 witness until OAH): under an Auto O, P's `top`
+/// or `bottom` percentage resolves against O's used content height 13 after P's bottom
+/// (OAH): `top:10%` is 1.3 (`bottom` -1.3), `bottom:10%` is 1.3 (`top` -1.3), and with
+/// both `top` wins (9.4.3).
 #[test]
-fn ptb_v9_parent_offsets_under_an_auto_outer_height_are_refused() {
-    ptb_assert_indefinite(&[
-        ("#p { position:relative; top:10%; }", 1, "top"),
-        ("#p { position:relative; bottom:10%; }", 1, "bottom"),
-        ("#p { position:relative; top:10%; bottom:10%; }", 1, "top"),
-    ]);
+fn ptb_v9_parent_offsets_resolve_against_the_auto_outer_height() {
+    for (fragment, twin, top) in [
+        (
+            "#p { position:relative; top:10%; }",
+            "#p { position:relative; top:1.3px; }",
+            1.3,
+        ),
+        (
+            "#p { position:relative; bottom:10%; }",
+            "#p { position:relative; bottom:1.3px; }",
+            -1.3,
+        ),
+        (
+            "#p { position:relative; top:10%; bottom:10%; }",
+            "#p { position:relative; top:1.3px; bottom:1.3px; }",
+            1.3,
+        ),
+    ] {
+        let expected = [
+            pct_lit("p.offset.top", top),
+            pct_lit("p.offset.bottom", -top),
+        ];
+        assert_pct_row(fragment, "#p { position:relative; }", twin, &expected);
+    }
 }
 
 /// V10 (M12 witness): under O's `height:200px`, P's `top` or `bottom` percentage is refused
@@ -252,20 +272,30 @@ fn ptb_v10b_parent_chain_order() {
 }
 
 /// V10c: under an Auto O, P's `height:50%` takes the 10.5 rule without an error, and its
-/// `top:10%` is refused.
+/// `top:10%` resolves against O's used content height 13 (OAH): 1.3, `bottom` -1.3.
 #[test]
 fn ptb_v10c_parent_height_used_as_auto_and_a_parent_offset() {
-    ptb_assert_indefinite(&[("#p { height:50%; position:relative; top:10%; }", 1, "top")]);
+    let expected = [
+        pct_lit("p.offset.top", 1.3),
+        pct_lit("p.offset.bottom", -1.3),
+    ];
+    assert_pct_row(
+        "#p { height:50%; position:relative; top:10%; }",
+        "#p { height:50%; position:relative; }",
+        "#p { height:50%; position:relative; top:1.3px; }",
+        &expected,
+    );
 }
 
-/// V11 (M16 witness): P's offset refusal precedes every child error (B1's
-/// `overflow:scroll`).
+/// V11 (the PTB M16 witness until OAH): under an Auto O, P's offset resolves after P's
+/// bottom (OAH), so a child error comes first: B1's `overflow:scroll` is `ChildOverflow`.
 #[test]
-fn ptb_v11_parent_offset_refusal_precedes_the_children() {
-    ptb_assert_indefinite(&[(
+fn ptb_v11_children_precede_the_parent_offset() {
+    pht_assert_refusals(&[(
         "#p { position:relative; top:10%; } #b1 { overflow:scroll; }",
-        1,
-        "top",
+        2,
+        "overflow",
+        "ChildOverflow",
     )]);
 }
 
@@ -495,8 +525,9 @@ fn ptb_fx9_offset_percentage_facts_are_exact_and_unconverted() {
     assert_eq!(receipt.numeric_calls, twin.numeric_calls, "{fragment}");
 }
 
-/// FX10: `top:inherit` copies P's computed `top:10%` with origin `Inherited`; the layout is
-/// refused at P (V9).
+/// FX10: `top:inherit` copies P's computed `top:10%` with origin `Inherited`; the layout
+/// resolves both (OAH A15): P's 10% of O's used content height 13 is 1.3 and B1's 10% of
+/// P's used content height 11 is 1.1.
 #[test]
 fn ptb_fx10_inherit_keeps_the_offset_percentage() {
     let fragment = "#p { position:relative; top:10%; } #b1 { position:relative; top:inherit; }";
@@ -509,7 +540,18 @@ fn ptb_fx10_inherit_keeps_the_offset_percentage() {
         Some(pct_fact("10", inherited)),
         "{fragment}"
     );
-    ptb_assert_indefinite(&[(fragment, 1, "top")]);
+    let expected = [
+        pct_lit("p.offset.top", 1.3),
+        pct_lit("p.offset.bottom", -1.3),
+        pct_lit("c0.offset.top", 1.1),
+        pct_lit("c0.offset.bottom", -1.1),
+    ];
+    assert_pct_row(
+        fragment,
+        "#p { position:relative; } #b1 { position:relative; }",
+        "#p { position:relative; top:1.3px; } #b1 { position:relative; top:1.1px; }",
+        &expected,
+    );
 }
 
 /// FX11: the bounded representation: `18446744073709551616%` (2^64) is
@@ -561,14 +603,14 @@ const PTB_WORK_FRAGMENT: &str = "#p { height:20px; } \
                                  #b1, #f, #b2, #b3, #b4 { position:relative; top:0%; bottom:0%; }";
 
 /// Facade and core work (M19 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `546 + 32N + 526(N-2) +
+/// percentages on every source; the facade charge is `625 + 32N + 526(N-2) +
 /// 371(N-3)`; the layout equals the control with the children relative and no offsets.
 #[test]
 fn ptb_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
+    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
+            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTB_WORK_FRAGMENT}"));
@@ -647,26 +689,28 @@ fn ptb_representation_measurement() {
 // compiles against the PTB commit ea24b2b7.
 
 /// PB9 (carried PTB plan review F-1, ruling PB-9; M17 witness, the narrowed-arm mutant
-/// MPB9): P's ignored `bottom:10%` (P's `top:1px` is not `auto`) is still refused at P:
-/// `IndefiniteOffsetBasis` under the Auto O and `OuterHeightBasis` under O's
-/// `height:200px`, property `bottom` (the reviewer's validated row). Passes at RED and
-/// after PTA (PTA does not change P's step).
+/// MPB9): P's ignored `bottom:10%` (P's `top:1px` is not `auto`) is still resolved. Under
+/// the Auto O it resolves against O's used content height 13 (OAH; 1.3, ignored: `top`
+/// wins, 1/-1); under O's `height:200px` without a host value it is refused with
+/// `OuterHeightBasis`, property `bottom` (the reviewer's validated row).
 #[test]
 fn pta_red_guard_pb9_parent_ignored_bottom_percentage_is_refused() {
-    pht_assert_refusals(&[
-        (
-            "#p { position:relative; top:1px; bottom:10%; }",
-            1,
-            "bottom",
-            "IndefiniteOffsetBasis",
-        ),
-        (
-            "#o { height:200px; } #p { position:relative; top:1px; bottom:10%; }",
-            1,
-            "bottom",
-            "OuterHeightBasis",
-        ),
-    ]);
+    let expected = [
+        pct_lit("p.offset.top", 1.0),
+        pct_lit("p.offset.bottom", -1.0),
+    ];
+    assert_pct_row(
+        "#p { position:relative; top:1px; bottom:10%; }",
+        "#p { position:relative; top:1px; }",
+        "#p { position:relative; top:1px; bottom:1.3px; }",
+        &expected,
+    );
+    pht_assert_refusals(&[(
+        "#o { height:200px; } #p { position:relative; top:1px; bottom:10%; }",
+        1,
+        "bottom",
+        "OuterHeightBasis",
+    )]);
 }
 
 /// A1 (RED; M1, M2, M3, M5, M6, M7, M11, M14 witness): under the Auto P, B1's `top:50%`
@@ -966,15 +1010,15 @@ const PTA_WORK_FRAGMENT: &str = "#b1, #f, #b2, #b3, #b4 { position:relative; top
 
 /// Facade and core work under the Auto P (M16 witness): exact and one short at N5, N6 and
 /// N7 with PCT's, PPM's and PHT's percentages and the children's offset percentages
-/// resolved in the vertical pass; the facade charge is `546 + 32N + 526(N-2) + 371(N-3)`,
+/// resolved in the vertical pass; the facade charge is `625 + 32N + 526(N-2) + 371(N-3)`,
 /// as on the explicit path (`ptb_work_thresholds_with_percentages`); the layout equals the
 /// control with the children relative and no offsets.
 #[test]
 fn pta_work_thresholds_under_an_auto_parent() {
-    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
+    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
+            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTA_WORK_FRAGMENT}"));

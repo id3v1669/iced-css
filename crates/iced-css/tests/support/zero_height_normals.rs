@@ -5,9 +5,10 @@
 //! through; a zero-height new-BFC border box strictly inside F's margin interval is
 //! `NewBfcFloatContact` (CSS2.2 9.5, Q-3). Every other zero-height normal stays
 //! `NonpositiveBlockHeight`, and every new-BFC, undecorated or undecidable Auto-height
-//! normal stays `HeightKind` (a decorated ordinary Auto normal is admitted since DAZ, G6b;
-//! undecidable: its only separation is a vertical padding percentage without P's solve
-//! or one that does not resolve, DAZ Q-2).
+//! normal whose constrained tentative height is +0 stays `HeightKind` (a decorated
+//! ordinary Auto normal is admitted since DAZ, G6b; undecidable: its only separation is
+//! a vertical padding percentage without P's solve, one that does not resolve or one
+//! that rounds to +0, DAZ Q-2).
 //!
 //! A child module of `em_lengths` (ZHN design section 6): it reuses the `pct`, `pht`, `och`
 //! and `eml` helpers (`pct_css`, `pct_with`, `pct_view`, `assert_pct_view`, `pct_lit`,
@@ -430,7 +431,7 @@ fn zhn_z11_a_zero_height_tail_with_a_negative_margin_takes_the_signed_route() {
 /// is `Core(Work)`; the facade work is unchanged.
 #[test]
 fn zhn_z12_core_work_charges_62_per_normal() {
-    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
+    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
         assert_eq!(
             core,
             702 + 12 * nodes

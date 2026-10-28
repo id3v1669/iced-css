@@ -6,8 +6,8 @@
 //! the core as an explicit +0 (the ZHN admission, G6a). A vertical padding percentage
 //! counts with its value against P's used content width (CSS2.2 8.4), read from P's
 //! solve; without P's solve, when it does not resolve, or when it rounds to +0 it does
-//! not separate (Q-2), and that normal keeps `HeightKind`, as every new-BFC (G6c) and
-//! every undecorated (G6) Auto normal does.
+//! not separate by itself (Q-2), and a normal whose only separation it is keeps
+//! `HeightKind`, as every new-BFC (G6c) and every undecorated (G6) Auto normal does.
 //!
 //! A child module of `zero_height_normals` (DAZ design section 6): it reuses `zhn_row`,
 //! `zhn_same`, `zhn_error`, `zhn_layout`, `zhn_pick`, `eml_row`, `pct_css`, `pct_with`,
@@ -383,15 +383,15 @@ fn daz_d15_an_em_padding_separates_the_margins() {
     );
 }
 
-/// D16 (MW1, MW2 witness): facade work `546 + 32N + 526(N-2) + 371(N-3)` (DAZ: 58 per
+/// D16 (MW1, MW2 witness): facade work `625 + 32N + 526(N-2) + 371(N-3)` (DAZ: 58 per
 /// normal on every path) is exact at N5, N6 and N7 and one short is `Work`; the core work
 /// is unchanged.
 #[test]
 fn daz_d16_facade_work_charges_58_per_normal() {
-    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
+    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3),
+            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3),
             "N{nodes}"
         );
         let css = pct_css(nodes, "");
@@ -457,3 +457,8 @@ fn daz_d19_a_mixed_separation_fails_at_the_unresolvable_padding() {
         "Percentage { source: 2, property: \"padding-top\", error: Unrepresentable }"
     );
 }
+
+// OAH: P's `top`/`bottom` percentages against an Auto-height O (G4d-3b-P) reuse the `pct`,
+// `pht`, `ptb`, `och` and `eml` helpers as a child module of this one (OAH design section 6).
+#[path = "outer_auto_heights.rs"]
+mod outer_auto_heights;

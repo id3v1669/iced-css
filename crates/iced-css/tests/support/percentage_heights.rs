@@ -870,14 +870,14 @@ const PHT_WORK_FRAGMENT: &str = "#p { min-height:0%; max-height:100%; } \
                                  #b1, #f, #b2, #b3, #b4 { min-height:0%; max-height:100%; }";
 
 /// Facade and core work (M24 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `546 + 32N + 526(N-2) +
+/// percentages on every source; the facade charge is `625 + 32N + 526(N-2) +
 /// 371(N-3)`; the layout equals the baseline's.
 #[test]
 fn pht_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
+    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
+            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         let css = pct_css(
             nodes,

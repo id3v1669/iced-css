@@ -194,7 +194,8 @@ pub struct FontSizeFact {
 /// used content height when the host supplies it
 /// (`build_captured_sibling_layout_with_outer_height`, OCH) and are refused
 /// (`OuterHeightBasis`) otherwise; P's `top` and `bottom` percentages under an `auto` O
-/// are refused (`IndefiniteOffsetBasis`): O's final used height is not computed here.
+/// resolve in the facade against O's used content height (OAH) or are refused
+/// (`IndefiniteOffsetBasis`).
 /// Every other one is resolved against the containing block's width.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearanceBoxFact {

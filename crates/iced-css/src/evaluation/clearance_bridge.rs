@@ -65,9 +65,11 @@ pub enum CapturedClearanceUnsupported {
     /// (`build_captured_sibling_layout`, or `None` in
     /// `build_captured_sibling_layout_with_outer_height`; OCH) (CSS2.2 10.5, 10.7, 9.3.2).
     OuterHeightBasis,
-    /// PTB, PTA: a `top` or `bottom` percentage of P whose containing block (O) has a
-    /// computed `auto` height: O's final used height is not computed by the facade (CSS2.2
-    /// 9.3.2). A child's resolves against P's used content height (PTA).
+    /// PTB, OAH: a `top` or `bottom` percentage of P whose containing block (O) has a
+    /// computed `auto` height, when O's `min-height` or `max-height` is a percentage (the
+    /// initial containing block's height is not an input) or when O's tentative content
+    /// height, from its content top to P's bottom margin edge, is negative (CSS2.2 9.3.2,
+    /// 10.6.3, 10.7). A child's resolves against P's used content height (PTA).
     IndefiniteOffsetBasis,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

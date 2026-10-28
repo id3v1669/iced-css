@@ -307,8 +307,9 @@ fn och_oc5_parent_resolution_reaches_the_children() {
 
 /// OC6 (Q-4; M4 witness): under an `auto` O the host's value is not read: P's
 /// `height:50%` is used as `auto` (P's used content height 11; reading 200 would give
-/// 100), also under O's `min-height:200px` (H10c), and P's `top:10%` is
-/// `IndefiniteOffsetBasis`.
+/// 100), also under O's `min-height:200px` (H10c), and P's `top:10%` resolves against
+/// O's used content height 13 (OAH: 1.3 with the host's 200 and without it; reading 200
+/// would give 20).
 #[test]
 fn och_oc6_auto_outer_height_ignores_the_host_height() {
     for fragment in [
@@ -322,10 +323,19 @@ fn och_oc6_auto_outer_height_ignores_the_host_height() {
             &pct_css(5, fragment),
         );
     }
-    assert_eq!(
-        och_error("#p { position:relative; top:10%; }", Some(200.0)),
-        pht_refusal(1, "top", "IndefiniteOffsetBasis")
-    );
+    let fragment = "#p { position:relative; top:10%; }";
+    let control = och_layout("#p { position:relative; }", None);
+    for height in [Some(200.0), None] {
+        assert_pct_view(
+            &och_layout(fragment, height),
+            &control,
+            &[
+                pct_lit("p.offset.top", 1.3),
+                pct_lit("p.offset.bottom", -1.3),
+            ],
+            &format!("{fragment} with {height:?}"),
+        );
+    }
 }
 
 /// OC7 (PH-11 (2), Q-5): O's `height:50%` is explicit (O is the captured root), so P's
@@ -524,15 +534,15 @@ const OCH_WORK_FRAGMENT: &str = "#o { height:200px; } #p { height:10%; min-heigh
 
 /// Facade and core work with the host's value (M16 witness): exact and one short at N5,
 /// N6 and N7 with PCT's, PPM's, PHT's and PTA's percentages and P's five percentages
-/// resolved against the host's 200; the facade charge is `546 + 32N + 526(N-2) +
+/// resolved against the host's 200; the facade charge is `625 + 32N + 526(N-2) +
 /// 371(N-3)`, as through the old entry; the layout equals the control with P's
 /// percentages replaced by their values and the children relative without offsets.
 #[test]
 fn och_work_thresholds_with_the_host_height() {
-    for (nodes, facade, core) in [(5, 3026, 1373), (6, 3955, 1687), (7, 4884, 2002)] {
+    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
         assert_eq!(
             facade,
-            546 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
+            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(
@@ -631,15 +641,21 @@ fn eml_red_guard_ocx1_an_invalid_host_height_under_an_auto_outer_is_not_read() {
     }
 }
 
-/// OCX2 (OC-10): under an `auto` O, P's `top:10%` stays `IndefiniteOffsetBasis` with each
-/// of the three invalid host values. Passes before and after EML.
+/// OCX2 (OC-10; OAH): under an `auto` O, P's `top:10%` resolves against O's used content
+/// height 13 with each of the three invalid host values, as without one (1.3, -1.3).
 #[test]
-fn eml_red_guard_ocx2_parent_top_percentage_under_an_auto_outer_stays_refused() {
+fn oah_ocx2_parent_top_percentage_ignores_invalid_host_values() {
+    let fragment = "#p { position:relative; top:10%; }";
+    let control = och_layout("#p { position:relative; }", None);
     for height in [f32::NAN, f32::INFINITY, -1.0] {
-        assert_eq!(
-            och_error("#p { position:relative; top:10%; }", Some(height)),
-            pht_refusal(1, "top", "IndefiniteOffsetBasis"),
-            "{height}"
+        assert_pct_view(
+            &och_layout(fragment, Some(height)),
+            &control,
+            &[
+                pct_lit("p.offset.top", 1.3),
+                pct_lit("p.offset.bottom", -1.3),
+            ],
+            &format!("{fragment} with {height}"),
         );
     }
 }
