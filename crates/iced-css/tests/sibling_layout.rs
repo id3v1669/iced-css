@@ -10151,14 +10151,19 @@ fn css_b1_overflow_hidden_kept_margin_at_2p24_matches_the_visible_layout() {
     });
 }
 
+/// Migrated by MFZ: B1's Auto height is an explicit +0 (U4=A), so a later child's
+/// overflow is the first error (before MFZ: B1's `HeightKind`).
 #[test]
-fn b1_overflow_no_longer_masks_its_height_kind() {
+fn b1_overflow_auto_height_no_longer_masks_a_later_child_overflow() {
     assert_captured(
-        float_overflow_error(6, "#b1 { overflow:hidden; height:auto; }"),
+        float_overflow_error(
+            6,
+            "#b1 { overflow:hidden; height:auto; } #b3 { overflow:scroll; }",
+        ),
         CapturedClearanceError::Unsupported {
-            projected: 2,
-            property: "height",
-            reason: CapturedClearanceUnsupported::HeightKind,
+            projected: 5,
+            property: "overflow",
+            reason: CapturedClearanceUnsupported::ChildOverflow,
         },
     );
 }

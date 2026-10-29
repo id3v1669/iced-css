@@ -4,11 +4,11 @@
 //! positive top or bottom border or padding separates its margins, so it cannot collapse
 //! through; a zero-height new-BFC border box strictly inside F's margin interval is
 //! `NewBfcFloatContact` (CSS2.2 9.5, Q-3). Every other zero-height normal stays
-//! `NonpositiveBlockHeight`, and every new-BFC, undecorated or undecidable Auto-height
+//! `NonpositiveBlockHeight`, and every undecorated or undecidable ordinary Auto-height
 //! normal whose constrained tentative height is +0 stays `HeightKind` (a decorated
-//! ordinary Auto normal is admitted since DAZ, G6b; undecidable: its only separation is
-//! a vertical padding percentage without P's solve, one that does not resolve or one
-//! that rounds to +0, DAZ Q-2).
+//! ordinary Auto normal is admitted since DAZ, G6b, and a new-BFC one since MFZ, the
+//! user's U4=A; undecidable: its only separation is a vertical padding percentage without
+//! P's solve, one that does not resolve or one that rounds to +0, DAZ Q-2).
 //!
 //! A child module of `em_lengths` (ZHN design section 6): it reuses the `pct`, `pht`, `och`
 //! and `eml` helpers (`pct_css`, `pct_with`, `pct_view`, `assert_pct_view`, `pct_lit`,
@@ -127,20 +127,22 @@ fn zhn_red_guard_z7c_a_borderless_top_width_does_not_separate() {
     );
 }
 
-/// Z7d (RED guard): a new-BFC Auto-height normal stays `HeightKind` at the facade,
-/// undecorated or decorated (10.6.7 childless, the Q3=A analog; G6c). Since DAZ (G6b) a
-/// decorated ordinary one is admitted (DAZ D3). Passes before and after ZHN and DAZ.
+/// Z7d (migrated by MFZ; MN1 witness): a new-BFC Auto-height normal, undecorated or
+/// decorated, is an explicit +0 since MFZ (the user's U4=A extends Q3=A; 10.6.7 defines no
+/// childless height) and equals its `height:0` twin (before MFZ: `HeightKind`, G6c).
 #[test]
-fn zhn_red_guard_z7d_auto_heights_stay_height_kind() {
-    for fragment in [
-        "#b1 { overflow:hidden; height:auto; }",
-        "#b1 { overflow:auto; height:auto; padding-top:1px; }",
+fn zhn_z7d_new_bfc_auto_heights_equal_their_zero_twins() {
+    for (fragment, twin) in [
+        (
+            "#b1 { overflow:hidden; height:auto; }",
+            "#b1 { overflow:hidden; height:0; }",
+        ),
+        (
+            "#b1 { overflow:auto; height:auto; padding-top:1px; }",
+            "#b1 { overflow:auto; height:0; padding-top:1px; }",
+        ),
     ] {
-        assert_eq!(
-            zhn_error(5, fragment),
-            pht_refusal(2, "height", "HeightKind"),
-            "{fragment}"
-        );
+        zhn_same(fragment, twin);
     }
 }
 

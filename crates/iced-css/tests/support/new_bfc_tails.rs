@@ -249,16 +249,20 @@ fn tnb_clear_selection_rows() {
 #[test]
 fn tnb_error_order_profile_rows() {
     use CapturedClearanceUnsupported as U;
-    // E1: the same tail's height kind follows its admitted overflow.
+    // E1 (migrated by MFZ): the same tail's admitted overflow makes its Auto height an
+    // explicit +0 (U4=A), so F's width refusal after the child loop is the first error.
     assert_captured(
         tnb_error(
             6,
-            &format!("{} #b3 {{ overflow:hidden; height:auto; }}", baseline_css()),
+            &format!(
+                "{} #b3 {{ overflow:hidden; height:auto; }} #f {{ width:auto; }}",
+                baseline_css()
+            ),
         ),
         CapturedClearanceError::Unsupported {
-            projected: 5,
-            property: "height",
-            reason: U::HeightKind,
+            projected: 3,
+            property: "width",
+            reason: U::FloatWidth,
         },
     );
     // E3: a later child's overflow and an N7 tail without a height become reachable.

@@ -7,7 +7,8 @@
 //! counts with its value against P's used content width (CSS2.2 8.4), read from P's
 //! solve; without P's solve, when it does not resolve, or when it rounds to +0 it does
 //! not separate by itself (Q-2), and a normal whose only separation it is keeps
-//! `HeightKind`, as every new-BFC (G6c) and every undecorated (G6) Auto normal does.
+//! `HeightKind`, as every undecorated (G6) ordinary Auto normal does (a new-BFC one is an
+//! explicit +0 since MFZ, the user's U4=A).
 //!
 //! A child module of `zero_height_normals` (DAZ design section 6): it reuses `zhn_row`,
 //! `zhn_same`, `zhn_error`, `zhn_layout`, `zhn_pick`, `eml_row`, `pct_css`, `pct_with`,
@@ -58,13 +59,13 @@ fn daz_red_guard_dg0_an_undecorated_auto_b1_stays_height_kind() {
     assert_eq!(zhn_error(5, "#b1 { height:auto; }"), DAZ_B1_REFUSAL);
 }
 
-/// DG1 (RED guard; MD2 witness): a decorated new-BFC Auto B1 has no defined childless
-/// height (10.6.7; G6c) and stays `HeightKind`. Passes before and after DAZ.
+/// DG1 (migrated by MFZ): a decorated new-BFC Auto B1 is an explicit +0 since MFZ (the
+/// user's U4=A) and equals its `height:0` twin (before MFZ: `HeightKind`, G6c).
 #[test]
-fn daz_red_guard_dg1_a_decorated_new_bfc_auto_b1_stays_height_kind() {
-    assert_eq!(
-        zhn_error(5, "#b1 { overflow:hidden; height:auto; padding-top:1px; }"),
-        DAZ_B1_REFUSAL
+fn daz_dg1_a_decorated_new_bfc_auto_b1_equals_its_zero_twin() {
+    zhn_same(
+        "#b1 { overflow:hidden; height:auto; padding-top:1px; }",
+        "#b1 { overflow:hidden; height:0; padding-top:1px; }",
     );
 }
 

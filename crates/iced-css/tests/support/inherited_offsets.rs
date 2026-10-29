@@ -470,3 +470,8 @@ fn isp_ie2_a_later_row_error_now_surfaces() {
          RelativeLength })"
     );
 }
+
+// MFZ: the U3 and U4 user decisions reuse the `pct`, `pht`, `zhn`, `daz`, `oah` and `eml`
+// helpers as a child module of this one (MFZ design section 6).
+#[path = "min_floor_zero_heights.rs"]
+mod min_floor_zero_heights;

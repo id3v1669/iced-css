@@ -5,8 +5,9 @@
 //! bottom margin edge (10.6.3, one f32 subtraction); O's `min-height` and `max-height`
 //! then constrain it (10.7). A percentage limit of O (its basis, the initial containing
 //! block's height, is not an input) keeps `IndefiniteOffsetBasis` at P's step, a negative
-//! tentative height is `IndefiniteOffsetBasis` after P's bottom, and a host value is not
-//! read under an `auto` O.
+//! tentative height takes O's `min-height` (MFZ, the user's U3=A; before MFZ it was
+//! `IndefiniteOffsetBasis` after P's bottom), and a host value is not read under an `auto`
+//! O.
 //!
 //! A child module of `decorated_auto_normals` (OAH design section 6): it reuses
 //! `assert_pct_row`, `assert_pct_view`, `pct_css`, `pct_layout`, `pct_layout_in`, `pct_lit`,
@@ -81,16 +82,18 @@ fn oah_red_guard_ag3_the_limit_refusal_precedes_the_children() {
     )]);
 }
 
-/// AG4 (RED guard; MO6 witness): with P's `margin-top:-20px`, P's border top is -10, its
-/// content top -9, content bottom 2 and margin bottom 3, so O's tentative content height
-/// is -7: this facade does not read CSS2.2 as giving a negative distance a value, and P's
-/// `top:50%` is `IndefiniteOffsetBasis` (after P's bottom since OAH, at P's step before).
-/// Passes before and after OAH.
+/// AG4 (migrated by MFZ; MF1, MF3 witness): with P's `margin-top:-20px`, P's border top
+/// is -10, its content top -9, content bottom 2 and margin bottom 3, so O's tentative
+/// content height is -7; MFZ (the user's U3=A) applies CSS2.2 10.7 literally and uses O's
+/// default `min-height` 0, so P's `top:50%` is +0 and `bottom` +0 (before MFZ:
+/// `IndefiniteOffsetBasis` after P's bottom).
 #[test]
-fn oah_red_guard_ag4_a_negative_tentative_outer_height_is_refused() {
-    assert_eq!(
-        oah_error("#p { position:relative; top:50%; margin-top:-20px; }"),
-        pht_refusal(1, "top", "IndefiniteOffsetBasis")
+fn oah_ag4_a_negative_tentative_outer_height_takes_the_default_min_height() {
+    assert_pct_row(
+        "#p { position:relative; top:50%; margin-top:-20px; }",
+        "#p { position:relative; margin-top:-20px; }",
+        "#p { position:relative; top:0px; margin-top:-20px; }",
+        &oah_offsets(0.0, 0.0),
     );
 }
 

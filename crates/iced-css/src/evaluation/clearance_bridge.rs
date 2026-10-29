@@ -67,9 +67,10 @@ pub enum CapturedClearanceUnsupported {
     OuterHeightBasis,
     /// PTB, OAH: a `top` or `bottom` percentage of P whose containing block (O) has a
     /// computed `auto` height, when O's `min-height` or `max-height` is a percentage (the
-    /// initial containing block's height is not an input) or when O's tentative content
-    /// height, from its content top to P's bottom margin edge, is negative (CSS2.2 9.3.2,
-    /// 10.6.3, 10.7). A child's resolves against P's used content height (PTA).
+    /// initial containing block's height is not an input; CSS2.2 9.3.2, 10.6.3, 10.7). A
+    /// negative tentative content height of O takes O's `min-height` (MFZ: the user's U3=A,
+    /// a literal CSS2.2 10.7 reading). A child's resolves against P's used content height
+    /// (PTA).
     IndefiniteOffsetBasis,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
