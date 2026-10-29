@@ -164,10 +164,15 @@ pub struct FontSizeFact {
 /// `offset` (REL) holds the computed `top`, `right`, `bottom` and `left` of a Sequence
 /// row whose computed `position` is `relative`: `auto`, or an absolute length
 /// converted like a signed margin (zero is +0), or a percentage (PCT: `right`/`left`;
-/// PTB: `top`/`bottom`), or the parent row's offset for `inherit`. It is `None` for
-/// every other row (CSS2.2 9.3.1: the offsets do not apply to a static box; absolute
-/// and fixed boxes are refused later) and for every Legacy row, whose offsets are
-/// never resolved.
+/// PTB: `top`/`bottom`), or, for `inherit`, the parent row's computed offset: its
+/// `offset` when the parent row is relatively positioned; otherwise (ISP; CSS2.2 6.2.1,
+/// 6.1.2: a computed value exists even where the property does not apply) the parent's
+/// own computed value: `auto` (initial or explicit), or its length or percentage computed
+/// against the parent's own resolver (an `em` against the parent's font size), or, when
+/// the parent's own side is `inherit`, O's computed value in the same way (O's `inherit`
+/// is the initial `auto`). It is `None` for every other row (CSS2.2 9.3.1: the offsets
+/// do not apply to a static box; absolute and fixed boxes are refused later) and for
+/// every Legacy row, whose offsets are never resolved.
 ///
 /// `font_size` (EML) is the computed `font-size` (CSS2.2 15.7) of every row from
 /// `evaluate_sibling_box_facts_with_font_medium`, computed before the row's other
@@ -269,9 +274,12 @@ pub enum BoxFactUnsupported {
     NondefaultMinMax,
     BorderStyle,
     GeneratedContent,
-    /// REL: `inherit` on an offset of a relatively positioned row whose parent row is
-    /// not relatively positioned. CSS2.2 9.3.2 defines a computed value there; this is
-    /// a supported-subset refusal, because only relative rows resolve their offsets.
+    /// REL, ISP: `inherit` on an offset of a relatively positioned row whose parent row
+    /// is not relatively positioned and whose computed offset on that side is outside the
+    /// supported subset: `ex`, `em` without the font entry, an unrepresentable length, a
+    /// percentage outside the bounded representation, or a defaulting or initial-recipe
+    /// failure, also through a static P from O. CSS2.2 6.2.1 defines the value; this is a
+    /// supported-subset refusal.
     InheritedOffset,
     /// PCT: an admitted percentage whose canonical coefficient exceeds `u64::MAX` or
     /// whose scale exceeds `u32::MAX` (the bounded `Copy` representation).
@@ -602,6 +610,10 @@ pub(super) fn evaluate_box_rows<'h>(
     let source = snapshot
         .selector_source(limits.selectors)
         .map_err(E::Source)?;
+    // ISP (CSS2.2 6.2.1): the offsets of a static O or P (projected 0 and 1, the only rows
+    // with children in the sibling projection) for a relative child's `inherit`; Sequence
+    // only, never published or converted here.
+    let mut statics: [Option<resolve::StaticOffsets<'_>>; 2] = [None; 2];
     for projected in 0..count {
         let original = projection
             .original_index(projected)
@@ -659,22 +671,39 @@ pub(super) fn evaluate_box_rows<'h>(
         row.font_size = font_size;
         // REL (CSS2.2 9.3.2, 9.4.3): only a Sequence row whose computed `position` is
         // `relative` resolves its offsets, after its other longhands and before its
-        // pseudos; the offsets do not apply to any other row (9.3.1). Only the Sequence
-        // entry reads the position (MMX K-2), which `prepare_box_facts` proves present;
-        // an absence is the existing join error.
+        // pseudos; the offsets do not apply to any other row (9.3.1). An O or P that is
+        // not relatively positioned keeps its specified offsets, unconverted, for a
+        // relative child's `inherit` (ISP). Only the Sequence entry reads the position
+        // (MMX K-2), which `prepare_box_facts` proves present; an absence is the existing
+        // join error.
         if mode == BoxFactMode::Sequence {
             let position = display
                 .resolution(original)
                 .ok_or(E::SourceJoin { projected })?
                 .position;
+            let parent_static = parent.and_then(|(original_parent, _)| {
+                statics
+                    .into_iter()
+                    .flatten()
+                    .find(|row| row.original == original_parent)
+            });
             if position == Position::Relative {
                 row.offset = Some(resolve::offsets(
                     &winners,
                     ids,
                     parent,
+                    parent_static,
                     resolver,
                     &mut receipt.numeric_calls,
                 )?);
+            } else if let Some(slot) = statics.get_mut(projected) {
+                *slot = Some(resolve::static_offsets(
+                    &winners,
+                    ids,
+                    parent,
+                    parent_static,
+                    resolver,
+                ));
             }
         }
         for (target, pseudo) in [

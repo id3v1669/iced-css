@@ -571,8 +571,9 @@ fn rel_e7_inherit_copies_a_relative_parent_offset() {
     assert_rel_row(5, fragment, "", &expected);
 }
 
-/// E8 (M11 witness): a static row never reads its offsets, so `%`, `em` and lengths
-/// are ignored: facts Ok with no offset row and no extra conversion.
+/// E8 (M11 witness): a static row publishes and converts no offset (ISP reads a static
+/// O's or P's specified offsets only for a relative child's `inherit`), so `%`, `em` and
+/// lengths are ignored: facts Ok with no offset row and no extra conversion.
 #[test]
 fn rel_e8_static_rows_never_read_offsets() {
     let fragment = "#b1 { top:10%; left:1em; right:3px; }";
@@ -651,15 +652,16 @@ fn rel_e12_relative_length_offset_is_refused() {
     );
 }
 
-/// E13 (M13 witness): `inherit` from a static parent is refused (Q-4 (a)).
+/// E13 (M13 witness until ISP): `inherit` from a static parent copies its computed offset
+/// (CSS2.2 6.2.1): B1's `top:inherit` under the static P's `top:3px` is 3px, so B1's
+/// offsets are (0, 0, 3, -3) and the normal flow is the static control's.
 #[test]
-fn rel_e13_inherit_from_a_static_parent_is_refused() {
-    let css = rel_css(5, "#p { top:3px; } #b1 { position:relative; top:inherit; }");
-    let (error, originals) = rel_fact_error(5, &css);
-    assert_rel_refusal(
-        &error,
-        (originals[2], "top", BoxFactUnsupported::InheritedOffset),
-        &css,
+fn rel_e13_inherit_from_a_static_parent_copies_its_computed_offset() {
+    assert_rel_row(
+        5,
+        "#p { top:3px; } #b1 { position:relative; top:inherit; }",
+        "#p { top:3px; }",
+        &rel_only(5, 1, (0.0, 0.0, 3.0, -3.0)),
     );
 }
 

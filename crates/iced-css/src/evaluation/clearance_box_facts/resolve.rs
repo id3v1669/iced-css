@@ -640,11 +640,13 @@ pub(super) fn font_size(
 /// length converted like a signed margin (one counted conversion), a percentage kept
 /// exactly (PCT: `right`, `left`; PTB: `top`, `bottom`), (EML) an `em` length against the
 /// row's computed font size, converted like a signed margin, or, for `inherit`, the
-/// parent row's computed offset (`auto`, an absolute length or a percentage).
+/// parent row's computed offset (`auto`, an absolute length or a percentage; ISP: a static
+/// parent's is computed here from its kept value, `parent_static`).
 pub(super) fn offsets(
     winners: &PropertyWinners<'_>,
     ids: &[PropertyId; 29],
     parent: Option<(usize, ClearanceBoxFact)>,
+    parent_static: Option<StaticOffsets<'_>>,
     resolver: Resolver,
     calls: &mut usize,
 ) -> Result<[BoxLengthFact; 4], E> {
@@ -667,17 +669,19 @@ pub(super) fn offsets(
                     origin: BoxFactOrigin::Initial,
                 }
             }
-            // Q-4 (a): `inherit` copies the parent row's resolved offset, which exists
-            // only when the parent row is itself relatively positioned.
+            // Q-4 (a), ISP (CSS2.2 6.2.1, 6.1.2): `inherit` copies the parent row's computed
+            // offset: its resolved offset when it is relatively positioned, otherwise its
+            // specified value computed here against its own resolver.
             DefaultedValueRef::ParentComputed => {
                 let (original_parent, p) = parent.ok_or_else(|| resolver.invalid(property))?;
-                let parent_offset = p.offset.ok_or_else(|| {
+                let parent_offset = match p.offset {
+                    Some(offset) => Some(offset[side]),
+                    None => parent_static.and_then(|row| row.computed(side, property, calls)),
+                }
+                .ok_or_else(|| {
                     resolver.unsupported(property, BoxFactUnsupported::InheritedOffset)
                 })?;
-                inherited(
-                    parent_offset[side],
-                    BoxFactOrigin::Inherited { original_parent },
-                )
+                inherited(parent_offset, BoxFactOrigin::Inherited { original_parent })
             }
             // PCT: `right` and `left` keep a percentage of the containing block's width,
             // PTB `top` and `bottom` one of its height (CSS2.2 9.3.2).
@@ -687,6 +691,75 @@ pub(super) fn offsets(
         };
     }
     Ok(offset)
+}
+/// ISP (CSS2.2 6.2.1, 6.1.2, 9.3.2): one side of a static Sequence row's offset, kept for
+/// a relatively positioned child's `inherit`: a computed fact (`auto`, or a relative
+/// parent's offset), a specified value computed later against its owner's resolver, or
+/// not available here.
+#[derive(Clone, Copy)]
+enum StaticOffset<'a> {
+    Fact(BoxLengthFact),
+    Specified(&'a SpecifiedValue, Resolver),
+    Unavailable,
+}
+/// ISP: the `top`, `right`, `bottom` and `left` of a static O or P (the rows with children
+/// in the sibling projection), by its original index. Reading them never fails: the
+/// offsets do not apply to the row itself (CSS2.2 9.3.1), and nothing is converted here.
+#[derive(Clone, Copy)]
+pub(super) struct StaticOffsets<'a> {
+    pub(super) original: usize,
+    sides: [StaticOffset<'a>; 4],
+}
+impl StaticOffsets<'_> {
+    /// ISP: the computed offset `side` for a child's `inherit`: a fact as kept, or the
+    /// specified value computed against its owner's resolver (`auto`, a percentage kept
+    /// exactly, or an absolute or `em` length, one counted conversion); `None` when it is
+    /// not available or fails (`ex`, `em` without a font size, an unrepresentable length,
+    /// a percentage outside the bounded representation).
+    fn computed(
+        self,
+        side: usize,
+        property: PropertyId,
+        calls: &mut usize,
+    ) -> Option<BoxLengthFact> {
+        match self.sides[side] {
+            StaticOffset::Fact(fact) => Some(fact),
+            StaticOffset::Specified(value, owner) => {
+                owner.length(value, property, true, true, true, calls).ok()
+            }
+            StaticOffset::Unavailable => None,
+        }
+    }
+}
+/// ISP: the offsets of a static Sequence row for its children's `inherit`. `parent` and
+/// `parent_static` are this row's parent row and, when that row is static, its entry.
+pub(super) fn static_offsets<'a>(
+    winners: &PropertyWinners<'a>,
+    ids: &[PropertyId; 29],
+    parent: Option<(usize, ClearanceBoxFact)>,
+    parent_static: Option<StaticOffsets<'a>>,
+    resolver: Resolver,
+) -> StaticOffsets<'a> {
+    let mut sides = [StaticOffset::Unavailable; 4];
+    for (side, &property) in ids[25..].iter().enumerate() {
+        sides[side] = match winners.defaulted(property, parent.is_some()) {
+            Ok(DefaultedValueRef::Initial(_)) if recipe(property, 25 + side).is_ok() => {
+                StaticOffset::Fact(BoxLengthFact::Auto {
+                    origin: BoxFactOrigin::Initial,
+                })
+            }
+            Ok(DefaultedValueRef::Compute(value)) => StaticOffset::Specified(value, resolver),
+            Ok(DefaultedValueRef::ParentComputed) => match parent.and_then(|(_, p)| p.offset) {
+                Some(offset) => StaticOffset::Fact(offset[side]),
+                None => parent_static.map_or(StaticOffset::Unavailable, |row| row.sides[side]),
+            },
+            _ => StaticOffset::Unavailable,
+        };
+    }
+    StaticOffsets {
+        original: resolver.original,
+        sides,
+    }
 }
 pub(super) fn pseudo(
     winners: &PropertyWinners<'_>,

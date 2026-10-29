@@ -9,8 +9,8 @@
 //! read under an `auto` O.
 //!
 //! A child module of `decorated_auto_normals` (OAH design section 6): it reuses
-//! `assert_pct_row`, `assert_pct_view`, `pct_css`, `pct_layout`, `pct_lit`, `pct_with`,
-//! `pht_error_in`, `pht_refusal`, `ptb_assert_indefinite`, `och_layout`, `eml_row`,
+//! `assert_pct_row`, `assert_pct_view`, `pct_css`, `pct_layout`, `pct_layout_in`, `pct_lit`,
+//! `pct_with`, `pht_error_in`, `pht_refusal`, `ptb_assert_indefinite`, `och_layout`, `eml_row`,
 //! `PCT_OUTER`, `PCT_F32_MAX_PX`, `layout_limits` and `nz` through `use super::*`. The
 //! RED part (`oah_error`, A1 and the guards AG1-AG5) compiles against the DAZ commit
 //! ed6b3dba: it names no new item and reads only published geometry and errors as text.
@@ -83,9 +83,9 @@ fn oah_red_guard_ag3_the_limit_refusal_precedes_the_children() {
 
 /// AG4 (RED guard; MO6 witness): with P's `margin-top:-20px`, P's border top is -10, its
 /// content top -9, content bottom 2 and margin bottom 3, so O's tentative content height
-/// is -7: CSS2.2 gives a negative distance no value, and P's `top:50%` is
-/// `IndefiniteOffsetBasis` (after P's bottom since OAH, at P's step before). Passes before
-/// and after OAH.
+/// is -7: this facade does not read CSS2.2 as giving a negative distance a value, and P's
+/// `top:50%` is `IndefiniteOffsetBasis` (after P's bottom since OAH, at P's step before).
+/// Passes before and after OAH.
 #[test]
 fn oah_red_guard_ag4_a_negative_tentative_outer_height_is_refused() {
     assert_eq!(
@@ -329,10 +329,11 @@ fn oah_a14_the_horizontal_axis_keeps_its_solve() {
     );
 }
 
-/// A15 (PTA): P's pass precedes the children's: P's `top:10%` of 13 is 1.3, and B1's
-/// inherited `top:10%` of P's used content height 11 is 1.1.
+/// A15 (PTA): P's `top:10%` of 13 is 1.3, and B1's inherited `top:10%` of P's used content
+/// height 11 is 1.1. Both values are the same in either pass order (the children's basis
+/// is P's used content height), so this row does not pin the order of the passes; OX2 does.
 #[test]
-fn oah_a15_the_children_pass_follows_the_parent_pass() {
+fn oah_a15_parent_and_child_percentages_both_resolve() {
     let expected = [
         pct_lit("p.offset.top", 1.3),
         pct_lit("p.offset.bottom", -1.3),
@@ -475,3 +476,44 @@ fn oah_ow_facade_work_charges_79_fixed() {
         );
     }
 }
+
+// Carried OAH rows (OA-6; OAH plan review M-1, M-2): they pin existing OAH code and pass
+// at the ISP RED stage.
+
+/// OX1 (carried OAH plan review M-1, ruling OA-6; MX1 witness): P's own relative offset
+/// does not enter O's used content height. With `top:50%` and `bottom:5px` (ignored,
+/// 9.4.3) P's offsets are (6.5, -6.5), 50% of 13: the basis is P's bottom margin edge
+/// before the offset (an edge moved by P's offset of -5 would give 8 and 4).
+#[test]
+fn oah_ox1_parent_relative_offset_does_not_enter_the_outer_height() {
+    let expected = [
+        pct_lit("p.offset.top", 6.5),
+        pct_lit("p.offset.bottom", -6.5),
+    ];
+    assert_pct_row(
+        "#p { position:relative; top:50%; bottom:5px; }",
+        "#p { position:relative; }",
+        "#p { position:relative; top:6.5px; bottom:5px; }",
+        &expected,
+    );
+}
+
+/// OX2 (carried OAH plan review M-2, ruling OA-6; MX2 witness): P's pass precedes the
+/// children's. With B2's `height:<f32::MAX>px`, B2's bottom edges, P's used height and
+/// O's tentative height all round to f32::MAX, so P's `top:200%` fails first, at source 1;
+/// the children's pass first would fail at B2 (source 4).
+#[test]
+fn oah_ox2_the_parent_pass_precedes_the_children_pass() {
+    assert_eq!(
+        oah_error(&format!(
+            "#p {{ position:relative; top:200%; }} #b2 {{ height:{PCT_F32_MAX_PX}; \
+             position:relative; top:200%; }}"
+        )),
+        "Percentage { source: 1, property: \"top\", error: Unrepresentable }"
+    );
+}
+
+// ISP: offsets inherited from a static parent row (gap G10) reuse the `pct`, `pht`, `ptb`
+// and `eml` helpers as a child module of this one (ISP design section 6).
+#[path = "inherited_offsets.rs"]
+mod inherited_offsets;

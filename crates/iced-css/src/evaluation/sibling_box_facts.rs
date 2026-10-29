@@ -117,7 +117,8 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 /// computed `position` is `relative` (O included) also resolves `top`, `right`, `bottom`
 /// and `left`, after its other longhands and before its pseudos, and can fail there with
 /// `Unsupported` (`RelativeLength`, `InheritedOffset` or `PercentagePrecision`),
-/// `InvalidValue`, `Defaulting`, `InitialRecipe` or a `Length` conversion error.
+/// `InvalidValue`, `Defaulting`, `InitialRecipe` or a `Length` conversion error. An
+/// `inherit` offset under a static parent takes that parent's computed offset (ISP).
 /// Every Sequence row also carries its computed `min-width`, `min-height`, `max-width`
 /// and `max-height` (absolute, a percentage for `min-width`/`max-width` (PPM) and
 /// `min-height`/`max-height` (PHT), `none` for a maximum, or inherited) and can fail there

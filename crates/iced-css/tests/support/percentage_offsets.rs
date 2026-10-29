@@ -689,12 +689,12 @@ fn ptb_representation_measurement() {
 // compiles against the PTB commit ea24b2b7.
 
 /// PB9 (carried PTB plan review F-1, ruling PB-9; M17 witness, the narrowed-arm mutant
-/// MPB9): P's ignored `bottom:10%` (P's `top:1px` is not `auto`) is still resolved. Under
-/// the Auto O it resolves against O's used content height 13 (OAH; 1.3, ignored: `top`
-/// wins, 1/-1); under O's `height:200px` without a host value it is refused with
-/// `OuterHeightBasis`, property `bottom` (the reviewer's validated row).
+/// MPB9): P's ignored `bottom:10%` (P's `top:1px` is not `auto`) is resolved under the Auto
+/// O against O's used content height 13 (OAH; 1.3, ignored: `top` wins, 1/-1) and refused
+/// with `OuterHeightBasis`, property `bottom`, under O's `height:200px` without a host value
+/// (the reviewer's validated row).
 #[test]
-fn pta_red_guard_pb9_parent_ignored_bottom_percentage_is_refused() {
+fn pta_red_guard_pb9_parent_ignored_bottom_percentage_resolves_or_is_refused() {
     let expected = [
         pct_lit("p.offset.top", 1.0),
         pct_lit("p.offset.bottom", -1.0),
