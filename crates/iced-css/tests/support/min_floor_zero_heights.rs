@@ -54,8 +54,9 @@ fn mfz_red_f1_a_negative_tentative_outer_height_takes_the_min_height() {
     );
 }
 
-/// FG1 (RED guard): a percentage `min-height` of O keeps the refusal at P's step, also
-/// with a negative tentative height. Passes before and after MFZ.
+/// FG1 (RED guard): without a viewport height (the old entries; VPH, the user's U2=A) a
+/// percentage `min-height` of O keeps the refusal at P's step, also with a negative
+/// tentative height. Passes before and after MFZ.
 #[test]
 fn mfz_red_guard_fg1_a_percentage_outer_limit_keeps_the_refusal() {
     assert_eq!(
@@ -325,10 +326,10 @@ fn mfz_z14_the_float_width_refusal_follows() {
 }
 
 /// Z15 (work): with every normal an Auto-height new-BFC box the facade work stays
-/// `625 + 32N + 526(N-2) + 371(N-3)`, exact and one short, and the core work too.
+/// `670 + 32N + 526(N-2) + 371(N-3)`, exact and one short, and the core work too.
 #[test]
 fn mfz_z15_the_work_is_unchanged() {
-    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
+    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
         let css = pct_css(
             nodes,
             "#b1, #b2, #b3, #b4 { overflow:hidden; height:auto; } #b2, #b3 { clear:none; }",

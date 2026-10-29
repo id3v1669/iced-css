@@ -433,7 +433,7 @@ fn zhn_z11_a_zero_height_tail_with_a_negative_margin_takes_the_signed_route() {
 /// is `Core(Work)`; the facade work is unchanged.
 #[test]
 fn zhn_z12_core_work_charges_62_per_normal() {
-    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
+    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
         assert_eq!(
             core,
             702 + 12 * nodes

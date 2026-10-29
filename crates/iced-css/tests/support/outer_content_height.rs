@@ -534,15 +534,15 @@ const OCH_WORK_FRAGMENT: &str = "#o { height:200px; } #p { height:10%; min-heigh
 
 /// Facade and core work with the host's value (M16 witness): exact and one short at N5,
 /// N6 and N7 with PCT's, PPM's, PHT's and PTA's percentages and P's five percentages
-/// resolved against the host's 200; the facade charge is `625 + 32N + 526(N-2) +
+/// resolved against the host's 200; the facade charge is `670 + 32N + 526(N-2) +
 /// 371(N-3)`, as through the old entry; the layout equals the control with P's
 /// percentages replaced by their values and the children relative without offsets.
 #[test]
 fn och_work_thresholds_with_the_host_height() {
-    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
+    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
         assert_eq!(
             facade,
-            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
+            670 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(

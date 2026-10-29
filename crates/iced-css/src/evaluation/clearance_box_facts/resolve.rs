@@ -293,8 +293,8 @@ impl Resolver {
                         return Err(self.invalid(property));
                     }
                     _ if target.is_negative() => return Err(self.invalid(property)),
-                    // EML, EXF: an `em` or `ex` width against the row's computed font size
-                    // or its 0.5em x-height.
+                    // EML, EXF (the user's U5=B): an `em` or `ex` width against the row's
+                    // computed font size or its 0.5em x-height.
                     (LengthTarget::Relative(value, unit), Some(size)) => {
                         let basis = match unit {
                             RelativeUnit::Em => size,
@@ -419,10 +419,10 @@ pub(super) fn element(
                     // constraint: `none` for a max, else one counted conversion of an
                     // absolute nonnegative length; PPM keeps a `min-width` or `max-width`
                     // and PHT a `min-height` or `max-height` percentage exactly, and
-                    // (EML) an `em` length with a font size like an absolute one (EXF: an
-                    // `ex` too, against the 0.5em x-height; `em` and `ex` without a font
-                    // size, `auto` and negative values keep their refusals). Legacy keeps
-                    // the refusals below.
+                    // (EML) an `em` length with a font size like an absolute one (EXF, the
+                    // user's U5=B: an `ex` too, against the 0.5em x-height; `em` and `ex`
+                    // without a font size, `auto` and negative values keep their
+                    // refusals). Legacy keeps the refusals below.
                     if mode == BoxFactMode::Sequence && (2..6).contains(&index) {
                         if index >= 4
                             && matches!(value,SpecifiedValue::Keyword(k) if k.as_str()=="none")

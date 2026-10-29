@@ -384,15 +384,15 @@ fn daz_d15_an_em_padding_separates_the_margins() {
     );
 }
 
-/// D16 (MW1, MW2 witness): facade work `625 + 32N + 526(N-2) + 371(N-3)` (DAZ: 58 per
+/// D16 (MW1, MW2 witness): facade work `670 + 32N + 526(N-2) + 371(N-3)` (DAZ: 58 per
 /// normal on every path) is exact at N5, N6 and N7 and one short is `Work`; the core work
 /// is unchanged.
 #[test]
 fn daz_d16_facade_work_charges_58_per_normal() {
-    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
+    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
         assert_eq!(
             facade,
-            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3),
+            670 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3),
             "N{nodes}"
         );
         let css = pct_css(nodes, "");

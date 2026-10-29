@@ -4,10 +4,10 @@
 //! (CSS2.2 8.3.1), so its tentative content height runs from its content top to P's
 //! bottom margin edge (10.6.3, one f32 subtraction); O's `min-height` and `max-height`
 //! then constrain it (10.7). A percentage limit of O (its basis, the initial containing
-//! block's height, is not an input) keeps `IndefiniteOffsetBasis` at P's step, a negative
-//! tentative height takes O's `min-height` (MFZ, the user's U3=A; before MFZ it was
-//! `IndefiniteOffsetBasis` after P's bottom), and a host value is not read under an `auto`
-//! O.
+//! block's height, which the old entries do not supply; VPH, the user's U2=A) keeps
+//! `IndefiniteOffsetBasis` at P's step, a negative tentative height takes O's
+//! `min-height` (MFZ, the user's U3=A; before MFZ it was `IndefiniteOffsetBasis` after
+//! P's bottom), and a host value is not read under an `auto` O.
 //!
 //! A child module of `decorated_auto_normals` (OAH design section 6): it reuses
 //! `assert_pct_row`, `assert_pct_view`, `pct_css`, `pct_layout`, `pct_layout_in`, `pct_lit`,
@@ -49,8 +49,8 @@ fn oah_red_a1_parent_top_percentage_of_an_auto_outer_height() {
 }
 
 /// AG1 (RED guard; MO3 witness): O's `min-height:10%` refers to the initial containing
-/// block's height, which is not an input, so P's `top:50%` stays `IndefiniteOffsetBasis`
-/// at P's step. Passes before and after OAH.
+/// block's height, which the old entries do not supply (VPH, the user's U2=A), so P's
+/// `top:50%` stays `IndefiniteOffsetBasis` at P's step. Passes before and after OAH.
 #[test]
 fn oah_red_guard_ag1_a_percentage_outer_min_height_keeps_the_refusal() {
     ptb_assert_indefinite(&[(
@@ -448,15 +448,15 @@ fn oah_ae6_an_infinite_tentative_outer_height_fails_unless_capped() {
     );
 }
 
-/// OW (MW1, MW2 witness): facade work `625 + 32N + 526(N-2) + 371(N-3)` (OAH: 79 fixed on
+/// OW (MW1, MW2 witness): facade work `670 + 32N + 526(N-2) + 371(N-3)` (OAH: 79 fixed on
 /// every path) is exact at N5, N6 and N7 and one short is `Work`; the core work is
 /// unchanged.
 #[test]
 fn oah_ow_facade_work_charges_79_fixed() {
-    for (nodes, facade, core) in [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)] {
+    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
         assert_eq!(
             facade,
-            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3),
+            670 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3),
             "N{nodes}"
         );
         let css = pct_css(nodes, "");

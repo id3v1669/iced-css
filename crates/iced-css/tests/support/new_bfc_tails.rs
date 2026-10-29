@@ -7,7 +7,7 @@ use super::*;
 use iced_css_core::formatting::bfc_height::{SignedNormalMarginEdge, SignedNormalMarginError};
 
 /// (nodes, facade exact work, core exact work) from the TNB counted action table.
-const TNB_WORK: [(usize, usize, usize); 3] = [(5, 3105, 1373), (6, 4034, 1687), (7, 4963, 2002)];
+const TNB_WORK: [(usize, usize, usize); 3] = [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)];
 
 /// Copied observations of one successful layout.
 #[derive(Debug)]
@@ -667,7 +667,7 @@ fn tnb_exact_and_one_short_work_at_every_node_count() {
     for (nodes, facade, core) in TNB_WORK {
         assert_eq!(
             facade,
-            625 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
+            670 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
         );
         assert_eq!(
             core,

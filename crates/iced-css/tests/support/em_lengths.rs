@@ -414,11 +414,12 @@ fn eml_em8b_em_offsets_with_the_host_height() {
     );
 }
 
-/// EM9 (migrated by EXF, the user's U5=B; XM8 witness): in the font entry `ex` resolves
-/// against the 0.5em x-height: B1's `height:1ex` is 8, P's `font-size:1ex` 8 (the
-/// medium's 16 halved) and B1's solid `border-top-width:1ex` 8 (before EXF the three were
-/// `RelativeLength`); a `border-top-width` of `1ex` or `1em` on a side whose style is
-/// `none` is +0 with no event and no counted conversion (style first).
+/// EM9 (migrated by EXF, the user's U5=B; XM8 witness; M12 witness by the tail): in the
+/// font entry `ex` resolves against the 0.5em x-height: B1's `height:1ex` is 8, P's
+/// `font-size:1ex` 8 (the medium's 16 halved) and B1's solid `border-top-width:1ex` 8
+/// (before EXF the three were `RelativeLength`); a `border-top-width` of `1ex` or `1em`
+/// on a side whose style is `none` is +0 with no event and no counted conversion (style
+/// first).
 #[test]
 fn eml_em9_ex_resolves_and_a_suppressed_side_stays_zero() {
     let specified = BoxFactOrigin::Specified;

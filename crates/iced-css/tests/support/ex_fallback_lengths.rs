@@ -416,3 +416,9 @@ fn exf_x15_a_later_row_error_now_surfaces() {
          PercentagePrecision })"
     );
 }
+
+// VPH: the user's U2=A (the viewport height input) reuses the `pct`, `och`, `eml` and `exf`
+// helpers as a child module of this one (VPH design section 5); EXF-L6's C1 and C2 come
+// first.
+#[path = "viewport_heights.rs"]
+mod viewport_heights;
