@@ -385,3 +385,8 @@ fn mfz_z17_a_parent_auto_overflow_follows() {
         "ParentAutoOverflow { source: 2 }"
     );
 }
+
+// EXF: the user's U5=B (`ex` as the 0.5em fallback) reuses the `eml`, `pct`, `zhn` and `isp`
+// helpers as a child module of this one (EXF design section 5); MZ-6's Z16b comes first.
+#[path = "ex_fallback_lengths.rs"]
+mod ex_fallback_lengths;

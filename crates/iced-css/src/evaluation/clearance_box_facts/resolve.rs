@@ -138,8 +138,16 @@ fn inherited_length_percentage(
         }
     }
 }
+/// EXF (CSS2.2 4.3.2, the user's U5=B): the x-height of a computed font size, the basis
+/// of `ex`. This layer reads no font metrics, so it is the 0.5em fallback: one f32 product,
+/// exact except below 2^-125 with an odd last bit (then nearest, ties to even). A measured
+/// x-height (U5 option A, a later increment) replaces this function and its callers.
+fn fallback_x_height(font_size: f32) -> f32 {
+    0.5 * font_size
+}
 /// One row's longhand resolver: its original index, the numeric limits and (EML) its
-/// computed font size, the basis of an `em` length (`None`: `em` stays `RelativeLength`).
+/// computed font size, the basis of an `em` length and (EXF, the user's U5=B) of an `ex`
+/// length through its 0.5em x-height (`None`: `em` and `ex` stay `RelativeLength`).
 #[derive(Clone, Copy)]
 pub(super) struct Resolver {
     original: usize,
@@ -176,10 +184,10 @@ impl Resolver {
     /// `min-width`, `max-width`; PHT: Sequence `height`, `min-height`, `max-height`; PTB:
     /// `top`, `bottom` of a relative Sequence row): a negative one only when `signed` is
     /// set, and a value outside the bounded representation is `PercentagePrecision`;
-    /// otherwise it is `PercentageLength`. EML: with a font size an `em` length is
-    /// converted like an absolute one (the sign test, one counted conversion, one exact
-    /// product with the font size rounded once); `ex`, and `em` without a font size, are
-    /// `RelativeLength`.
+    /// otherwise it is `PercentageLength`. EML, EXF: with a font size an `em` length, and an
+    /// `ex` length against its 0.5em x-height (the user's U5=B), is converted like an
+    /// absolute one (the sign test, one counted conversion, one exact product with the font
+    /// size or x-height rounded once); without a font size both are `RelativeLength`.
     fn length(
         &self,
         value: &SpecifiedValue,
@@ -193,7 +201,7 @@ impl Resolver {
             return Err(self.invalid(property));
         };
         match target {
-            LengthTarget::Relative(_, RelativeUnit::Em) if self.font_size.is_some() => {}
+            LengthTarget::Relative(..) if self.font_size.is_some() => {}
             LengthTarget::Relative(..) => {
                 return Err(self.unsupported(property, BoxFactUnsupported::RelativeLength));
             }
@@ -229,6 +237,7 @@ impl Resolver {
         *calls += 1;
         let context = LengthContext {
             font_size: self.font_size,
+            x_height: self.font_size.map(fallback_x_height),
             ..LengthContext::default()
         };
         let evaluated =
@@ -249,9 +258,10 @@ impl Resolver {
     /// One `border-*-width` side in Sequence mode (CSS2.2 8.5.1; architecture 34).
     /// The side's own computed style is tested first: a `none` or `hidden` side is +0
     /// with no event, no `RelativeLength` and no conversion, whatever its value.
-    /// `ex`, or `em` without a font size, is `RelativeLength` before any conversion; an
-    /// absolute length, or (EML) an `em` length against the row's font size, is one
-    /// counted conversion to the nearest non-negative f32, ties to even, saturating.
+    /// `ex` or `em` without a font size is `RelativeLength` before any conversion; an
+    /// absolute length, or (EML) an `em` length against the row's font size, or (EXF, the
+    /// user's U5=B) an `ex` length against its 0.5em x-height, is one counted conversion to
+    /// the nearest non-negative f32, ties to even, saturating.
     fn border_width(
         &self,
         value: &SpecifiedValue,
@@ -276,17 +286,21 @@ impl Resolver {
             },
             SpecifiedValue::Length(target) => {
                 let converted = match (target, self.font_size) {
-                    (LengthTarget::Relative(_, RelativeUnit::Ex), _)
-                    | (LengthTarget::Relative(_, RelativeUnit::Em), None) => {
+                    (LengthTarget::Relative(..), None) => {
                         return Err(self.unsupported(property, BoxFactUnsupported::RelativeLength));
                     }
                     (LengthTarget::Percentage(..) | LengthTarget::Auto, _) => {
                         return Err(self.invalid(property));
                     }
                     _ if target.is_negative() => return Err(self.invalid(property)),
-                    // EML: an `em` width against the row's computed font size.
-                    (LengthTarget::Relative(value, _), Some(size)) => {
-                        value.scaled_nonnegative_f32(size, self.numeric)
+                    // EML, EXF: an `em` or `ex` width against the row's computed font size
+                    // or its 0.5em x-height.
+                    (LengthTarget::Relative(value, unit), Some(size)) => {
+                        let basis = match unit {
+                            RelativeUnit::Em => size,
+                            RelativeUnit::Ex => fallback_x_height(size),
+                        };
+                        value.scaled_nonnegative_f32(basis, self.numeric)
                     }
                     (LengthTarget::Absolute(length), _) => length.to_nonnegative_f32(self.numeric),
                 };
@@ -405,9 +419,10 @@ pub(super) fn element(
                     // constraint: `none` for a max, else one counted conversion of an
                     // absolute nonnegative length; PPM keeps a `min-width` or `max-width`
                     // and PHT a `min-height` or `max-height` percentage exactly, and
-                    // (EML) an `em` length with a font size like an absolute one (`ex`,
-                    // `em` without a font size, `auto` and negative values keep their
-                    // refusals). Legacy keeps the refusals below.
+                    // (EML) an `em` length with a font size like an absolute one (EXF: an
+                    // `ex` too, against the 0.5em x-height; `em` and `ex` without a font
+                    // size, `auto` and negative values keep their refusals). Legacy keeps
+                    // the refusals below.
                     if mode == BoxFactMode::Sequence && (2..6).contains(&index) {
                         if index >= 4
                             && matches!(value,SpecifiedValue::Keyword(k) if k.as_str()=="none")
@@ -567,8 +582,9 @@ pub(super) fn element(
 /// fact; the root (O, no parent) takes `initial` (`medium`, the table's middle entry), as
 /// `initial` does on every row. A keyword, a length, an `em` or a percentage resolves
 /// against the parent's computed size, or against `medium` for the root (CSS22-001338):
-/// one counted conversion for a length, `em` or percentage, none for a keyword. `ex`
-/// stays `RelativeLength` and never reaches `compute_font_size`.
+/// one counted conversion for a length, `em` or percentage, none for a keyword. EXF (the
+/// user's U5=B): an `ex` resolves like an `em` against the 0.5em x-height of the same
+/// basis, one counted conversion.
 pub(super) fn font_size(
     winners: &PropertyWinners<'_>,
     font: FontContext,
@@ -614,18 +630,15 @@ pub(super) fn font_size(
         }
         DefaultedValueRef::Compute(value) => value,
     };
-    if let SpecifiedValue::Length(target) = value {
-        if matches!(target, LengthTarget::Relative(_, RelativeUnit::Ex)) {
-            return Err(resolver.unsupported(property, BoxFactUnsupported::RelativeLength));
-        }
-        if !matches!(target, LengthTarget::Auto) {
-            *calls += 1;
-        }
+    if matches!(value, SpecifiedValue::Length(target) if !matches!(target, LengthTarget::Auto)) {
+        *calls += 1;
     }
+    // EXF: `ex` refers to the parent's x-height (CSS2.2 4.3.2), the root's to `medium`'s.
+    let parent_size = parent_fact.map_or(medium, |(_, fact)| fact.pixels);
     let context = FontSizeContext {
         table: font.table,
-        parent_size: parent_fact.map_or(medium, |(_, fact)| fact.pixels),
-        parent_x_height: f32::NAN,
+        parent_size,
+        parent_x_height: fallback_x_height(parent_size),
     };
     let size = compute_font_size(value, context, numeric)
         .map_err(|error| E::FontSize { original, error })?;
@@ -638,10 +651,11 @@ pub(super) fn font_size(
 /// REL (CSS2.2 9.3.2, 9.4.3): the computed `top`, `right`, `bottom` and `left` (25-28)
 /// of a relatively positioned Sequence row, in index order: `auto`, or an absolute
 /// length converted like a signed margin (one counted conversion), a percentage kept
-/// exactly (PCT: `right`, `left`; PTB: `top`, `bottom`), (EML) an `em` length against the
-/// row's computed font size, converted like a signed margin, or, for `inherit`, the
-/// parent row's computed offset (`auto`, an absolute length or a percentage; ISP: a static
-/// parent's is computed here from its kept value, `parent_static`).
+/// exactly (PCT: `right`, `left`; PTB: `top`, `bottom`), (EML, EXF) an `em` or `ex` length
+/// against the row's computed font size or its 0.5em x-height (the user's U5=B), converted
+/// like a signed margin, or, for `inherit`, the parent row's computed offset (`auto`, an
+/// absolute length or a percentage; ISP: a static parent's is computed here from its kept
+/// value, `parent_static`).
 pub(super) fn offsets(
     winners: &PropertyWinners<'_>,
     ids: &[PropertyId; 29],
@@ -702,9 +716,11 @@ enum StaticOffset<'a> {
     Specified(&'a SpecifiedValue, Resolver),
     Unavailable,
 }
-/// ISP: the `top`, `right`, `bottom` and `left` of a static O or P (the rows with children
-/// in the sibling projection), by its original index. Reading them never fails: the
-/// offsets do not apply to the row itself (CSS2.2 9.3.1), and nothing is converted here.
+/// ISP: the `top`, `right`, `bottom` and `left` of an O or P that is not relatively
+/// positioned (static, or absolute or fixed and refused later by the facade; the rows with
+/// children in the sibling projection), by its original index. Reading them never fails:
+/// the offsets do not position a static row (CSS2.2 9.3.1), the facade refuses an absolute
+/// or fixed one, and nothing is converted here.
 #[derive(Clone, Copy)]
 pub(super) struct StaticOffsets<'a> {
     pub(super) original: usize,
@@ -713,9 +729,9 @@ pub(super) struct StaticOffsets<'a> {
 impl StaticOffsets<'_> {
     /// ISP: the computed offset `side` for a child's `inherit`: a fact as kept, or the
     /// specified value computed against its owner's resolver (`auto`, a percentage kept
-    /// exactly, or an absolute or `em` length, one counted conversion); `None` when it is
-    /// not available or fails (`ex`, `em` without a font size, an unrepresentable length,
-    /// a percentage outside the bounded representation).
+    /// exactly, or an absolute, `em` or (EXF, the user's U5=B) `ex` length, one counted
+    /// conversion); `None` when it is not available or fails (`em` or `ex` without a font
+    /// size, an unrepresentable length, a percentage outside the bounded representation).
     fn computed(
         self,
         side: usize,

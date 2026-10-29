@@ -1,7 +1,8 @@
 //! EML: `em` lengths in the Sequence facts against a host-supplied medium (CSS2.2 6.1.2,
 //! 15.7, 4.3.2): `evaluate_sibling_box_facts_with_font_medium` computes every row's
 //! `font-size` from the keyword table of `medium` (architecture 27) and resolves `em` in
-//! every captured length longhand against it; `ex` stays `RelativeLength`.
+//! every captured length longhand against it, and `ex` against its 0.5em x-height since
+//! EXF (the user's U5=B).
 //!
 //! A child module of `outer_content_height` (EML design section 6): it reuses the `pct`,
 //! `ppm`, `pht`, `ptb` and `och` helpers (`pct_css`, `pct_view`, `assert_pct_view`,
@@ -413,21 +414,40 @@ fn eml_em8b_em_offsets_with_the_host_height() {
     );
 }
 
-/// EM9 (M9, M10, M12 witness): `ex` stays refused: at B1's `height`, at P's `font-size`
-/// and at B1's solid `border-top-width`; a `border-top-width` of `1ex` or `1em` on a side
-/// whose style is `none` is +0 with no event and no counted conversion (style first).
+/// EM9 (migrated by EXF, the user's U5=B; XM8 witness): in the font entry `ex` resolves
+/// against the 0.5em x-height: B1's `height:1ex` is 8, P's `font-size:1ex` 8 (the
+/// medium's 16 halved) and B1's solid `border-top-width:1ex` 8 (before EXF the three were
+/// `RelativeLength`); a `border-top-width` of `1ex` or `1em` on a side whose style is
+/// `none` is +0 with no event and no counted conversion (style first).
 #[test]
-fn eml_em9_ex_stays_refused() {
-    for (fragment, expected) in [
-        ("#b1 { height:1ex; }", eml_relative(0, "height")),
-        ("#p { font-size:1ex; }", eml_relative(3, "font-size")),
-        (
-            "#b1 { border-top-style:solid; border-top-width:1ex; }",
-            eml_relative(0, "border-top-width"),
-        ),
-    ] {
-        assert_eq!(eml_error(fragment), expected, "{fragment}");
-    }
+fn eml_em9_ex_resolves_and_a_suppressed_side_stays_zero() {
+    let specified = BoxFactOrigin::Specified;
+    let fragment = "#b1 { height:1ex; }";
+    assert_eq!(
+        eml_facts(fragment).0[2].height,
+        BoxLengthFact::Absolute(AbsoluteBoxFact {
+            pixels: 8.0,
+            rounded_to_zero: false,
+            origin: specified,
+        }),
+        "{fragment}"
+    );
+    let fragment = "#p { font-size:1ex; }";
+    assert_eml_font(
+        eml_facts(fragment).0[1].font_size,
+        eml_font(8.0, None, specified),
+        fragment,
+    );
+    let fragment = "#b1 { border-top-style:solid; border-top-width:1ex; }";
+    assert_eq!(
+        eml_facts(fragment).0[2].border_width[0],
+        BorderWidthFact {
+            pixels: 8.0,
+            event: None,
+            origin: specified,
+        },
+        "{fragment}"
+    );
     let calls = eml_facts("").1.numeric_calls;
     for fragment in [
         "#b1 { border-top-width:1ex; }",
@@ -556,18 +576,30 @@ fn eml_em14_the_medium_is_validated_first() {
     assert_eq!(eml_error_with("", EML_MEDIUM, limits), "Sources");
 }
 
-/// EM15 (M13 witness): `font-size` is computed before the row's other longhands: B1's
-/// `font-size:1ex` with `height:1ex`, in either declaration order, is refused at
-/// `font-size`.
+/// EM15 (M13 witness; migrated by EXF, the user's U5=B; XM5 witness): `font-size` is
+/// computed before the row's other longhands: B1's `font-size:1ex` with `height:1ex`, in
+/// either declaration order, gives B1's font size 8 (the parent's 16 halved) and its
+/// `height` 4 (its own 8 halved; `height` before `font-size` would give 8). Before EXF
+/// both orders were refused at `font-size`.
 #[test]
 fn eml_em15_font_size_precedes_the_other_longhands() {
     for fragment in [
         "#b1 { font-size:1ex; height:1ex; }",
         "#b1 { height:1ex; font-size:1ex; }",
     ] {
+        let rows = eml_facts(fragment).0;
+        assert_eml_font(
+            rows[2].font_size,
+            eml_font(8.0, None, BoxFactOrigin::Specified),
+            fragment,
+        );
         assert_eq!(
-            eml_error(fragment),
-            eml_relative(0, "font-size"),
+            rows[2].height,
+            BoxLengthFact::Absolute(AbsoluteBoxFact {
+                pixels: 4.0,
+                rounded_to_zero: false,
+                origin: BoxFactOrigin::Specified,
+            }),
             "{fragment}"
         );
     }

@@ -4,11 +4,11 @@
 //! 6.1.2: a computed value exists even where the property does not apply; 9.3.2: the
 //! computed `top` is `auto`, an absolute length, or a percentage as specified). A static O
 //! or P keeps its specified offsets, unconverted; the inheriting child computes the side
-//! against the parent's own resolver (an `em` against the parent's font size), one counted
-//! conversion per inheriting length side. A side outside the supported subset (`ex`, `em`
-//! without the font entry, an unrepresentable length, a percentage outside the bounded
-//! representation, the same through a static P from O) keeps `InheritedOffset` at the
-//! child.
+//! against the parent's own resolver (an `em` against the parent's font size, an `ex`
+//! against its 0.5em x-height since EXF, the user's U5=B), one counted conversion per
+//! inheriting length side. A side outside the supported subset (`em` or `ex` without the
+//! font entry, an unrepresentable length, a percentage outside the bounded representation,
+//! the same through a static P from O) keeps `InheritedOffset` at the child.
 //!
 //! A child module of `outer_auto_heights` (ISP design section 6): it reuses
 //! `assert_pct_row`, `pct_css`, `pct_lit`, `pct_facts`, `pct_fact`, `pct_fact_error`,
@@ -69,8 +69,8 @@ fn isp_red_guard_ig1_an_em_parent_without_the_font_entry_stays_refused() {
     );
 }
 
-/// IG2 (RED guard): P's `top:1ex` (`ex` stays refused, EM-4) keeps B1's `InheritedOffset`.
-/// Passes before and after ISP.
+/// IG2 (RED guard): P's `top:1ex` (`ex` without the font entry; refused) keeps B1's
+/// `InheritedOffset`. Passes before and after ISP.
 #[test]
 fn isp_red_guard_ig2_an_ex_parent_stays_refused() {
     assert_eq!(
@@ -410,12 +410,15 @@ fn isp_i8b_the_child_font_size_is_not_the_basis() {
     );
 }
 
-/// I8c (EML): `ex` stays refused with the font entry too (EM-4): B1's `InheritedOffset`.
+/// I8c (EML; migrated by EXF, the user's U5=B): P's `top:1ex` computes against P's own
+/// 0.5em x-height 5 (P's `font-size:10px`), so B1's `top:inherit` is 5 (before EXF:
+/// `InheritedOffset`).
 #[test]
-fn isp_i8c_an_ex_parent_stays_refused_with_the_font_entry() {
-    assert_eq!(
-        eml_error("#p { font-size:10px; top:1ex; } #b1 { position:relative; top:inherit; }"),
-        ISP_INHERITED_TOP
+fn isp_i8c_an_ex_parent_offset_against_the_parent_x_height() {
+    eml_row(
+        "#p { font-size:10px; top:1ex; } #b1 { position:relative; top:inherit; }",
+        "#b1 { position:relative; top:5px; }",
+        &isp_y("c0", 5.0),
     );
 }
 

@@ -1910,9 +1910,9 @@ fn resolve_max(
 /// and `bottom` are not resolved here either (see `resolve_vertical_offsets`). It never
 /// rewrites offset sides 0 and 2: every reader of P's and the children's `top` and
 /// `bottom` (P's vertical step, the copy of P's resolved sides into P's used row, the
-/// child loop, the OAH pass and the vertical pass) takes them from the fact row. EML: an
-/// `em` offset is already absolute in the fact row (a computed value, CSS2.2 6.1.2), so
-/// no unit is converted here.
+/// child loop, the OAH pass and the vertical pass) takes them from the fact row. EML and
+/// EXF: an `em` or `ex` offset is already absolute in the fact row (a computed value,
+/// CSS2.2 6.1.2), so no unit is converted here.
 fn resolved_row(
     row: &ClearanceBoxFact,
     basis: f32,
@@ -2204,11 +2204,11 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // and the refusal decision 2. P's mask for its horizontal solve 10 (the PTA mask
         // unit). The pass: the auto-O and percentage-presence decision 4, O's tentative
         // height 4 (two reads 2, the subtraction 1, the write 1), the negative test and
-        // refusal decision 4, O's two limit reads and conversions 4, the constraint 5 (two
-        // comparisons 4, the write 1), P's resolution 21 (the PTB unit) and P's vertical
-        // axis 21 (the offset presence test 2, two offset reads 2, two category
-        // conversions 2, direction read 1, primitive call and return 4, two axis
-        // resolutions 8 and two publication writes 2).
+        // refusal decision 4 (kept without credit since MFZ removed them), O's two limit
+        // reads and conversions 4, the constraint 5 (two comparisons 4, the write 1), P's
+        // resolution 21 (the PTB unit) and P's vertical axis 21 (the offset presence test
+        // 2, two offset reads 2, two category conversions 2, direction read 1, primitive
+        // call and return 4, two axis resolutions 8 and two publication writes 2).
         .checked_add(79)
 }
 

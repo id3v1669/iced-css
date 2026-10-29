@@ -129,9 +129,9 @@ impl<'p, 'h, 'd, 's, 'b, 'r> SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r> {
 /// a `max-width` (PPM) or `max-height` (PHT) as `BoxMaxFact::Percentage`, without a
 /// conversion; each can fail with `InvalidValue` (a negative value) or `Unsupported`
 /// (`PercentagePrecision`). No Sequence longhand keeps `PercentageLength` (Legacy refuses
-/// every percentage). Every row carries `font_size: None`, and an `em` length is refused
-/// (`RelativeLength`) like `ex`; `evaluate_sibling_box_facts_with_font_medium` computes
-/// `font-size` and resolves `em` (EML).
+/// every percentage). Every row carries `font_size: None`, and `em` and `ex` lengths are
+/// refused (`RelativeLength`); `evaluate_sibling_box_facts_with_font_medium` computes
+/// `font-size` and resolves `em` (EML) and `ex` (EXF).
 ///
 /// Shared registry/rule/declaration preflight and aggregate service reservations finish
 /// before row allocation. Actual row capacity is then charged before row initialization
@@ -158,12 +158,13 @@ pub fn evaluate_sibling_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
 /// provider's, else iced's default text size), from which the keyword table is built.
 /// Every row then carries its computed `font-size` (`ClearanceBoxFact::font_size`),
 /// computed before its other longhands, and resolves `em` in every captured length
-/// longhand against it; `ex` stays `RelativeLength`. O, the captured root, takes `medium`
-/// as its initial `font-size` and as the parent basis of its own `em`, percentage,
-/// `larger` and `smaller` (CSS22-001338): a host whose O is not the root of its CSS
-/// document must not use this entry. Work is `36*N+2+r` and the numeric allowance `23*N`
-/// conversions (one more unit and one more conversion per source than
-/// `evaluate_sibling_box_facts`).
+/// longhand against it and `ex` against its 0.5em x-height (EXF, the user's U5=B: no font
+/// metrics are read, CSS2.2 4.3.2, so every `ex` here uses that fallback). O, the captured
+/// root, takes `medium` as its initial `font-size` and as the parent basis of its own
+/// `em`, `ex`, percentage, `larger` and `smaller` (CSS22-001338): a host whose O is not
+/// the root of its CSS document must not use this entry. Work is `36*N+2+r` and the
+/// numeric allowance `23*N` conversions (one more unit and one more conversion per source
+/// than `evaluate_sibling_box_facts`).
 ///
 /// # Errors
 ///
@@ -172,11 +173,11 @@ pub fn evaluate_sibling_box_facts<'p, 'h, 'd, 's, 'b, 'r>(
 /// `Evaluation(PropertyRegistry { name: "font-size" })` when the property registry has no
 /// `font-size`, and, per row before its other longhands, `Evaluation(FontSize { .. })` for
 /// a `font-size` computation failure, `Evaluation(Defaulting { .. })` or
-/// `Evaluation(InitialRecipe { .. })` for `font-size`, and `Evaluation(Unsupported { .. })`
-/// (`RelativeLength`) for an `ex` `font-size`; an `em` width, height, constraint, margin,
-/// padding or offset outside the finite f32 range is `Evaluation(Length { .. })` at its
-/// property (an `em` border width or `font-size` saturates at `f32::MAX` with
-/// `UpperSaturation`). Failure publishes no partial batch.
+/// `Evaluation(InitialRecipe { .. })` for `font-size`; an `em` or `ex` width, height,
+/// constraint, margin, padding or offset outside the finite f32 range is
+/// `Evaluation(Length { .. })` at its property (an `em` or `ex` border width or
+/// `font-size` saturates at `f32::MAX` with `UpperSaturation`). Failure publishes no
+/// partial batch.
 pub fn evaluate_sibling_box_facts_with_font_medium<'p, 'h, 'd, 's, 'b, 'r>(
     projection: &'p SiblingSourceProjection<'h>,
     display: &'d SourceDisplay<'s, 'b, 'r>,

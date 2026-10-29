@@ -253,8 +253,9 @@ fn oah_a9_an_em_outer_limit_is_absolute() {
     );
 }
 
-/// A10 (MO5 witness): with P's `margin-top:-13px` P's margin bottom is 10, O's content top,
-/// so the tentative height is +0 (not negative): `top:50%` is +0 and `bottom` +0.
+/// A10 (PX6 witness; MO5 retired by MFZ): with P's `margin-top:-13px` P's margin bottom
+/// is 10, O's content top, so the tentative height is +0 (not negative): `top:50%` is +0
+/// and `bottom` +0.
 #[test]
 fn oah_a10_a_zero_tentative_outer_height_is_admitted() {
     let expected = [

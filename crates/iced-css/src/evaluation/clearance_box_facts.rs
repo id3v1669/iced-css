@@ -123,8 +123,9 @@ pub struct BorderWidthFact {
 }
 /// EML (CSS2.2 15.7, 6.1.2): one computed `font-size` in pixels, finite and non-negative
 /// and +0 when zero: a keyword table entry, the parent's fact for inheritance, one
-/// nearest/ties-even conversion of a length, `em` or percentage, saturating at
-/// `f32::MAX`, or `larger` or `smaller` through the relative mapping against the parent's
+/// nearest/ties-even conversion of a length, `em`, `ex` (EXF, the user's U5=B: against the
+/// parent's 0.5em x-height) or percentage, saturating at `f32::MAX`, or `larger` or
+/// `smaller` through the relative mapping against the parent's
 /// size (architecture 29), an interpolation of several f32 steps that is neither a table
 /// entry nor one conversion and can saturate. `event` is the range event of the
 /// computation (upper saturation, or a positive size rounded to +0); an inherited fact
@@ -147,8 +148,9 @@ pub struct FontSizeFact {
 /// nonnegative length converted once (zero is +0), `none` for a max, or the parent
 /// row's fact for `inherit`; a `min-width` or `max-width` percentage (PPM) and a
 /// `min-height` or `max-height` percentage (PHT) are kept exactly (see below), and an
-/// `em` length of a row with a computed `font_size` (EML) is converted once like an
-/// absolute one, while `ex`, and `em` on any other row, stay refused.
+/// `em` length of a row with a computed `font_size` (EML), and (EXF, the user's U5=B) an
+/// `ex` length against its 0.5em x-height, is converted once like an absolute one, while
+/// `em` and `ex` on any other row stay refused.
 ///
 /// Border facts depend on the entry. `evaluate_clearance_box_facts` (Legacy) admits
 /// only `none`/`hidden` styles and never computes a width: every Legacy width fact is
@@ -157,7 +159,8 @@ pub struct FontSizeFact {
 /// CSS2.2 style and computes each side (CSS2.2 8.5.1): +0 without conversion when the
 /// side's own style is `none` or `hidden`; otherwise `thin`/`medium`/`thick` are
 /// 1/3/5, an absolute length, or (EML) an `em` length against the row's computed
-/// `font_size`, is the nearest f32 (ties to even, saturating at `f32::MAX`), and
+/// `font_size` or (EXF, the user's U5=B) an `ex` length against its 0.5em x-height, is
+/// the nearest f32 (ties to even, saturating at `f32::MAX`), and
 /// `inherit` copies the parent's computed fact. Sequence width facts carry true
 /// provenance.
 ///
@@ -168,20 +171,24 @@ pub struct FontSizeFact {
 /// `offset` when the parent row is relatively positioned; otherwise (ISP; CSS2.2 6.2.1,
 /// 6.1.2: a computed value exists even where the property does not apply) the parent's
 /// own computed value: `auto` (initial or explicit), or its length or percentage computed
-/// against the parent's own resolver (an `em` against the parent's font size), or, when
-/// the parent's own side is `inherit`, O's computed value in the same way (O's `inherit`
-/// is the initial `auto`). It is `None` for every other row (CSS2.2 9.3.1: the offsets
-/// do not apply to a static box; absolute and fixed boxes are refused later) and for
-/// every Legacy row, whose offsets are never resolved.
+/// against the parent's own resolver (a percentage validated and kept; an `em` against the
+/// parent's font size, an `ex` (EXF, the user's U5=B) against its 0.5em x-height), or,
+/// when the parent's own side is `inherit`, O's computed offset (its fact when O is
+/// relative, otherwise computed in the same way; O's `inherit` is the initial `auto`). It
+/// is `None` for every other row (CSS2.2 9.3.1: the offsets do not apply to a static box;
+/// absolute and fixed boxes are refused later) and for every Legacy row, whose offsets are
+/// never resolved.
 ///
 /// `font_size` (EML) is the computed `font-size` (CSS2.2 15.7) of every row from
 /// `evaluate_sibling_box_facts_with_font_medium`, computed before the row's other
 /// longhands, and `None` for every other row (`evaluate_sibling_box_facts`, Legacy),
-/// whose `em` lengths stay refused. An `em` in a length longhand of a row with a computed
-/// `font_size` (a width, height, constraint, margin, padding, border width or offset) is
-/// that size times the authored number, one exact product rounded once (CSS2.2 6.1.2:
-/// `em` computes to an absolute length), so `inherit` copies the parent's absolute fact.
-/// `ex` stays refused on every row.
+/// whose `em` and `ex` lengths stay refused. An `em` in a length longhand of a row with a
+/// computed `font_size` (a width, height, constraint, margin, padding, border width or
+/// offset) is that size times the authored number, one exact product rounded once (CSS2.2
+/// 6.1.2: `em` computes to an absolute length), so `inherit` copies the parent's absolute
+/// fact. An `ex` (EXF, the user's U5=B) is the same product with the row's 0.5em x-height
+/// (CSS2.2 4.3.2: no font metrics are read here), and `ex` in `font-size` uses the
+/// parent's (the root's: `medium`'s).
 ///
 /// Percentage facts (PCT, PPM, PHT, PTB) depend on the entry. A Legacy row never holds
 /// `BoxLengthFact::Percentage`, `LengthPercentageBoxFact::Percentage` or
@@ -276,10 +283,10 @@ pub enum BoxFactUnsupported {
     GeneratedContent,
     /// REL, ISP: `inherit` on an offset of a relatively positioned row whose parent row
     /// is not relatively positioned and whose computed offset on that side is outside the
-    /// supported subset: `ex`, `em` without the font entry, an unrepresentable length, a
+    /// supported subset: `em` or `ex` without the font entry, an unrepresentable length, a
     /// percentage outside the bounded representation, or a defaulting or initial-recipe
-    /// failure, also through a static P from O. CSS2.2 6.2.1 defines the value; this is a
-    /// supported-subset refusal.
+    /// failure (reachable only through a property-table invariant), also through a static P
+    /// from O. CSS2.2 6.2.1 defines the value; this is a supported-subset refusal.
     InheritedOffset,
     /// PCT: an admitted percentage whose canonical coefficient exceeds `u64::MAX` or
     /// whose scale exceeds `u32::MAX` (the bounded `Copy` representation).
@@ -610,9 +617,10 @@ pub(super) fn evaluate_box_rows<'h>(
     let source = snapshot
         .selector_source(limits.selectors)
         .map_err(E::Source)?;
-    // ISP (CSS2.2 6.2.1): the offsets of a static O or P (projected 0 and 1, the only rows
-    // with children in the sibling projection) for a relative child's `inherit`; Sequence
-    // only, never published or converted here.
+    // ISP (CSS2.2 6.2.1): the offsets of an O or P that is not relatively positioned
+    // (static, or absolute or fixed and refused later by the facade; projected 0 and 1, the
+    // only rows with children in the sibling projection) for a relative child's `inherit`;
+    // Sequence only, never published or converted here.
     let mut statics: [Option<resolve::StaticOffsets<'_>>; 2] = [None; 2];
     for projected in 0..count {
         let original = projection
@@ -646,7 +654,8 @@ pub(super) fn evaluate_box_rows<'h>(
             error,
         })?;
         // EML (CSS2.2 15.7, 6.1.2): the font entry computes the row's `font-size` first;
-        // its other longhands and its offsets resolve an `em` against it.
+        // its other longhands and its offsets resolve an `em` against it and (EXF, the
+        // user's U5=B) an `ex` against its 0.5em x-height.
         let font_size = match font {
             Some(font) => Some(resolve::font_size(
                 &winners,
