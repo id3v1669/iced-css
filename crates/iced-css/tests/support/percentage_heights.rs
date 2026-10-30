@@ -789,12 +789,13 @@ fn pht_result(fragment: &str) -> String {
 }
 
 /// H19: a zero basis: P's `height:0px` makes B1's `height:50%` 0, the same result as the
-/// `#b1 { height:0px; }` twin (compared by `Debug` text, layout or error).
+/// `#b1 { height:0px; }` twin (compared by `Debug` text, layout or error); both carry a
+/// top padding since CTB, which lets only the literal zero collapse through.
 #[test]
 fn pht_h19_zero_basis() {
     assert_eq!(
-        pht_result("#p { height:0px; } #b1 { height:50%; }"),
-        pht_result("#p { height:0px; } #b1 { height:0px; }")
+        pht_result("#p { height:0px; } #b1 { height:50%; padding-top:1px; }"),
+        pht_result("#p { height:0px; } #b1 { height:0px; padding-top:1px; }")
     );
 }
 
@@ -870,14 +871,14 @@ const PHT_WORK_FRAGMENT: &str = "#p { min-height:0%; max-height:100%; } \
                                  #b1, #f, #b2, #b3, #b4 { min-height:0%; max-height:100%; }";
 
 /// Facade and core work (M24 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `670 + 32N + 526(N-2) +
-/// 371(N-3)`; the layout equals the baseline's.
+/// percentages on every source; the facade charge is `695 + 32N + 534(N-2) +
+/// 373(N-3)`; the layout equals the baseline's.
 #[test]
 fn pht_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
+    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
         assert_eq!(
             facade,
-            670 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3)
+            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
         );
         let css = pct_css(
             nodes,

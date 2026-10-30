@@ -405,7 +405,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `670 + 32*N + 526*(N-2) + 371*(N-3)` is prepaid before any
+/// Facade work `695 + 32*N + 534*(N-2) + 373*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -483,6 +483,12 @@ impl std::error::Error for SiblingLayoutError {
 /// 1, the viewport presence test 2, the validity decision 7, O's limit name selection 3,
 /// the outer-limits decision 5 and O's limits against the basis 27 (the PHT unit: three
 /// longhands of 8, the basis read 1 and the basis-presence test 2).
+/// A collapse-through B1 (CTB, the user's U1=A; CT-15) adds conservative policy charges:
+/// 25 fixed, 8 per child and 2 per normal, prepaid on every path without credit.
+/// Fixed: adjoining property checks 15, explicit check 8 and refusal 2. Per child:
+/// adjoining role/connective/write 4 and explicit used-write/role/connective 4.
+/// Per normal: the Auto guard 2. The existing category/constrain and DAZ helper
+/// charges are retained once. These policy charges are not measured instruction counts.
 /// As in the PHT, PTB, PTA and OCH units, a call of a private facade helper is not charged.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
@@ -574,8 +580,14 @@ impl std::error::Error for SiblingLayoutError {
 /// margins are not adjoining (8.3.1). Any other Auto normal stays refused (`HeightKind`).
 /// An explicit used height of +0 (G6a) is admitted by the core for a normal whose own top
 /// and bottom margins are not adjoining (CSS2.2 8.3.1: `hidden` or `auto`, or a positive
-/// top or bottom border or padding); any other zero-height normal is
-/// `NonpositiveBlockHeight`.
+/// top or bottom border or padding). An ordinary B1 whose computed `height` is zero or
+/// `auto` and whose computed `min-height` is zero, neither a percentage nor a length
+/// rounded to +0, and without a top or bottom border or padding, collapses through (CTB,
+/// the user's U1=A; CSS2.2 8.3.1, 9.5.1): F's hypothetical top is B1's top border edge
+/// and the first tail's top margin collapses with both of B1's margins, unless a normal's
+/// used vertical margin is negative (`NonpositiveBlockHeight`); a B1 used as +0 whose
+/// computed `height` or `min-height` is not such a zero is `HeightKind` unless its margins
+/// are separated; any other zero-height normal is `NonpositiveBlockHeight`.
 /// P's Auto height is the tentative placement of either route, then
 /// `constrain_bfc_height`: a limit that applies reruns the explicit route on P's content
 /// top. Containment, offsets and P's bottom read the constrained boxes, so a constraint
@@ -625,11 +637,10 @@ impl std::error::Error for SiblingLayoutError {
 /// (VPH, the user's U2=A) their resolution against the initial containing block's height
 /// and its failure, sits there, and P's offset resolution (OAH; since MFZ a negative
 /// tentative height takes O's `min-height`) follows P's bottom. A child's `top` and
-/// `bottom` percentages resolve,
-/// under an explicit P, after its height facts and category and before the held P check,
-/// and again in the vertical pass after P's bottom (PTA); under an Auto P they resolve
-/// only in that pass, after P's bottom and before the `auto` containment test, where a
-/// failure is `Percentage`.
+/// `bottom` percentages resolve, under an explicit P, after its height facts and category
+/// and before the held P check, and again in the vertical pass after P's bottom (PTA);
+/// under an Auto P they resolve only in that pass, after P's bottom and before the `auto`
+/// containment test, where a failure is `Percentage`.
 /// Temporary child facts are released before the source-only output is published.
 ///
 /// # Errors
@@ -665,7 +676,9 @@ pub fn build_captured_sibling_layout<'p, 'h, 'd, 's, 'b, 'r>(
 /// whose resolved value exceeds the finite f32 range is `Percentage { source: 1,
 /// property, error: Unrepresentable }`, at the same position; the old entry cannot
 /// produce these at that position (under an `auto` O both entries give P's `top` or
-/// `bottom` `Percentage` after P's bottom, OAH).
+/// `bottom` `Percentage` after P's bottom, OAH). A digit or budget failure of that
+/// resolution under the supplied `NumericLimits` is the same `Percentage` with that
+/// error, at the same position.
 pub fn build_captured_sibling_layout_with_outer_height<'p, 'h, 'd, 's, 'b, 'r>(
     facts: &SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
     outer: ClearanceOuterContentGeometry<'p>,
@@ -704,7 +717,8 @@ pub fn build_captured_sibling_layout_with_outer_height<'p, 'h, 'd, 's, 'b, 'r>(
 /// range is `Percentage { source: 0, property, error: Unrepresentable }`, `min-height`
 /// first; both at the position of the `IndefiniteOffsetBasis` refusal, which `None`
 /// keeps: after P's `overflow` test and before every child error and P's held horizontal
-/// error.
+/// error. A digit or budget failure of that resolution under the supplied
+/// `NumericLimits` is the same `Percentage` with that error, at the same position.
 pub fn build_captured_sibling_layout_with_viewport_height<'p, 'h, 'd, 's, 'b, 'r>(
     facts: &SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
     outer: ClearanceOuterContentGeometry<'p>,
@@ -935,18 +949,49 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // `HeightKind`. PHT (10.5, 10.7): the three height facts are first resolved against
         // P's explicit used content height or take the indefinite rules, after the
         // admission tests above and before the held P check below (the basis does not
-        // depend on P's horizontal solve). An explicit +0 goes to the core (G6a).
+        // depend on P's horizontal solve). An explicit +0 goes to the core (G6a). CTB (the
+        // user's U1=A): an ordinary undecorated B1 whose own margins adjoin goes as +0 and
+        // may collapse through; a B1 used as +0 whose own margins do not adjoin by its
+        // computed values and are not separated is `HeightKind`.
         let vertical = resolve_heights(row, child_basis, numeric, source)?;
         let auto_height = constrain(0.0, vertical.min, vertical.max);
+        // CTB (CSS2.2 8.3.1, 10.5, 10.7): B1's own margins may adjoin only with a computed
+        // `height` of zero or `auto` and a computed `min-height` of zero; a percentage is
+        // neither, nor is a length rounded to +0 (CT-2).
+        let adjoining = source == 2
+            && matches!(row.min_height, LengthPercentageBoxFact::Absolute(min)
+                if min.pixels == 0.0 && !min.rounded_to_zero)
+            && match row.height {
+                BoxLengthFact::Absolute(height) => height.pixels == 0.0 && !height.rounded_to_zero,
+                BoxLengthFact::Auto { .. } => true,
+                BoxLengthFact::Percentage(_) => false,
+            };
         let height = match vertical.height {
             BoxLengthFact::Absolute(value) => {
-                OwnerHeight::Explicit(constrain(value.pixels, vertical.min, vertical.max))
+                let used = constrain(value.pixels, vertical.min, vertical.max);
+                // CTB (ZH-4 scope, Q-4): a zero B1 whose own margins do not adjoin keeps a
+                // refusal unless they are separated.
+                if source == 2
+                    && used == 0.0
+                    && !adjoining
+                    && !separated_auto(row, parent_solved, numeric)
+                {
+                    return Err(E::Captured(unsupported(
+                        source,
+                        "height",
+                        CapturedClearanceUnsupported::HeightKind,
+                    )));
+                }
+                OwnerHeight::Explicit(used)
             }
             BoxLengthFact::Auto { .. } if source == 3 && auto_height == 0.0 => OwnerHeight::Auto,
             BoxLengthFact::Auto { .. } if auto_height > 0.0 => OwnerHeight::Explicit(auto_height),
             BoxLengthFact::Auto { .. } if separated_auto(row, parent_solved, numeric) => {
                 OwnerHeight::Explicit(auto_height)
             }
+            // CTB (10.6.3 "zero, otherwise"): the core decides between separated,
+            // collapse-through and `NonpositiveBlockHeight`.
+            BoxLengthFact::Auto { .. } if adjoining => OwnerHeight::Explicit(auto_height),
             BoxLengthFact::Auto { .. } => {
                 return Err(E::Captured(unsupported(
                     source,
@@ -1771,7 +1816,8 @@ fn resolve_heights(
 /// content width as in `resolved_row` (CSS2.2 8.4); without P's solve (held, PCT Q-6),
 /// when it does not resolve, or when it rounds to +0, it does not separate by itself
 /// (the core's `vertical_decoration` tests the same edges with `> 0.`); when it is the
-/// only separation of an ordinary normal, the caller's `HeightKind` stands.
+/// only separation of an ordinary normal, the caller's `HeightKind` stands. CTB also asks
+/// it for an explicit B1 used as +0 whose own margins do not adjoin.
 fn separated_auto(
     row: &ClearanceBoxFact,
     parent: Option<&ParentSolve>,
@@ -2299,7 +2345,16 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // unit: three longhands of 8, the basis read 1 and the basis-presence test 2). The
         // OAH pass decision 4 and O's two limit reads 4 stay charged above, kept without
         // credit (the pass now tests the carried limits).
-        .checked_add(45)
+        .checked_add(45)?
+        // CTB (the user's U1=A; CT-15): conservative prepaid policy charges, no credit.
+        // Fixed 25: adjoining property checks 15, explicit check 8, refusal 2.
+        // Per child 8: adjoining role/connective/write 4 and explicit
+        // used-write/role/connective 4. Per normal 2: the Auto guard.
+        // Property checks include category, zero and rounding tests and connectives.
+        // Existing category/constrain and DAZ helper charges remain prepaid once.
+        .checked_add(25)?
+        .checked_add(nodes.checked_sub(2)?.checked_mul(8)?)?
+        .checked_add(nodes.checked_sub(3)?.checked_mul(2)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -2403,9 +2458,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(3150));
-        assert_eq!(facade_work(6), Some(4079));
-        assert_eq!(facade_work(7), Some(5008));
+        assert_eq!(facade_work(5), Some(3203));
+        assert_eq!(facade_work(6), Some(4142));
+        assert_eq!(facade_work(7), Some(5081));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.

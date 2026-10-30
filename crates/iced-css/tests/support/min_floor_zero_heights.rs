@@ -326,10 +326,11 @@ fn mfz_z14_the_float_width_refusal_follows() {
 }
 
 /// Z15 (work): with every normal an Auto-height new-BFC box the facade work stays
-/// `670 + 32N + 526(N-2) + 371(N-3)`, exact and one short, and the core work too.
+/// `695 + 32N + 534(N-2) + 373(N-3)`, exact and one short, and the core work too.
+/// (The formula also carries VPH's 45 and CTB's 25 + 8(N-2) + 2(N-3).)
 #[test]
 fn mfz_z15_the_work_is_unchanged() {
-    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
+    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
         let css = pct_css(
             nodes,
             "#b1, #b2, #b3, #b4 { overflow:hidden; height:auto; } #b2, #b3 { clear:none; }",

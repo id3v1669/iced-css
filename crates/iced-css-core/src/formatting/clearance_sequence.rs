@@ -8,9 +8,10 @@
 use super::{
     clearance_owner::{
         BlockVertical, ChildContext, ChildFacts, ClearanceOwnerError, FirstFloatInput, KernelError,
-        MarginGroup, NormalKernel, OuterFacts, ParentFacts, place_first_float, place_next_normal,
-        validate_outer, validate_sequence_child, validate_sequence_float_extents,
-        validate_sequence_float_width, validate_sequence_parent, vertical_decoration,
+        MarginGroup, NormalKernel, OuterFacts, ParentFacts, PreviousNormal, place_first_float,
+        place_next_normal, validate_outer, validate_sequence_child,
+        validate_sequence_float_extents, validate_sequence_float_width, validate_sequence_parent,
+        vertical_decoration,
     },
     floats::{Band, PlacedFloat},
 };
@@ -239,13 +240,20 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// positive-zero used content height; a normal keeps a positive explicit height, or +0
 /// when its own top and bottom margins are not adjoining (G6a, CSS2.2 8.3.1), and Legacy
 /// admission is unchanged.
+/// CTB (the user's U1=A; CSS2.2 8.3.1, 9.5.1): an ordinary B1 with used height +0 or -0
+/// and no top or bottom border or padding collapses through when no normal (B1 or a tail)
+/// has a negative or NaN used vertical margin (F's margins do not count); otherwise it
+/// stays `NonpositiveBlockHeight`, a scope choice of this slice. F's hypothetical top is
+/// then B1's top border edge, P's content top plus B1's top margin (8.3.1), and the first
+/// tail's top margin collapses with both of B1's margins from P's content top (a
+/// three-member group); clearance separates it from B1's collapsed pair (9.5.2).
 /// The facade passes used heights after `min-height`/`max-height` (MMX, CSS2.2 10.7):
 /// an F whose constrained Auto height is positive, and a normal whose computed Auto or
 /// zero height is raised by a positive `min-height`, arrive as explicit heights.
 /// P and every child may be relatively positioned (REL, CSS2.2 9.4.3); the owner
 /// publishes their normal-flow geometry, which the offsets do not change, and the
 /// outer source stays static.
-/// Work `702 + 12*N + N*(N-1)/2 + 54*(N-4) + 61*(N-2) + 182*(N-3)` is prepaid,
+/// Work `751 + 12*N + N*(N-1)/2 + 71*(N-4) + 64*(N-2) + 200*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages, every child's border terms and padding publications, and
@@ -342,10 +350,20 @@ fn build_with_reserve<'s>(
 
     validate_outer(input.outer, 0).map_err(profile)?;
     validate_sequence_parent(input.parent, 1).map_err(profile)?;
+    // CTB (the user's U1=A; CSS2.2 8.3.1): B1 may collapse through only when no normal (B1
+    // or a tail) has a negative used vertical margin. Refusing one is a scope choice of
+    // this slice (the mixed-sign group and the signed P route come later), not a CSS2.2
+    // requirement. F's margins do not count; a NaN margin keeps the refusal.
+    let unsigned_normals = input.children[..1]
+        .iter()
+        .chain(&input.children[2..])
+        .all(|facts| facts.margin.used_top() >= 0. && facts.margin.used_bottom() >= 0.);
     let mut checked_float_height = None;
     for (offset, facts) in input.children.iter().copied().enumerate() {
         let source = offset + 2;
-        let height = validate_sequence_child(facts, source, source == 3).map_err(profile)?;
+        let height =
+            validate_sequence_child(facts, source, source == 3, source == 2 && unsigned_normals)
+                .map_err(profile)?;
         if source == 3 {
             checked_float_height = Some(height);
         }
@@ -371,6 +389,10 @@ fn build_with_reserve<'s>(
     }
 
     let before_height = explicit_height(input.children[0]);
+    // CTB: an ordinary B1 with a zero-height border box was admitted only by its
+    // collapse-through flag (K1), so it collapses through.
+    let collapses = input.children[0].context == ChildContext::OrdinaryNonBfc
+        && zero_border_box(input.children[0]);
     let first = place_first_float(FirstFloatInput {
         parent: input.parent,
         before: input.children[0],
@@ -380,6 +402,7 @@ fn build_with_reserve<'s>(
         float_height,
         float_width: input.float_width,
         float_source: 3,
+        before_collapses_through: collapses,
     })
     .map_err(placement)?;
     // CSS2.2 §9.5, Q1: reject intersection of nonempty published intervals.
@@ -396,15 +419,22 @@ fn build_with_reserve<'s>(
             error: ClearanceOwnerError::NewBfcFloatContact,
         });
     }
-    let mut previous_bottom = first.before.bottom;
-    let mut previous_margin = input.children[0].margin.used_bottom();
-    let mut previous_source = 2;
+    // CTB: the first tail follows B1, or a collapse-through B1's two margins from P's
+    // content top.
+    let mut previous = PreviousNormal {
+        edge: if collapses {
+            input.parent.content_top
+        } else {
+            first.before.bottom
+        },
+        source: 2,
+        top_margin: collapses.then(|| input.children[0].margin.used_top()),
+        bottom_margin: input.children[0].margin.used_bottom(),
+    };
     for (offset, facts) in input.children[2..].iter().copied().enumerate() {
         let source = offset + 4;
         let next = place_next_normal(
-            previous_bottom,
-            previous_margin,
-            previous_source,
+            previous,
             facts,
             explicit_height(facts),
             source,
@@ -421,9 +451,12 @@ fn build_with_reserve<'s>(
                 error: ClearanceOwnerError::NewBfcFloatContact,
             });
         }
-        previous_bottom = next.vertical.bottom;
-        previous_margin = facts.margin.used_bottom();
-        previous_source = source;
+        previous = PreviousNormal {
+            edge: next.vertical.bottom,
+            source,
+            top_margin: None,
+            bottom_margin: facts.margin.used_bottom(),
+        };
         tail.push(record(source, next));
     }
     Ok(ClearanceSequenceOwner {
@@ -572,7 +605,19 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         .checked_add(nodes.checked_sub(3)?.checked_mul(62)?)?
         // REL: 4 per P and child, charged on every path: the policy flag test 2 and the
         // relative position comparison 2 of the widened display test.
-        .checked_add(nodes.checked_sub(1)?.checked_mul(4)?)
+        .checked_add(nodes.checked_sub(1)?.checked_mul(4)?)?
+        // CTB (the user's U1=A; CT-15): conservative prepaid policy charges, no credit.
+        // Fixed 49: scan setup 3, collapse decision 26, float top selection 3,
+        // initial previous-normal record 5, leading member 4, barrier extra member 4,
+        // and initial top-margin used getter 4. Per child 3: role test and flag argument.
+        // Per normal 18: sign scan 14 and admission clause 4. Per tail 17: leading
+        // match 2, collapsed read 2, top-margin reset 1, three widened-group units of 4.
+        // Each group unit prepays extraction, padding and extra extrema handling,
+        // including unused slots and absent clearance; these are not measured counts.
+        .checked_add(49)?
+        .checked_add(nodes.checked_sub(2)?.checked_mul(3)?)?
+        .checked_add(nodes.checked_sub(3)?.checked_mul(18)?)?
+        .checked_add(tail.checked_mul(17)?)
 }
 
 fn retained_bytes(capacity: usize) -> Option<usize> {
@@ -618,7 +663,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(1373).unwrap(),
+            work: NonZeroUsize::new(1484).unwrap(),
             retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
         };
         (sources, limits)
@@ -1042,7 +1087,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [1372, 480, 419, 337, 269, 213] {
+        for short in [1483, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -1058,7 +1103,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(1373).unwrap();
+        limits.work = NonZeroUsize::new(1484).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -1078,7 +1123,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 1373);
+        assert_eq!(owner.receipt().work, 1484);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -1106,9 +1151,9 @@ mod tests {
         assert_eq!(retained_bytes(largest), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1), None);
         assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(1373));
-        assert_eq!(sequence_work(6, 2), Some(1687));
-        assert_eq!(sequence_work(7, 3), Some(2002));
+        assert_eq!(sequence_work(5, 1), Some(1484));
+        assert_eq!(sequence_work(6, 2), Some(1836));
+        assert_eq!(sequence_work(7, 3), Some(2189));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
@@ -1130,7 +1175,7 @@ mod tests {
                     size_of::<SequenceNormalPlacement>(),
                     std::mem::align_of::<SequenceNormalPlacement>()
                 ),
-                (232, 8)
+                (280, 8)
             );
             assert_eq!(
                 (
@@ -1288,7 +1333,7 @@ mod tests {
         let (_, _, mut children) = input(&sources);
         children[1].height = OwnerHeight::Auto;
         assert_eq!(
-            validate_sequence_child(children[1], 3, true)
+            validate_sequence_child(children[1], 3, true, false)
                 .unwrap()
                 .to_bits(),
             0
@@ -1296,7 +1341,7 @@ mod tests {
         for value in [-0.0_f32, 0.0, 2.0, f32::MAX] {
             children[1].height = OwnerHeight::Explicit(value);
             assert_eq!(
-                validate_sequence_child(children[1], 3, true)
+                validate_sequence_child(children[1], 3, true, false)
                     .unwrap()
                     .to_bits(),
                 value.to_bits()
@@ -1305,7 +1350,7 @@ mod tests {
         children[1].height = OwnerHeight::Auto;
         children[1].content = OwnerContent::TextOrRichText;
         assert!(matches!(
-            validate_sequence_child(children[1], 3, true),
+            validate_sequence_child(children[1], 3, true, false),
             Err(ClearanceOwnerError::Unsupported {
                 source: 3,
                 reason: OwnerProfileReason::Content

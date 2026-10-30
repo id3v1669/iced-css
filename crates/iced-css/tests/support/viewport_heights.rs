@@ -580,17 +580,17 @@ fn vph_receipt(layout: &CapturedSiblingLayout<'_>) -> (usize, usize) {
     (layout.receipt().work, layout.receipt().core.work)
 }
 
-/// VW (probe VP6 witness): the facade work is `670 + 32N + 526(N-2) + 371(N-3)` (VPH: 45
-/// fixed on every path): 3150, 4079 and 5008 at N5, N6 and N7 lay out at the exact limit
+/// VW (probe VP6 witness): the facade work is `695 + 32N + 534(N-2) + 373(N-3)` (VPH: 45
+/// fixed on every path): 3203, 4142 and 5081 at N5, N6 and N7 lay out at the exact limit
 /// and one short is `Work`, both through the new entry with the viewport height 40 on V1's
 /// fragment (the read path) and through the old entry on the baseline; the core work is
-/// 1373, 1687 and 2002.
+/// 1484, 1836 and 2189.
 #[test]
 fn vph_vw_facade_work_charges_45_fixed() {
-    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
+    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
         assert_eq!(
             facade,
-            670 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3),
+            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
             "N{nodes}"
         );
         let limits = |work: usize| {
@@ -621,3 +621,9 @@ fn vph_vw_facade_work_charges_45_fixed() {
         }
     }
 }
+
+// CTB: the user's U1=A (its first slice, a collapse-through B1) reuses the `vph`, `zhn`,
+// `daz` and `pct` helpers as a child module of this one (CTB design section 6); VPH-L6's
+// rows L1-L3 come first.
+#[path = "collapse_through_b1.rs"]
+mod collapse_through_b1;

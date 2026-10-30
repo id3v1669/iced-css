@@ -8,7 +8,9 @@
 //! Sequence owner does not, because a new BFC root never collapses margins with its
 //! in-flow children (CSS2.2 8.3.1). Ordinary positive-height B1/B2 cannot collapse
 //! through; nor can a Sequence normal whose own top and bottom margins are not adjoining
-//! (G6a), which may have zero height. The Sequence owner also admits a relatively
+//! (G6a), which may have zero height. CTB (the user's U1=A): a zero-height Sequence B1
+//! whose own margins adjoin collapses through when no normal's used vertical margin is
+//! negative. The Sequence owner also admits a relatively
 //! positioned P or child (REL, CSS2.2 9.4.3) and computes its normal-flow geometry, which
 //! the offsets do not
 //! change; the outer source and every Legacy source stay static. This is not full
@@ -62,7 +64,10 @@ pub enum OwnerHeight {
     /// by a positive `min-height` (10.6.3 gives the tentative zero; such a box cannot
     /// collapse through, 8.3.1). (G6a) A Sequence normal may also assert +0 when its own
     /// top and bottom margins are not adjoining (8.3.1): it establishes a new block
-    /// formatting context or has a nonzero top or bottom border or padding. A Sequence
+    /// formatting context or has a nonzero top or bottom border or padding. (CTB, the
+    /// user's U1=A) An ordinary undecorated Sequence B1 that asserts +0 or -0 asserts that
+    /// its own margins adjoin: its computed `height` is zero or `auto` and its computed
+    /// `min-height` is zero, neither a percentage nor a length rounded to zero. A Sequence
     /// percentage `height` resolved by the caller against its containing block's explicit
     /// used content height (PHT, CSS2.2 10.5) is
     /// such a used length; callers must not relabel native-derived height. SourceNode
@@ -203,7 +208,8 @@ pub enum OwnerProfileReason {
     ParentIsolation,
     HeightKind,
     /// A normal's used height is negative, or +0 while its own top and bottom margins may
-    /// adjoin (Sequence, G6a) or always (Legacy).
+    /// adjoin (Sequence, G6a) and it is a tail or a normal's used vertical margin is
+    /// negative or NaN (CTB: otherwise such a B1 collapses through), or always (Legacy).
     NonpositiveBlockHeight,
     NegativeMargin,
     AutoVerticalMargin,
@@ -302,6 +308,9 @@ pub struct MarginMember {
     pub side: MarginSide,
     pub value: f32,
 }
+/// A group's role. `HypotheticalPair` and `ActualPair` name the adjoining margins of a tail
+/// and the normal before it: two margins, or three after a B1 that collapses through (CTB,
+/// the user's U1=A); the barrier groups hold the margins on either side of clearance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarginGroupId {
     HypotheticalPair,
@@ -309,11 +318,15 @@ pub enum MarginGroupId {
     BeforeBarrier,
     AfterBarrier,
 }
-/// Immutable owner-local membership. Indices resolve through the owning source slice.
+/// Immutable owner-local membership. Indices resolve through the owning source slice. A
+/// group has at most three members: after a B1 that collapses through (CTB, the user's
+/// U1=A; CSS2.2 8.3.1), the first tail's hypothetical and actual groups list B1's top and
+/// bottom margins and the tail's top margin, and its `BeforeBarrier` B1's two margins.
+/// Unused slots repeat the last member.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarginGroup {
     id: MarginGroupId,
-    members: [MarginMember; 2],
+    members: [MarginMember; 3],
     len: usize,
     extrema: MarginExtrema,
 }
@@ -321,6 +334,7 @@ impl MarginGroup {
     pub fn id(&self) -> MarginGroupId {
         self.id
     }
+    /// The members in source order: two, one, or (CTB) three.
     pub fn members(&self) -> &[MarginMember] {
         &self.members[..self.len]
     }
@@ -518,11 +532,14 @@ fn own_margins_separated(f: ChildFacts<'_>, policy: ChildMarginPolicy) -> bool {
         && (f.context == ChildContext::OtherNewBfc || vertical_decoration(f))
 }
 
+/// `collapse_through` (CTB, the user's U1=A): a zero-height Sequence B1 whose own margins
+/// may adjoin is admitted, and its margins collapse through (CSS2.2 8.3.1).
 fn child(
     f: ChildFacts<'_>,
     source: usize,
     floating: bool,
     margin_policy: ChildMarginPolicy,
+    collapse_through: bool,
 ) -> Result<f32, ClearanceOwnerError> {
     display(
         f.display,
@@ -555,7 +572,9 @@ fn child(
     finite(height, source, "height")?;
     if floating {
         nonnegative(height, source, "height")?;
-    } else if height < 0. || (height == 0. && !own_margins_separated(f, margin_policy)) {
+    } else if height < 0.
+        || (height == 0. && !own_margins_separated(f, margin_policy) && !collapse_through)
+    {
         return Err(unsupported(
             source,
             OwnerProfileReason::NonpositiveBlockHeight,
@@ -629,13 +648,13 @@ fn sum(terms: &[f32], stage: &'static str) -> Result<f32, ClearanceOwnerError> {
 }
 fn group(
     id: MarginGroupId,
-    members: [MarginMember; 2],
+    members: [MarginMember; 3],
     len: usize,
 ) -> Result<MarginGroup, ClearanceOwnerError> {
     let mut extrema = MarginExtrema::default();
-    let values = [members[0].value, members[1].value];
+    let values = [members[0].value, members[1].value, members[2].value];
     extrema
-        .extend(&values[..len], NonZeroUsize::MIN.saturating_add(1))
+        .extend(&values[..len], NonZeroUsize::MIN.saturating_add(2))
         .map_err(ClearanceOwnerError::Margin)?;
     Ok(MarginGroup {
         id,
@@ -682,7 +701,7 @@ pub(super) fn validate_child(
     floating: bool,
     after: bool,
 ) -> Result<f32, ClearanceOwnerError> {
-    let height = child(facts, source, floating, ChildMarginPolicy::Legacy)?;
+    let height = child(facts, source, floating, ChildMarginPolicy::Legacy, false)?;
     // Legacy owners keep the four-source restriction on B1 and the float.
     if !after && facts.clear != ClearSide::None {
         return Err(unsupported(
@@ -693,12 +712,20 @@ pub(super) fn validate_child(
     Ok(height)
 }
 
+/// `collapse_through`: as for `child` (CTB: B1 when no normal margin is negative).
 pub(super) fn validate_sequence_child(
     facts: ChildFacts<'_>,
     source: usize,
     floating: bool,
+    collapse_through: bool,
 ) -> Result<f32, ClearanceOwnerError> {
-    child(facts, source, floating, ChildMarginPolicy::Sequence)
+    child(
+        facts,
+        source,
+        floating,
+        ChildMarginPolicy::Sequence,
+        collapse_through,
+    )
 }
 
 pub(super) fn validate_float_width(
@@ -799,6 +826,9 @@ pub(super) struct FirstFloatInput<'s> {
     pub float_height: f32,
     pub float_width: f32,
     pub float_source: usize,
+    /// CTB (the user's U1=A): B1 collapses through, so F's hypothetical top is B1's top
+    /// border edge (CSS2.2 8.3.1, 9.5.1).
+    pub before_collapses_through: bool,
 }
 
 pub(super) struct NormalKernel {
@@ -812,6 +842,18 @@ pub(super) struct NormalKernel {
     pub hypothetical_group: MarginGroup,
     pub actual_groups: [MarginGroup; 2],
     pub actual_len: usize,
+}
+
+/// The in-flow normal before a placed tail: its border bottom `edge` and its bottom
+/// margin, or (CTB, the user's U1=A) for a B1 that collapses through, P's content top as
+/// `edge` (B1's top margin edge) and both of B1's margins, which adjoin the tail's top
+/// margin (CSS2.2 8.3.1) unless clearance separates them (9.5.2).
+#[derive(Clone, Copy)]
+pub(super) struct PreviousNormal {
+    pub edge: f32,
+    pub source: usize,
+    pub top_margin: Option<f32>,
+    pub bottom_margin: f32,
 }
 
 // Border top is already published by origin/clearance. Preserve the undecorated
@@ -898,14 +940,21 @@ pub(super) fn place_first_float(
         source: input.before_source,
         error,
     })?;
-    let float_top = sum(
-        &[before_bottom, input.before.margin.used_bottom()],
-        "float_top",
-    )
-    .map_err(|error| KernelError {
-        source: input.float_source,
-        error,
-    })?;
+    // CTB (the user's U1=A; CSS2.2 9.5.1 rule 4, 8.3.1): after a B1 that collapses
+    // through, F's hypothetical top is B1's top border edge, placed as with a nonzero
+    // bottom border; the placer's containing-top clamp still applies.
+    let float_top = if input.before_collapses_through {
+        before_top
+    } else {
+        sum(
+            &[before_bottom, input.before.margin.used_bottom()],
+            "float_top",
+        )
+        .map_err(|error| KernelError {
+            source: input.float_source,
+            error,
+        })?
+    };
     let ml = input.float.margin.float_used_left();
     let mr = input.float.margin.float_used_right();
     let padding = input.float.padding;
@@ -1155,33 +1204,40 @@ pub(super) fn place_first_float(
 }
 
 pub(super) fn place_next_normal(
-    previous_border_bottom: f32,
-    previous_bottom_margin: f32,
-    previous_source: usize,
+    previous: PreviousNormal,
     next: ChildFacts<'_>,
     next_height: f32,
     next_source: usize,
     placed_float: PlacedFloat,
 ) -> Result<NormalKernel, KernelError> {
     let result = (|| {
-        let members = [
-            MarginMember {
-                source_index: previous_source,
-                side: MarginSide::Bottom,
-                value: previous_bottom_margin,
-            },
-            MarginMember {
-                source_index: next_source,
-                side: MarginSide::Top,
-                value: next.margin.used_top(),
-            },
-        ];
-        let hypothetical_group = group(MarginGroupId::HypotheticalPair, members, 2)?;
+        let bottom = MarginMember {
+            source_index: previous.source,
+            side: MarginSide::Bottom,
+            value: previous.bottom_margin,
+        };
+        let top = MarginMember {
+            source_index: next_source,
+            side: MarginSide::Top,
+            value: next.margin.used_top(),
+        };
+        // CTB (the user's U1=A; CSS2.2 8.3.1): after a B1 that collapses through, its top
+        // and bottom margins adjoin the tail's top margin, from P's content top; the
+        // margins before a barrier are B1's pair. Unused slots repeat the last member.
+        let (members, len, before, before_len) = match previous.top_margin {
+            Some(value) => {
+                let leading = MarginMember {
+                    source_index: previous.source,
+                    side: MarginSide::Top,
+                    value,
+                };
+                ([leading, bottom, top], 3, [leading, bottom, bottom], 2)
+            }
+            None => ([bottom, top, top], 2, [bottom, bottom, bottom], 1),
+        };
+        let hypothetical_group = group(MarginGroupId::HypotheticalPair, members, len)?;
         let hypothetical_top = sum(
-            &[
-                previous_border_bottom,
-                hypothetical_group.extrema.collapsed(),
-            ],
+            &[previous.edge, hypothetical_group.extrema.collapsed()],
             "hypothetical_top",
         )?;
         let selected =
@@ -1203,8 +1259,11 @@ pub(super) fn place_next_normal(
                 (None, ClearanceState::Absent, [pair, pair], 1)
             }
             ClearanceRequirement::Required => {
+                // 9.5.2: clearance separates the tail's top margin from the margins before
+                // it, which still collapse with each other (CTB: B1's pair).
+                let before = group(MarginGroupId::BeforeBarrier, before, before_len)?;
                 let baseline = sum(
-                    &[previous_border_bottom, members[0].value, members[1].value],
+                    &[previous.edge, before.extrema.collapsed(), top.value],
                     "zero_clearance_top",
                 )?;
                 let bottom = selected.ok_or(ClearanceOwnerError::MissingRequiredFloat)?;
@@ -1215,8 +1274,8 @@ pub(super) fn place_next_normal(
                         lowest_float_bottom: bottom,
                     },
                     [
-                        group(MarginGroupId::BeforeBarrier, [members[0], members[0]], 1)?,
-                        group(MarginGroupId::AfterBarrier, [members[1], members[1]], 1)?,
+                        before,
+                        group(MarginGroupId::AfterBarrier, [top, top, top], 1)?,
                     ],
                     2,
                 )
@@ -1410,15 +1469,19 @@ fn solve_region<'s>(
         float_height,
         float_width: input.float_width,
         float_source: indices.float,
+        before_collapses_through: false,
     })
     .map_err(|failure| failure.error)?;
     // Legacy float margins are validated all zero, so only the identity path is
     // reachable on both axes here, and `first.float_content` and
     // `first.float_content_vertical` equal the placed margin box.
     let after = place_next_normal(
-        first.before.bottom,
-        input.before.margin.used_bottom(),
-        indices.before,
+        PreviousNormal {
+            edge: first.before.bottom,
+            source: indices.before,
+            top_margin: None,
+            bottom_margin: input.before.margin.used_bottom(),
+        },
         input.after,
         after_height,
         indices.after,

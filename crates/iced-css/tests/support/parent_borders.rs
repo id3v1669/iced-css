@@ -1036,12 +1036,12 @@ fn pbr_x03_parent_overflow_with_an_admitted_child_border() {
 }
 
 /// X4: an earlier child's `NonpositiveBlockHeight` is reported beside a later child's
-/// admitted border.
+/// admitted border (B1's negative top margin keeps it, CTB).
 #[test]
 fn pbr_x04_earlier_height_with_a_later_child_border() {
     for fragment in [
-        "#b2 { border-left:1px solid; } #b1 { height:0; }",
-        "#b1 { height:0; }",
+        "#b2 { border-left:1px solid; } #b1 { height:0; margin-top:-1px; }",
+        "#b1 { height:0; margin-top:-1px; }",
     ] {
         let css = pbr_css(5, fragment);
         assert_profile(
@@ -1075,12 +1075,12 @@ fn pbr_x05_admitted_child_border_leaves_the_later_height_fault() {
 
 /// X6: within one child, the height check precedes the border check, which admits
 /// any finite nonnegative width. (ZHN) Left and right borders do not separate the
-/// margins, so the zero height stays refused.
+/// margins, so the zero height stays refused (B1's negative top margin, CTB).
 #[test]
 fn pbr_x06_own_height_with_an_own_border() {
     for fragment in [
-        "#b1 { border-left:1px solid; border-right:1px solid; height:0; }",
-        "#b1 { height:0; }",
+        "#b1 { border-left:1px solid; border-right:1px solid; height:0; margin-top:-1px; }",
+        "#b1 { height:0; margin-top:-1px; }",
     ] {
         let css = pbr_css(5, fragment);
         assert_profile(

@@ -4,7 +4,10 @@
 //! positive top or bottom border or padding separates its margins, so it cannot collapse
 //! through; a zero-height new-BFC border box strictly inside F's margin interval is
 //! `NewBfcFloatContact` (CSS2.2 9.5, Q-3). Every other zero-height normal stays
-//! `NonpositiveBlockHeight`, and every undecorated or undecidable ordinary Auto-height
+//! `NonpositiveBlockHeight` (since CTB, the user's U1=A, a zero or Auto B1 whose own
+//! margins adjoin collapses through when no normal margin is negative, so the guards
+//! below give B1 a negative top margin or a non-literal zero), and every undecorated or
+//! undecidable ordinary Auto-height
 //! normal whose constrained tentative height is +0 stays `HeightKind` (a decorated
 //! ordinary Auto normal is admitted since DAZ, G6b, and a new-BFC one since MFZ, the
 //! user's U4=A; undecidable: its only separation is a vertical padding percentage without
@@ -96,21 +99,25 @@ fn zhn_red_z1_a_zero_height_new_bfc_b1_is_admitted() {
 }
 
 /// Z7a (RED guard; MA8 witness): an ordinary zero-height B1 without top or bottom border
-/// or padding may collapse through (G6) and stays `NonpositiveBlockHeight`. Passes before
-/// and after ZHN.
+/// or padding may collapse through (G6); with a negative top margin it stays
+/// `NonpositiveBlockHeight` (CTB, CT-3). Passes before and after ZHN.
 #[test]
 fn zhn_red_guard_z7a_an_undecorated_ordinary_zero_height_stays_refused() {
-    assert_eq!(zhn_error(5, "#b1 { height:0; }"), ZHN_B1_REFUSAL);
+    assert_eq!(
+        zhn_error(5, "#b1 { height:0; margin-top:-1px; }"),
+        ZHN_B1_REFUSAL
+    );
 }
 
 /// Z7b (RED guard; MA9 witness): left and right borders and paddings do not separate the
-/// vertical margins. Passes before and after ZHN.
+/// vertical margins; B1's negative top margin keeps the refusal (CTB, CT-3). Passes
+/// before and after ZHN.
 #[test]
 fn zhn_red_guard_z7b_horizontal_decoration_does_not_separate() {
     assert_eq!(
         zhn_error(
             5,
-            "#b1 { height:0; border-left:1px solid; border-right:1px solid; \
+            "#b1 { height:0; margin-top:-1px; border-left:1px solid; border-right:1px solid; \
              padding-left:1px; padding-right:1px; }"
         ),
         ZHN_B1_REFUSAL
@@ -118,11 +125,15 @@ fn zhn_red_guard_z7b_horizontal_decoration_does_not_separate() {
 }
 
 /// Z7c (RED guard): a top border width with style `none` is a used 0 and does not
-/// separate. Passes before and after ZHN.
+/// separate; B1's negative top margin keeps the refusal (CTB, CT-3). Passes before and
+/// after ZHN.
 #[test]
 fn zhn_red_guard_z7c_a_borderless_top_width_does_not_separate() {
     assert_eq!(
-        zhn_error(5, "#b1 { height:0; border-top-width:1px; }"),
+        zhn_error(
+            5,
+            "#b1 { height:0; margin-top:-1px; border-top-width:1px; }"
+        ),
         ZHN_B1_REFUSAL
     );
 }
@@ -148,13 +159,13 @@ fn zhn_z7d_new_bfc_auto_heights_equal_their_zero_twins() {
 
 /// Z7e (RED guard; ZH-4): `height:10px; max-height:0` on an ordinary undecorated B1 stays
 /// refused. This is a scope choice for G6/G6b, not a CSS2.2 8.3.1 requirement (the
-/// normative list reads the computed height, which is not zero here). Passes before and
-/// after ZHN.
+/// normative list reads the computed height, which is not zero here). Since CTB it is
+/// `HeightKind` at B1's height step (Q-4). Passes before and after ZHN.
 #[test]
 fn zhn_red_guard_z7e_a_max_height_zero_ordinary_b1_stays_refused() {
     assert_eq!(
         zhn_error(5, "#b1 { height:10px; max-height:0; }"),
-        ZHN_B1_REFUSAL
+        pht_refusal(2, "height", "HeightKind")
     );
 }
 
@@ -428,19 +439,19 @@ fn zhn_z11_a_zero_height_tail_with_a_negative_margin_takes_the_signed_route() {
     );
 }
 
-/// Z12 (MW1, MW2 witness): core work `702 + 12N + N(N-1)/2 + 54(N-4) + 61(N-2) +
-/// 182(N-3)` (G6a: 62 per normal on every path) is exact at N5, N6 and N7 and one short
+/// Z12 (MW1, MW2 witness): core work `751 + 12N + N(N-1)/2 + 71(N-4) + 64(N-2) +
+/// 200(N-3)` (G6a: 62 per normal on every path) is exact at N5, N6 and N7 and one short
 /// is `Core(Work)`; the facade work is unchanged.
 #[test]
 fn zhn_z12_core_work_charges_62_per_normal() {
-    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
+    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
         assert_eq!(
             core,
-            702 + 12 * nodes
+            751 + 12 * nodes
                 + nodes * (nodes - 1) / 2
-                + 54 * (nodes - 4)
-                + 61 * (nodes - 2)
-                + 182 * (nodes - 3)
+                + 71 * (nodes - 4)
+                + 64 * (nodes - 2)
+                + 200 * (nodes - 3)
         );
         let css = pct_css(nodes, "");
         let limits = |core_work: usize| {

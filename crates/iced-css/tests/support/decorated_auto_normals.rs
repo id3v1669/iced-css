@@ -8,7 +8,9 @@
 //! solve; without P's solve, when it does not resolve, or when it rounds to +0 it does
 //! not separate by itself (Q-2), and a normal whose only separation it is keeps
 //! `HeightKind`, as every undecorated (G6) ordinary Auto normal does (a new-BFC one is an
-//! explicit +0 since MFZ, the user's U4=A).
+//! explicit +0 since MFZ, the user's U4=A). Since CTB (the user's U1=A) an undecorated
+//! ordinary Auto B1 whose computed `min-height` is zero is passed as +0 and may collapse
+//! through, so the guards below use B2.
 //!
 //! A child module of `zero_height_normals` (DAZ design section 6): it reuses `zhn_row`,
 //! `zhn_same`, `zhn_error`, `zhn_layout`, `zhn_pick`, `eml_row`, `pct_css`, `pct_with`,
@@ -24,9 +26,9 @@
 
 use super::*;
 
-/// The facade refusal of an Auto-height B1 that is not admitted (HK2).
-const DAZ_B1_REFUSAL: &str =
-    "Captured(Unsupported { projected: 2, property: \"height\", reason: HeightKind })";
+/// The facade refusal of an Auto-height B2 that is not admitted (HK2; B2 since CTB).
+const DAZ_B2_REFUSAL: &str =
+    "Captured(Unsupported { projected: 4, property: \"height\", reason: HeightKind })";
 
 /// The `Debug` text of the N5 layout error of `fragment` with O's content width NaN: P's
 /// horizontal solve fails and is held (the `pht` HP precedent), so the height category
@@ -52,11 +54,11 @@ fn daz_red_d1_an_auto_height_b1_with_a_top_border_is_admitted() {
     );
 }
 
-/// DG0 (RED guard; MD9, MD14 witness): an undecorated ordinary Auto B1 may collapse
-/// through (G6) and stays `HeightKind`. Passes before and after DAZ.
+/// DG0 (RED guard; MD9, MD14 witness): an undecorated ordinary Auto tail may collapse
+/// through (G6) and stays `HeightKind` (B2: CTB admits such a B1). Passes before and after DAZ.
 #[test]
 fn daz_red_guard_dg0_an_undecorated_auto_b1_stays_height_kind() {
-    assert_eq!(zhn_error(5, "#b1 { height:auto; }"), DAZ_B1_REFUSAL);
+    assert_eq!(zhn_error(5, "#b2 { height:auto; }"), DAZ_B2_REFUSAL);
 }
 
 /// DG1 (migrated by MFZ): a decorated new-BFC Auto B1 is an explicit +0 since MFZ (the
@@ -70,98 +72,100 @@ fn daz_dg1_a_decorated_new_bfc_auto_b1_equals_its_zero_twin() {
 }
 
 /// DG2 (RED guard): left and right borders and paddings do not separate the vertical
-/// margins. Passes before and after DAZ.
+/// margins (B2 since CTB). Passes before and after DAZ.
 #[test]
 fn daz_red_guard_dg2_horizontal_decoration_does_not_separate() {
     assert_eq!(
         zhn_error(
             5,
-            "#b1 { height:auto; border-left:1px solid; border-right:1px solid; \
+            "#b2 { height:auto; border-left:1px solid; border-right:1px solid; \
              padding-left:1px; padding-right:1px; }"
         ),
-        DAZ_B1_REFUSAL
+        DAZ_B2_REFUSAL
     );
 }
 
 /// DG3 (RED guard): a top border width with style `none` is a used 0 and does not
-/// separate. Passes before and after DAZ.
+/// separate (B2 since CTB). Passes before and after DAZ.
 #[test]
 fn daz_red_guard_dg3_a_borderless_top_width_does_not_separate() {
     assert_eq!(
-        zhn_error(5, "#b1 { height:auto; border-top-width:1px; }"),
-        DAZ_B1_REFUSAL
+        zhn_error(5, "#b2 { height:auto; border-top-width:1px; }"),
+        DAZ_B2_REFUSAL
     );
 }
 
 /// DG4 (RED guard; MD13 witness): `padding-top:0%` resolves to +0 and does not separate.
-/// Passes before and after DAZ.
+/// B2 since CTB. Passes before and after DAZ.
 #[test]
 fn daz_red_guard_dg4_a_zero_percentage_padding_does_not_separate() {
     assert_eq!(
-        zhn_error(5, "#b1 { height:auto; padding-top:0%; }"),
-        DAZ_B1_REFUSAL
+        zhn_error(5, "#b2 { height:auto; padding-top:0%; }"),
+        DAZ_B2_REFUSAL
     );
 }
 
 /// DG5 (RED guard; MD12 witness): `padding-top:1%` of P's used content width 0 is +0 and
 /// does not separate. P's solve with `width:0` is Ok: the `height:0` twin reaches the
-/// core.
+/// core (B2 since CTB: `NonpositiveBlockHeight` at 4).
 #[test]
 fn daz_red_guard_dg5_a_percentage_of_a_zero_width_does_not_separate() {
     assert_eq!(
-        zhn_error(5, "#p { width:0; } #b1 { height:auto; padding-top:1%; }"),
-        DAZ_B1_REFUSAL
+        zhn_error(5, "#p { width:0; } #b2 { height:auto; padding-top:1%; }"),
+        DAZ_B2_REFUSAL
     );
     assert_eq!(
-        zhn_error(5, "#p { width:0; } #b1 { height:0; padding-top:1%; }"),
-        "Core(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
+        zhn_error(5, "#p { width:0; } #b2 { height:0; padding-top:1%; }"),
+        "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))"
     );
 }
 
 /// DG6 (RED guard; MD10 witness): without P's solve (held), a padding percentage cannot
 /// be decided and does not separate (Q-2): `HeightKind`, not the held error. Passes
-/// before and after DAZ.
+/// before and after DAZ (B2 since CTB).
 #[test]
 fn daz_red_guard_dg6_a_percentage_without_the_parent_solve_does_not_separate() {
     assert_eq!(
-        daz_held("#b1 { height:auto; padding-top:1%; }"),
-        DAZ_B1_REFUSAL
+        daz_held("#b2 { height:auto; padding-top:1%; }"),
+        DAZ_B2_REFUSAL
     );
 }
 
 /// DG7 (RED guard; MD11 witness): `padding-top:200%` of P's `<f32::MAX>px` does not
 /// resolve and does not separate (Q-2): `HeightKind`, and `resolved_row` is not reached.
-/// P's solve with that width is Ok: the `height:1px` twin fails in `resolved_row`.
+/// P's solve with that width is Ok: the `height:1px` twin fails in `resolved_row` (B2
+/// since CTB).
 #[test]
 fn daz_red_guard_dg7_an_unresolvable_percentage_does_not_separate() {
     let parent = format!("#p {{ width:{PCT_F32_MAX_PX}; }}");
     assert_eq!(
         zhn_error(
             5,
-            &format!("{parent} #b1 {{ height:auto; padding-top:200%; }}")
+            &format!("{parent} #b2 {{ height:auto; padding-top:200%; }}")
         ),
-        DAZ_B1_REFUSAL
+        DAZ_B2_REFUSAL
     );
     assert_eq!(
         zhn_error(
             5,
-            &format!("{parent} #b1 {{ height:1px; padding-top:200%; }}")
+            &format!("{parent} #b2 {{ height:1px; padding-top:200%; }}")
         ),
-        "Percentage { source: 2, property: \"padding-top\", error: Unrepresentable }"
+        "Percentage { source: 4, property: \"padding-top\", error: Unrepresentable }"
     );
 }
 
 /// DG8 (RED guard; N-3): a padding percentage that rounds to +0 (1e-46% of 100) does not
-/// separate, as the core's `> 0.` test: `HeightKind`. Passes before and after DAZ.
+/// separate, as the core's `> 0.` test: `HeightKind` (B2 since CTB). Passes before and
+/// after DAZ.
 #[test]
 fn daz_red_guard_dg8_a_percentage_rounded_to_zero_does_not_separate() {
     assert_eq!(
         zhn_error(
             5,
-            "#b1 { height:auto; \
+            "#b2 { height:auto; \
              padding-top:0.0000000000000000000000000000000000000000000001%; }"
         ),
-        DAZ_B1_REFUSAL
+        DAZ_B2_REFUSAL
     );
 }
 
@@ -384,15 +388,15 @@ fn daz_d15_an_em_padding_separates_the_margins() {
     );
 }
 
-/// D16 (MW1, MW2 witness): facade work `670 + 32N + 526(N-2) + 371(N-3)` (DAZ: 58 per
+/// D16 (MW1, MW2 witness): facade work `695 + 32N + 534(N-2) + 373(N-3)` (DAZ: 58 per
 /// normal on every path) is exact at N5, N6 and N7 and one short is `Work`; the core work
 /// is unchanged.
 #[test]
 fn daz_d16_facade_work_charges_58_per_normal() {
-    for (nodes, facade, core) in [(5, 3150, 1373), (6, 4079, 1687), (7, 5008, 2002)] {
+    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
         assert_eq!(
             facade,
-            670 + 32 * nodes + 526 * (nodes - 2) + 371 * (nodes - 3),
+            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
             "N{nodes}"
         );
         let css = pct_css(nodes, "");

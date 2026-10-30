@@ -643,6 +643,8 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
         let (outer, parent, mut children) = facts(&source_nodes);
         children[source - 2].margin.left = AutoLength::Auto;
         children[source - 2].height = OwnerHeight::Explicit(0.0);
+        // CTB: a negative normal margin keeps a zero-height B1 refused.
+        children[source - 2].margin.top = AutoLength::Value(-1.0);
         assert!(matches!(
             build(&source_nodes, outer, parent, &children, limits(6)),
             Err(ClearanceSequenceError::Profile(
@@ -1178,7 +1180,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 1373, 419), (6, 1687, 501), (7, 2002, 584)] {
+    for (count, work, old_work) in [(5, 1484, 419), (6, 1836, 501), (7, 2189, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1206,11 +1208,11 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            702 + 12 * count
+            751 + 12 * count
                 + count * (count - 1) / 2
-                + 54 * tail_count
-                + 61 * child_count
-                + 182 * (count - 3)
+                + 71 * tail_count
+                + 64 * child_count
+                + 200 * (count - 3)
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert_eq!(
@@ -1286,7 +1288,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(1686).unwrap();
+    short.work = NonZeroUsize::new(1835).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1335,7 +1337,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].border.left = -1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(1686).unwrap();
+    one_short.work = NonZeroUsize::new(1835).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -2280,7 +2282,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 1373, 419), (6, 1687, 501), (7, 2002, 584)] {
+    for (count, work, old_work) in [(5, 1484, 419), (6, 1836, 501), (7, 2189, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2746,7 +2748,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 1373, 419), (6, 1687, 501), (7, 2002, 584)] {
+    for (count, work, old_work) in [(5, 1484, 419), (6, 1836, 501), (7, 2189, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -3128,7 +3130,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 1373, 419), (6, 1687, 501), (7, 2002, 584)] {
+    for (count, work, old_work) in [(5, 1484, 419), (6, 1836, 501), (7, 2189, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3486,7 +3488,7 @@ fn tnb_core_tail_guards_follow_source_order() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 1373), (6, 1687), (7, 2002)] {
+    for (count, work) in [(5, 1484), (6, 1836), (7, 2189)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3501,11 +3503,11 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
         assert_eq!(owner.receipt().work, work);
         assert_eq!(
             work,
-            702 + 12 * count
+            751 + 12 * count
                 + count * (count - 1) / 2
-                + 54 * (count - 4)
-                + 61 * (count - 2)
-                + 182 * (count - 3)
+                + 71 * (count - 4)
+                + 64 * (count - 2)
+                + 200 * (count - 3)
         );
     }
 }
@@ -4378,7 +4380,7 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 1373), (6, 1687), (7, 2002)] {
+    for (count, work) in [(5, 1484), (6, 1836), (7, 2189)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
@@ -4633,7 +4635,7 @@ fn cfh_core_exact_extent_and_later_profile_order() {
 
 #[test]
 fn cfh_core_auto_work_thresholds() {
-    for (count, work) in [(5, 1373), (6, 1687), (7, 2002)] {
+    for (count, work) in [(5, 1484), (6, 1836), (7, 2189)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[1].height = OwnerHeight::Auto;
@@ -5178,16 +5180,423 @@ fn zhn_red_guard_zc1_a_negative_height_new_bfc_tail_stays_refused() {
 
 /// ZHN ZC2 (RED guard; MA11 witness): the height step precedes the edge validation, so a
 /// zero-height ordinary B1 whose top padding is NaN is `NonpositiveBlockHeight` (a NaN
-/// edge never separates the margins), not `InvalidNumber`. Passes before and after ZHN.
+/// edge never separates the margins), not `InvalidNumber`; B1's negative top margin
+/// keeps the refusal since CTB. Passes before and after ZHN.
 #[test]
 fn zhn_red_guard_zc2_a_nan_padding_does_not_separate_the_margins() {
     let sources = sources(6);
     let (outer, parent, mut children) = facts(&sources);
     children[0].height = OwnerHeight::Explicit(0.0);
+    children[0].margin.top = AutoLength::Value(-1.0);
     children[0].padding.top = f32::NAN;
     let result = build(&sources, outer, parent, &children, limits(6));
     assert_eq!(
         format!("{:?}", result.map(|_| ())),
         "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
+    );
+}
+
+/// CTB CC3a (RED guard; CM3, CM4, CM26 witness): a zero-height ordinary B1 stays
+/// `NonpositiveBlockHeight` when B1's own top margin or B2's bottom margin is negative, or
+/// when B2's top margin is NaN (a NaN margin fails the sign scan; root ruling CT-3, review
+/// m-2). Passes before and after CTB.
+#[test]
+fn ctb_red_guard_cc3a_signed_and_nan_normal_margins_keep_the_refusal() {
+    let sources = sources(5);
+    for (slot, top, value) in [(0, true, -1.0), (2, false, -1.0), (2, true, f32::NAN)] {
+        let (outer, parent, mut children) = facts(&sources);
+        children[0].height = OwnerHeight::Explicit(0.0);
+        if top {
+            children[slot].margin.top = AutoLength::Value(value);
+        } else {
+            children[slot].margin.bottom = AutoLength::Value(value);
+        }
+        let result = build(&sources, outer, parent, &children, limits(5));
+        assert_eq!(
+            format!("{:?}", result.map(|_| ())),
+            "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))",
+            "slot {slot} top {top} value {value}"
+        );
+    }
+}
+
+// CTB FLIP rows: they need the collapse-through admission and the three-member groups.
+
+/// One group's members as (source, side, value).
+fn ctb_members(
+    group: &iced_css_core::formatting::clearance_owner::MarginGroup,
+) -> Vec<(usize, MarginSide, f32)> {
+    group
+        .members()
+        .iter()
+        .map(|member| (member.source_index, member.side, member.value))
+        .collect()
+}
+
+/// The `Debug` text of an N5 build of `children` without its geometry.
+fn ctb_result(sources: &[SourceNode], children: &[ChildFacts<'_>]) -> String {
+    let (outer, parent, _) = facts(sources);
+    format!(
+        "{:?}",
+        build(sources, outer, parent, children, limits(sources.len())).map(|_| ())
+    )
+}
+
+/// CTB CC1 (CM9, CM10, CM14 witness): a zero-height ordinary B1 collapses through: B1
+/// [11, 11], F's margin box [11, 13] (B1's top border edge, the user's U1=A), B2's
+/// hypothetical group lists B1's top 0 and bottom 4 and B2's top 3 (positive 4, negative
+/// 0), so its hypothetical top is 11 + 4 = 15 and B2 is [15, 16] without clearance; its one
+/// `ActualPair` copies the three members. `Explicit(-0.0)` gives the same owner.
+#[test]
+fn ctb_cc1_groups_after_a_collapse_through_b1() {
+    let sources = sources(5);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(0.0);
+    let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
+    let tail = &owner.tail()[0];
+    let float = owner.placed_float();
+    assert_eq!(
+        (owner.before(), float.top, float.bottom, tail.vertical()),
+        (
+            BlockVertical {
+                top: 11.0,
+                bottom: 11.0
+            },
+            11.0,
+            13.0,
+            BlockVertical {
+                top: 15.0,
+                bottom: 16.0
+            }
+        )
+    );
+    assert_eq!(
+        (
+            tail.hypothetical_top(),
+            tail.zero_clearance_top(),
+            tail.clearance()
+        ),
+        (15.0, None, None)
+    );
+    let members = vec![
+        (2, MarginSide::Top, 0.0),
+        (2, MarginSide::Bottom, 4.0),
+        (4, MarginSide::Top, 3.0),
+    ];
+    let group = tail.hypothetical_group();
+    assert_eq!(
+        (
+            group.id(),
+            ctb_members(group),
+            group.positive(),
+            group.negative()
+        ),
+        (MarginGroupId::HypotheticalPair, members.clone(), 4.0, 0.0)
+    );
+    let actual: Vec<_> = tail
+        .actual_groups()
+        .iter()
+        .map(|group| (group.id(), ctb_members(group)))
+        .collect();
+    assert_eq!(actual, vec![(MarginGroupId::ActualPair, members)]);
+    let mut negative = children.clone();
+    negative[0].height = OwnerHeight::Explicit(-0.0);
+    let (outer, parent, _) = facts(&sources);
+    let negative = build(&sources, outer, parent, &negative, limits(5)).unwrap();
+    assert_eq!(format!("{negative:?}"), format!("{owner:?}"));
+}
+
+/// CTB CC2 (CM11, CM13 witness): with B1's top margin 1 and F 10 high, B2's hypothetical
+/// top 11 + 4 = 15 lies inside F [12, 22]: its zero-clearance top is 11 plus the collapse
+/// of B1's pair (4) plus B2's top margin 3, 18, so clearance 4 and B2 [22, 23]; the
+/// `BeforeBarrier` lists B1's two margins and the `AfterBarrier` B2's top margin.
+#[test]
+fn ctb_cc2_the_barrier_groups() {
+    let sources = sources(5);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(0.0);
+    children[0].margin.top = AutoLength::Value(1.0);
+    children[1].height = OwnerHeight::Explicit(10.0);
+    let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
+    let tail = &owner.tail()[0];
+    let float = owner.placed_float();
+    assert_eq!(
+        (owner.before(), float.top, float.bottom, tail.vertical()),
+        (
+            BlockVertical {
+                top: 12.0,
+                bottom: 12.0
+            },
+            12.0,
+            22.0,
+            BlockVertical {
+                top: 22.0,
+                bottom: 23.0
+            }
+        )
+    );
+    assert_eq!(
+        (
+            tail.hypothetical_top(),
+            tail.zero_clearance_top(),
+            tail.clearance()
+        ),
+        (15.0, Some(18.0), Some(4.0))
+    );
+    assert_eq!(
+        ctb_members(tail.hypothetical_group()),
+        vec![
+            (2, MarginSide::Top, 1.0),
+            (2, MarginSide::Bottom, 4.0),
+            (4, MarginSide::Top, 3.0),
+        ]
+    );
+    let actual: Vec<_> = tail
+        .actual_groups()
+        .iter()
+        .map(|group| (group.id(), ctb_members(group)))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            (
+                MarginGroupId::BeforeBarrier,
+                vec![(2, MarginSide::Top, 1.0), (2, MarginSide::Bottom, 4.0)]
+            ),
+            (MarginGroupId::AfterBarrier, vec![(4, MarginSide::Top, 3.0)]),
+        ]
+    );
+}
+
+/// CTB CC3b (CM5, CM15 witness): F's negative top margin does not count: B1 collapses
+/// through and F's margin box is [11, 12]; a zero-height `OtherNewBfc` B1 is separated
+/// (ZHN), so F follows B1's bottom margin at 15 and B2 is [17, 18] (clearance -1).
+#[test]
+fn ctb_cc3b_the_float_margins_and_the_context() {
+    let sources = sources(5);
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(0.0);
+    children[1].margin.top = AutoLength::Value(-1.0);
+    let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
+    let float = owner.placed_float();
+    assert_eq!(
+        (float.top, float.bottom, owner.tail()[0].vertical().top),
+        (11.0, 12.0, 15.0)
+    );
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(0.0);
+    children[0].context = ChildContext::OtherNewBfc;
+    let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
+    let float = owner.placed_float();
+    let tail = &owner.tail()[0];
+    assert_eq!(
+        (
+            float.top,
+            float.bottom,
+            tail.vertical().top,
+            tail.clearance()
+        ),
+        (15.0, 17.0, 17.0, Some(-1.0))
+    );
+}
+
+/// CTB CC4 (design section 5, review m-3): once B1 is admitted, later failures surface
+/// where `NonpositiveBlockHeight` at 2 stood: an infinite B1 or B2 top margin passes the
+/// sign scan and is `InvalidNumber` at its source; F 4 high puts B2's hypothetical top on
+/// F's bottom 15, `UnsupportedEquality` at 4.
+#[test]
+fn ctb_cc4_later_failures_surface() {
+    let sources = sources(5);
+    for (case, expected) in [
+        (
+            0,
+            "Err(Profile(InvalidNumber { source: 2, field: \"margin\" }))",
+        ),
+        (
+            1,
+            "Err(Profile(InvalidNumber { source: 4, field: \"margin\" }))",
+        ),
+        (
+            2,
+            "Err(Placement { source: 4, error: UnsupportedEquality })",
+        ),
+    ] {
+        let (_, _, mut children) = facts(&sources);
+        children[0].height = OwnerHeight::Explicit(0.0);
+        match case {
+            0 => children[0].margin.top = AutoLength::Value(f32::INFINITY),
+            1 => children[2].margin.top = AutoLength::Value(f32::INFINITY),
+            _ => children[1].height = OwnerHeight::Explicit(4.0),
+        }
+        assert_eq!(ctb_result(&sources, &children), expected, "case {case}");
+    }
+}
+
+/// CTB ZL6a (ZHN-L6, ZH-8): a zero-height `OtherNewBfc` tail with `Explicit(-0.0)` is
+/// admitted and equals its +0 twin.
+#[test]
+fn ctb_zl6a_a_negative_zero_new_bfc_tail_is_admitted() {
+    let sources = sources(5);
+    let (outer, parent, mut children) = facts(&sources);
+    children[2].context = ChildContext::OtherNewBfc;
+    children[2].height = OwnerHeight::Explicit(0.0);
+    let positive = format!(
+        "{:?}",
+        build(&sources, outer, parent, &children, limits(5)).unwrap()
+    );
+    children[2].height = OwnerHeight::Explicit(-0.0);
+    let (outer, parent, _) = facts(&sources);
+    let negative = format!(
+        "{:?}",
+        build(&sources, outer, parent, &children, limits(5)).unwrap()
+    );
+    assert_eq!(negative, positive);
+}
+
+/// CTB ZL6b (ZHN-L6): an ordinary B1 with `Explicit(-0.0)` collapses through since CTB
+/// (ZHN recorded `NonpositiveBlockHeight`); with a negative top margin it still is.
+#[test]
+fn ctb_zl6b_a_negative_zero_ordinary_b1() {
+    let sources = sources(5);
+    let (_, _, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(-0.0);
+    assert_eq!(ctb_result(&sources, &children), "Ok(())");
+    children[0].margin.top = AutoLength::Value(-1.0);
+    assert_eq!(
+        ctb_result(&sources, &children),
+        "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
+    );
+}
+
+/// CTB ZL6c (ZHN-L6): a negative top padding does not separate, so the zero-height
+/// ordinary B1 is admitted and its padding is `InvalidNumber` since CTB (ZHN recorded
+/// `NonpositiveBlockHeight`); with a negative top margin it still is.
+#[test]
+fn ctb_zl6c_a_negative_padding_reaches_its_validation() {
+    let sources = sources(5);
+    let (_, _, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(0.0);
+    children[0].padding.top = -1.0;
+    assert_eq!(
+        ctb_result(&sources, &children),
+        "Err(Profile(InvalidNumber { source: 2, field: \"padding\" }))"
+    );
+    children[0].margin.top = AutoLength::Value(-1.0);
+    assert_eq!(
+        ctb_result(&sources, &children),
+        "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
+    );
+}
+
+/// CTB ZL6d (ZHN-L6): a zero-height `OtherNewBfc` tail with a NaN top margin is
+/// `InvalidNumber` for its margin.
+#[test]
+fn ctb_zl6d_a_nan_margin_on_a_new_bfc_tail() {
+    let sources = sources(5);
+    let (_, _, mut children) = facts(&sources);
+    children[2].context = ChildContext::OtherNewBfc;
+    children[2].height = OwnerHeight::Explicit(0.0);
+    children[2].margin.top = AutoLength::Value(f32::NAN);
+    assert_eq!(
+        ctb_result(&sources, &children),
+        "Err(Profile(InvalidNumber { source: 4, field: \"margin\" }))"
+    );
+}
+
+/// CTB ZL6e (ZHN-L6): the same tail with an infinite top padding is `InvalidNumber` for its
+/// padding.
+#[test]
+fn ctb_zl6e_an_infinite_padding_on_a_new_bfc_tail() {
+    let sources = sources(5);
+    let (_, _, mut children) = facts(&sources);
+    children[2].context = ChildContext::OtherNewBfc;
+    children[2].height = OwnerHeight::Explicit(0.0);
+    children[2].padding.top = f32::INFINITY;
+    assert_eq!(
+        ctb_result(&sources, &children),
+        "Err(Profile(InvalidNumber { source: 4, field: \"padding\" }))"
+    );
+}
+
+/// The `Debug` text of one `MarginMember`.
+fn ctb_debug_member(source: usize, side: &str, value: f32) -> String {
+    format!("MarginMember {{ source_index: {source}, side: {side}, value: {value:?} }}")
+}
+
+/// The `Debug` text of one `MarginGroup` with its three slots, length and extrema.
+fn ctb_debug_group(id: &str, slots: [String; 3], len: usize, extrema: (f32, f32)) -> String {
+    format!(
+        "MarginGroup {{ id: {id}, members: [{}], len: {len}, extrema: MarginExtrema {{ \
+         positive: {:?}, negative: {:?} }} }}",
+        slots.join(", "),
+        extrema.0,
+        extrema.1
+    )
+}
+
+/// CTB CC5 (review M-1; CM28, CM29 witness): the published groups, padding included
+/// (`MarginGroup` derives the public `Debug` and `PartialEq`, which read the unused slots;
+/// they repeat the last member): the baseline's pairwise hypothetical group and its two
+/// barrier groups, and after a collapse-through B1 (CC2) the three-member hypothetical
+/// group, the `BeforeBarrier` of B1's pair and the `AfterBarrier`, each by its full
+/// `Debug` text.
+#[test]
+fn ctb_cc5_published_groups_pin_their_padding() {
+    let b1_bottom = || ctb_debug_member(2, "Bottom", 4.0);
+    let b2_top = || ctb_debug_member(4, "Top", 3.0);
+    let after = ctb_debug_group(
+        "AfterBarrier",
+        [b2_top(), b2_top(), b2_top()],
+        1,
+        (3.0, 0.0),
+    );
+    let sources = sources(5);
+    let (outer, parent, children) = facts(&sources);
+    let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
+    let tail = &owner.tail()[0];
+    assert_eq!(
+        format!("{:?}", (tail.hypothetical_group(), tail.actual_groups())),
+        format!(
+            "({}, [{}, {}])",
+            ctb_debug_group(
+                "HypotheticalPair",
+                [b1_bottom(), b2_top(), b2_top()],
+                2,
+                (4.0, 0.0)
+            ),
+            ctb_debug_group(
+                "BeforeBarrier",
+                [b1_bottom(), b1_bottom(), b1_bottom()],
+                1,
+                (4.0, 0.0)
+            ),
+            after
+        )
+    );
+    let (outer, parent, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(0.0);
+    children[0].margin.top = AutoLength::Value(1.0);
+    children[1].height = OwnerHeight::Explicit(10.0);
+    let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
+    let tail = &owner.tail()[0];
+    let b1_top = || ctb_debug_member(2, "Top", 1.0);
+    assert_eq!(
+        format!("{:?}", (tail.hypothetical_group(), tail.actual_groups())),
+        format!(
+            "({}, [{}, {}])",
+            ctb_debug_group(
+                "HypotheticalPair",
+                [b1_top(), b1_bottom(), b2_top()],
+                3,
+                (4.0, 0.0)
+            ),
+            ctb_debug_group(
+                "BeforeBarrier",
+                [b1_top(), b1_bottom(), b1_bottom()],
+                2,
+                (4.0, 0.0)
+            ),
+            after
+        )
     );
 }
