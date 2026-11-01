@@ -1,16 +1,9 @@
-//! DAZ (slice G6b): an ordinary (`overflow:visible`) Sequence normal, B1 or a tail, whose
-//! computed `height` is used as `auto` and whose constrained tentative height is +0 has
-//! no in-flow children or line boxes, so its height is zero (CSS2.2 10.6.3 "zero,
-//! otherwise"); when a positive top or bottom border or padding separates its own top and
-//! bottom margins (CSS2.2 8.3.1) it cannot collapse through, and the facade passes it to
-//! the core as an explicit +0 (the ZHN admission, G6a). A vertical padding percentage
-//! counts with its value against P's used content width (CSS2.2 8.4), read from P's
-//! solve; without P's solve, when it does not resolve, or when it rounds to +0 it does
-//! not separate by itself (Q-2), and a normal whose only separation it is keeps
-//! `HeightKind` when its min-height is nonliteral zero. CTB/CTT (the user's U1=A)
-//! admits ordinary Auto B1 and tails with literal min-height zero in unsigned scope.
-//! The old nonseparation guards below therefore use B2 with min-height:0%; the new
-//! CTT cases separately cover literal admission and the later errors it exposes.
+//! DAZ: positive vertical border/padding separates an ordinary normal's own margins.
+//! Percentage padding uses P's resolved content width; an unresolved, zero or rounded
+//! padding does not itself separate. CTB/CTT admit literal-zero/Auto through normals.
+//! NZS admits nonliteral used-zero normals as separated independently of padding.
+//! The former min-height:0% guards below now assert that separation or the next error,
+//! while their literal-zero signed controls and physical decoration meaning remain.
 //!
 //! A child module of `zero_height_normals` (DAZ design section 6): it reuses `zhn_row`,
 //! `zhn_same`, `zhn_error`, `zhn_layout`, `zhn_pick`, `eml_row`, `pct_css`, `pct_with`,
@@ -26,9 +19,7 @@
 
 use super::*;
 
-/// The facade refusal of an Auto-height B2 with nonliteral zero min-height (HK2/CTT).
-const DAZ_B2_REFUSAL: &str =
-    "Captured(Unsupported { projected: 4, property: \"height\", reason: HeightKind })";
+// NZS: formerly refused nonliteral zeros now keep separate outgoing margins.
 
 /// The `Debug` text of the N5 layout error of `fragment` with O's content width NaN: P's
 /// horizontal solve fails and is held (the `pht` HP precedent), so the height category
@@ -54,15 +45,10 @@ fn daz_red_d1_an_auto_height_b1_with_a_top_border_is_admitted() {
     );
 }
 
-/// DG0 (RED guard; MD9, MD14 witness): an undecorated ordinary Auto tail may collapse
-/// through only with literal min-height zero. CTT keeps these guards outside that
-/// admission with min-height:0%, so the lack of separation still yields HeightKind.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
-fn daz_red_guard_dg0_an_undecorated_auto_b1_stays_height_kind() {
-    assert_eq!(
-        zhn_error(5, "#b2 { height:auto; min-height:0%; }"),
-        DAZ_B2_REFUSAL
-    );
+fn daz_dg0_nonliteral_auto_tail_is_separated() {
+    nzs_assert_zero_layout(5, "#b2 { height:auto; min-height:0%; }", 4);
 }
 
 /// DG1 (migrated by MFZ): a decorated new-BFC Auto B1 is an explicit +0 since MFZ (the
@@ -75,80 +61,59 @@ fn daz_dg1_a_decorated_new_bfc_auto_b1_equals_its_zero_twin() {
     );
 }
 
-/// DG2 (RED guard): left and right borders and paddings do not separate the vertical
-/// margins (B2 since CTB). Passes before and after DAZ.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn daz_red_guard_dg2_horizontal_decoration_does_not_separate() {
-    assert_eq!(
-        zhn_error(
-            5,
-            "#b2 { height:auto; min-height:0%; border-left:1px solid; border-right:1px solid; \
-             padding-left:1px; padding-right:1px; }"
-        ),
-        DAZ_B2_REFUSAL
+    nzs_assert_zero_layout(
+        5,
+        "#b2 { height:auto; min-height:0%; border-left:1px solid; border-right:1px solid; padding-left:1px; padding-right:1px; }",
+        4,
     );
 }
 
-/// DG3 (RED guard): a top border width with style `none` is a used 0 and does not
-/// separate (B2 since CTB). Passes before and after DAZ.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn daz_red_guard_dg3_a_borderless_top_width_does_not_separate() {
-    assert_eq!(
-        zhn_error(
-            5,
-            "#b2 { height:auto; min-height:0%; border-top-width:1px; }"
-        ),
-        DAZ_B2_REFUSAL
+    nzs_assert_zero_layout(
+        5,
+        "#b2 { height:auto; min-height:0%; border-top-width:1px; }",
+        4,
     );
 }
 
-/// DG4 (RED guard; MD13 witness): `padding-top:0%` resolves to +0 and does not separate.
-/// B2 since CTB. Passes before and after DAZ.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn daz_red_guard_dg4_a_zero_percentage_padding_does_not_separate() {
-    assert_eq!(
-        zhn_error(5, "#b2 { height:auto; min-height:0%; padding-top:0%; }"),
-        DAZ_B2_REFUSAL
-    );
+    nzs_assert_zero_layout(5, "#b2 { height:auto; min-height:0%; padding-top:0%; }", 4);
 }
 
-/// DG5 (RED guard; MD12 witness): `padding-top:1%` of P's used content width 0 is +0 and
-/// does not separate. P's solve with `width:0` is Ok: the `height:0` twin reaches the
-/// core; its negative top margin keeps the explicit zero outside CTT unsigned scope
-/// (`NonpositiveBlockHeight` at 4). The Auto arm uses nonliteral min-height zero.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn daz_red_guard_dg5_a_percentage_of_a_zero_width_does_not_separate() {
-    assert_eq!(
-        zhn_error(
-            5,
-            "#p { width:0; } #b2 { height:auto; min-height:0%; padding-top:1%; }"
-        ),
-        DAZ_B2_REFUSAL
+    nzs_assert_zero_layout(
+        5,
+        "#p { width:0; } #b2 { height:auto; min-height:0%; padding-top:1%; }",
+        4,
     );
     assert_eq!(
         zhn_error(
             5,
             "#p { width:0; } #b2 { height:0; margin-top:-1px; padding-top:1%; }"
         ),
-        "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))"
+        "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))",
     );
 }
 
-/// DG6 (RED guard; MD10 witness): without P's solve (held), a padding percentage cannot
-/// be decided and does not separate (Q-2): `HeightKind`, not the held error. Passes
-/// before and after DAZ (B2 since CTB).
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn daz_red_guard_dg6_a_percentage_without_the_parent_solve_does_not_separate() {
     assert_eq!(
         daz_held("#b2 { height:auto; min-height:0%; padding-top:1%; }"),
-        DAZ_B2_REFUSAL
+        "ParentHorizontal(Width(InvalidInput(\"containing_width\")))"
     );
 }
 
-/// DG7 (RED guard; MD11 witness): `padding-top:200%` of P's `<f32::MAX>px` does not
-/// resolve and does not separate (Q-2): `HeightKind`, and `resolved_row` is not reached.
-/// P's solve with that width is Ok: the `height:1px` twin fails in `resolved_row` (B2
-/// since CTB).
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn daz_red_guard_dg7_an_unresolvable_percentage_does_not_separate() {
     let parent = format!("#p {{ width:{PCT_F32_MAX_PX}; }}");
@@ -157,7 +122,7 @@ fn daz_red_guard_dg7_an_unresolvable_percentage_does_not_separate() {
             5,
             &format!("{parent} #b2 {{ height:auto; min-height:0%; padding-top:200%; }}")
         ),
-        DAZ_B2_REFUSAL
+        "Percentage { source: 4, property: \"padding-top\", error: Unrepresentable }"
     );
     assert_eq!(
         zhn_error(
@@ -168,18 +133,13 @@ fn daz_red_guard_dg7_an_unresolvable_percentage_does_not_separate() {
     );
 }
 
-/// DG8 (RED guard; N-3): a padding percentage that rounds to +0 (1e-46% of 100) does not
-/// separate, as the core's `> 0.` test: `HeightKind` (B2 since CTB). Passes before and
-/// after DAZ.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn daz_red_guard_dg8_a_percentage_rounded_to_zero_does_not_separate() {
-    assert_eq!(
-        zhn_error(
-            5,
-            "#b2 { height:auto; min-height:0%; \
-             padding-top:0.0000000000000000000000000000000000000000000001%; }"
-        ),
-        DAZ_B2_REFUSAL
+    nzs_assert_zero_layout(
+        5,
+        "#b2 { height:auto; min-height:0%; padding-top:0.0000000000000000000000000000000000000000000001%; }",
+        4,
     );
 }
 
@@ -402,15 +362,15 @@ fn daz_d15_an_em_padding_separates_the_margins() {
     );
 }
 
-/// D16 (MW1, MW2 witness): facade work `752 + 32N + 534(N-2) + 373(N-3)` (DAZ: 58 per
+/// D16 (MW1, MW2 witness): facade work `752 + 32N + 542(N-2) + 373(N-3)` (DAZ: 58 per
 /// normal on every path) is exact at N5, N6 and N7 and one short is `Work`; the core work
 /// is unchanged.
 #[test]
 fn daz_d16_facade_work_charges_58_per_normal() {
-    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         assert_eq!(
             facade,
-            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
+            752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3),
             "N{nodes}"
         );
         let css = pct_css(nodes, "");

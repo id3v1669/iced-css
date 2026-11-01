@@ -1599,3 +1599,34 @@ fn zhn_red_guard_zl3_legacy_zero_height_with_a_border_stays_refused() {
         }
     );
 }
+
+#[test]
+fn nzs_legacy_rejects_nonadjoining_zero_in_every_child_role() {
+    let nodes = sources();
+    for source in 1..4 {
+        for value in [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            let mut facts = input(&nodes);
+            let height = OwnerHeight::NonAdjoiningZero(value);
+            match source {
+                1 => facts.before.height = height,
+                2 => facts.float.height = height,
+                _ => facts.after.height = height,
+            }
+            assert_eq!(
+                build_clearance_owner(&nodes, facts).unwrap_err(),
+                ClearanceOwnerError::Unsupported {
+                    source,
+                    reason: OwnerProfileReason::HeightKind
+                }
+            );
+        }
+    }
+}

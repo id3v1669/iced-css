@@ -517,7 +517,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            752 + 32 * 6 + 534 * (6 - 2) + 373 * (6 - 3)
+            752 + 32 * 6 + 542 * (6 - 2) + 373 * (6 - 3)
         );
     });
 }
@@ -3352,7 +3352,7 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 4199;
+        let work = 4231;
         for short in [1, 4198] {
             let mut limits = layout_limits();
             limits.work = nz(short);
@@ -3382,12 +3382,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            3260,
+            3284,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            5138,
+            5178,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3415,7 +3415,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             let normals = source_count - 3;
             assert_eq!(
                 work,
-                752 + 32 * source_count + 534 * children + 373 * normals
+                752 + 32 * source_count + 542 * children + 373 * normals
             );
         });
     }
@@ -3424,7 +3424,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
     for (source_count, facade_work, core_work) in
-        [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)]
+        [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)]
     {
         let mut receipts = Vec::new();
         for width in [10, 140] {
@@ -3474,22 +3474,22 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            3260,
-            2057,
+            3284,
+            2117,
             419,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            4199,
-            2671,
+            4231,
+            2755,
             501,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            5138,
-            3286,
+            5178,
+            3394,
             584,
         ),
     ] {
@@ -3869,15 +3869,14 @@ fn parent_and_child_profile_errors_preserve_causes_and_source_indices() {
 
 #[test]
 fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
+    nzs_assert_zero_layout(
+        6,
+        "#f { margin-left:auto; margin-right:auto; } #b3 { height:auto; min-height:0%; }",
+        5,
+    );
     use CapturedClearanceUnsupported as Unsupported;
 
     for (suffix, source, property, reason) in [
-        (
-            "#b3 { height:auto; min-height:0%; }",
-            5,
-            "height",
-            Unsupported::HeightKind,
-        ),
         (
             "#b3 { overflow:scroll; }",
             5,
@@ -4128,13 +4127,7 @@ fn auto_vertical_margins_advance_to_later_profile_faults() {
                 10.0,
                 layout_limits()
             ),
-            Err(SiblingLayoutError::Captured(
-                CapturedClearanceError::Unsupported {
-                    projected: 5,
-                    property: "height",
-                    reason: U::HeightKind
-                }
-            ))
+            Ok(ref layout) if layout.children()[3].used_height() == 0.0
         ));
     });
 
@@ -4155,13 +4148,7 @@ fn auto_vertical_margins_advance_to_later_profile_faults() {
                 },
                 layout_limits(),
             ),
-            Err(SiblingLayoutError::Captured(
-                CapturedClearanceError::Unsupported {
-                    projected: 4,
-                    property: "height",
-                    reason: U::HeightKind,
-                }
-            ))
+            Ok(ref layout) if layout.children()[2].used_height() == 0.0
         ));
     });
 
@@ -4771,13 +4758,7 @@ fn actual_defaulting_inheritance_and_cascade_provenance_reach_layout_records() {
                 },
                 layout_limits(),
             ),
-            Err(SiblingLayoutError::Captured(
-                CapturedClearanceError::Unsupported {
-                    projected: 5,
-                    property: "height",
-                    reason: CapturedClearanceUnsupported::HeightKind,
-                }
-            ))
+            Ok(ref layout) if layout.children()[3].used_height() == 0.0
         ));
     });
 }
@@ -5631,12 +5612,12 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [3260, 4199, 5138][case.nodes - 5],
+        [3284, 4231, 5178][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
         layout.receipt().core.work,
-        [2057, 2671, 3286][case.nodes - 5],
+        [2117, 2755, 3394][case.nodes - 5],
         "{id}"
     );
 }
@@ -6368,7 +6349,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 3260, "#b2"), (6, 4199, "#b3"), (7, 5138, "#b4")] {
+    for (source_count, work, selector) in [(5, 3284, "#b2"), (6, 4231, "#b3"), (7, 5178, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6405,13 +6386,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
                 if enough {
                     assert!(matches!(
                         result,
-                        Err(SiblingLayoutError::Captured(
-                            CapturedClearanceError::Unsupported {
-                                projected: 5,
-                                property: "height",
-                                reason: U::HeightKind,
-                            }
-                        ))
+                        Ok(ref layout) if layout.children()[3].used_height() == 0.0
                     ));
                 } else {
                     assert!(matches!(result, Err(SiblingLayoutError::ScratchBytes)));
@@ -6421,7 +6396,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
     }
 
     // F vertical Auto, later source 5 nonliteral-zero Auto and F width:auto: complete
-    // conversion reports source 5 height; removing it reaches source 3 width.
+    // NZS conversion admits source 5, so both rows reach source 3 width.
     run(
         6,
         "#f { width:auto; } #b3 { height:auto; min-height:0%; }",
@@ -6432,9 +6407,9 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
                 result,
                 Err(SiblingLayoutError::Captured(
                     CapturedClearanceError::Unsupported {
-                        projected: 5,
-                        property: "height",
-                        reason: U::HeightKind,
+                        projected: 3,
+                        property: "width",
+                        reason: U::FloatWidth
                     }
                 ))
             ));
@@ -6639,9 +6614,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 3260, 475, 2057, 419),
-        (6, 4199, 616, 2671, 501),
-        (7, 5138, 757, 3286, 584),
+        (5, 3284, 475, 2117, 419),
+        (6, 4231, 616, 2755, 501),
+        (7, 5178, 757, 3394, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -6731,6 +6706,7 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
 
 #[test]
 fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
+    nzs_assert_zero_layout(6, "#b3 { margin-top:auto; height:auto; min-height:0%; }", 5);
     use CapturedClearanceUnsupported as U;
     let captured = |projected, property, reason| {
         SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
@@ -6754,10 +6730,6 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
         (
             "#f { margin-top:auto; margin-left:-11px; }",
             profile(3, OwnerProfileReason::NegativeFloatOuterExtent),
-        ),
-        (
-            "#b3 { margin-top:auto; height:auto; min-height:0%; }",
-            captured(5, "height", U::HeightKind),
         ),
         (
             "#b2 { margin-bottom:auto; overflow:scroll; }",
@@ -7490,9 +7462,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 3260, 475, 2057, 419),
-        (6, 4199, 616, 2671, 501),
-        (7, 5138, 757, 3286, 584),
+        (5, 3284, 475, 2117, 419),
+        (6, 4231, 616, 2755, 501),
+        (7, 5178, 757, 3394, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8568,9 +8540,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 3260, 475, 2057, 419),
-        (6, 4199, 616, 2671, 501),
-        (7, 5138, 757, 3286, 584),
+        (5, 3284, 475, 2117, 419),
+        (6, 4231, 616, 2755, 501),
+        (7, 5178, 757, 3394, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -9479,9 +9451,9 @@ fn float_overflow_build<'p>(
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
     for (nodes, exact, lc, core) in [
-        (5, 3260, 481, 2057),
-        (6, 4199, 622, 2671),
-        (7, 5138, 763, 3286),
+        (5, 3284, 481, 2117),
+        (6, 4231, 622, 2755),
+        (7, 5178, 763, 3394),
     ] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
@@ -9505,7 +9477,7 @@ fn float_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+                752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9523,7 +9495,7 @@ fn float_overflow_facade_work_thresholds_are_exact() {
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 4199).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 4231).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -9926,7 +9898,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, exact, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -9948,7 +9920,7 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+                752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9966,7 +9938,7 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 4199).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 4231).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10532,7 +10504,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, exact, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -10554,7 +10526,7 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+                752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -10572,7 +10544,7 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 4199).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 4231).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -11290,7 +11262,7 @@ fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn parent_overflow_auto_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, exact, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         let css = format!(
             "{} {} #p {{ overflow:auto; }}",
             baseline_css(),
@@ -11312,7 +11284,7 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+                752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -11330,7 +11302,7 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 4199).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 4231).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -30459,7 +30431,7 @@ fn cfh_css_cascade_and_copied_auto() {
 
 #[test]
 fn cfh_css_auto_work_thresholds() {
-    for (nodes, facade_work, core_work) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, facade_work, core_work) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         let css = cfh_css(nodes, "right", true, "height:inherit;");
         sibling_fixture(nodes, &css, |projection, display| {
             let facts =
@@ -30636,6 +30608,51 @@ fn snv_assert_migration_css(suffix: &str, oracle: &str) {
             assert_eq!(child.margin_bottom(), row.margin[2]);
             assert_eq!(child.clear(), row.clear);
             assert_eq!(child.computed_height(), row.height);
+        }
+    });
+}
+
+// NZS migration helper: zero used height is not enough; its outgoing group must reset.
+fn nzs_assert_zero_layout(nodes: usize, fragment: &str, source: usize) {
+    let leading = if nodes == 7 {
+        leading_clear_source_rule(7)
+    } else {
+        ""
+    };
+    let css = format!("{} {leading} {fragment}", baseline_css());
+    sibling_fixture(nodes, &css, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
+        let computed = facts.row(source).unwrap().height;
+        let layout = default_outer_layout(
+            &facts,
+            &projection.nodes()[0],
+            0.0,
+            100.0,
+            10.0,
+            layout_limits(),
+        )
+        .unwrap_or_else(|error| panic!("NZS migration {fragment}: {error:?}"));
+        let child = &layout.children()[source - 2];
+        assert_eq!(child.used_height(), 0.0, "{fragment}");
+        assert_eq!(child.computed_height(), computed, "{fragment}");
+        let sequence = layout.sequence();
+        if source == nodes - 1 {
+            let members = sequence.terminal_run().members().to_vec();
+            assert_eq!(members.len(), 1, "{fragment}");
+            assert_eq!(
+                (members[0].source_index, members[0].side),
+                (source, MarginSide::Bottom)
+            );
+        } else {
+            let next = if source == 2 { 0 } else { source - 3 };
+            let group = sequence.tail_view(next).unwrap().hypothetical_group();
+            let members = group.members();
+            assert_eq!(members.len(), 2, "{fragment}");
+            assert_eq!(
+                (members[0].source_index, members[0].side),
+                (source, MarginSide::Bottom)
+            );
+            assert_eq!(members[1].side, MarginSide::Top);
         }
     });
 }

@@ -1,17 +1,9 @@
-//! ZHN: zero-height Sequence normals whose own top and bottom margins are not adjoining
-//! (CSS2.2 8.3.1): a normal (B1 or a tail) with used height +0 is admitted by the core when
-//! it establishes a new block formatting context (`overflow:hidden` or `auto`) or when a
-//! positive top or bottom border or padding separates its margins, so it cannot collapse
-//! through; a zero-height new-BFC border box strictly inside F's margin interval is
-//! `NewBfcFloatContact` (CSS2.2 9.5, Q-3). Every other zero-height normal stays
-//! `NonpositiveBlockHeight` (since CTB, the user's U1=A, a zero or Auto B1 whose own
-//! margins adjoin collapses through when no normal margin is negative, so the guards
-//! below give B1 a negative top margin or a non-literal zero), and every undecorated or
-//! undecidable ordinary Auto-height
-//! normal whose constrained tentative height is +0 stays `HeightKind` (a decorated
-//! ordinary Auto normal is admitted since DAZ, G6b, and a new-BFC one since MFZ, the
-//! user's U4=A; undecidable: its only separation is a vertical padding percentage without
-//! P's solve, one that does not resolve or one that rounds to +0, DAZ Q-2).
+//! ZHN: zero-height Sequence normals separated by a new BFC or vertical decoration.
+//! A geometric zero-height new-BFC box strictly inside the float's margin interval
+//! still reports NewBfcFloatContact. CTB/CTT admit ordinary literal-zero/Auto through
+//! normals in unsigned-normal scope. NZS additionally admits computed-nonliteral
+//! used-zero normals with separate own margins, including undecorated ordinary boxes.
+//! Existing actual-through signed-margin refusals remain; NZS does not implement S4.
 //!
 //! A child module of `em_lengths` (ZHN design section 6): it reuses the `pct`, `pht`, `och`
 //! and `eml` helpers (`pct_css`, `pct_with`, `pct_view`, `assert_pct_view`, `pct_lit`,
@@ -157,16 +149,11 @@ fn zhn_z7d_new_bfc_auto_heights_equal_their_zero_twins() {
     }
 }
 
-/// Z7e (RED guard; ZH-4): `height:10px; max-height:0` on an ordinary undecorated B1 stays
-/// refused. This is a scope choice for G6/G6b, not a CSS2.2 8.3.1 requirement (the
-/// normative list reads the computed height, which is not zero here). Since CTB it is
-/// `HeightKind` at B1's height step (Q-4). Passes before and after ZHN.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
-fn zhn_red_guard_z7e_a_max_height_zero_ordinary_b1_stays_refused() {
-    assert_eq!(
-        zhn_error(5, "#b1 { height:10px; max-height:0; }"),
-        pht_refusal(2, "height", "HeightKind")
-    );
+fn zhn_z7e_max_height_zero_ordinary_b1_is_separated() {
+    // NZS: retain computed provenance and require a separate outgoing margin group.
+    nzs_assert_zero_layout(5, "#b1 { height:10px; max-height:0; }", 2);
 }
 
 // ZHN FLIP rows: they need the widened core admission and guard (and the G6a work).
@@ -439,19 +426,19 @@ fn zhn_z11_a_zero_height_tail_with_a_negative_margin_takes_the_signed_route() {
     );
 }
 
-/// Z12 (MW1, MW2 witness): core work `1062 + 12N + N(N-1)/2 + 333(N-4) + 64(N-2) +
-/// 200(N-3)` (G6a: 62 per normal on every path) is exact at N5, N6 and N7 and one short
+/// Z12 (MW1, MW2 witness): core work `1062 + 12N + N(N-1)/2 + 333(N-4) + 76(N-2) +
+/// 212(N-3)` (G6a: 62 per normal on every path) is exact at N5, N6 and N7 and one short
 /// is `Core(Work)`; the facade work is unchanged.
 #[test]
 fn zhn_z12_core_work_charges_62_per_normal() {
-    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         assert_eq!(
             core,
             1062 + 12 * nodes
                 + nodes * (nodes - 1) / 2
                 + 333 * (nodes - 4)
-                + 64 * (nodes - 2)
-                + 200 * (nodes - 3)
+                + 76 * (nodes - 2)
+                + 212 * (nodes - 3)
         );
         let css = pct_css(nodes, "");
         let limits = |core_work: usize| {

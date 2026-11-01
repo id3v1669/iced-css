@@ -1204,7 +1204,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 2057, 419), (6, 2671, 501), (7, 3286, 584)] {
+    for (count, work, old_work) in [(5, 2117, 419), (6, 2755, 501), (7, 3394, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1235,8 +1235,8 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
             1062 + 12 * count
                 + count * (count - 1) / 2
                 + 333 * tail_count
-                + 64 * child_count
-                + 200 * (count - 3)
+                + 76 * child_count
+                + 212 * (count - 3)
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert!(owner.receipt().member_capacity >= 2 * (count - 3));
@@ -1314,7 +1314,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(2670).unwrap();
+    short.work = NonZeroUsize::new(2754).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1363,7 +1363,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].border.left = -1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(2670).unwrap();
+    one_short.work = NonZeroUsize::new(2754).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -2345,7 +2345,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 2057, 419), (6, 2671, 501), (7, 3286, 584)] {
+    for (count, work, old_work) in [(5, 2117, 419), (6, 2755, 501), (7, 3394, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2816,7 +2816,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 2057, 419), (6, 2671, 501), (7, 3286, 584)] {
+    for (count, work, old_work) in [(5, 2117, 419), (6, 2755, 501), (7, 3394, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -3200,7 +3200,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 2057, 419), (6, 2671, 501), (7, 3286, 584)] {
+    for (count, work, old_work) in [(5, 2117, 419), (6, 2755, 501), (7, 3394, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3560,7 +3560,7 @@ fn tnb_core_tail_guards_follow_source_order() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 2057), (6, 2671), (7, 3286)] {
+    for (count, work) in [(5, 2117), (6, 2755), (7, 3394)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3578,8 +3578,8 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
             1062 + 12 * count
                 + count * (count - 1) / 2
                 + 333 * (count - 4)
-                + 64 * (count - 2)
-                + 200 * (count - 3)
+                + 76 * (count - 2)
+                + 212 * (count - 3)
         );
     }
 }
@@ -4458,7 +4458,7 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 2057), (6, 2671), (7, 3286)] {
+    for (count, work) in [(5, 2117), (6, 2755), (7, 3394)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
@@ -4719,7 +4719,7 @@ fn cfh_core_exact_extent_and_later_profile_order() {
 
 #[test]
 fn cfh_core_auto_work_thresholds() {
-    for (count, work) in [(5, 2057), (6, 2671), (7, 3286)] {
+    for (count, work) in [(5, 2117), (6, 2755), (7, 3394)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[1].height = OwnerHeight::Auto;
@@ -6224,4 +6224,471 @@ fn ctt_signed_nonthrough_keeps_published_collapse_boundary() {
     );
     let group = ordinary.tail_view(0).unwrap().hypothetical_group();
     assert_eq!((group.positive(), group.negative()), (4., -3.));
+}
+
+fn nzs_assert_profile_error(actual: ClearanceSequenceError, expected: ClearanceOwnerError) {
+    let ClearanceSequenceError::Profile(actual) = actual else {
+        panic!("expected a profile error, got {actual:?}");
+    };
+    assert_eq!(actual, expected);
+}
+
+// NZS direct API tests enter GREEN; baseline RED uses the existing facade API.
+fn nzs_layout<'s>(
+    nodes: &'s [SourceNode],
+    before: (OwnerHeight, f32, f32),
+    float_height: f32,
+    tails: &[(OwnerHeight, f32, f32, ClearSide)],
+) -> Result<CttOwner<'s>, ClearanceSequenceError> {
+    assert_eq!(tails.len(), nodes.len() - 4);
+    let (outer, mut parent, mut children) = facts(nodes);
+    parent.content_top = 0.;
+    children[0].height = before.0;
+    children[0].margin.top = AutoLength::Value(before.1);
+    children[0].margin.bottom = AutoLength::Value(before.2);
+    children[1].height = OwnerHeight::Explicit(float_height);
+    for (child, &(height, top, bottom, clear)) in children[2..].iter_mut().zip(tails) {
+        child.height = height;
+        child.margin.top = AutoLength::Value(top);
+        child.margin.bottom = AutoLength::Value(bottom);
+        child.clear = clear;
+    }
+    let mut budget = limits(nodes.len());
+    budget.work = NonZeroUsize::new(1_000_000).unwrap();
+    budget.retained_bytes = NonZeroUsize::new(1_000_000).unwrap();
+    build(nodes, outer, parent, &children, budget)
+}
+
+#[test]
+fn nzs_leading_zero_uses_its_bottom_margin_for_float_and_next_sibling() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(5);
+    for zero in [0.0, -0.0] {
+        let owner = nzs_layout(
+            &nodes,
+            (OwnerHeight::NonAdjoiningZero(zero), 1., 4.),
+            2.,
+            &[(OwnerHeight::Explicit(1.), 3., 2., ClearSide::None)],
+        )
+        .unwrap();
+        assert_eq!(
+            owner.before(),
+            BlockVertical {
+                top: 1.,
+                bottom: 1.
+            }
+        );
+        assert_eq!(
+            (owner.placed_float().top, owner.placed_float().bottom),
+            (5., 7.)
+        );
+        let tail = owner.tail_view(0).unwrap();
+        assert_eq!(
+            tail.vertical(),
+            BlockVertical {
+                top: 5.,
+                bottom: 6.
+            }
+        );
+        assert_eq!(
+            ctt_members(tail.hypothetical_group().members()),
+            [(2, B, 4.), (4, T, 3.)]
+        );
+        assert_eq!(ctt_members(owner.terminal_run().members()), [(4, B, 2.)]);
+    }
+}
+
+#[test]
+fn nzs_consecutive_zeros_keep_separate_incoming_and_outgoing_groups() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(6);
+    let owner = nzs_layout(
+        &nodes,
+        (OwnerHeight::Explicit(2.), 0., 4.),
+        2.,
+        &[
+            (OwnerHeight::NonAdjoiningZero(0.), 3., 10., ClearSide::None),
+            (OwnerHeight::NonAdjoiningZero(0.), 2., 1., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(owner.tail()[0].vertical().top, 6.);
+    let last = owner.tail_view(1).unwrap();
+    assert_eq!(
+        last.vertical(),
+        BlockVertical {
+            top: 16.,
+            bottom: 16.
+        }
+    );
+    assert_eq!(
+        ctt_members(last.hypothetical_group().members()),
+        [(4, B, 10.), (5, T, 2.)]
+    );
+    assert_eq!(ctt_members(owner.terminal_run().members()), [(5, B, 1.)]);
+}
+
+#[test]
+fn nzs_nonliteral_separator_breaks_a_literal_through_run() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(7);
+    let owner = nzs_layout(
+        &nodes,
+        (OwnerHeight::Explicit(2.), 0., 4.),
+        2.,
+        &[
+            (OwnerHeight::Explicit(0.), 3., 10., ClearSide::None),
+            (OwnerHeight::NonAdjoiningZero(0.), 2., 1., ClearSide::None),
+            (OwnerHeight::Explicit(0.), 5., 7., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        owner
+            .tail()
+            .iter()
+            .map(|p| p.vertical().top)
+            .collect::<Vec<_>>(),
+        [6., 12., 17.]
+    );
+    assert_eq!(
+        ctt_members(owner.tail_view(1).unwrap().hypothetical_group().members()),
+        [(2, B, 4.), (4, T, 3.), (4, B, 10.), (5, T, 2.)]
+    );
+    assert_eq!(
+        ctt_members(owner.tail_view(2).unwrap().hypothetical_group().members()),
+        [(5, B, 1.), (6, T, 5.)]
+    );
+    assert_eq!(
+        ctt_members(owner.terminal_run().members()),
+        [(5, B, 1.), (6, T, 5.), (6, B, 7.)]
+    );
+}
+
+#[test]
+fn nzs_cleared_separator_resets_after_zero_and_negative_clearance() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(6);
+    for (top, baseline, clearance) in [(3., 9., -1.), (2., 8., 0.)] {
+        let owner = nzs_layout(
+            &nodes,
+            (OwnerHeight::Explicit(2.), 0., 4.),
+            2.,
+            &[
+                (OwnerHeight::NonAdjoiningZero(0.), top, 10., ClearSide::Both),
+                (OwnerHeight::Explicit(1.), 2., 1., ClearSide::None),
+            ],
+        )
+        .unwrap();
+        let first = owner.tail_view(0).unwrap();
+        assert_eq!(first.hypothetical_top(), 6.);
+        assert_eq!(first.zero_clearance_top(), Some(baseline));
+        assert_eq!(first.clearance(), Some(clearance));
+        assert_eq!(
+            first.vertical(),
+            BlockVertical {
+                top: 8.,
+                bottom: 8.
+            }
+        );
+        assert_eq!(first.actual_groups().count(), 2);
+        let next = owner.tail_view(1).unwrap();
+        assert_eq!(
+            next.vertical(),
+            BlockVertical {
+                top: 18.,
+                bottom: 19.
+            }
+        );
+        assert_eq!(
+            ctt_members(next.hypothetical_group().members()),
+            [(4, B, 10.), (5, T, 2.)]
+        );
+    }
+    let equal = nzs_layout(
+        &nodes,
+        (OwnerHeight::Explicit(2.), 0., 4.),
+        2.,
+        &[
+            (OwnerHeight::NonAdjoiningZero(0.), 6., 10., ClearSide::Both),
+            (OwnerHeight::Explicit(1.), 2., 1., ClearSide::None),
+        ],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        equal,
+        ClearanceSequenceError::Placement {
+            source: 4,
+            error: ClearanceOwnerError::UnsupportedEquality,
+        }
+    ));
+}
+
+#[test]
+fn nzs_signed_separated_zero_does_not_license_an_actual_through_sibling() {
+    let nodes = sources(5);
+    let owner = nzs_layout(
+        &nodes,
+        (OwnerHeight::NonAdjoiningZero(0.), -2., 4.),
+        2.,
+        &[(OwnerHeight::Explicit(1.), -3., 2., ClearSide::None)],
+    )
+    .unwrap();
+    assert_eq!(
+        owner.before(),
+        BlockVertical {
+            top: -2.,
+            bottom: -2.
+        }
+    );
+    assert_eq!(
+        (owner.placed_float().top, owner.placed_float().bottom),
+        (2., 4.)
+    );
+    assert_eq!(
+        owner.tail()[0].vertical(),
+        BlockVertical {
+            top: -1.,
+            bottom: 0.
+        }
+    );
+    for (before, after, source) in [
+        (
+            OwnerHeight::NonAdjoiningZero(0.),
+            OwnerHeight::Explicit(0.),
+            4,
+        ),
+        (
+            OwnerHeight::Explicit(0.),
+            OwnerHeight::NonAdjoiningZero(0.),
+            2,
+        ),
+    ] {
+        nzs_assert_profile_error(
+            nzs_layout(
+                &nodes,
+                (before, -2., 4.),
+                2.,
+                &[(after, -3., 2., ClearSide::None)],
+            )
+            .unwrap_err(),
+            ClearanceOwnerError::Unsupported {
+                source,
+                reason: OwnerProfileReason::NonpositiveBlockHeight,
+            },
+        );
+    }
+}
+
+#[test]
+fn nzs_geometric_zero_still_checks_new_bfc_float_contact() {
+    let nodes = sources(5);
+    let (outer, mut parent, mut children) = facts(&nodes);
+    parent.content_top = 0.;
+    children[0].height = OwnerHeight::Explicit(2.);
+    children[2].height = OwnerHeight::NonAdjoiningZero(0.);
+    children[2].margin.top = AutoLength::Value(5.);
+    children[2].clear = ClearSide::None;
+    let owner = build(&nodes, outer, parent, &children, limits(5)).unwrap();
+    assert_eq!(
+        owner.tail()[0].vertical(),
+        BlockVertical {
+            top: 7.,
+            bottom: 7.
+        }
+    );
+    children[2].context = ChildContext::OtherNewBfc;
+    assert!(matches!(
+        build(&nodes, outer, parent, &children, limits(5)),
+        Err(ClearanceSequenceError::Placement {
+            source: 4,
+            error: ClearanceOwnerError::NewBfcFloatContact,
+        })
+    ));
+}
+
+#[test]
+fn nzs_zero_category_rejects_nonzero_and_nonfinite_at_each_normal_source() {
+    let nodes = sources(6);
+    for offset in [0, 2, 3] {
+        let source = offset + 2;
+        for value in [1., -1., f32::MAX, -f32::MAX, f32::MIN_POSITIVE] {
+            let (outer, parent, mut children) = facts(&nodes);
+            children[offset].height = OwnerHeight::NonAdjoiningZero(value);
+            nzs_assert_profile_error(
+                build(&nodes, outer, parent, &children, limits(6)).unwrap_err(),
+                ClearanceOwnerError::Unsupported {
+                    source,
+                    reason: OwnerProfileReason::HeightKind,
+                },
+            );
+        }
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let (outer, parent, mut children) = facts(&nodes);
+            children[offset].height = OwnerHeight::NonAdjoiningZero(value);
+            nzs_assert_profile_error(
+                build(&nodes, outer, parent, &children, limits(6)).unwrap_err(),
+                ClearanceOwnerError::InvalidNumber {
+                    source,
+                    field: "height",
+                },
+            );
+        }
+    }
+}
+
+#[test]
+fn nzs_category_validation_preserves_profile_order_and_float_refusal() {
+    let nodes = sources(5);
+    for value in [0., -0., 1., -1., f32::NAN, f32::INFINITY] {
+        let (outer, parent, mut children) = facts(&nodes);
+        children[1].height = OwnerHeight::NonAdjoiningZero(value);
+        nzs_assert_profile_error(
+            build(&nodes, outer, parent, &children, limits(5)).unwrap_err(),
+            ClearanceOwnerError::Unsupported {
+                source: 3,
+                reason: OwnerProfileReason::HeightKind,
+            },
+        );
+    }
+    for (case, reason) in [
+        (0, OwnerProfileReason::DisplayOrFlow),
+        (1, OwnerProfileReason::ChildContext),
+        (2, OwnerProfileReason::Content),
+        (3, OwnerProfileReason::GeneratedContent),
+    ] {
+        let (outer, parent, mut children) = facts(&nodes);
+        children[2].height = OwnerHeight::NonAdjoiningZero(f32::NAN);
+        match case {
+            0 => children[2].display.flow = Flow::Floating,
+            1 => children[2].context = ChildContext::Unknown,
+            2 => children[2].content = OwnerContent::TextOrRichText,
+            _ => children[2].generated = OwnerGenerated::Present,
+        }
+        nzs_assert_profile_error(
+            build(&nodes, outer, parent, &children, limits(5)).unwrap_err(),
+            ClearanceOwnerError::Unsupported { source: 4, reason },
+        );
+    }
+    let (outer, parent, mut children) = facts(&nodes);
+    children[0].height = OwnerHeight::NonAdjoiningZero(0.);
+    children[2].margin.bottom = AutoLength::Value(f32::NAN);
+    nzs_assert_profile_error(
+        build_width(&nodes, outer, parent, &children, f32::NAN, limits(5)).unwrap_err(),
+        ClearanceOwnerError::InvalidNumber {
+            source: 4,
+            field: "margin",
+        },
+    );
+    children[2].margin.bottom = AutoLength::Value(3.);
+    for height in [OwnerHeight::Auto, OwnerHeight::Percentage(0.)] {
+        children[2].height = height;
+        nzs_assert_profile_error(
+            build(&nodes, outer, parent, &children, limits(5)).unwrap_err(),
+            ClearanceOwnerError::Unsupported {
+                source: 4,
+                reason: OwnerProfileReason::HeightKind,
+            },
+        );
+    }
+}
+
+#[test]
+fn nzs_exact_work_and_requested_bytes_gate_new_zero_layouts() {
+    use iced_css_core::formatting::clearance_sequence::sequence_requested_retained_bytes;
+    for (count, work, requested) in [(5, 2117, 200), (6, 2755, 368), (7, 3394, 536)] {
+        let nodes = sources(count);
+        let (outer, parent, mut children) = facts(&nodes);
+        children[0].height = OwnerHeight::NonAdjoiningZero(-0.);
+        let mut budget = limits(count);
+        budget.work = NonZeroUsize::new(work - 1).unwrap();
+        assert!(matches!(
+            build(&nodes, outer, parent, &children, budget),
+            Err(ClearanceSequenceError::Work)
+        ));
+        budget.work = NonZeroUsize::new(work).unwrap();
+        let owner = build(&nodes, outer, parent, &children, budget).unwrap();
+        assert_eq!(owner.receipt().work, work);
+        assert_eq!(owner.before().bottom, 11.);
+        assert_eq!(owner.placed_float().top, 15.);
+        assert_eq!(sequence_requested_retained_bytes(count), Some(requested));
+        budget.retained_bytes = NonZeroUsize::new(requested - 1).unwrap();
+        assert!(matches!(
+            build(&nodes, outer, parent, &children, budget),
+            Err(ClearanceSequenceError::Bytes)
+        ));
+    }
+}
+
+#[test]
+fn nzs_long_run_retains_only_members_after_the_separator() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(21);
+    let mut tails = vec![(OwnerHeight::Explicit(0.), 1., 1., ClearSide::None); 17];
+    tails[8].0 = OwnerHeight::NonAdjoiningZero(0.);
+    let owner = nzs_layout(&nodes, (OwnerHeight::Explicit(1.), 0., 1.), 0., &tails).unwrap();
+    assert_eq!(owner.tail()[0].vertical().top, 2.);
+    assert_eq!(owner.tail()[8].vertical().top, 2.);
+    assert_eq!(owner.tail()[16].vertical().top, 3.);
+    assert_eq!(
+        owner
+            .tail_view(8)
+            .unwrap()
+            .hypothetical_group()
+            .members()
+            .len(),
+        18
+    );
+    let mut expected = vec![(12, B, 1.)];
+    for source in 13..=20 {
+        expected.push((source, T, 1.));
+        expected.push((source, B, 1.));
+    }
+    assert_eq!(ctt_members(owner.terminal_run().members()), expected);
+}
+
+#[test]
+fn nzs_separated_zero_keeps_the_signed_publication_boundary() {
+    let nodes = sources(5);
+    let (outer, mut parent, mut children) = facts(&nodes);
+    parent.content_top = -2.;
+    children[0].margin.bottom = AutoLength::Value(1.);
+    children[1].height = OwnerHeight::Explicit(0.);
+    children[2].height = OwnerHeight::NonAdjoiningZero(0.);
+    children[2].margin.top = AutoLength::Value(f32::from_bits(0xb3000000));
+    children[2].margin.bottom = AutoLength::Value(0.);
+    children[2].clear = ClearSide::None;
+    let owner = build(&nodes, outer, parent, &children, limits(5)).unwrap();
+    // RN(1 - 2^-25) is 1, then the already-published B1 bottom -1 gives +0.
+    // Fusing the terms would publish -2^-25 instead.
+    let tail = owner.tail_view(0).unwrap();
+    assert_eq!(tail.hypothetical_top().to_bits(), 0);
+    assert_eq!(tail.vertical().top.to_bits(), 0);
+    assert_eq!(tail.vertical().bottom.to_bits(), 0);
+    assert_eq!(tail.hypothetical_group().negative().to_bits(), 0xb3000000);
+    assert_eq!(owner.terminal_run().members().len(), 1);
+}
+
+#[test]
+fn nzs_last_separator_keeps_the_exact_cleared_reference() {
+    let nodes = sources(6);
+    let (outer, mut parent, mut children) = facts(&nodes);
+    parent.content_top = -2.;
+    children[0].margin.bottom = AutoLength::Value(f32::from_bits(0x3f7fffff));
+    children[1].height = OwnerHeight::Explicit(f32::from_bits(0x33c00000));
+    children[2].height = OwnerHeight::Explicit(0.);
+    children[2].margin.top = AutoLength::Value(1.);
+    children[2].margin.bottom = AutoLength::Value(1.);
+    children[3].height = OwnerHeight::NonAdjoiningZero(0.);
+    children[3].margin.top = AutoLength::Value(0.);
+    children[3].margin.bottom = AutoLength::Value(0.);
+    children[3].clear = ClearSide::None;
+    let owner = build(&nodes, outer, parent, &children, limits(6)).unwrap();
+    let first = owner.tail_view(0).unwrap();
+    assert_eq!(first.vertical().top.to_bits(), 0x33000000);
+    assert_eq!(first.clearance().unwrap().to_bits(), 0xbf7ffffe);
+    let last = owner.tail_view(1).unwrap();
+    assert_eq!(last.vertical().top.to_bits(), 0x33000000);
+    assert_eq!(last.vertical().bottom.to_bits(), 0x33000000);
+    assert_eq!(owner.terminal_run().members().len(), 1);
 }

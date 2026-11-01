@@ -405,7 +405,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `752 + 32*N + 534*(N-2) + 373*(N-3)` is prepaid before any
+/// Facade work `752 + 32*N + 542*(N-2) + 373*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -491,6 +491,8 @@ impl std::error::Error for SiblingLayoutError {
 /// charges are retained once. These policy charges are not measured instruction counts.
 /// CTT retains those charges and prepays 57 fixed policy units for the shared
 /// two-vector requested-byte helper, including its checked count/products/sum.
+/// NZS adds eight per child for the narrow new category and scalar publication,
+/// retaining all old charges without credit for removed refusals.
 /// As in the PHT, PTB, PTA and OCH units, a call of a private facade helper is not charged.
 /// The shared public core byte helper is included explicitly in the CTT unit.
 /// The core is invoked exactly once, with computed Auto preserved and
@@ -580,7 +582,8 @@ impl std::error::Error for SiblingLayoutError {
 /// A new-BFC (`hidden` or `auto`) Auto normal whose constrained height is +0 is passed as
 /// an explicit +0 too (MFZ): CSS2.2 10.6.7 defines no height for a box without children,
 /// and the user's U4=A extends Q3=A (F's childless Auto height is zero) to it; its own
-/// margins are not adjoining (8.3.1). Any other Auto normal stays refused (`HeightKind`).
+/// margins are not adjoining (8.3.1). NZS preserves computed non-adjacency for other
+/// zero-height normals with the explicit NonAdjoiningZero category.
 /// An explicit used height of +0 (G6a) is admitted by the core for a normal whose own top
 /// and bottom margins are not adjoining (CSS2.2 8.3.1: `hidden` or `auto`, or a positive
 /// top or bottom border or padding). An ordinary normal whose computed `height` is zero or
@@ -590,7 +593,8 @@ impl std::error::Error for SiblingLayoutError {
 /// top border edge when B1 collapses through; subsequent through tails extend the
 /// adjoining run unless a normal's used vertical margin is negative
 /// (`NonpositiveBlockHeight`). A normal used as +0 whose computed `height` or
-/// `min-height` is not such a zero is `HeightKind` unless its margins are separated.
+/// `min-height` is not such a zero uses separated geometry (NZS), without changing
+/// physical decoration, context or sibling margin collapse.
 /// P's unsigned Auto-height route keeps the last source normal's border bottom plus
 /// its raw used bottom margin, including through tails (CTT-D1). Terminal collapsed
 /// extrema do not replace this endpoint; raw-margin containment remains separate.
@@ -617,8 +621,8 @@ impl std::error::Error for SiblingLayoutError {
 /// reads a decorated Auto normal's vertical padding percentages from the fact row and
 /// resolves them itself, earlier, against the same width with the same primitive and
 /// without failing; one that does not resolve, or that rounds to +0, does not separate by
-/// itself (a normal whose only separation it is keeps `HeightKind`), and the resolved row
-/// read later holds the same values.
+/// itself. Computed non-adjacency supplies a separate NZS category; literal adjoining
+/// zeros retain CTB/CTT behavior. The later resolved row owns any percentage error.
 /// Every Sequence row's percentage `height`, `min-height` and `max-height` (PHT, CSS2.2
 /// 10.5, 10.7) resolves against its containing block's height when that height is
 /// specified explicitly; otherwise `height` is used as `auto`, `min-height` as 0 and
@@ -950,14 +954,14 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // that height (it cannot collapse through, 8.3.1); DAZ (G6b): an ordinary one
         // whose positive top or bottom border or padding separates its own margins is
         // an explicit +0 ("zero, otherwise", 10.6.3); MFZ (U4=A): so is a new-BFC one
-        // (10.6.7 defines no childless height; Q3=A extended); any other Auto normal stays
-        // `HeightKind`. PHT (10.5, 10.7): the three height facts are first resolved against
+        // (10.6.7 defines no childless height; Q3=A extended). NZS keeps computed
+        // non-adjacency for other used-zero normals. PHT (10.5, 10.7): height facts resolve against
         // P's explicit used content height or take the indefinite rules, after the
         // admission tests above and before the held P check below (the basis does not
         // depend on P's horizontal solve). An explicit +0 goes to the core (G6a). CTB (the
         // user's U1=A): an ordinary undecorated B1 whose own margins adjoin goes as +0 and
-        // may collapse through; a B1 used as +0 whose own margins do not adjoin by its
-        // computed values and are not separated is `HeightKind`.
+        // may collapse through. NZS normals with a non-adjoining computed category
+        // carry their zero used height without joining their own top and bottom margins.
         let vertical = resolve_heights(row, child_basis, numeric, source)?;
         let auto_height = constrain(0.0, vertical.min, vertical.max);
         // CTB/CTT (CSS2.2 8.3.1, 10.5, 10.7): a normal's margins adjoin only with a computed
@@ -974,20 +978,17 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         let height = match vertical.height {
             BoxLengthFact::Absolute(value) => {
                 let used = constrain(value.pixels, vertical.min, vertical.max);
-                // CTB/CTT (ZH-4 scope): a zero normal whose own margins do not adjoin keeps a
-                // refusal unless they are separated.
+                // NZS: carry computed non-adjacency explicitly for the formerly
+                // refused zero; existing physically separated cases keep their category.
                 if source != 3
                     && used == 0.0
                     && !adjoining
                     && !separated_auto(row, parent_solved, numeric)
                 {
-                    return Err(E::Captured(unsupported(
-                        source,
-                        "height",
-                        CapturedClearanceUnsupported::HeightKind,
-                    )));
+                    OwnerHeight::NonAdjoiningZero(used)
+                } else {
+                    OwnerHeight::Explicit(used)
                 }
-                OwnerHeight::Explicit(used)
             }
             BoxLengthFact::Auto { .. } if source == 3 && auto_height == 0.0 => OwnerHeight::Auto,
             BoxLengthFact::Auto { .. } if auto_height > 0.0 => OwnerHeight::Explicit(auto_height),
@@ -997,6 +998,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             // CTB (10.6.3 "zero, otherwise"): the core decides between separated,
             // collapse-through and `NonpositiveBlockHeight`.
             BoxLengthFact::Auto { .. } if adjoining => OwnerHeight::Explicit(auto_height),
+            BoxLengthFact::Auto { .. } if source != 3 && auto_height == 0.0 => {
+                OwnerHeight::NonAdjoiningZero(auto_height)
+            }
             BoxLengthFact::Auto { .. } => {
                 return Err(E::Captured(unsupported(
                     source,
@@ -1821,8 +1825,9 @@ fn resolve_heights(
 /// content width as in `resolved_row` (CSS2.2 8.4); without P's solve (held, PCT Q-6),
 /// when it does not resolve, or when it rounds to +0, it does not separate by itself
 /// (the core's `vertical_decoration` tests the same edges with `> 0.`); when it is the
-/// only separation of an ordinary normal, the caller's `HeightKind` stands. CTB/CTT also
-/// asks it for an explicit normal used as +0 whose own margins do not adjoin.
+/// only possible physical separation, this helper returns false. NZS carries computed
+/// non-adjacency separately; CTB/CTT retains the literal adjoining category. The caller
+/// also asks this helper for an explicit normal used as +0.
 fn separated_auto(
     row: &ClearanceBoxFact,
     parent: Option<&ParentSolve>,
@@ -2167,6 +2172,7 @@ fn fact_row<'a>(
 fn used_child_height(child: ChildFacts<'_>, source: usize) -> Result<f32, SiblingLayoutError> {
     match child.height {
         OwnerHeight::Explicit(height) => Ok(height),
+        OwnerHeight::NonAdjoiningZero(height) if source != 3 => Ok(height),
         OwnerHeight::Auto if source == 3 => Ok(0.0_f32),
         _ => Err(SiblingLayoutError::FactInvariant {
             source,
@@ -2363,7 +2369,11 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // CTT: shared requested-byte helper57: entry/argument5, tail count4,
         // zero-tail guard4, member_slots16, two-vector byte helper26, mapping2.
         // The old record-only byte charge remains, without credit.
-        .checked_add(57)
+        .checked_add(57)?
+        // NZS-D5: eight per child, six for the narrow category branch/write and
+        // two for validated scalar publication, retaining all earlier charges.
+        // NZS-FLIP-FACADE-WORK: the FLIP stage omits only this new charge.
+        .checked_add(nodes.checked_sub(2)?.checked_mul(8)?)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -2467,9 +2477,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(3260));
-        assert_eq!(facade_work(6), Some(4199));
-        assert_eq!(facade_work(7), Some(5138));
+        assert_eq!(facade_work(5), Some(3284));
+        assert_eq!(facade_work(6), Some(4231));
+        assert_eq!(facade_work(7), Some(5178));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
@@ -2790,6 +2800,34 @@ mod tests {
                     assert_eq!(v.capacity(), capacity);
                     assert_eq!(bytes, wanted);
                 }
+            }
+        }
+    }
+    #[test]
+    fn nzs_nonadjoining_zero_used_height_preserves_both_signs() {
+        use iced_css_core::{identity::IdAllocator, source::Metadata};
+        let mut ids = IdAllocator::new(std::num::NonZeroU64::new(713).unwrap());
+        let source = SourceNode {
+            instance: ids.allocate().unwrap(),
+            parent: None,
+            children: vec![],
+            metadata: Metadata::default(),
+        };
+        for index in [2, 4] {
+            for zero in [0.0_f32, -0.0_f32] {
+                let mut child = cp_capacity_child(&source);
+                child.height = OwnerHeight::NonAdjoiningZero(zero);
+                assert_eq!(
+                    used_child_height(child, index).unwrap().to_bits(),
+                    zero.to_bits()
+                );
+                assert!(matches!(
+                    used_child_height(child, 3),
+                    Err(SiblingLayoutError::FactInvariant {
+                        source: 3,
+                        property: "height"
+                    })
+                ));
             }
         }
     }

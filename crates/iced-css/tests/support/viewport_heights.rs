@@ -580,17 +580,17 @@ fn vph_receipt(layout: &CapturedSiblingLayout<'_>) -> (usize, usize) {
     (layout.receipt().work, layout.receipt().core.work)
 }
 
-/// VW (probe VP6 witness): the facade work is `752 + 32N + 534(N-2) + 373(N-3)` (VPH: 45
-/// fixed on every path): 3260, 4199 and 5138 at N5, N6 and N7 lay out at the exact limit
+/// VW (probe VP6 witness): the facade work is `752 + 32N + 542(N-2) + 373(N-3)` (VPH: 45
+/// fixed on every path): 3284, 4231 and 5178 at N5, N6 and N7 lay out at the exact limit
 /// and one short is `Work`, both through the new entry with the viewport height 40 on V1's
 /// fragment (the read path) and through the old entry on the baseline; the core work is
-/// 2057, 2671 and 3286.
+/// 2117, 2755 and 3394.
 #[test]
 fn vph_vw_facade_work_charges_45_fixed() {
-    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         assert_eq!(
             facade,
-            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
+            752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3),
             "N{nodes}"
         );
         let limits = |work: usize| {

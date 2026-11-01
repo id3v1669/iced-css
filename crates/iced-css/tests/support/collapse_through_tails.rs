@@ -122,7 +122,8 @@ fn ctt_literal_auto_and_negative_zero_tails_have_identical_geometry() {
 }
 
 #[test]
-fn ctt_nonliteral_zero_tails_keep_height_kind_until_s3() {
+fn ctt_nonliteral_zero_tails_are_separated_in_s3() {
+    // NZS: retain computed provenance and require a separate outgoing margin group.
     for fragment in [
         "#b2 { height:50%; }",
         "#p { height:20px; } #b2 { height:0%; }",
@@ -132,11 +133,7 @@ fn ctt_nonliteral_zero_tails_keep_height_kind_until_s3() {
         "#b2 { height:0.0000000000000000000000000000000000000000000001px; }",
         "#b2 { height:auto; min-height:0.0000000000000000000000000000000000000000000001px; }",
     ] {
-        assert_eq!(
-            zhn_error(5, fragment),
-            pht_refusal(4, "height", "HeightKind"),
-            "{fragment}"
-        );
+        nzs_assert_zero_layout(5, fragment, 4);
     }
 }
 
@@ -354,7 +351,7 @@ fn ctt_admission_exposes_existing_later_facade_errors_in_order() {
         (
             6,
             "#b2 { height:10px; max-height:0; } #b3 { overflow:scroll; }".to_owned(),
-            pht_refusal(4, "height", "HeightKind"),
+            pht_refusal(5, "overflow", "ChildOverflow"),
         ),
     ] {
         assert_eq!(zhn_error(nodes, &fragment), expected, "{fragment}");
@@ -365,7 +362,7 @@ fn ctt_admission_exposes_existing_later_facade_errors_in_order() {
     );
     assert_eq!(
         daz_held("#b2 { height:10px; max-height:0; padding-top:1%; }"),
-        pht_refusal(4, "height", "HeightKind"),
+        "ParentHorizontal(Width(InvalidInput(\"containing_width\")))",
     );
 }
 
@@ -568,3 +565,6 @@ fn ctt_g8_decimal_conversion_preserves_cleared_reference_publications() {
         );
     }
 }
+
+#[path = "nonliteral_zero_separation.rs"]
+mod nonliteral_zero_separation;

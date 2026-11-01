@@ -276,7 +276,9 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// P and every child may be relatively positioned (REL, CSS2.2 9.4.3); the owner
 /// publishes their normal-flow geometry, which the offsets do not change, and the
 /// outer source stays static.
-/// Work `1062 + 12*N + N*(N-1)/2 + 333*(N-4) + 64*(N-2) + 200*(N-3)` is prepaid,
+/// NZS admits an explicit NonAdjoiningZero for a normal without extending the
+/// unsigned scope of actual through participants. Its own margins stay separate.
+/// Work `1062 + 12*N + N*(N-1)/2 + 333*(N-4) + 76*(N-2) + 212*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages, every child's border terms and padding publications, and
@@ -435,10 +437,9 @@ fn build_with_reserves<'s>(
     }
 
     let before_height = explicit_height(input.children[0]);
-    // CTB: an ordinary B1 with a zero-height border box was admitted only by its
-    // collapse-through flag (K1), so it collapses through.
-    let collapses = input.children[0].context == ChildContext::OrdinaryNonBfc
-        && zero_border_box(input.children[0]);
+    // CTB/CTT: only the adjoining height assertion participates in a through run.
+    // NZS zeros keep their own top and bottom margins separate.
+    let collapses = collapses_through(input.children[0]);
     let first = place_first_float(FirstFloatInput {
         parent: input.parent,
         before: input.children[0],
@@ -475,7 +476,7 @@ fn build_with_reserves<'s>(
     .map_err(placement)?;
     for (offset, facts) in input.children[2..].iter().copied().enumerate() {
         let source = offset + 4;
-        let through = facts.context == ChildContext::OrdinaryNonBfc && zero_border_box(facts);
+        let through = collapses_through(facts);
         let next = chain
             .place_next(
                 &mut members,
@@ -553,17 +554,28 @@ fn new_bfc_intersects_float(
         && border.top < float.bottom
 }
 
+/// CTB/CTT adjoining provenance is independent of geometric zero height (NZS).
+fn collapses_through(facts: ChildFacts<'_>) -> bool {
+    facts.context == ChildContext::OrdinaryNonBfc
+        && matches!(
+            facts.height,
+            super::clearance_owner::OwnerHeight::Explicit(_)
+        )
+        && zero_border_box(facts)
+}
+
 /// G6a (Q-3): a zero-height border box (CSS2.2 8.1): zero used height and no top or
 /// bottom border or padding. A positive height rounded to an empty interval is not one
-/// (PR-5).
+/// (PR-5). NZS non-adjoining zeros still qualify for this geometric contact predicate.
 fn zero_border_box(facts: ChildFacts<'_>) -> bool {
     explicit_height(facts) == 0.0 && !vertical_decoration(facts)
 }
 
 fn explicit_height(facts: ChildFacts<'_>) -> f32 {
     match facts.height {
-        super::clearance_owner::OwnerHeight::Explicit(height) => height,
-        _ => unreachable!("complete profile validation admitted only explicit height"),
+        super::clearance_owner::OwnerHeight::Explicit(height)
+        | super::clearance_owner::OwnerHeight::NonAdjoiningZero(height) => height,
+        _ => unreachable!("complete profile validation admitted only used normal heights"),
     }
 }
 
@@ -652,7 +664,13 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         // descriptors61, extra Exact terms10, bottom append/reference updates81,
         // source mapping3. Existing final record output transfers remain prepaid.
         .checked_add(311)?
-        .checked_add(tail.checked_mul(262)?)
+        .checked_add(tail.checked_mul(262)?)?
+        // NZS-D5: twelve per child for category/policy/zero validation and twelve
+        // per normal for separated membership, through provenance and scalar dispatch.
+        // These conservative policy charges retain all CT15/CTT units without credit.
+        // NZS-FLIP-CORE-WORK: the FLIP stage omits only these new charges.
+        .checked_add(children.checked_mul(12)?)?
+        .checked_add(nodes.checked_sub(3)?.checked_mul(12)?)
 }
 
 /// Requested retained allocations for a Sequence source count, without allocating.
@@ -734,7 +752,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(2057).unwrap(),
+            work: NonZeroUsize::new(2117).unwrap(),
             retained_bytes: NonZeroUsize::new(sequence_requested_retained_bytes(5).unwrap())
                 .unwrap(),
         };
@@ -1159,7 +1177,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [2056, 480, 419, 337, 269, 213] {
+        for short in [2116, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -1175,7 +1193,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(2057).unwrap();
+        limits.work = NonZeroUsize::new(2117).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -1195,7 +1213,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 2057);
+        assert_eq!(owner.receipt().work, 2117);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -1225,9 +1243,9 @@ mod tests {
         assert_eq!(retained_bytes(largest, 0), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1, 0), None);
         assert_eq!(retained_bytes(usize::MAX, 0), None);
-        assert_eq!(sequence_work(5, 1), Some(2057));
-        assert_eq!(sequence_work(6, 2), Some(2671));
-        assert_eq!(sequence_work(7, 3), Some(3286));
+        assert_eq!(sequence_work(5, 1), Some(2117));
+        assert_eq!(sequence_work(6, 2), Some(2755));
+        assert_eq!(sequence_work(7, 3), Some(3394));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
@@ -1765,5 +1783,112 @@ mod tests {
                 field: "padding"
             })
         ));
+    }
+    #[test]
+    fn nzs_validated_zero_scalar_preserves_both_signs() {
+        let (sources, _) = fixture();
+        let (_, _, children) = input(&sources);
+        for source in [2, 4] {
+            for zero in [0.0_f32, -0.0_f32] {
+                let mut child = children[source - 2];
+                child.height = OwnerHeight::NonAdjoiningZero(zero);
+                let validated = validate_sequence_child(child, source, false, false).unwrap();
+                assert_eq!(validated.to_bits(), zero.to_bits());
+                assert_eq!(explicit_height(child).to_bits(), zero.to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn nzs_category_profile_errors_precede_both_retained_allocations() {
+        let (sources, mut limits) = fixture();
+        let (outer, parent, mut children) = input(&sources);
+        children[0].height = OwnerHeight::NonAdjoiningZero(0.);
+        children[2].height = OwnerHeight::NonAdjoiningZero(1.);
+        limits.retained_bytes = NonZeroUsize::MIN;
+        let error = build_with_reserves(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.,
+            },
+            limits,
+            |_, _| panic!("record allocation before category validation"),
+            |_, _| panic!("member allocation before category validation"),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ClearanceSequenceError::Profile(ClearanceOwnerError::Unsupported {
+                source: 4,
+                reason: OwnerProfileReason::HeightKind,
+            })
+        ));
+        limits.work = NonZeroUsize::new(2116).unwrap();
+        assert!(matches!(
+            build_with_reserves(
+                &sources,
+                ClearanceSequenceInput {
+                    outer,
+                    parent,
+                    children: &children,
+                    float_width: 10.
+                },
+                limits,
+                |_, _| panic!("record allocation before work validation"),
+                |_, _| panic!("member allocation before work validation"),
+            ),
+            Err(ClearanceSequenceError::Work)
+        ));
+    }
+
+    #[test]
+    fn nzs_height_category_keeps_runtime_sized_storage() {
+        println!(
+            "NZS_REPRESENTATION OwnerHeight {} {}",
+            size_of::<OwnerHeight>(),
+            std::mem::align_of::<OwnerHeight>()
+        );
+        println!(
+            "NZS_REPRESENTATION ChildFacts {} {}",
+            size_of::<ChildFacts<'_>>(),
+            std::mem::align_of::<ChildFacts<'_>>()
+        );
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
+        {
+            assert_eq!(
+                (
+                    size_of::<OwnerHeight>(),
+                    std::mem::align_of::<OwnerHeight>()
+                ),
+                (8, 4)
+            );
+            assert_eq!(
+                (
+                    size_of::<ChildFacts<'_>>(),
+                    std::mem::align_of::<ChildFacts<'_>>()
+                ),
+                (88, 8)
+            );
+            assert_eq!(
+                (
+                    size_of::<SequenceNormalPlacement>(),
+                    std::mem::align_of::<SequenceNormalPlacement>()
+                ),
+                (136, 8)
+            );
+            assert_eq!(
+                (
+                    size_of::<MarginMember>(),
+                    std::mem::align_of::<MarginMember>()
+                ),
+                (16, 8)
+            );
+            for (nodes, bytes) in [(5, 200), (6, 368), (7, 536)] {
+                assert_eq!(sequence_requested_retained_bytes(nodes), Some(bytes));
+            }
+        }
     }
 }

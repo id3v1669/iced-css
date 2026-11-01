@@ -274,50 +274,32 @@ fn pht_h5_tail_height_percentage() {
     );
 }
 
-/// H6 (M11 witness): without a basis (P's height is `auto`) B1's `height:50%` is used as
-/// `auto`, so B1 is an Auto normal without a positive minimum: `HeightKind` at projected
-/// 2 (a basis of 0 gives the core's `NonpositiveBlockHeight`, a basis of 100 a layout).
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn pht_h6_child_height_without_a_basis_is_auto() {
-    pht_assert_refusals(&[("#b1 { height:50%; }", 2, "height", "HeightKind")]);
+    // NZS: retain computed provenance and require a separate outgoing margin group.
+    nzs_assert_zero_layout(5, "#b1 { height:50%; }", 2);
 }
 
-/// H7 (M12 witness): without a basis B1's `min-height:50%` is 0, so its `height:auto`
-/// stays `HeightKind` (P's width basis would give 50 and admit B1).
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn pht_h7_child_min_height_without_a_basis_is_zero() {
-    pht_assert_refusals(&[(
-        "#b1 { height:auto; min-height:50%; }",
-        2,
-        "height",
-        "HeightKind",
-    )]);
+    // NZS: retain computed provenance and require a separate outgoing margin group.
+    nzs_assert_zero_layout(5, "#b1 { height:auto; min-height:50%; }", 2);
 }
 
-/// H9d (M28 witness): P's `height:50%` used as `auto` depends on content, so it gives its
-/// children no basis: B1's `height:10%` is used as `auto`, `HeightKind` (counting P's
-/// percentage as explicit gives a layout).
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn pht_h9d_children_of_an_auto_used_parent_have_no_basis() {
-    pht_assert_refusals(&[(
-        "#p { height:50%; } #b1 { height:10%; }",
-        2,
-        "height",
-        "HeightKind",
-    )]);
+    // NZS: retain computed provenance and require a separate outgoing margin group.
+    nzs_assert_zero_layout(5, "#p { height:50%; } #b1 { height:10%; }", 2);
 }
 
-/// H9e (review F-2; M36 witness): an Auto P with a length `min-height` still depends on
-/// content and gives no basis: B1's `height:50%` is `HeightKind` (the basis
-/// `constrain(0, 20, none)` = 20 would give B1 10 and a layout).
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn pht_h9e_auto_parent_with_a_minimum_gives_no_basis() {
-    pht_assert_refusals(&[(
-        "#p { min-height:20px; } #b1 { height:50%; }",
-        2,
-        "height",
-        "HeightKind",
-    )]);
+    // NZS: retain computed provenance and require a separate outgoing margin group.
+    nzs_assert_zero_layout(5, "#p { min-height:20px; } #b1 { height:50%; }", 2);
 }
 
 /// H6b: B1's `height:50%` is used as `auto` and its `min-height:3px` gives the used
@@ -871,14 +853,14 @@ const PHT_WORK_FRAGMENT: &str = "#p { min-height:0%; max-height:100%; } \
                                  #b1, #f, #b2, #b3, #b4 { min-height:0%; max-height:100%; }";
 
 /// Facade and core work (M24 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `752 + 32N + 534(N-2) +
+/// percentages on every source; the facade charge is `752 + 32N + 542(N-2) +
 /// 373(N-3)`; the layout equals the baseline's.
 #[test]
 fn pht_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         assert_eq!(
             facade,
-            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+            752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)
         );
         let css = pct_css(
             nodes,

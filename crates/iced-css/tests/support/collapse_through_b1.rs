@@ -1,16 +1,11 @@
-//! CTB (user decision U1=A, the first slice: a collapse-through B1): an ordinary
-//! (`overflow:visible`) B1 whose computed `height` is zero or `auto` and whose computed
-//! `min-height` is zero, without a top or bottom border or padding, has adjoining own top
-//! and bottom margins (CSS2.2 8.3.1). When no normal (B1 or a tail) has a negative used
-//! vertical margin it collapses through: F's hypothetical top is B1's top border edge, P's
-//! content top plus B1's top margin (the user's U1=A: "the hypothetical top of B1's border
-//! box (8.3.1 for the position)"), and the first tail's top margin collapses with both of
-//! B1's margins from P's content top; clearance separates it from B1's collapsed pair
-//! (9.5.2). A negative normal margin keeps `NonpositiveBlockHeight` (a scope choice of this
-//! slice, root ruling CT-3), and a B1 used as +0 whose computed `height` or `min-height` is
-//! a percentage or a length rounded to +0 keeps `HeightKind` unless its margins are
-//! separated (CT-2). Carried first: VPH-L6 (rows L1-L3, witnesses of the VPH probes RP9,
-//! RP8 and RP10).
+//! CTB/CTT: an ordinary undecorated normal with literal computed zero/Auto height
+//! and literal computed zero min-height may collapse through in unsigned-normal scope.
+//! B1 then fixes the float at its first-child hypothetical top; tail runs retain
+//! source-ordered adjoining margin members and the existing clearance split.
+//! NZS adds non-adjoining used-zero normals when computed height/min-height is
+//! nonliteral. Their own margins stay separate without inventing decoration or a BFC.
+//! Actual through participants still refuse a negative normal margin until S4.
+//! Carried first: VPH-L6 rows L1-L3 retain their existing offset witnesses.
 //!
 //! A child module of `viewport_heights` (CTB design section 6): it reuses `vph_row`,
 //! `vph_error`, `vph_offsets`, `vph_with`, `zhn_row`, `zhn_same`, `zhn_error`,
@@ -91,22 +86,16 @@ fn ctb_red_guard_cg1_a_negative_normal_margin_keeps_the_refusal() {
     }
 }
 
-/// CG3 (RED guard; CM18, CM19, CM25 witness): a percentage `height` used as `auto`, a
-/// percentage `min-height` used as 0 and a `min-height` length rounded to +0 are not
-/// computed zeros (CSS2.2 10.5, 10.7; CT-2), so the Auto B1 stays `HeightKind`. Passes
-/// before and after CTB.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn ctb_red_guard_cg3_percentages_and_rounded_lengths_are_not_computed_zeros() {
+    // NZS: retain computed provenance and require a separate outgoing margin group.
     for fragment in [
         "#b1 { height:50%; }",
         "#b1 { height:auto; min-height:5%; }",
         "#b1 { height:auto; min-height:0.0000000000000000000000000000000000000000000001px; }",
     ] {
-        assert_eq!(
-            zhn_error(5, fragment),
-            pht_refusal(2, "height", "HeightKind"),
-            "{fragment}"
-        );
+        nzs_assert_zero_layout(5, fragment, 2);
     }
 }
 
@@ -242,13 +231,10 @@ fn ctb_c6_undecorated_by_used_edges() {
     );
 }
 
-/// C7 (CM20, CM21, CM22, CM23, CM24, CM25 witness): a B1 used as +0 whose computed
-/// `height` or `min-height` is not a literal zero (`height:10px; max-height:0`,
-/// `min-height:0%`, `height:0%` of P's explicit 20, and lengths rounded to +0, CT-2) is
-/// `HeightKind` at B1's height step (ZH-4 scope, Q-4); with a top padding its margins are
-/// separated and it equals its `height:0` twin.
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
-fn ctb_c7_non_literal_zeros_keep_a_refusal() {
+fn ctb_c7_non_literal_zeros_are_separated() {
+    // NZS: retain computed provenance and require a separate outgoing margin group.
     for fragment in [
         "#b1 { height:10px; max-height:0; }",
         "#b1 { height:0; min-height:0%; }",
@@ -256,11 +242,7 @@ fn ctb_c7_non_literal_zeros_keep_a_refusal() {
         "#b1 { height:0.0000000000000000000000000000000000000000000001px; }",
         "#b1 { height:0; min-height:0.0000000000000000000000000000000000000000000001px; }",
     ] {
-        assert_eq!(
-            zhn_error(5, fragment),
-            pht_refusal(2, "height", "HeightKind"),
-            "{fragment}"
-        );
+        nzs_assert_zero_layout(5, fragment, 2);
     }
     zhn_same(
         "#b1 { height:10px; max-height:0; padding-top:1px; }",
@@ -317,12 +299,7 @@ fn ctb_c11_auto_vertical_margins() {
     zhn_row(5, "#b1 { height:0; margin-bottom:auto; }", &expected);
 }
 
-/// C12 (design section 5): the error order moves. An Auto B1 is now passed to the core,
-/// so its old `HeightKind` gives way to the core's `NonpositiveBlockHeight` (a negative
-/// margin), `resolved_row`'s `Percentage` at B1, P's held horizontal error at F's width
-/// step, F's `FloatWidth` and a later child's error; an explicit non-literal zero B1 is
-/// `HeightKind` at its own height step, before a later child's error and, when its only
-/// separation is a percentage padding, before P's held horizontal error (review m-3).
+/// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn ctb_c12_the_error_order_moves() {
     let parent = format!("#p {{ width:{PCT_F32_MAX_PX}; }}");
@@ -346,7 +323,7 @@ fn ctb_c12_the_error_order_moves() {
         ),
         (
             "#b1 { height:10px; max-height:0; } #b2 { overflow:scroll; }".to_owned(),
-            pht_refusal(2, "height", "HeightKind"),
+            pht_refusal(4, "overflow", "ChildOverflow"),
         ),
     ] {
         assert_eq!(zhn_error(5, &fragment), expected, "{fragment}");
@@ -357,7 +334,7 @@ fn ctb_c12_the_error_order_moves() {
     );
     assert_eq!(
         daz_held("#b1 { height:10px; max-height:0; padding-top:1%; }"),
-        pht_refusal(2, "height", "HeightKind")
+        "ParentHorizontal(Width(InvalidInput(\"containing_width\")))"
     );
 }
 
@@ -366,18 +343,18 @@ fn ctb_receipt(layout: &CapturedSiblingLayout<'_>) -> (usize, usize) {
     (layout.receipt().work, layout.receipt().core.work)
 }
 
-/// CW (KW1-KW9 witness): facade `752 + 32N + 534(N-2) + 373(N-3)`, core
-/// `1062 + 12N + N(N-1)/2 + 333(N-4) + 64(N-2) + 200(N-3)`. Retained CT-15 charges:
+/// CW (KW1-KW9 witness): facade `752 + 32N + 542(N-2) + 373(N-3)`, core
+/// `1062 + 12N + N(N-1)/2 + 333(N-4) + 76(N-2) + 212(N-3)`. Retained CT-15 charges:
 /// facade 25 fixed + 8 per child + 2 per normal; core 49 fixed + 3 per child +
 /// 18 per normal + 17 per tail. At N5/N6/N7, a collapse-through B1 and the baseline use
 /// CTT additionally prepays core311+262T and facade57 (CTT-P2), without credit.
-/// exact facade 3260/4199/5138, core 2057/2671/3286; one short is `Work` or `Core(Work)`.
+/// exact facade 3284/4231/5178, core 2117/2755/3394; one short is `Work` or `Core(Work)`.
 #[test]
 fn ctb_cw_work() {
-    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
+    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
         assert_eq!(
             facade,
-            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
+            752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3),
             "N{nodes}"
         );
         assert_eq!(
@@ -385,8 +362,8 @@ fn ctb_cw_work() {
             1062 + 12 * nodes
                 + nodes * (nodes - 1) / 2
                 + 333 * (nodes - 4)
-                + 64 * (nodes - 2)
-                + 200 * (nodes - 3),
+                + 76 * (nodes - 2)
+                + 212 * (nodes - 3),
             "N{nodes}"
         );
         for fragment in ["#b1 { height:0; }", ""] {

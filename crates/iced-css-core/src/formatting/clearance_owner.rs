@@ -73,6 +73,12 @@ pub enum OwnerHeight {
     /// such a used length; callers must not relabel native-derived height. SourceNode
     /// cannot prove that provenance; the owner checks the used payload.
     Explicit(f32),
+    /// NZS (CSS2.2 8.3.1): a Sequence normal's used height is exactly +0 or -0,
+    /// but its computed height or minimum does not qualify for own-margin adjacency.
+    /// This caller assertion preserves the zero payload; the owner cannot recover
+    /// the original CSS facts. Sequence normals validate finiteness and exact zero.
+    /// Legacy owners and the Sequence float reject this category as HeightKind.
+    NonAdjoiningZero(f32),
     /// Used as Auto: a computed Auto height, or a Sequence percentage `height` used as
     /// `auto` because its containing block's height depends on content (PHT, CSS2.2
     /// 10.5); only the childless Sequence float resolves this to positive zero.
@@ -526,10 +532,13 @@ pub(super) fn vertical_decoration(f: ChildFacts<'_>) -> bool {
 /// G6a (CSS2.2 8.3.1): the own top and bottom margins of a Sequence normal are not
 /// adjoining when it establishes a new block formatting context or a top or bottom
 /// border or padding separates them, so its zero used height cannot collapse through.
-/// Legacy normals never qualify.
+/// NZS also admits a caller-asserted computed non-adjoining zero. Its numerical
+/// payload is validated before this predicate is reached. Legacy normals never qualify.
 fn own_margins_separated(f: ChildFacts<'_>, policy: ChildMarginPolicy) -> bool {
     policy == ChildMarginPolicy::Sequence
-        && (f.context == ChildContext::OtherNewBfc || vertical_decoration(f))
+        && (f.context == ChildContext::OtherNewBfc
+            || vertical_decoration(f)
+            || matches!(f.height, OwnerHeight::NonAdjoiningZero(_)))
 }
 
 /// `collapse_through` (CTB/CTT, the user's U1=A): a Sequence normal whose own margins
@@ -566,10 +575,20 @@ fn child(
     content(f.content, f.generated, source)?;
     let height = match f.height {
         OwnerHeight::Explicit(height) => height,
+        OwnerHeight::NonAdjoiningZero(height)
+            if margin_policy == ChildMarginPolicy::Sequence && !floating =>
+        {
+            height
+        }
         OwnerHeight::Auto if margin_policy == ChildMarginPolicy::Sequence && floating => 0.0_f32,
         _ => return Err(unsupported(source, OwnerProfileReason::HeightKind)),
     };
     finite(height, source, "height")?;
+    // NZS: a finite nonzero payload violates the zero-only category contract.
+    // Keep this after finiteness and before any margin or decoration validation.
+    if matches!(f.height, OwnerHeight::NonAdjoiningZero(_)) && height != 0.0 {
+        return Err(unsupported(source, OwnerProfileReason::HeightKind));
+    }
     if floating {
         nonnegative(height, source, "height")?;
     } else if height < 0.
@@ -833,9 +852,6 @@ pub(super) struct FirstFloatInput<'s> {
 
 pub(super) struct NormalKernel {
     pub vertical: BlockVertical,
-    pub content_vertical: BlockVertical,
-    /// Padding span: on a side without border its edge is the border edge.
-    pub padding_vertical: BlockVertical,
     pub hypothetical_top: f32,
     pub zero_clearance_top: Option<f32>,
     pub clearance: Option<f32>,
@@ -1282,7 +1298,7 @@ pub(super) fn place_next_normal(
             }
         };
         let placement = solve_clearance(hypothetical_top, state).map_err(amount_error)?;
-        let (content_vertical, padding_vertical, bottom) = normal_vertical(
+        let (_, _, bottom) = normal_vertical(
             placement.border_top,
             next_height,
             next.border,
@@ -1296,8 +1312,6 @@ pub(super) fn place_next_normal(
             ],
         )?;
         Ok(NormalKernel {
-            content_vertical,
-            padding_vertical,
             vertical: BlockVertical {
                 top: placement.border_top,
                 bottom,
