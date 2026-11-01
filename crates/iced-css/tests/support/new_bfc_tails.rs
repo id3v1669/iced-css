@@ -7,7 +7,7 @@ use super::*;
 use iced_css_core::formatting::bfc_height::{SignedNormalMarginEdge, SignedNormalMarginError};
 
 /// (nodes, facade exact work, core exact work) from the TNB counted action table.
-const TNB_WORK: [(usize, usize, usize); 3] = [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)];
+const TNB_WORK: [(usize, usize, usize); 3] = [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)];
 
 /// Copied observations of one successful layout.
 #[derive(Debug)]
@@ -280,13 +280,24 @@ fn tnb_error_order_profile_rows() {
             reason: U::ChildOverflow,
         },
     );
-    assert_captured(
-        tnb_error(7, &format!("{} #b2 {{ overflow:auto; }}", baseline_css())),
-        CapturedClearanceError::Unsupported {
-            projected: 6,
-            property: "height",
-            reason: U::HeightKind,
-        },
+    let error = tnb_error(
+        7,
+        &format!(
+            "{} #b2 {{ overflow:auto; }} #b4 {{ margin-top:-1px; }}",
+            baseline_css()
+        ),
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 6,
+                    reason: OwnerProfileReason::NonpositiveBlockHeight,
+                }
+            ))
+        ),
+        "{error:?}"
     );
     // E4: F width extraction follows the child loop (plan pin P2).
     assert_captured(
@@ -667,13 +678,13 @@ fn tnb_exact_and_one_short_work_at_every_node_count() {
     for (nodes, facade, core) in TNB_WORK {
         assert_eq!(
             facade,
-            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
         );
         assert_eq!(
             core,
-            751 + 12 * nodes
+            1062 + 12 * nodes
                 + nodes * (nodes - 1) / 2
-                + 71 * (nodes - 4)
+                + 333 * (nodes - 4)
                 + 64 * (nodes - 2)
                 + 200 * (nodes - 3)
         );
@@ -780,14 +791,25 @@ fn tnb_pins_admit_tail_overflow_with_literal_intervals() {
         rows += 1;
     }
     assert_eq!(rows, 9);
-    // P12: the bare N7 baseline has no B4 height, so the admitted tail exposes HeightKind.
-    assert_captured(
-        tnb_error(7, &format!("{} #b2 {{ overflow:auto; }}", baseline_css())),
-        CapturedClearanceError::Unsupported {
-            projected: 6,
-            property: "height",
-            reason: CapturedClearanceUnsupported::HeightKind,
-        },
+    // P12: a signed B4 tail stays outside CTT and preserves the nonpositive refusal.
+    let error = tnb_error(
+        7,
+        &format!(
+            "{} #b2 {{ overflow:auto; }} #b4 {{ margin-top:-1px; }}",
+            baseline_css()
+        ),
+    );
+    assert!(
+        matches!(
+            error,
+            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 6,
+                    reason: OwnerProfileReason::NonpositiveBlockHeight,
+                }
+            ))
+        ),
+        "{error:?}"
     );
 }
 

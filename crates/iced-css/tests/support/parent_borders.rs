@@ -973,22 +973,19 @@ fn pbr_n4_outer_borders_are_admitted_and_unused() {
 
 // Error-order pins (N6 baseline unless stated).
 
-/// X1: a later tail's `HeightKind` (facade loop) is reported beside B1's admitted
-/// border.
+/// X1: a later signed tail's core nonpositive refusal is reported beside B1's
+/// admitted border.
 #[test]
 fn pbr_x01_height_kind_with_an_admitted_child_border() {
     for fragment in [
-        "#b1 { border-top:1px solid; } #b3 { height:auto; }",
-        "#b3 { height:auto; }",
+        "#b1 { border-top:1px solid; } #b3 { height:auto; margin-top:-1px; }",
+        "#b3 { height:auto; margin-top:-1px; }",
     ] {
         let css = pbr_css(6, fragment);
-        assert_captured(
+        assert_profile(
             &pbr_error(6, &css),
-            CapturedClearanceError::Unsupported {
-                projected: 5,
-                property: "height",
-                reason: CapturedClearanceUnsupported::HeightKind,
-            },
+            5,
+            OwnerProfileReason::NonpositiveBlockHeight,
             &css,
         );
     }
@@ -1054,17 +1051,20 @@ fn pbr_x04_earlier_height_with_a_later_child_border() {
 }
 
 /// X5 (CBR): an earlier child's admitted border leaves a later child's height fault
-/// as the first error.
+/// as the first error. Its negative tail margin preserves the CTT scope refusal.
 #[test]
 fn pbr_x05_admitted_child_border_leaves_the_later_height_fault() {
-    let css = pbr_css(5, "#b1 { border-bottom:2px solid; } #b2 { height:0; }");
+    let css = pbr_css(
+        5,
+        "#b1 { border-bottom:2px solid; } #b2 { height:0; margin-top:-1px; }",
+    );
     assert_profile(
         &pbr_error(5, &css),
         4,
         OwnerProfileReason::NonpositiveBlockHeight,
         &css,
     );
-    let control = pbr_css(5, "#b2 { height:0; }");
+    let control = pbr_css(5, "#b2 { height:0; margin-top:-1px; }");
     assert_profile(
         &pbr_error(5, &control),
         4,

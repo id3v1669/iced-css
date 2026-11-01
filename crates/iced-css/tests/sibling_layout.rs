@@ -517,7 +517,7 @@ fn six_source_actual_css_builds_source_linked_principal_geometry() {
         assert_eq!(layout.receipt().nodes, 6);
         assert_eq!(
             layout.receipt().work,
-            695 + 32 * 6 + 534 * (6 - 2) + 373 * (6 - 3)
+            752 + 32 * 6 + 534 * (6 - 2) + 373 * (6 - 3)
         );
     });
 }
@@ -680,7 +680,7 @@ struct MarginGroupObservation {
 }
 
 fn observe_margin_group(
-    group: &iced_css_core::formatting::clearance_owner::MarginGroup,
+    group: iced_css_core::formatting::clearance_sequence::SequenceMarginGroupView<'_>,
 ) -> MarginGroupObservation {
     MarginGroupObservation {
         id: group.id(),
@@ -829,8 +829,7 @@ fn observe_layout(layout: &CapturedSiblingLayout<'_>) -> VerticalObservation {
         ),
         tail: layout
             .sequence()
-            .tail()
-            .iter()
+            .tail_views()
             .map(|record| TailVerticalObservation {
                 source: record.source_index(),
                 top: record.vertical().top,
@@ -840,11 +839,7 @@ fn observe_layout(layout: &CapturedSiblingLayout<'_>) -> VerticalObservation {
                 clearance: record.clearance(),
                 barrier_source: record.barrier_source_index(),
                 hypothetical_group: observe_margin_group(record.hypothetical_group()),
-                actual_groups: record
-                    .actual_groups()
-                    .iter()
-                    .map(observe_margin_group)
-                    .collect(),
+                actual_groups: record.actual_groups().map(observe_margin_group).collect(),
             })
             .collect(),
         parent_source: (
@@ -2512,7 +2507,7 @@ fn fixed_width_preserves_full_vertical_sequence_and_parent_equation() {
                 })
             );
 
-            let b2 = &layout.sequence().tail()[0];
+            let b2 = &layout.sequence().tail_view(0).unwrap();
             assert_eq!(b2.source_index(), 4);
             assert_eq!(b2.vertical().top, 16.0);
             assert_eq!(b2.vertical().bottom, 17.0);
@@ -2540,13 +2535,16 @@ fn fixed_width_preserves_full_vertical_sequence_and_parent_equation() {
                 ]
             );
             assert_eq!(b2.actual_groups().len(), 1);
-            assert_eq!(b2.actual_groups()[0].id(), MarginGroupId::ActualPair);
             assert_eq!(
-                b2.actual_groups()[0].members(),
+                b2.actual_groups().next().unwrap().id(),
+                MarginGroupId::ActualPair
+            );
+            assert_eq!(
+                b2.actual_groups().next().unwrap().members(),
                 b2.hypothetical_group().members()
             );
 
-            let b3 = &layout.sequence().tail()[1];
+            let b3 = &layout.sequence().tail_view(1).unwrap();
             assert_eq!(b3.source_index(), 5);
             assert_eq!(b3.vertical().top, 36.0);
             assert_eq!(b3.vertical().bottom, 37.0);
@@ -2574,18 +2572,24 @@ fn fixed_width_preserves_full_vertical_sequence_and_parent_equation() {
                 ]
             );
             assert_eq!(b3.actual_groups().len(), 2);
-            assert_eq!(b3.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
             assert_eq!(
-                b3.actual_groups()[0].members(),
+                b3.actual_groups().next().unwrap().id(),
+                MarginGroupId::BeforeBarrier
+            );
+            assert_eq!(
+                b3.actual_groups().next().unwrap().members(),
                 [MarginMember {
                     source_index: 4,
                     side: MarginSide::Bottom,
                     value: 3.0,
                 }]
             );
-            assert_eq!(b3.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
             assert_eq!(
-                b3.actual_groups()[1].members(),
+                b3.actual_groups().nth(1).unwrap().id(),
+                MarginGroupId::AfterBarrier
+            );
+            assert_eq!(
+                b3.actual_groups().nth(1).unwrap().members(),
                 [MarginMember {
                     source_index: 5,
                     side: MarginSide::Top,
@@ -3348,8 +3352,8 @@ fn facade_work_is_prepaid_before_late_actual_css_profile_extraction() {
             content_width: 100.0,
             content_top: 10.0,
         };
-        let work = 4142;
-        for short in [1, 4141] {
+        let work = 4199;
+        for short in [1, 4198] {
             let mut limits = layout_limits();
             limits.work = nz(short);
             assert!(matches!(
@@ -3378,12 +3382,12 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            3203,
+            3260,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            5081,
+            5138,
         ),
     ] {
         let css = format!("{} {suffix}", baseline_css());
@@ -3411,7 +3415,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
             let normals = source_count - 3;
             assert_eq!(
                 work,
-                695 + 32 * source_count + 534 * children + 373 * normals
+                752 + 32 * source_count + 534 * children + 373 * normals
             );
         });
     }
@@ -3420,7 +3424,7 @@ fn facade_work_thresholds_are_exact_for_five_and_seven_sources() {
 #[test]
 fn fitting_and_oversized_widths_have_identical_resource_receipts() {
     for (source_count, facade_work, core_work) in
-        [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)]
+        [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)]
     {
         let mut receipts = Vec::new();
         for width in [10, 140] {
@@ -3470,22 +3474,22 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
         (
             5,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b1 { margin-left:auto; }",
-            3203,
-            1484,
+            3260,
+            2057,
             419,
         ),
         (
             6,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b3 { margin-left:auto; }",
-            4142,
-            1836,
+            4199,
+            2671,
             501,
         ),
         (
             7,
             "#f { width:140px; margin-left:auto; margin-right:auto; } #b4 { height:2px; margin-top:1px; margin-bottom:2px; margin-left:auto; clear:none; }",
-            5081,
-            2189,
+            5138,
+            3286,
             584,
         ),
     ] {
@@ -3526,6 +3530,7 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
 
             limits = layout_limits();
             limits.retained_bytes = nz(tail_count * size_of::<SequenceNormalPlacement>()
+                + 2 * (source_count - 3) * size_of::<MarginMember>()
                 + child_count
                     * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>()
                 - 1);
@@ -3570,9 +3575,11 @@ fn source_scratch_retained_and_core_budgets_keep_typed_boundaries() {
             assert_eq!(layout.receipt().core.work, core_work);
             assert!(layout.receipt().child_capacity >= child_count);
             assert!(layout.receipt().core.record_capacity >= tail_count);
+            assert!(layout.receipt().core.member_capacity >= 2 * (source_count - 3));
             assert_eq!(
                 layout.receipt().core.retained_bytes,
                 layout.receipt().core.record_capacity * size_of::<SequenceNormalPlacement>()
+                    + layout.receipt().core.member_capacity * size_of::<MarginMember>()
             );
         });
     }
@@ -3865,7 +3872,12 @@ fn unsupported_categories_keep_typed_sources_while_overwide_normals_succeed() {
     use CapturedClearanceUnsupported as Unsupported;
 
     for (suffix, source, property, reason) in [
-        ("#b3 { height:auto; }", 5, "height", Unsupported::HeightKind),
+        (
+            "#b3 { height:auto; min-height:0%; }",
+            5,
+            "height",
+            Unsupported::HeightKind,
+        ),
         (
             "#b3 { overflow:scroll; }",
             5,
@@ -4102,7 +4114,7 @@ fn auto_vertical_margins_advance_to_later_profile_faults() {
 
     snv_assert_migration_css("#b1 {margin-bottom:auto;} #b3 {margin-bottom:-1px;}", "C");
     let css = format!(
-        "{} #b1 {{margin-bottom:auto;}} #b3 {{height:auto;}}",
+        "{} #b1 {{margin-bottom:auto;}} #b3 {{height:auto;min-height:0%;}}",
         baseline_css()
     );
     sibling_fixture(6, &css, |projection, display| {
@@ -4127,7 +4139,7 @@ fn auto_vertical_margins_advance_to_later_profile_faults() {
     });
 
     let same_child = format!(
-        "{} #b2 {{ height:auto; margin-top:auto; margin-bottom:auto; }}",
+        "{} #b2 {{ height:auto; min-height:0%; margin-top:auto; margin-bottom:auto; }}",
         baseline_css()
     );
     sibling_fixture(6, &same_child, |projection, display| {
@@ -4759,12 +4771,13 @@ fn actual_defaulting_inheritance_and_cascade_provenance_reach_layout_records() {
                 },
                 layout_limits(),
             ),
-            Err(SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 5,
-                    reason: OwnerProfileReason::NonpositiveBlockHeight,
+            Err(SiblingLayoutError::Captured(
+                CapturedClearanceError::Unsupported {
+                    projected: 5,
+                    property: "height",
+                    reason: CapturedClearanceUnsupported::HeightKind,
                 }
-            )))
+            ))
         ));
     });
 }
@@ -5552,7 +5565,7 @@ fn assert_inventory_layout(
         "{id}"
     );
     assert_eq!(sequence.tail().len(), expected.tail.len(), "{id}");
-    for (record, tail) in sequence.tail().iter().zip(&expected.tail) {
+    for (record, tail) in sequence.tail_views().zip(&expected.tail) {
         assert_eq!(record.source_index(), tail.source, "{id}");
         assert_eq!(
             (record.vertical().top, record.vertical().bottom),
@@ -5587,11 +5600,7 @@ fn assert_inventory_layout(
         for (actual, literal) in record.hypothetical_group().members().iter().zip(&members) {
             assert_eq!(actual.value.to_bits(), literal.value.to_bits(), "{id}");
         }
-        let actual_groups: Vec<_> = record
-            .actual_groups()
-            .iter()
-            .map(observe_margin_group)
-            .collect();
+        let actual_groups: Vec<_> = record.actual_groups().map(observe_margin_group).collect();
         if tail.clearance.is_some() {
             assert_eq!(record.barrier_source_index(), Some(tail.source), "{id}");
             assert_eq!(
@@ -5622,12 +5631,12 @@ fn assert_inventory_layout(
     assert_eq!(layout.receipt().nodes, case.nodes, "{id}");
     assert_eq!(
         layout.receipt().work,
-        [3203, 4142, 5081][case.nodes - 5],
+        [3260, 4199, 5138][case.nodes - 5],
         "{id}"
     );
     assert_eq!(
         layout.receipt().core.work,
-        [1484, 1836, 2189][case.nodes - 5],
+        [2057, 2671, 3286][case.nodes - 5],
         "{id}"
     );
 }
@@ -6359,7 +6368,7 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
 
     // One-short facade work beside a later child overflow: Work first; the exact
     // bound reaches ChildOverflow on the actual last source.
-    for (source_count, work, selector) in [(5, 3203, "#b2"), (6, 4142, "#b3"), (7, 5081, "#b4")] {
+    for (source_count, work, selector) in [(5, 3260, "#b2"), (6, 4199, "#b3"), (7, 5138, "#b4")] {
         for (bound, overflow) in [(work - 1, false), (work, true)] {
             let mut limits = layout_limits();
             limits.work = nz(bound);
@@ -6381,35 +6390,41 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
         }
     }
 
-    // One-short scratch with supported Auto and a later invalid height.
+    // CTT-D2: one-short scratch with supported Auto and a later nonliteral-zero height.
     for enough in [false, true] {
         let mut limits = layout_limits();
         if !enough {
             limits.scratch_bytes = nz(4 * size_of::<ChildFacts<'_>>() - 1);
         }
-        run(6, "#b3 { height:auto; }", normal, limits, &|result| {
-            if enough {
-                assert!(matches!(
-                    result,
-                    Err(SiblingLayoutError::Captured(
-                        CapturedClearanceError::Unsupported {
-                            projected: 5,
-                            property: "height",
-                            reason: U::HeightKind,
-                        }
-                    ))
-                ));
-            } else {
-                assert!(matches!(result, Err(SiblingLayoutError::ScratchBytes)));
-            }
-        });
+        run(
+            6,
+            "#b3 { height:auto; min-height:0%; }",
+            normal,
+            limits,
+            &|result| {
+                if enough {
+                    assert!(matches!(
+                        result,
+                        Err(SiblingLayoutError::Captured(
+                            CapturedClearanceError::Unsupported {
+                                projected: 5,
+                                property: "height",
+                                reason: U::HeightKind,
+                            }
+                        ))
+                    ));
+                } else {
+                    assert!(matches!(result, Err(SiblingLayoutError::ScratchBytes)));
+                }
+            },
+        );
     }
 
-    // F vertical Auto, later source 5 height:auto and F width:auto: complete
+    // F vertical Auto, later source 5 nonliteral-zero Auto and F width:auto: complete
     // conversion reports source 5 height; removing it reaches source 3 width.
     run(
         6,
-        "#f { width:auto; } #b3 { height:auto; }",
+        "#f { width:auto; } #b3 { height:auto; min-height:0%; }",
         normal,
         layout_limits(),
         &|result| {
@@ -6482,8 +6497,9 @@ fn vertical_auto_facade_priority_rows_have_later_fault_controls() {
     // then the paired sufficient control succeeds with the oversized float.
     for (facade_short, core_short) in [(true, false), (false, true), (false, false)] {
         let mut limits = layout_limits();
-        let floor =
-            2 * size_of::<iced_css_core::formatting::clearance_sequence::SequenceNormalPlacement>();
+        let floor = 2 * size_of::<
+            iced_css_core::formatting::clearance_sequence::SequenceNormalPlacement,
+        >() + 6 * size_of::<MarginMember>();
         if facade_short {
             limits.retained_bytes = nz(floor
                 + 4 * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>()
@@ -6623,9 +6639,9 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 3203, 475, 1484, 419),
-        (6, 4142, 616, 1836, 501),
-        (7, 5081, 757, 2189, 584),
+        (5, 3260, 475, 2057, 419),
+        (6, 4199, 616, 2671, 501),
+        (7, 5138, 757, 3286, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:auto; margin-bottom:auto; clear:none; }"
@@ -6646,7 +6662,8 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
             let child_count = source_count - 2;
             let tail_count = source_count - 4;
             let scratch_floor = child_count * size_of::<ChildFacts<'_>>();
-            let core_floor = tail_count * size_of::<SequenceNormalPlacement>();
+            let core_floor = tail_count * size_of::<SequenceNormalPlacement>()
+                + 2 * (source_count - 3) * size_of::<MarginMember>();
             let retained_floor = core_floor + child_count * size_of::<PrincipalChildBox>();
 
             for short in [facade_work - 1, old_facade] {
@@ -6695,6 +6712,7 @@ fn vertical_auto_facade_work_and_storage_boundaries_are_exact() {
             assert_eq!(receipt.core.work, core_work);
             assert_eq!(receipt.core.tail, tail_count);
             assert_eq!(receipt.core.record_capacity, tail_count);
+            assert_eq!(receipt.core.member_capacity, 2 * (source_count - 3));
             assert_eq!(receipt.core.retained_bytes, core_floor);
             for child in layout.children() {
                 assert_eq!(child.used_margin_top().to_bits(), 0.0f32.to_bits());
@@ -6738,7 +6756,7 @@ fn vertical_auto_keeps_facade_exclusions_and_horizontal_categories() {
             profile(3, OwnerProfileReason::NegativeFloatOuterExtent),
         ),
         (
-            "#b3 { margin-top:auto; height:auto; }",
+            "#b3 { margin-top:auto; height:auto; min-height:0%; }",
             captured(5, "height", U::HeightKind),
         ),
         (
@@ -7472,9 +7490,9 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 3203, 475, 1484, 419),
-        (6, 4142, 616, 1836, 501),
-        (7, 5081, 757, 2189, 584),
+        (5, 3260, 475, 2057, 419),
+        (6, 4199, 616, 2671, 501),
+        (7, 5138, 757, 3286, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -7494,7 +7512,8 @@ fn nonzero_float_margin_facade_work_and_storage_boundaries_are_exact() {
             let child_count = source_count - 2;
             let tail_count = source_count - 4;
             let scratch_floor = child_count * size_of::<ChildFacts<'_>>();
-            let core_floor = tail_count * size_of::<SequenceNormalPlacement>();
+            let core_floor = tail_count * size_of::<SequenceNormalPlacement>()
+                + 2 * (source_count - 3) * size_of::<MarginMember>();
             let retained_floor = core_floor + child_count * size_of::<PrincipalChildBox>();
 
             // One short and the predecessor bound fail before the scratch scan.
@@ -8549,9 +8568,9 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
     use std::mem::size_of;
 
     for (source_count, facade_work, old_facade, core_work, old_core) in [
-        (5, 3203, 475, 1484, 419),
-        (6, 4142, 616, 1836, 501),
-        (7, 5081, 757, 2189, 584),
+        (5, 3260, 475, 2057, 419),
+        (6, 4199, 616, 2671, 501),
+        (7, 5138, 757, 3286, 584),
     ] {
         let b4 = if source_count == 7 {
             "#b4 { height:2px; margin-top:1px; margin-bottom:2px; clear:none; }"
@@ -8571,7 +8590,8 @@ fn nonzero_float_vertical_margin_facade_work_and_storage_boundaries_are_exact() 
             let child_count = source_count - 2;
             let tail_count = source_count - 4;
             let scratch_floor = child_count * size_of::<ChildFacts<'_>>();
-            let core_floor = tail_count * size_of::<SequenceNormalPlacement>();
+            let core_floor = tail_count * size_of::<SequenceNormalPlacement>()
+                + 2 * (source_count - 3) * size_of::<MarginMember>();
             let retained_floor = core_floor + child_count * size_of::<PrincipalChildBox>();
 
             // One short and the predecessor bound fail before the scratch scan.
@@ -9459,9 +9479,9 @@ fn float_overflow_build<'p>(
 #[test]
 fn float_overflow_facade_work_thresholds_are_exact() {
     for (nodes, exact, lc, core) in [
-        (5, 3203, 481, 1484),
-        (6, 4142, 622, 1836),
-        (7, 5081, 763, 2189),
+        (5, 3260, 481, 2057),
+        (6, 4199, 622, 2671),
+        (7, 5138, 763, 3286),
     ] {
         let css = format!(
             "{} {} #f {{ overflow:hidden; }}",
@@ -9485,7 +9505,7 @@ fn float_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+                752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9499,11 +9519,11 @@ fn float_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 4141),
+            float_overflow_build(&facts, &projection.nodes()[0], 4198),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 4142).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 4199).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -9906,7 +9926,7 @@ fn css_float_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
-    for (nodes, exact, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, exact, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         let css = format!(
             "{} {} #f {{ overflow:auto; }}",
             baseline_css(),
@@ -9928,7 +9948,7 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+                752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -9942,11 +9962,11 @@ fn float_overflow_auto_facade_work_thresholds_are_unchanged() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 4141),
+            float_overflow_build(&facts, &projection.nodes()[0], 4198),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 4142).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 4199).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -10512,7 +10532,7 @@ fn b1_overflow_no_longer_masks_the_float_width_kind() {
 
 #[test]
 fn b1_overflow_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, exact, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         let css = format!(
             "{} {} #b1 {{ overflow:hidden; }}",
             baseline_css(),
@@ -10534,7 +10554,7 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+                752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -10548,11 +10568,11 @@ fn b1_overflow_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 4141),
+            float_overflow_build(&facts, &projection.nodes()[0], 4198),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 4142).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 4199).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -11270,7 +11290,7 @@ fn css_parent_overflow_auto_generated_content_stays_a_fact_failure() {
 
 #[test]
 fn parent_overflow_auto_facade_work_thresholds_are_exact() {
-    for (nodes, exact, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, exact, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         let css = format!(
             "{} {} #p {{ overflow:auto; }}",
             baseline_css(),
@@ -11292,7 +11312,7 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
             assert_eq!(layout.receipt().work, exact, "N{nodes}");
             assert_eq!(
                 exact,
-                695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+                752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
             );
             assert_eq!(layout.receipt().core.work, core, "N{nodes}");
             assert_eq!(layout.sequence().receipt().work, core, "N{nodes}");
@@ -11306,11 +11326,11 @@ fn parent_overflow_auto_facade_work_thresholds_are_exact() {
     sibling_fixture(6, &css, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, sibling_fact_limits()).unwrap();
         assert!(matches!(
-            float_overflow_build(&facts, &projection.nodes()[0], 4141),
+            float_overflow_build(&facts, &projection.nodes()[0], 4198),
             Err(SiblingLayoutError::Work)
         ));
         assert_captured(
-            float_overflow_build(&facts, &projection.nodes()[0], 4142).unwrap_err(),
+            float_overflow_build(&facts, &projection.nodes()[0], 4199).unwrap_err(),
             CapturedClearanceError::Unsupported {
                 projected: 5,
                 property: "overflow",
@@ -12970,7 +12990,8 @@ fn cp_css_requested_combined_and_core_budgets_keep_typed_boundaries() {
                 content_width: 100.0,
                 content_top: 10.0,
             };
-            let core_floor = (count - 4) * size_of::<SequenceNormalPlacement>();
+            let core_floor = (count - 4) * size_of::<SequenceNormalPlacement>()
+                + 2 * (count - 3) * size_of::<MarginMember>();
             let child_floor =
                 (count - 2) * size_of::<iced_css::evaluation::sibling_layout::PrincipalChildBox>();
             let mut limits = layout_limits();
@@ -12996,9 +13017,12 @@ fn cp_css_requested_combined_and_core_budgets_keep_typed_boundaries() {
             assert_eq!(
                 receipt.core.retained_bytes,
                 receipt.core.record_capacity * size_of::<SequenceNormalPlacement>()
+                    + receipt.core.member_capacity * size_of::<MarginMember>()
             );
             assert!(
-                receipt.child_capacity >= count - 2 && receipt.core.record_capacity >= count - 4
+                receipt.child_capacity >= count - 2
+                    && receipt.core.record_capacity >= count - 4
+                    && receipt.core.member_capacity >= 2 * (count - 3)
             );
         });
     }
@@ -13424,7 +13448,7 @@ fn cp_witness_case_19198() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a80000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a80000u32);
@@ -13466,39 +13490,54 @@ fn cp_witness_case_19198() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
         let child = &layout.children()[0];
@@ -14086,7 +14125,7 @@ fn cp_witness_case_19199() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
@@ -14128,39 +14167,54 @@ fn cp_witness_case_19199() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
         let child = &layout.children()[0];
@@ -14748,7 +14802,7 @@ fn cp_witness_case_19200() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a80000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a80000u32);
@@ -14790,39 +14844,54 @@ fn cp_witness_case_19200() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
         let child = &layout.children()[0];
@@ -15410,7 +15479,7 @@ fn cp_witness_case_19201() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
@@ -15452,39 +15521,54 @@ fn cp_witness_case_19201() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
         let child = &layout.children()[0];
@@ -16072,7 +16156,7 @@ fn cp_witness_case_19203() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Right
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
@@ -16114,39 +16198,54 @@ fn cp_witness_case_19203() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
         let child = &layout.children()[0];
@@ -16734,7 +16833,7 @@ fn cp_witness_case_19206() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41c00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41c00000u32);
@@ -16776,39 +16875,54 @@ fn cp_witness_case_19206() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
         let child = &layout.children()[0];
@@ -17396,7 +17510,7 @@ fn cp_witness_case_19207() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -17438,39 +17552,54 @@ fn cp_witness_case_19207() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
         let child = &layout.children()[0];
@@ -18058,7 +18187,7 @@ fn cp_witness_case_19208() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -18097,29 +18226,41 @@ fn cp_witness_case_19208() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
         let child = &layout.children()[0];
@@ -19114,7 +19255,7 @@ fn cp_witness_case_19234() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
@@ -19153,32 +19294,44 @@ fn cp_witness_case_19234() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -19217,29 +19370,41 @@ fn cp_witness_case_19234() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -19971,7 +20136,7 @@ fn cp_witness_case_19236() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
@@ -20010,32 +20175,44 @@ fn cp_witness_case_19236() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -20074,29 +20251,41 @@ fn cp_witness_case_19236() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -20828,7 +21017,7 @@ fn cp_witness_case_19238() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
@@ -20867,32 +21056,44 @@ fn cp_witness_case_19238() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -20931,29 +21132,41 @@ fn cp_witness_case_19238() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -21685,7 +21898,7 @@ fn cp_witness_case_19240() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
@@ -21724,32 +21937,44 @@ fn cp_witness_case_19240() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -21788,29 +22013,41 @@ fn cp_witness_case_19240() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -22547,7 +22784,7 @@ fn cp_witness_case_19248() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
@@ -22589,42 +22826,57 @@ fn cp_witness_case_19248() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41b00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41b00000u32);
@@ -22663,29 +22915,41 @@ fn cp_witness_case_19248() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -23417,7 +23681,7 @@ fn cp_witness_case_19249() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41f80000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x42040000u32);
@@ -23459,42 +23723,57 @@ fn cp_witness_case_19249() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x42200000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x42200000u32);
@@ -23533,29 +23812,41 @@ fn cp_witness_case_19249() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -25081,7 +25372,7 @@ fn cp_witness_case_19258() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
@@ -25120,32 +25411,44 @@ fn cp_witness_case_19258() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -25184,29 +25487,41 @@ fn cp_witness_case_19258() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -25938,7 +26253,7 @@ fn cp_witness_case_19259() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
@@ -25977,32 +26292,44 @@ fn cp_witness_case_19259() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -26041,29 +26368,41 @@ fn cp_witness_case_19259() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -26795,7 +27134,7 @@ fn cp_witness_case_19260() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
@@ -26834,32 +27173,44 @@ fn cp_witness_case_19260() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -26898,29 +27249,41 @@ fn cp_witness_case_19260() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -27652,7 +28015,7 @@ fn cp_witness_case_19261() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41800000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41800000u32);
@@ -27691,32 +28054,44 @@ fn cp_witness_case_19261() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 4);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41a00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41a00000u32);
@@ -27755,29 +28130,41 @@ fn cp_witness_case_19261() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -29323,7 +29710,7 @@ fn cp_witness_case_19283() {
             sequence.placed_float().side,
             iced_css_core::formatting::floats::FloatSide::Left
         );
-        let tail = &sequence.tail()[0];
+        let tail = &sequence.tail_view(0).unwrap();
         assert_eq!(tail.source_index(), 4);
         assert_eq!((tail.vertical().top).to_bits(), 0x41900000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41900000u32);
@@ -29365,42 +29752,57 @@ fn cp_witness_case_19283() {
             0x40400000u32
         );
         assert_eq!(tail.actual_groups().len(), 2);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::BeforeBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40800000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 1);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 2);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 1);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            2
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40800000u32
         );
-        assert_eq!(tail.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
         assert_eq!(
-            (tail.actual_groups()[1].positive()).to_bits(),
+            tail.actual_groups().nth(1).unwrap().id(),
+            MarginGroupId::AfterBarrier
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[1].negative()).to_bits(),
+            (tail.actual_groups().nth(1).unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[1].members().len(), 1);
-        assert_eq!(tail.actual_groups()[1].members()[0].source_index, 4);
-        assert_eq!(tail.actual_groups()[1].members()[0].side, MarginSide::Top);
+        assert_eq!(tail.actual_groups().nth(1).unwrap().members().len(), 1);
         assert_eq!(
-            (tail.actual_groups()[1].members()[0].value).to_bits(),
+            tail.actual_groups().nth(1).unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().nth(1).unwrap().members()[0].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().nth(1).unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        let tail = &sequence.tail()[1];
+        let tail = &sequence.tail_view(1).unwrap();
         assert_eq!(tail.source_index(), 5);
         assert_eq!((tail.vertical().top).to_bits(), 0x41b00000u32);
         assert_eq!((tail.content_vertical().top).to_bits(), 0x41b00000u32);
@@ -29439,29 +29841,41 @@ fn cp_witness_case_19283() {
             0x40000000u32
         );
         assert_eq!(tail.actual_groups().len(), 1);
-        assert_eq!(tail.actual_groups()[0].id(), MarginGroupId::ActualPair);
         assert_eq!(
-            (tail.actual_groups()[0].positive()).to_bits(),
+            tail.actual_groups().next().unwrap().id(),
+            MarginGroupId::ActualPair
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().positive()).to_bits(),
             0x40400000u32
         );
         assert_eq!(
-            (tail.actual_groups()[0].negative()).to_bits(),
+            (tail.actual_groups().next().unwrap().negative()).to_bits(),
             0x00000000u32
         );
-        assert_eq!(tail.actual_groups()[0].members().len(), 2);
-        assert_eq!(tail.actual_groups()[0].members()[0].source_index, 4);
+        assert_eq!(tail.actual_groups().next().unwrap().members().len(), 2);
         assert_eq!(
-            tail.actual_groups()[0].members()[0].side,
+            tail.actual_groups().next().unwrap().members()[0].source_index,
+            4
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[0].side,
             MarginSide::Bottom
         );
         assert_eq!(
-            (tail.actual_groups()[0].members()[0].value).to_bits(),
+            (tail.actual_groups().next().unwrap().members()[0].value).to_bits(),
             0x40400000u32
         );
-        assert_eq!(tail.actual_groups()[0].members()[1].source_index, 5);
-        assert_eq!(tail.actual_groups()[0].members()[1].side, MarginSide::Top);
         assert_eq!(
-            (tail.actual_groups()[0].members()[1].value).to_bits(),
+            tail.actual_groups().next().unwrap().members()[1].source_index,
+            5
+        );
+        assert_eq!(
+            tail.actual_groups().next().unwrap().members()[1].side,
+            MarginSide::Top
+        );
+        assert_eq!(
+            (tail.actual_groups().next().unwrap().members()[1].value).to_bits(),
             0x40000000u32
         );
         let child = &layout.children()[0];
@@ -30045,7 +30459,7 @@ fn cfh_css_cascade_and_copied_auto() {
 
 #[test]
 fn cfh_css_auto_work_thresholds() {
-    for (nodes, facade_work, core_work) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, facade_work, core_work) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         let css = cfh_css(nodes, "right", true, "height:inherit;");
         sibling_fixture(nodes, &css, |projection, display| {
             let facts =

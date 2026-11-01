@@ -448,15 +448,15 @@ fn oah_ae6_an_infinite_tentative_outer_height_fails_unless_capped() {
     );
 }
 
-/// OW (MW1, MW2 witness): facade work `695 + 32N + 534(N-2) + 373(N-3)` (OAH: 79 fixed on
+/// OW (MW1, MW2 witness): facade work `752 + 32N + 534(N-2) + 373(N-3)` (OAH: 79 fixed on
 /// every path) is exact at N5, N6 and N7 and one short is `Work`; the core work is
 /// unchanged by OAH (the formula also carries VPH's 45 and CTB's 25 + 8(N-2) + 2(N-3)).
 #[test]
 fn oah_ow_facade_work_charges_79_fixed() {
-    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         assert_eq!(
             facade,
-            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
+            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
             "N{nodes}"
         );
         let css = pct_css(nodes, "");

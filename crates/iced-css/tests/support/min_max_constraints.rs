@@ -599,20 +599,20 @@ fn mmx_h1_b1_min_height_moves_followers() {
     assert_mmx_row(5, "#b1 { min-height:3px; }", "", &mmx_h1_expected());
 }
 
-/// H2: `max-height` 0 makes B2's used height +0, which the core refuses.
+/// H2: `max-height` 0 plus a signed tail margin remains outside CTT; the
+/// captured height category is refused before the core sees its used +0.
 #[test]
 fn mmx_h2_max_height_zero_is_nonpositive() {
-    let css = mmx_css(5, "#b2 { max-height:0px; }");
+    let css = mmx_css(5, "#b2 { height:1px; max-height:0px; margin-top:-1px; }");
     let error = mmx_error(5, &css);
     assert!(
         matches!(
             error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 4,
-                    reason: OwnerProfileReason::NonpositiveBlockHeight,
-                }
-            ))
+            SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
+                projected: 4,
+                property: "height",
+                reason: CapturedClearanceUnsupported::HeightKind,
+            })
         ),
         "{css}: {error:?}"
     );
@@ -652,19 +652,21 @@ fn mmx_h3_auto_normal_with_min_height_is_admitted() {
     );
 }
 
-/// H4 (M14 witness): an Auto normal whose `min-height` is zero stays `HeightKind`.
+/// H4 (M14 witness): an Auto normal with a signed tail margin remains outside CTT
+/// and reaches the core's nonpositive-height refusal.
 #[test]
 fn mmx_h4_auto_normal_without_min_height_stays_height_kind() {
-    let css = mmx_css(5, "#b2 { height:auto; max-height:5px; }");
+    let css = mmx_css(5, "#b2 { height:auto; max-height:5px; margin-top:-1px; }");
     let error = mmx_error(5, &css);
     assert!(
         matches!(
             error,
-            SiblingLayoutError::Captured(CapturedClearanceError::Unsupported {
-                projected: 4,
-                property: "height",
-                reason: CapturedClearanceUnsupported::HeightKind,
-            })
+            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
+                ClearanceOwnerError::Unsupported {
+                    source: 4,
+                    reason: OwnerProfileReason::NonpositiveBlockHeight,
+                }
+            ))
         ),
         "{css}: {error:?}"
     );
@@ -1169,13 +1171,13 @@ const MMX_WORK_FRAGMENT: &str = "#o { min-width:1px; max-width:500px; min-height
                                  min-height:1px; max-height:50px; }";
 
 /// Facade and core work (M24 witness): exact and one short at N5, N6 and N7 with every
-/// constraint nondefault; the facade charge is `695 + 32N + 534(N-2) + 373(N-3)`.
+/// constraint nondefault; the facade charge is `752 + 32N + 534(N-2) + 373(N-3)`.
 #[test]
 fn mmx_work_thresholds_with_constraints() {
-    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         assert_eq!(
             facade,
-            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
         );
         let css = mmx_css(nodes, MMX_WORK_FRAGMENT);
         assert_mmx_view(

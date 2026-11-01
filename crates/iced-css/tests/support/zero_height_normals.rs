@@ -439,17 +439,17 @@ fn zhn_z11_a_zero_height_tail_with_a_negative_margin_takes_the_signed_route() {
     );
 }
 
-/// Z12 (MW1, MW2 witness): core work `751 + 12N + N(N-1)/2 + 71(N-4) + 64(N-2) +
+/// Z12 (MW1, MW2 witness): core work `1062 + 12N + N(N-1)/2 + 333(N-4) + 64(N-2) +
 /// 200(N-3)` (G6a: 62 per normal on every path) is exact at N5, N6 and N7 and one short
 /// is `Core(Work)`; the facade work is unchanged.
 #[test]
 fn zhn_z12_core_work_charges_62_per_normal() {
-    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         assert_eq!(
             core,
-            751 + 12 * nodes
+            1062 + 12 * nodes
                 + nodes * (nodes - 1) / 2
-                + 71 * (nodes - 4)
+                + 333 * (nodes - 4)
                 + 64 * (nodes - 2)
                 + 200 * (nodes - 3)
         );

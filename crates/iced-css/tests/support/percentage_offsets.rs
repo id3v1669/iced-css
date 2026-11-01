@@ -178,25 +178,30 @@ fn ptb_v4b_child_basis_includes_the_parent_minimum() {
 }
 
 /// V8 (PTB M7 witness, kept by its explicit-P case): a child's offsets resolve after its
-/// height category: B2's `height:auto` is `HeightKind` before its `top` percentage
-/// resolves, under the Auto P (where `top:10%` resolves only after P's bottom, PTA) and
-/// under P's `height:<f32::MAX>px` (where `top:200%` would be `Percentage`). B2 since
-/// CTB, which passes such a B1 to the core.
+/// height category: B2's signed-tail `height:auto` reaches the core nonpositive
+/// refusal under Auto P. Under P's `height:<f32::MAX>px`, its `top:200%`
+/// remains the earlier unrepresentable-percentage refusal.
 #[test]
 fn ptb_v8_offsets_follow_the_height_category() {
-    for (parent, top) in [
-        (String::new(), "10%"),
-        (format!("#p {{ height:{PCT_F32_MAX_PX}; }}"), "200%"),
+    for (parent, top, expected) in [
+        (
+            String::new(),
+            "10%",
+            "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))",
+        ),
+        (
+            format!("#p {{ height:{PCT_F32_MAX_PX}; }}"),
+            "200%",
+            "Percentage { source: 4, property: \"top\", error: Unrepresentable }",
+        ),
     ] {
         let css = pct_css(
             5,
-            &format!("{parent} #b2 {{ height:auto; position:relative; top:{top}; }}"),
+            &format!(
+                "{parent} #b2 {{ height:auto; margin-top:-1px; position:relative; top:{top}; }}"
+            ),
         );
-        assert_eq!(
-            pht_error_in(&css, PCT_OUTER),
-            pht_refusal(4, "height", "HeightKind"),
-            "{css}"
-        );
+        assert_eq!(pht_error_in(&css, PCT_OUTER), expected, "{css}");
     }
 }
 
@@ -604,14 +609,14 @@ const PTB_WORK_FRAGMENT: &str = "#p { height:20px; } \
                                  #b1, #f, #b2, #b3, #b4 { position:relative; top:0%; bottom:0%; }";
 
 /// Facade and core work (M19 witness): exact and one short at N5, N6 and N7 with
-/// percentages on every source; the facade charge is `695 + 32N + 534(N-2) +
+/// percentages on every source; the facade charge is `752 + 32N + 534(N-2) +
 /// 373(N-3)`; the layout equals the control with the children relative and no offsets.
 #[test]
 fn ptb_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         assert_eq!(
             facade,
-            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTB_WORK_FRAGMENT}"));
@@ -1011,15 +1016,15 @@ const PTA_WORK_FRAGMENT: &str = "#b1, #f, #b2, #b3, #b4 { position:relative; top
 
 /// Facade and core work under the Auto P (M16 witness): exact and one short at N5, N6 and
 /// N7 with PCT's, PPM's and PHT's percentages and the children's offset percentages
-/// resolved in the vertical pass; the facade charge is `695 + 32N + 534(N-2) + 373(N-3)`,
+/// resolved in the vertical pass; the facade charge is `752 + 32N + 534(N-2) + 373(N-3)`,
 /// as on the explicit path (`ptb_work_thresholds_with_percentages`); the layout equals the
 /// control with the children relative and no offsets.
 #[test]
 fn pta_work_thresholds_under_an_auto_parent() {
-    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         assert_eq!(
             facade,
-            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
+            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3)
         );
         let earlier = format!("{PCT_WORK_FRAGMENT} {PPM_WORK_FRAGMENT} {PHT_WORK_FRAGMENT}");
         let css = pct_css(nodes, &format!("{earlier} {PTA_WORK_FRAGMENT}"));

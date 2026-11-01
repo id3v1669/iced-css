@@ -5,13 +5,17 @@
 //! reserving output storage or publishing geometry. The returned owner borrows only
 //! the source slice; copied placement records do not retain the input facts slice.
 
+mod chain;
+
+use chain::{ChainState, GroupSpan};
+pub use chain::{SequenceMarginGroupView, SequenceMarginRunView, SequenceNormalView};
+
 use super::{
     clearance_owner::{
         BlockVertical, ChildContext, ChildFacts, ClearanceOwnerError, FirstFloatInput, KernelError,
-        MarginGroup, NormalKernel, OuterFacts, ParentFacts, PreviousNormal, place_first_float,
-        place_next_normal, validate_outer, validate_sequence_child,
-        validate_sequence_float_extents, validate_sequence_float_width, validate_sequence_parent,
-        vertical_decoration,
+        MarginMember, OuterFacts, ParentFacts, place_first_float, validate_outer,
+        validate_sequence_child, validate_sequence_float_extents, validate_sequence_float_width,
+        validate_sequence_parent, vertical_decoration,
     },
     floats::{Band, PlacedFloat},
 };
@@ -43,6 +47,7 @@ pub struct ClearanceSequenceReceipt {
     pub tail: usize,
     pub work: usize,
     pub record_capacity: usize,
+    pub member_capacity: usize,
     pub retained_bytes: usize,
 }
 
@@ -85,8 +90,8 @@ pub struct SequenceNormalPlacement {
     hypothetical_top: f32,
     zero_clearance_top: Option<f32>,
     clearance: Option<f32>,
-    hypothetical_group: MarginGroup,
-    actual_groups: [MarginGroup; 2],
+    hypothetical_group: GroupSpan,
+    actual_groups: [GroupSpan; 2],
     actual_len: usize,
 }
 
@@ -116,12 +121,6 @@ impl SequenceNormalPlacement {
     pub fn clearance(&self) -> Option<f32> {
         self.clearance
     }
-    pub fn hypothetical_group(&self) -> &MarginGroup {
-        &self.hypothetical_group
-    }
-    pub fn actual_groups(&self) -> &[MarginGroup] {
-        &self.actual_groups[..self.actual_len]
-    }
     pub fn barrier_source_index(&self) -> Option<usize> {
         self.clearance.map(|_| self.source_index)
     }
@@ -141,6 +140,8 @@ pub struct ClearanceSequenceOwner<'s> {
     float_padding: Band,
     float_padding_vertical: BlockVertical,
     tail: Vec<SequenceNormalPlacement>,
+    members: Vec<MarginMember>,
+    terminal: GroupSpan,
     receipt: ClearanceSequenceReceipt,
 }
 
@@ -207,6 +208,25 @@ impl<'s> ClearanceSequenceOwner<'s> {
     pub fn tail(&self) -> &[SequenceNormalPlacement] {
         &self.tail
     }
+    /// Borrow a record together with the member arena of this owner only.
+    pub fn tail_view(&self, index: usize) -> Option<SequenceNormalView<'_>> {
+        self.tail
+            .get(index)
+            .map(|record| SequenceNormalView::new(record, &self.members))
+    }
+    /// Visit owner-bound records in source order without allocating.
+    pub fn tail_views(
+        &self,
+    ) -> impl ExactSizeIterator<Item = SequenceNormalView<'_>> + DoubleEndedIterator + '_ {
+        self.tail
+            .iter()
+            .map(|record| SequenceNormalView::new(record, &self.members))
+    }
+    /// Final adjoining members/extrema. No new numeric edge is published here.
+    /// The descriptor is inline owner storage, outside the retained-allocation limit.
+    pub fn terminal_run(&self) -> SequenceMarginRunView<'_> {
+        SequenceMarginRunView::new(self.terminal, &self.members)
+    }
     pub fn receipt(&self) -> ClearanceSequenceReceipt {
         self.receipt
     }
@@ -216,7 +236,8 @@ impl<'s> ClearanceSequenceOwner<'s> {
 ///
 /// Source/count/work checks precede the complete graph and profile scan. All
 /// profile checks, including the last child and float-width domain, precede the
-/// fallible record allocation; allocation precedes every numerical kernel.
+/// fallible record/member allocations. Record capacity and its byte floor are checked
+/// before reserving members; both actual capacities are checked before geometry.
 /// Sequence normals admit finite signed absolute or Auto margins on every edge.
 /// Floats admit computed Auto or finite signed
 /// absolute margins on all four edges (Auto is used zero) while both exact outer
@@ -240,24 +261,28 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// positive-zero used content height; a normal keeps a positive explicit height, or +0
 /// when its own top and bottom margins are not adjoining (G6a, CSS2.2 8.3.1), and Legacy
 /// admission is unchanged.
-/// CTB (the user's U1=A; CSS2.2 8.3.1, 9.5.1): an ordinary B1 with used height +0 or -0
-/// and no top or bottom border or padding collapses through when no normal (B1 or a tail)
+/// CTB/CTT (the user's U1=A; CSS2.2 8.3.1, 9.5.1): an ordinary normal with used height
+/// +0 or -0 and no vertical border or padding collapses through when no normal (B1 or a tail)
 /// has a negative or NaN used vertical margin (F's margins do not count); otherwise it
 /// stays `NonpositiveBlockHeight`, a scope choice of this slice. F's hypothetical top is
-/// then B1's top border edge, P's content top plus B1's top margin (8.3.1), and the first
-/// tail's top margin collapses with both of B1's margins from P's content top (a
-/// three-member group); clearance separates it from B1's collapsed pair (9.5.2).
+/// B1's top border edge when B1 collapses through. Consecutive through tails extend
+/// the same adjoining member run. Clearance splits the incoming run from the clearing
+/// top margin; later through tails use the published cleared border and clearing top
+/// as a two-scalar reference, with one final position fold (9.5.2). A positive or
+/// separated normal ends the run. Terminal membership has no numeric publication.
 /// The facade passes used heights after `min-height`/`max-height` (MMX, CSS2.2 10.7):
 /// an F whose constrained Auto height is positive, and a normal whose computed Auto or
 /// zero height is raised by a positive `min-height`, arrive as explicit heights.
 /// P and every child may be relatively positioned (REL, CSS2.2 9.4.3); the owner
 /// publishes their normal-flow geometry, which the offsets do not change, and the
 /// outer source stays static.
-/// Work `751 + 12*N + N*(N-1)/2 + 71*(N-4) + 64*(N-2) + 200*(N-3)` is prepaid,
+/// Work `1062 + 12*N + N*(N-1)/2 + 333*(N-4) + 64*(N-2) + 200*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages, every child's border terms and padding publications, and
-/// the widened display test of P and every child.
+/// the widened display test of P and every child. CTT prepays 311 fixed and 262
+/// per-tail policy units for the arena, both capacity checks and chain descriptors;
+/// all earlier charges remain, without credit. These are not measured instructions.
 ///
 /// # Errors
 /// Returns bounded admission/allocation failures, complete-profile failures, or a
@@ -267,16 +292,24 @@ pub fn build_clearance_sequence<'s>(
     input: ClearanceSequenceInput<'s, '_>,
     limits: ClearanceSequenceLimits,
 ) -> Result<ClearanceSequenceOwner<'s>, ClearanceSequenceError> {
-    build_with_reserve(sources, input, limits, |records, requested| {
-        records.try_reserve_exact(requested)
-    })
+    build_with_reserves(
+        sources,
+        input,
+        limits,
+        |records, requested| records.try_reserve_exact(requested),
+        |members, requested| members.try_reserve_exact(requested),
+    )
 }
 
-fn build_with_reserve<'s>(
+fn build_with_reserves<'s>(
     sources: &'s [SourceNode],
     input: ClearanceSequenceInput<'s, '_>,
     limits: ClearanceSequenceLimits,
-    reserve: impl FnOnce(&mut Vec<SequenceNormalPlacement>, usize) -> Result<(), TryReserveError>,
+    reserve_records: impl FnOnce(
+        &mut Vec<SequenceNormalPlacement>,
+        usize,
+    ) -> Result<(), TryReserveError>,
+    reserve_members: impl FnOnce(&mut Vec<MarginMember>, usize) -> Result<(), TryReserveError>,
 ) -> Result<ClearanceSequenceOwner<'s>, ClearanceSequenceError> {
     let nodes = sources.len();
     if nodes < 5 || nodes > limits.sources.get() {
@@ -350,7 +383,7 @@ fn build_with_reserve<'s>(
 
     validate_outer(input.outer, 0).map_err(profile)?;
     validate_sequence_parent(input.parent, 1).map_err(profile)?;
-    // CTB (the user's U1=A; CSS2.2 8.3.1): B1 may collapse through only when no normal (B1
+    // CTB/CTT (the user's U1=A; CSS2.2 8.3.1): a normal may collapse through only when no normal (B1
     // or a tail) has a negative used vertical margin. Refusing one is a scope choice of
     // this slice (the mixed-sign group and the signed P route come later), not a CSS2.2
     // requirement. F's margins do not count; a NaN margin keeps the refusal.
@@ -362,7 +395,7 @@ fn build_with_reserve<'s>(
     for (offset, facts) in input.children.iter().copied().enumerate() {
         let source = offset + 2;
         let height =
-            validate_sequence_child(facts, source, source == 3, source == 2 && unsigned_normals)
+            validate_sequence_child(facts, source, source == 3, source != 3 && unsigned_normals)
                 .map_err(profile)?;
         if source == 3 {
             checked_float_height = Some(height);
@@ -374,16 +407,29 @@ fn build_with_reserve<'s>(
     validate_sequence_float_extents(input.children[1], input.float_width, float_height, 3)
         .map_err(profile)?;
 
-    let requested_bytes = retained_bytes(tail_count).ok_or(ClearanceSequenceError::Bytes)?;
+    let member_count = member_slots(nodes).ok_or(ClearanceSequenceError::Bytes)?;
+    let requested_bytes =
+        retained_bytes(tail_count, member_count).ok_or(ClearanceSequenceError::Bytes)?;
     if requested_bytes > limits.retained_bytes.get() {
         return Err(ClearanceSequenceError::Bytes);
     }
     let mut tail = Vec::new();
-    reserve(&mut tail, tail_count).map_err(ClearanceSequenceError::Allocation)?;
+    reserve_records(&mut tail, tail_count).map_err(ClearanceSequenceError::Allocation)?;
     if tail.capacity() < tail_count {
         return Err(ClearanceSequenceError::Bytes);
     }
-    let actual_bytes = retained_bytes(tail.capacity()).ok_or(ClearanceSequenceError::Bytes)?;
+    let first_actual =
+        retained_bytes(tail.capacity(), member_count).ok_or(ClearanceSequenceError::Bytes)?;
+    if first_actual > limits.retained_bytes.get() {
+        return Err(ClearanceSequenceError::Bytes);
+    }
+    let mut members = Vec::new();
+    reserve_members(&mut members, member_count).map_err(ClearanceSequenceError::Allocation)?;
+    if members.capacity() < member_count {
+        return Err(ClearanceSequenceError::Bytes);
+    }
+    let actual_bytes =
+        retained_bytes(tail.capacity(), members.capacity()).ok_or(ClearanceSequenceError::Bytes)?;
     if actual_bytes > limits.retained_bytes.get() {
         return Err(ClearanceSequenceError::Bytes);
     }
@@ -419,28 +465,27 @@ fn build_with_reserve<'s>(
             error: ClearanceOwnerError::NewBfcFloatContact,
         });
     }
-    // CTB: the first tail follows B1, or a collapse-through B1's two margins from P's
-    // content top.
-    let mut previous = PreviousNormal {
-        edge: if collapses {
-            input.parent.content_top
-        } else {
-            first.before.bottom
-        },
-        source: 2,
-        top_margin: collapses.then(|| input.children[0].margin.used_top()),
-        bottom_margin: input.children[0].margin.used_bottom(),
-    };
+    let mut chain = ChainState::first(
+        &mut members,
+        input.children[0],
+        first.before.bottom,
+        input.parent.content_top,
+        collapses,
+    )
+    .map_err(placement)?;
     for (offset, facts) in input.children[2..].iter().copied().enumerate() {
         let source = offset + 4;
-        let next = place_next_normal(
-            previous,
-            facts,
-            explicit_height(facts),
-            source,
-            first.placed_float,
-        )
-        .map_err(placement)?;
+        let through = facts.context == ChildContext::OrdinaryNonBfc && zero_border_box(facts);
+        let next = chain
+            .place_next(
+                &mut members,
+                facts,
+                explicit_height(facts),
+                source,
+                through,
+                first.placed_float,
+            )
+            .map_err(placement)?;
         // CSS2.2 §9.5, Q1: a new-BFC tail obeys the B1 rule, checked right after its own
         // placement so that the first failing source in source order is reported.
         if facts.context == ChildContext::OtherNewBfc
@@ -451,13 +496,7 @@ fn build_with_reserve<'s>(
                 error: ClearanceOwnerError::NewBfcFloatContact,
             });
         }
-        previous = PreviousNormal {
-            edge: next.vertical.bottom,
-            source,
-            top_margin: None,
-            bottom_margin: facts.margin.used_bottom(),
-        };
-        tail.push(record(source, next));
+        tail.push(next);
     }
     Ok(ClearanceSequenceOwner {
         sources,
@@ -476,9 +515,12 @@ fn build_with_reserve<'s>(
             tail: tail_count,
             work,
             record_capacity: tail.capacity(),
+            member_capacity: members.capacity(),
             retained_bytes: actual_bytes,
         },
         tail,
+        members,
+        terminal: chain.terminal(),
     })
 }
 
@@ -522,21 +564,6 @@ fn explicit_height(facts: ChildFacts<'_>) -> f32 {
     match facts.height {
         super::clearance_owner::OwnerHeight::Explicit(height) => height,
         _ => unreachable!("complete profile validation admitted only explicit height"),
-    }
-}
-
-fn record(source_index: usize, placement: NormalKernel) -> SequenceNormalPlacement {
-    SequenceNormalPlacement {
-        source_index,
-        vertical: placement.vertical,
-        content_vertical: placement.content_vertical,
-        padding_vertical: placement.padding_vertical,
-        hypothetical_top: placement.hypothetical_top,
-        zero_clearance_top: placement.zero_clearance_top,
-        clearance: placement.clearance,
-        hypothetical_group: placement.hypothetical_group,
-        actual_groups: placement.actual_groups,
-        actual_len: placement.actual_len,
     }
 }
 
@@ -617,12 +644,56 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         .checked_add(49)?
         .checked_add(nodes.checked_sub(2)?.checked_mul(3)?)?
         .checked_add(nodes.checked_sub(3)?.checked_mul(18)?)?
-        .checked_add(tail.checked_mul(17)?)
+        .checked_add(tail.checked_mul(17)?)?
+        // CTT: conservative source-bound policy additions, no old charge removed.
+        // Fixed311: member count16, three complete byte helpers78, their gates30,
+        // second reserve19, complete through-B1 seed158, owner/receipt transfers10.
+        // Per tail262: through decision/call37, top append/span70, local actual
+        // descriptors61, extra Exact terms10, bottom append/reference updates81,
+        // source mapping3. Existing final record output transfers remain prepaid.
+        .checked_add(311)?
+        .checked_add(tail.checked_mul(262)?)
 }
 
-fn retained_bytes(capacity: usize) -> Option<usize> {
-    let bytes = capacity.checked_mul(size_of::<SequenceNormalPlacement>())?;
+/// Requested retained allocations for a Sequence source count, without allocating.
+/// Inline owner storage (including the terminal span) is not a retained allocation.
+/// Returns None for fewer than five sources or count/size/isize overflow.
+pub fn sequence_requested_retained_bytes(nodes: usize) -> Option<usize> {
+    let tail = nodes.checked_sub(4)?;
+    if tail == 0 {
+        return None;
+    }
+    retained_bytes(tail, member_slots(nodes)?)
+}
+
+fn member_slots(nodes: usize) -> Option<usize> {
+    nodes.checked_sub(3)?.checked_mul(2)
+}
+
+fn retained_bytes(record_capacity: usize, member_capacity: usize) -> Option<usize> {
+    let records = record_capacity.checked_mul(size_of::<SequenceNormalPlacement>())?;
+    let members = member_capacity.checked_mul(size_of::<MarginMember>())?;
+    let bytes = records.checked_add(members)?;
     (bytes <= isize::MAX as usize).then_some(bytes)
+}
+
+#[cfg(test)]
+fn build_with_reserve<'s>(
+    sources: &'s [SourceNode],
+    input: ClearanceSequenceInput<'s, '_>,
+    limits: ClearanceSequenceLimits,
+    reserve_records: impl FnOnce(
+        &mut Vec<SequenceNormalPlacement>,
+        usize,
+    ) -> Result<(), TryReserveError>,
+) -> Result<ClearanceSequenceOwner<'s>, ClearanceSequenceError> {
+    build_with_reserves(
+        sources,
+        input,
+        limits,
+        reserve_records,
+        |members, requested| members.try_reserve_exact(requested),
+    )
 }
 
 #[cfg(test)]
@@ -663,8 +734,9 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(1484).unwrap(),
-            retained_bytes: NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap(),
+            work: NonZeroUsize::new(2057).unwrap(),
+            retained_bytes: NonZeroUsize::new(sequence_requested_retained_bytes(5).unwrap())
+                .unwrap(),
         };
         (sources, limits)
     }
@@ -773,7 +845,7 @@ mod tests {
         children[1].margin.left = AutoLength::Auto;
         children[1].margin.right = AutoLength::Auto;
         limits.retained_bytes =
-            NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
+            NonZeroUsize::new(sequence_requested_retained_bytes(5).unwrap() - 1).unwrap();
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -868,7 +940,7 @@ mod tests {
         children[1].margin.left = AutoLength::Auto;
         children[1].margin.right = AutoLength::Auto;
         limits.retained_bytes =
-            NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
+            NonZeroUsize::new(sequence_requested_retained_bytes(5).unwrap() - 1).unwrap();
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -888,7 +960,7 @@ mod tests {
         children[1].margin.left = AutoLength::Auto;
         children[1].margin.right = AutoLength::Auto;
         limits.retained_bytes =
-            NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
+            NonZeroUsize::new(sequence_requested_retained_bytes(5).unwrap() - 1).unwrap();
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -914,7 +986,7 @@ mod tests {
         children[1].margin.left = AutoLength::Auto;
         children[1].margin.right = AutoLength::Auto;
         limits.retained_bytes =
-            NonZeroUsize::new(size_of::<SequenceNormalPlacement>() - 1).unwrap();
+            NonZeroUsize::new(sequence_requested_retained_bytes(5).unwrap() - 1).unwrap();
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -1087,7 +1159,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [1483, 480, 419, 337, 269, 213] {
+        for short in [2056, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -1103,7 +1175,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(1484).unwrap();
+        limits.work = NonZeroUsize::new(2057).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -1123,14 +1195,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 1484);
+        assert_eq!(owner.receipt().work, 2057);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
+                + owner.receipt().member_capacity * size_of::<MarginMember>()
         );
 
         // Spare actual capacity is charged against the runtime-sized limit.
-        limits.retained_bytes = NonZeroUsize::new(size_of::<SequenceNormalPlacement>()).unwrap();
+        limits.retained_bytes =
+            NonZeroUsize::new(sequence_requested_retained_bytes(5).unwrap()).unwrap();
         let error = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -1148,12 +1222,12 @@ mod tests {
         // The checked byte helper rejects products beyond isize::MAX.
         let size = size_of::<SequenceNormalPlacement>();
         let largest = isize::MAX as usize / size;
-        assert_eq!(retained_bytes(largest), Some(largest * size));
-        assert_eq!(retained_bytes(largest + 1), None);
-        assert_eq!(retained_bytes(usize::MAX), None);
-        assert_eq!(sequence_work(5, 1), Some(1484));
-        assert_eq!(sequence_work(6, 2), Some(1836));
-        assert_eq!(sequence_work(7, 3), Some(2189));
+        assert_eq!(retained_bytes(largest, 0), Some(largest * size));
+        assert_eq!(retained_bytes(largest + 1, 0), None);
+        assert_eq!(retained_bytes(usize::MAX, 0), None);
+        assert_eq!(sequence_work(5, 1), Some(2057));
+        assert_eq!(sequence_work(6, 2), Some(2671));
+        assert_eq!(sequence_work(7, 3), Some(3286));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
@@ -1164,6 +1238,26 @@ mod tests {
             std::mem::align_of::<SequenceNormalPlacement>()
         );
         println!(
+            "CTT_REPRESENTATION GroupSpan {} {}",
+            size_of::<GroupSpan>(),
+            std::mem::align_of::<GroupSpan>()
+        );
+        println!(
+            "CTT_REPRESENTATION MarginMember {} {}",
+            size_of::<MarginMember>(),
+            std::mem::align_of::<MarginMember>()
+        );
+        println!(
+            "CTT_REPRESENTATION ClearanceSequenceOwner {} {}",
+            size_of::<ClearanceSequenceOwner<'_>>(),
+            std::mem::align_of::<ClearanceSequenceOwner<'_>>()
+        );
+        println!(
+            "CTT_REPRESENTATION ClearanceSequenceReceipt {} {}",
+            size_of::<ClearanceSequenceReceipt>(),
+            std::mem::align_of::<ClearanceSequenceReceipt>()
+        );
+        println!(
             "CP_REPRESENTATION ChildFacts {} {}",
             size_of::<ChildFacts<'_>>(),
             std::mem::align_of::<ChildFacts<'_>>()
@@ -1171,11 +1265,25 @@ mod tests {
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
         {
             assert_eq!(
+                (size_of::<GroupSpan>(), std::mem::align_of::<GroupSpan>()),
+                (24, 8)
+            );
+            assert_eq!(
+                (
+                    size_of::<MarginMember>(),
+                    std::mem::align_of::<MarginMember>()
+                ),
+                (16, 8)
+            );
+            assert_eq!(sequence_requested_retained_bytes(5), Some(200));
+            assert_eq!(sequence_requested_retained_bytes(6), Some(368));
+            assert_eq!(sequence_requested_retained_bytes(7), Some(536));
+            assert_eq!(
                 (
                     size_of::<SequenceNormalPlacement>(),
                     std::mem::align_of::<SequenceNormalPlacement>()
                 ),
-                (280, 8)
+                (136, 8)
             );
             assert_eq!(
                 (
@@ -1235,8 +1343,7 @@ mod tests {
             ));
             limits.work = NonZeroUsize::new(work).unwrap();
             limits.retained_bytes =
-                NonZeroUsize::new(requested_tail * size_of::<SequenceNormalPlacement>() - 1)
-                    .unwrap();
+                NonZeroUsize::new(sequence_requested_retained_bytes(count).unwrap() - 1).unwrap();
             assert!(matches!(
                 build_with_reserve(&sources, input, limits, |_, _| panic!(
                     "requested byte admission"
@@ -1247,7 +1354,7 @@ mod tests {
             // Overflow operands are synthetic usize guards, not enormous allocated trees.
             assert_eq!(sequence_work(usize::MAX, requested_tail), None);
             assert_eq!(sequence_work(count, usize::MAX), None);
-            assert_eq!(retained_bytes(usize::MAX - requested_tail), None);
+            assert_eq!(retained_bytes(usize::MAX - requested_tail, 0), None);
             let real = Vec::<u8>::new().try_reserve_exact(usize::MAX).unwrap_err();
             let error = build_with_reserve(&sources, input, limits, |records, requested| {
                 assert_eq!(requested, requested_tail);
@@ -1284,7 +1391,7 @@ mod tests {
             assert_eq!(exact.capacity(), requested_tail);
             exact.clear();
             limits.retained_bytes =
-                NonZeroUsize::new(requested_tail * size_of::<SequenceNormalPlacement>()).unwrap();
+                NonZeroUsize::new(sequence_requested_retained_bytes(count).unwrap()).unwrap();
             let owner = build_with_reserve(&sources, input, limits, move |records, requested| {
                 assert_eq!(requested, requested_tail);
                 *records = exact;
@@ -1295,6 +1402,7 @@ mod tests {
             assert_eq!(
                 owner.receipt().retained_bytes,
                 requested_tail * size_of::<SequenceNormalPlacement>()
+                    + owner.receipt().member_capacity * size_of::<MarginMember>()
             );
 
             // Every case measures its own allocation BEFORE the call and moves that
@@ -1304,7 +1412,8 @@ mod tests {
                 prepared.try_reserve_exact(requested_tail + 1).unwrap();
                 let capacity = prepared.capacity();
                 assert!(capacity > requested_tail);
-                let bytes = capacity * size_of::<SequenceNormalPlacement>();
+                let bytes = capacity * size_of::<SequenceNormalPlacement>()
+                    + 2 * (count - 3) * size_of::<MarginMember>();
                 limits.retained_bytes =
                     NonZeroUsize::new(bytes.checked_add_signed(offset).unwrap()).unwrap();
                 let mut called = false;
@@ -1402,8 +1511,10 @@ mod tests {
         let mut prepared = Vec::new();
         prepared.try_reserve_exact(3).unwrap();
         let capacity = prepared.capacity();
-        limits.retained_bytes =
-            NonZeroUsize::new(capacity * size_of::<SequenceNormalPlacement>()).unwrap();
+        limits.retained_bytes = NonZeroUsize::new(
+            capacity * size_of::<SequenceNormalPlacement>() + 4 * size_of::<MarginMember>(),
+        )
+        .unwrap();
         let result = build_with_reserve(
             &sources,
             ClearanceSequenceInput {
@@ -1424,6 +1535,235 @@ mod tests {
         assert_eq!(
             result.receipt().retained_bytes,
             capacity * size_of::<SequenceNormalPlacement>()
+                + result.receipt().member_capacity * size_of::<MarginMember>()
         );
+    }
+
+    // Prospective additions inside clearance_sequence.rs #[cfg(test)] mod tests.
+    // Uses the existing fixture/input/cp_capacity_fixture helpers. Runtime is unrun.
+
+    #[test]
+    fn ctt_requested_bytes_cover_both_vectors_and_checked_arithmetic() {
+        for nodes in 0..5 {
+            assert_eq!(sequence_requested_retained_bytes(nodes), None);
+        }
+        for nodes in 5..=21 {
+            let records = nodes - 4;
+            let members = 2 * (nodes - 3);
+            assert_eq!(
+                sequence_requested_retained_bytes(nodes),
+                Some(
+                    records * size_of::<SequenceNormalPlacement>()
+                        + members * size_of::<MarginMember>()
+                )
+            );
+        }
+        assert_eq!(sequence_requested_retained_bytes(usize::MAX), None);
+        assert_eq!(member_slots(usize::MAX), None);
+        assert_eq!(retained_bytes(0, usize::MAX), None);
+        assert_eq!(retained_bytes(usize::MAX, 0), None);
+        let max_members = isize::MAX as usize / size_of::<MarginMember>();
+        assert_eq!(
+            retained_bytes(0, max_members),
+            Some(max_members * size_of::<MarginMember>())
+        );
+        assert_eq!(retained_bytes(0, max_members + 1), None);
+        let max_records = isize::MAX as usize / size_of::<SequenceNormalPlacement>();
+        assert_eq!(
+            retained_bytes(max_records, 0),
+            Some(max_records * size_of::<SequenceNormalPlacement>())
+        );
+        assert_eq!(retained_bytes(max_records, max_members), None);
+    }
+
+    #[test]
+    fn ctt_record_gate_precedes_second_reserve_and_geometry() {
+        let (sources, mut limits) = cp_capacity_fixture(9);
+        let (outer, mut parent, mut children) = input(&sources);
+        // Finite profile terms overflow B1 publication if geometry is reached.
+        parent.content_top = f32::MAX;
+        children[0].margin.top = AutoLength::Value(f32::MAX);
+        let input = ClearanceSequenceInput {
+            outer,
+            parent,
+            children: &children,
+            float_width: 140.0,
+        };
+        let requested = sequence_requested_retained_bytes(9).unwrap();
+        limits.retained_bytes = NonZeroUsize::new(requested - 1).unwrap();
+        assert!(matches!(
+            build_with_reserves(
+                &sources,
+                input,
+                limits,
+                |_, _| panic!("first reserve before requested floor"),
+                |_, _| panic!("second reserve before requested floor")
+            ),
+            Err(ClearanceSequenceError::Bytes)
+        ));
+        limits.retained_bytes = NonZeroUsize::MAX;
+        assert!(matches!(
+            build_with_reserves(
+                &sources,
+                input,
+                limits,
+                |_, requested| {
+                    assert_eq!(requested, 5);
+                    Ok(())
+                },
+                |_, _| panic!("second reserve after short record capacity")
+            ),
+            Err(ClearanceSequenceError::Bytes)
+        ));
+        limits.retained_bytes = NonZeroUsize::new(requested).unwrap();
+        assert!(matches!(
+            build_with_reserves(
+                &sources,
+                input,
+                limits,
+                |records, requested| records.try_reserve_exact(requested + 1),
+                |_, _| panic!("second reserve after excessive record capacity")
+            ),
+            Err(ClearanceSequenceError::Bytes)
+        ));
+    }
+
+    #[test]
+    fn ctt_member_reserve_errors_remain_typed_before_geometry() {
+        let (sources, limits) = cp_capacity_fixture(5);
+        let (outer, mut parent, mut children) = input(&sources);
+        parent.content_top = f32::MAX;
+        children[0].margin.top = AutoLength::Value(f32::MAX);
+        let input = ClearanceSequenceInput {
+            outer,
+            parent,
+            children: &children,
+            float_width: 140.0,
+        };
+        let calls = std::cell::Cell::new(0);
+        let expected = Vec::<MarginMember>::new()
+            .try_reserve_exact(usize::MAX)
+            .unwrap_err();
+        let error = build_with_reserves(
+            &sources,
+            input,
+            limits,
+            |records, requested| {
+                assert_eq!(calls.get(), 0);
+                calls.set(1);
+                records.try_reserve_exact(requested)
+            },
+            |members, requested| {
+                assert_eq!(calls.get(), 1);
+                assert_eq!(requested, 4);
+                calls.set(2);
+                members.try_reserve_exact(usize::MAX)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(calls.get(), 2);
+        assert!(matches!(error, ClearanceSequenceError::Allocation(_)));
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.is::<TryReserveError>());
+        assert_eq!(source.to_string(), expected.to_string());
+        assert!(matches!(
+            build_with_reserves(
+                &sources,
+                input,
+                limits,
+                |records, requested| records.try_reserve_exact(requested),
+                |_, requested| {
+                    assert_eq!(requested, 4);
+                    Ok(())
+                }
+            ),
+            Err(ClearanceSequenceError::Bytes)
+        ));
+        // Ownership proof: the local record Vec has no escape on either Err path;
+        // ordinary Rust scope destruction releases it. No allocator internals are mocked.
+    }
+
+    #[test]
+    fn ctt_actual_member_and_joint_spare_capacity_are_charged() {
+        for count in 5..=7 {
+            for (record_spare, member_spare) in [(0, 0), (1, 0), (0, 1), (1, 2)] {
+                for one_short in [false, true] {
+                    let (sources, mut limits) = cp_capacity_fixture(count);
+                    let (outer, parent, mut children) = input(&sources);
+                    children[2].clear = ClearSide::None;
+                    let input = ClearanceSequenceInput {
+                        outer,
+                        parent,
+                        children: &children,
+                        float_width: 10.0,
+                    };
+                    let mut record_storage = Vec::new();
+                    record_storage
+                        .try_reserve_exact(count - 4 + record_spare)
+                        .unwrap();
+                    let mut member_storage = Vec::new();
+                    member_storage
+                        .try_reserve_exact(2 * (count - 3) + member_spare)
+                        .unwrap();
+                    let record_capacity = record_storage.capacity();
+                    let member_capacity = member_storage.capacity();
+                    let exact = record_capacity * size_of::<SequenceNormalPlacement>()
+                        + member_capacity * size_of::<MarginMember>();
+                    limits.retained_bytes =
+                        NonZeroUsize::new(exact - usize::from(one_short)).unwrap();
+                    let result = build_with_reserves(
+                        &sources,
+                        input,
+                        limits,
+                        |records, requested| {
+                            assert_eq!(requested, count - 4);
+                            *records = record_storage;
+                            Ok(())
+                        },
+                        |members, requested| {
+                            assert_eq!(requested, 2 * (count - 3));
+                            *members = member_storage;
+                            Ok(())
+                        },
+                    );
+                    if one_short {
+                        assert!(matches!(result, Err(ClearanceSequenceError::Bytes)));
+                    } else {
+                        let owner = result.unwrap();
+                        assert_eq!(owner.receipt().record_capacity, record_capacity);
+                        assert_eq!(owner.receipt().member_capacity, member_capacity);
+                        assert_eq!(owner.receipt().retained_bytes, exact);
+                        assert_eq!(owner.tail().len(), count - 4);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ctt_complete_profile_validation_precedes_both_reserves() {
+        let (sources, limits) = cp_capacity_fixture(5);
+        let (outer, parent, mut children) = input(&sources);
+        children[2].padding.top = f32::NAN;
+        let error = build_with_reserves(
+            &sources,
+            ClearanceSequenceInput {
+                outer,
+                parent,
+                children: &children,
+                float_width: 10.0,
+            },
+            limits,
+            |_, _| panic!("first reserve before complete profile"),
+            |_, _| panic!("second reserve before complete profile"),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ClearanceSequenceError::Profile(ClearanceOwnerError::InvalidNumber {
+                source: 4,
+                field: "padding"
+            })
+        ));
     }
 }

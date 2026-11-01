@@ -280,12 +280,12 @@ fn ctb_c8_the_float_margins_do_not_count() {
     zhn_row(5, "#b1 { height:0; } #f { margin-bottom:-1px; }", &expected);
 }
 
-/// C9 (CM2 witness): a zero-height ordinary tail cannot collapse through in this slice: B2
-/// stays `NonpositiveBlockHeight` at source 4 after B1 collapses through.
+/// C9: a zero-height ordinary tail with a negative normal margin stays outside the
+/// CTT unsigned scope. B1 is positive so the first refusal remains source4.
 #[test]
 fn ctb_c9_a_zero_height_tail_stays_refused() {
     assert_eq!(
-        zhn_error(5, "#b1 { height:0; } #b2 { height:0; }"),
+        zhn_error(5, "#b1 { height:1px; } #b2 { height:0; margin-top:-1px; }"),
         "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))"
     );
 }
@@ -366,24 +366,25 @@ fn ctb_receipt(layout: &CapturedSiblingLayout<'_>) -> (usize, usize) {
     (layout.receipt().work, layout.receipt().core.work)
 }
 
-/// CW (KW1-KW9 witness): facade `695 + 32N + 534(N-2) + 373(N-3)`, core
-/// `751 + 12N + N(N-1)/2 + 71(N-4) + 64(N-2) + 200(N-3)`. Prospective CT-15 charges:
+/// CW (KW1-KW9 witness): facade `752 + 32N + 534(N-2) + 373(N-3)`, core
+/// `1062 + 12N + N(N-1)/2 + 333(N-4) + 64(N-2) + 200(N-3)`. Retained CT-15 charges:
 /// facade 25 fixed + 8 per child + 2 per normal; core 49 fixed + 3 per child +
 /// 18 per normal + 17 per tail. At N5/N6/N7, a collapse-through B1 and the baseline use
-/// exact facade 3203/4142/5081, core 1484/1836/2189; one short is `Work` or `Core(Work)`.
+/// CTT additionally prepays core311+262T and facade57 (CTT-P2), without credit.
+/// exact facade 3260/4199/5138, core 2057/2671/3286; one short is `Work` or `Core(Work)`.
 #[test]
 fn ctb_cw_work() {
-    for (nodes, facade, core) in [(5, 3203, 1484), (6, 4142, 1836), (7, 5081, 2189)] {
+    for (nodes, facade, core) in [(5, 3260, 2057), (6, 4199, 2671), (7, 5138, 3286)] {
         assert_eq!(
             facade,
-            695 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
+            752 + 32 * nodes + 534 * (nodes - 2) + 373 * (nodes - 3),
             "N{nodes}"
         );
         assert_eq!(
             core,
-            751 + 12 * nodes
+            1062 + 12 * nodes
                 + nodes * (nodes - 1) / 2
-                + 71 * (nodes - 4)
+                + 333 * (nodes - 4)
                 + 64 * (nodes - 2)
                 + 200 * (nodes - 3),
             "N{nodes}"
@@ -405,3 +406,6 @@ fn ctb_cw_work() {
         }
     }
 }
+
+#[path = "collapse_through_tails.rs"]
+mod collapse_through_tails;

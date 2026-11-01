@@ -8,9 +8,9 @@
 //! Sequence owner does not, because a new BFC root never collapses margins with its
 //! in-flow children (CSS2.2 8.3.1). Ordinary positive-height B1/B2 cannot collapse
 //! through; nor can a Sequence normal whose own top and bottom margins are not adjoining
-//! (G6a), which may have zero height. CTB (the user's U1=A): a zero-height Sequence B1
-//! whose own margins adjoin collapses through when no normal's used vertical margin is
-//! negative. The Sequence owner also admits a relatively
+//! (G6a), which may have zero height. CTB/CTT (the user's U1=A): a zero-height ordinary
+//! Sequence normal whose own margins adjoin collapses through when no normal's used
+//! vertical margin is negative or NaN. The Sequence owner also admits a relatively
 //! positioned P or child (REL, CSS2.2 9.4.3) and computes its normal-flow geometry, which
 //! the offsets do not
 //! change; the outer source and every Legacy source stay static. This is not full
@@ -64,8 +64,8 @@ pub enum OwnerHeight {
     /// by a positive `min-height` (10.6.3 gives the tentative zero; such a box cannot
     /// collapse through, 8.3.1). (G6a) A Sequence normal may also assert +0 when its own
     /// top and bottom margins are not adjoining (8.3.1): it establishes a new block
-    /// formatting context or has a nonzero top or bottom border or padding. (CTB, the
-    /// user's U1=A) An ordinary undecorated Sequence B1 that asserts +0 or -0 asserts that
+    /// formatting context or has a nonzero top or bottom border or padding. (CTB/CTT, the
+    /// user's U1=A) An ordinary undecorated Sequence normal asserting +0 or -0 asserts that
     /// its own margins adjoin: its computed `height` is zero or `auto` and its computed
     /// `min-height` is zero, neither a percentage nor a length rounded to zero. A Sequence
     /// percentage `height` resolved by the caller against its containing block's explicit
@@ -208,8 +208,8 @@ pub enum OwnerProfileReason {
     ParentIsolation,
     HeightKind,
     /// A normal's used height is negative, or +0 while its own top and bottom margins may
-    /// adjoin (Sequence, G6a) and it is a tail or a normal's used vertical margin is
-    /// negative or NaN (CTB: otherwise such a B1 collapses through), or always (Legacy).
+    /// adjoin (Sequence, G6a) and a normal's used vertical margin is negative or NaN
+    /// (CTB/CTT scope: otherwise it collapses through), or always (Legacy).
     NonpositiveBlockHeight,
     NegativeMargin,
     AutoVerticalMargin,
@@ -532,7 +532,7 @@ fn own_margins_separated(f: ChildFacts<'_>, policy: ChildMarginPolicy) -> bool {
         && (f.context == ChildContext::OtherNewBfc || vertical_decoration(f))
 }
 
-/// `collapse_through` (CTB, the user's U1=A): a zero-height Sequence B1 whose own margins
+/// `collapse_through` (CTB/CTT, the user's U1=A): a Sequence normal whose own margins
 /// may adjoin is admitted, and its margins collapse through (CSS2.2 8.3.1).
 fn child(
     f: ChildFacts<'_>,
@@ -639,7 +639,7 @@ fn child(
     }
     Ok(height)
 }
-fn sum(terms: &[f32], stage: &'static str) -> Result<f32, ClearanceOwnerError> {
+pub(super) fn sum(terms: &[f32], stage: &'static str) -> Result<f32, ClearanceOwnerError> {
     terms
         .iter()
         .fold(Exact::ZERO, |acc, &term| acc.add(Exact::from_f32(term)))
@@ -663,7 +663,7 @@ fn group(
         extrema,
     })
 }
-fn amount_error(error: ClearanceError) -> ClearanceOwnerError {
+pub(super) fn amount_error(error: ClearanceError) -> ClearanceOwnerError {
     match error {
         ClearanceError::Unrepresentable => ClearanceOwnerError::Unrepresentable {
             stage: "clearance_amount",
@@ -712,7 +712,7 @@ pub(super) fn validate_child(
     Ok(height)
 }
 
-/// `collapse_through`: as for `child` (CTB: B1 when no normal margin is negative).
+/// `collapse_through`: as for `child` (CTB/CTT: unsigned-normal Sequence scope).
 pub(super) fn validate_sequence_child(
     facts: ChildFacts<'_>,
     source: usize,
@@ -864,7 +864,7 @@ pub(super) struct PreviousNormal {
 // stage cannot fail. `stages` names the content top, padding top, content bottom,
 // padding bottom and border bottom. Returns the content span, the padding span and
 // the border bottom.
-fn normal_vertical(
+pub(super) fn normal_vertical(
     border_top: f32,
     height: f32,
     border: OwnerEdges,

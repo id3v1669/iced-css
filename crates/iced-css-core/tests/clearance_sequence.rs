@@ -240,8 +240,7 @@ fn oversized_core_matrix_changes_only_the_float_horizontal_placement() {
                         assert_eq!(oversized.before(), control.before());
                         assert_eq!(oversized.receipt(), control.receipt());
                         assert_eq!(oversized.tail().len(), control.tail().len());
-                        for (actual, expected) in oversized.tail().iter().zip(control.tail().iter())
-                        {
+                        for (actual, expected) in oversized.tail_views().zip(control.tail_views()) {
                             assert_eq!(actual.source_index(), expected.source_index());
                             assert_eq!(actual.vertical(), expected.vertical());
                             assert_eq!(actual.hypothetical_top(), expected.hypothetical_top());
@@ -252,7 +251,10 @@ fn oversized_core_matrix_changes_only_the_float_horizontal_placement() {
                                 expected.barrier_source_index()
                             );
                             assert_eq!(actual.hypothetical_group(), expected.hypothetical_group());
-                            assert_eq!(actual.actual_groups(), expected.actual_groups());
+                            assert_eq!(
+                                actual.actual_groups().collect::<Vec<_>>(),
+                                expected.actual_groups().collect::<Vec<_>>()
+                            );
                         }
                     }
                 }
@@ -321,15 +323,28 @@ fn five_source_sequence_matches_the_legacy_nested_owner() {
     )
     .unwrap();
     let dynamic = build(&sources, outer, parent, &children, limits(5)).unwrap();
-    let after = &dynamic.tail()[0];
+    let after = &dynamic.tail_view(0).unwrap();
     assert_eq!(dynamic.before(), legacy.before());
     assert_eq!(dynamic.placed_float(), legacy.placed_float());
     assert_eq!(after.vertical(), legacy.after());
     assert_eq!(after.hypothetical_top(), legacy.hypothetical_top());
     assert_eq!(after.zero_clearance_top(), legacy.zero_clearance_top());
     assert_eq!(after.clearance(), legacy.clearance());
-    assert_eq!(after.hypothetical_group(), legacy.hypothetical_group());
-    assert_eq!(after.actual_groups(), legacy.actual_groups());
+    assert_eq!(
+        observe_sequence_group(after.hypothetical_group()),
+        observe_legacy_group(legacy.hypothetical_group())
+    );
+    assert_eq!(
+        after
+            .actual_groups()
+            .map(observe_sequence_group)
+            .collect::<Vec<_>>(),
+        legacy
+            .actual_groups()
+            .iter()
+            .map(observe_legacy_group)
+            .collect::<Vec<_>>()
+    );
     assert_eq!(after.barrier_source_index(), legacy.barrier_source_index());
 }
 
@@ -421,7 +436,7 @@ fn every_tail_record_owns_local_pair_membership_and_barrier_identity() {
     let sources = sources(7);
     let (outer, parent, children) = facts(&sources);
     let owner = build(&sources, outer, parent, &children, limits(7)).unwrap();
-    for (index, record) in owner.tail().iter().enumerate() {
+    for (index, record) in owner.tail_views().enumerate() {
         let source = index + 4;
         let previous_source = [2, 4, 5][index];
         let previous_child = [0, 2, 3][index];
@@ -451,12 +466,21 @@ fn every_tail_record_owns_local_pair_membership_and_barrier_identity() {
         if source == 4 {
             assert_eq!(record.barrier_source_index(), Some(4));
             assert_eq!(record.actual_groups().len(), 2);
-            assert_eq!(record.actual_groups()[0].id(), MarginGroupId::BeforeBarrier);
-            assert_eq!(record.actual_groups()[1].id(), MarginGroupId::AfterBarrier);
+            assert_eq!(
+                record.actual_groups().next().unwrap().id(),
+                MarginGroupId::BeforeBarrier
+            );
+            assert_eq!(
+                record.actual_groups().nth(1).unwrap().id(),
+                MarginGroupId::AfterBarrier
+            );
         } else {
             assert_eq!(record.barrier_source_index(), None);
             assert_eq!(record.actual_groups().len(), 1);
-            assert_eq!(record.actual_groups()[0].id(), MarginGroupId::ActualPair);
+            assert_eq!(
+                record.actual_groups().next().unwrap().id(),
+                MarginGroupId::ActualPair
+            );
         }
     }
 }
@@ -478,13 +502,13 @@ fn vertical_auto_core_margin_is_a_zero_group_member() {
         limits(6),
     )
     .unwrap();
-    assert_eq!(owner.tail()[0].vertical().top, 18.0);
-    assert_eq!(owner.tail()[0].vertical().bottom, 19.0);
-    assert_eq!(owner.tail()[1].vertical().bottom, 23.0);
+    assert_eq!(owner.tail_view(0).unwrap().vertical().top, 18.0);
+    assert_eq!(owner.tail_view(0).unwrap().vertical().bottom, 19.0);
+    assert_eq!(owner.tail_view(1).unwrap().vertical().bottom, 23.0);
     assert_eq!(children[2].margin.top, AutoLength::Auto);
     assert_eq!(children[2].margin.used_top().to_bits(), 0.0_f32.to_bits());
 
-    let first = &owner.tail()[0];
+    let first = &owner.tail_view(0).unwrap();
     assert_eq!(
         first.hypothetical_group().members(),
         [
@@ -505,10 +529,10 @@ fn vertical_auto_core_margin_is_a_zero_group_member() {
     assert_eq!(first.hypothetical_top(), 16.0);
     assert_eq!(first.zero_clearance_top(), Some(16.0));
     assert_eq!(first.clearance(), Some(2.0));
-    assert_eq!(first.actual_groups()[0].positive(), 4.0);
-    assert_eq!(first.actual_groups()[0].negative(), 0.0);
-    assert_eq!(first.actual_groups()[1].positive(), 0.0);
-    assert_eq!(first.actual_groups()[1].negative(), 0.0);
+    assert_eq!(first.actual_groups().next().unwrap().positive(), 4.0);
+    assert_eq!(first.actual_groups().next().unwrap().negative(), 0.0);
+    assert_eq!(first.actual_groups().nth(1).unwrap().positive(), 0.0);
+    assert_eq!(first.actual_groups().nth(1).unwrap().negative(), 0.0);
 }
 
 #[test]
@@ -1180,7 +1204,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 1484, 419), (6, 1836, 501), (7, 2189, 584)] {
+    for (count, work, old_work) in [(5, 2057, 419), (6, 2671, 501), (7, 3286, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1208,20 +1232,22 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         assert_eq!(oversized.receipt(), owner.receipt());
         assert_eq!(
             work,
-            751 + 12 * count
+            1062 + 12 * count
                 + count * (count - 1) / 2
-                + 71 * tail_count
+                + 333 * tail_count
                 + 64 * child_count
                 + 200 * (count - 3)
         );
         assert!(owner.receipt().record_capacity >= tail_count);
+        assert!(owner.receipt().member_capacity >= 2 * (count - 3));
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
+                + owner.receipt().member_capacity * size_of::<MarginMember>()
         );
     }
 
-    let floor = 2 * size_of::<SequenceNormalPlacement>();
+    let floor = 2 * size_of::<SequenceNormalPlacement>() + 6 * size_of::<MarginMember>();
     let mut limit = limits(6);
     limit.retained_bytes = NonZeroUsize::new(floor - 1).unwrap();
     assert!(matches!(
@@ -1288,7 +1314,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(1835).unwrap();
+    short.work = NonZeroUsize::new(2670).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1337,7 +1363,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].border.left = -1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(1835).unwrap();
+    one_short.work = NonZeroUsize::new(2670).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -1467,7 +1493,7 @@ fn assert_owner_matches_model(
         model.float
     );
     assert_eq!(owner.tail().len(), model.tail.len());
-    for (record, expected) in owner.tail().iter().zip(&model.tail) {
+    for (record, expected) in owner.tail_views().zip(&model.tail) {
         assert_eq!(record.source_index(), expected.source);
         assert_eq!(
             (record.vertical().top, record.vertical().bottom),
@@ -1501,7 +1527,7 @@ fn assert_owner_matches_model(
         assert_eq!(record.hypothetical_group().negative(), 0.0);
         if expected.clearance.is_some() {
             assert_eq!(record.barrier_source_index(), Some(expected.source));
-            let groups = record.actual_groups();
+            let groups = record.actual_groups().collect::<Vec<_>>();
             assert_eq!(groups.len(), 2);
             assert_eq!(groups[0].id(), MarginGroupId::BeforeBarrier);
             assert_eq!(groups[0].members(), &members[..1]);
@@ -1512,13 +1538,43 @@ fn assert_owner_matches_model(
             assert!(groups.iter().all(|group| group.negative() == 0.0));
         } else {
             assert_eq!(record.barrier_source_index(), None);
-            let groups = record.actual_groups();
+            let groups = record.actual_groups().collect::<Vec<_>>();
             assert_eq!(groups.len(), 1);
             assert_eq!(groups[0].id(), MarginGroupId::ActualPair);
             assert_eq!(groups[0].members(), members);
             assert_eq!(groups[0].positive(), positive);
             assert_eq!(groups[0].negative(), 0.0);
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SequenceGroupObservation {
+    id: MarginGroupId,
+    members: Vec<MarginMember>,
+    positive: f32,
+    negative: f32,
+}
+
+fn observe_sequence_group(
+    group: iced_css_core::formatting::clearance_sequence::SequenceMarginGroupView<'_>,
+) -> SequenceGroupObservation {
+    SequenceGroupObservation {
+        id: group.id(),
+        members: group.members().to_vec(),
+        positive: group.positive(),
+        negative: group.negative(),
+    }
+}
+
+fn observe_legacy_group(
+    group: &iced_css_core::formatting::clearance_owner::MarginGroup,
+) -> SequenceGroupObservation {
+    SequenceGroupObservation {
+        id: group.id(),
+        members: group.members().to_vec(),
+        positive: group.positive(),
+        negative: group.negative(),
     }
 }
 
@@ -1533,8 +1589,8 @@ type OwnerObservation = (
         Option<f32>,
         Option<f32>,
         Option<usize>,
-        iced_css_core::formatting::clearance_owner::MarginGroup,
-        Vec<iced_css_core::formatting::clearance_owner::MarginGroup>,
+        SequenceGroupObservation,
+        Vec<SequenceGroupObservation>,
     )>,
 );
 
@@ -1546,8 +1602,7 @@ fn observe_owner(
         owner.placed_float(),
         owner.receipt(),
         owner
-            .tail()
-            .iter()
+            .tail_views()
             .map(|record| {
                 (
                     record.source_index(),
@@ -1556,8 +1611,8 @@ fn observe_owner(
                     record.zero_clearance_top(),
                     record.clearance(),
                     record.barrier_source_index(),
-                    *record.hypothetical_group(),
-                    record.actual_groups().to_vec(),
+                    observe_sequence_group(record.hypothetical_group()),
+                    record.actual_groups().map(observe_sequence_group).collect(),
                 )
             })
             .collect(),
@@ -1634,15 +1689,14 @@ fn direct_seeds_cover_first_normal_tail_top_and_final_bottom_auto() {
     );
     assert_eq!(
         owner
-            .tail()
-            .iter()
+            .tail_views()
             .map(|record| (record.vertical().top, record.vertical().bottom))
             .collect::<Vec<_>>(),
         [(15.0, 16.0), (19.0, 20.0)]
     );
-    assert_eq!(owner.tail()[0].clearance(), None);
+    assert_eq!(owner.tail_view(0).unwrap().clearance(), None);
     assert_eq!(
-        owner.tail()[0].hypothetical_group().members()[0],
+        owner.tail_view(0).unwrap().hypothetical_group().members()[0],
         MarginMember {
             source_index: 2,
             side: MarginSide::Bottom,
@@ -1658,16 +1712,16 @@ fn direct_seeds_cover_first_normal_tail_top_and_final_bottom_auto() {
     let (mut used, heights, clear) = fixture_profile(6);
     used[3].1 = 0.0;
     assert_owner_matches_model(&owner, &model_sequence(&used, &heights, &clear).unwrap());
-    assert_eq!(owner.tail()[1].vertical().bottom, 23.0);
+    assert_eq!(owner.tail_view(1).unwrap().vertical().bottom, 23.0);
 
     // Seven sources: the B4 top Auto member follows B3's actual used bottom 4.
     let sources7 = sources(7);
     let (outer, parent, mut children) = facts(&sources7);
     children[4].margin.top = AutoLength::Auto;
     let owner = build(&sources7, outer, parent, &children, limits(7)).unwrap();
-    assert_eq!(owner.tail()[2].hypothetical_top(), 27.0);
+    assert_eq!(owner.tail_view(2).unwrap().hypothetical_top(), 27.0);
     assert_eq!(
-        owner.tail()[2].hypothetical_group().members(),
+        owner.tail_view(2).unwrap().hypothetical_group().members(),
         [
             MarginMember {
                 source_index: 5,
@@ -1683,8 +1737,8 @@ fn direct_seeds_cover_first_normal_tail_top_and_final_bottom_auto() {
     );
     assert_eq!(
         (
-            owner.tail()[2].vertical().top,
-            owner.tail()[2].vertical().bottom
+            owner.tail_view(2).unwrap().vertical().top,
+            owner.tail_view(2).unwrap().vertical().bottom
         ),
         (27.0, 29.0)
     );
@@ -1804,14 +1858,19 @@ fn negative_zero_absolute_margins_keep_bits_and_are_not_relabelled() {
         (owner.placed_float().top, owner.placed_float().bottom),
         (12.0, 14.0)
     );
-    let members = owner.tail()[0].hypothetical_group().members();
+    let members = owner.tail_view(0).unwrap().hypothetical_group().members();
     assert_eq!(members[0].value.to_bits(), (-0.0f32).to_bits());
     assert_eq!(members[1].value.to_bits(), (-0.0f32).to_bits());
     assert_eq!(
-        owner.tail()[0].zero_clearance_top().unwrap().to_bits(),
+        owner
+            .tail_view(0)
+            .unwrap()
+            .zero_clearance_top()
+            .unwrap()
+            .to_bits(),
         12.0f32.to_bits()
     );
-    assert_eq!(owner.tail()[0].clearance(), Some(2.0));
+    assert_eq!(owner.tail_view(0).unwrap().clearance(), Some(2.0));
     assert!(
         matches!(children[0].margin.bottom, AutoLength::Value(value) if value.to_bits() == (-0.0f32).to_bits())
     );
@@ -2055,7 +2114,11 @@ fn vertical_auto_keeps_every_sequence_exclusion() {
         assert_eq!(format!("{owner:?}"), format!("{control:?}"), "slot {slot}");
     }
     rejected(
-        &|c| c[2].height = OwnerHeight::Explicit(0.0),
+        &|c| {
+            c[2].height = OwnerHeight::Explicit(0.0);
+            // CTT-D2: positive B1 leaves this signed zero tail as the source-4 refusal.
+            c[2].margin.top = AutoLength::Value(-1.0);
+        },
         4,
         R::NonpositiveBlockHeight,
     );
@@ -2282,7 +2345,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 1484, 419), (6, 1836, 501), (7, 2189, 584)] {
+    for (count, work, old_work) in [(5, 2057, 419), (6, 2671, 501), (7, 3286, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2319,7 +2382,8 @@ fn vertical_auto_work_and_storage_boundaries_are_exact() {
         let (outer, parent, mut children) = facts(&sources);
         all_auto(&mut children);
         let tail_count = count - 4;
-        let floor = tail_count * size_of::<SequenceNormalPlacement>();
+        let floor = tail_count * size_of::<SequenceNormalPlacement>()
+            + 2 * (count - 3) * size_of::<MarginMember>();
         let mut limit = limits(count);
         limit.work = NonZeroUsize::new(work).unwrap();
         limit.retained_bytes = NonZeroUsize::new(floor - 1).unwrap();
@@ -2333,6 +2397,7 @@ fn vertical_auto_work_and_storage_boundaries_are_exact() {
         assert_eq!(owner.receipt().tail, tail_count);
         assert_eq!(owner.receipt().work, work);
         assert_eq!(owner.receipt().record_capacity, tail_count);
+        assert_eq!(owner.receipt().member_capacity, 2 * (count - 3));
         assert_eq!(owner.receipt().retained_bytes, floor);
         assert_eq!(
             (owner.placed_float().left, owner.placed_float().right),
@@ -2366,7 +2431,7 @@ fn nonzero_float_horizontal_margins_place_the_margin_box() {
     let control = build_width(&sources, outer, parent, &control, 30.0, limits(6)).unwrap();
     assert_eq!(owner.before(), control.before());
     assert_eq!(owner.tail().len(), control.tail().len());
-    for (actual, expected) in owner.tail().iter().zip(control.tail()) {
+    for (actual, expected) in owner.tail_views().zip(control.tail_views()) {
         assert_eq!(actual.vertical(), expected.vertical());
         assert_eq!(
             actual.hypothetical_top().to_bits(),
@@ -2375,7 +2440,10 @@ fn nonzero_float_horizontal_margins_place_the_margin_box() {
         assert_eq!(actual.zero_clearance_top(), expected.zero_clearance_top());
         assert_eq!(actual.clearance(), expected.clearance());
         assert_eq!(actual.hypothetical_group(), expected.hypothetical_group());
-        assert_eq!(actual.actual_groups(), expected.actual_groups());
+        assert_eq!(
+            actual.actual_groups().collect::<Vec<_>>(),
+            expected.actual_groups().collect::<Vec<_>>()
+        );
     }
 }
 
@@ -2696,7 +2764,7 @@ fn nonzero_float_margin_admission_keeps_fault_precedence() {
     // Valid nonzero margins whose kernel would fail: the byte floor fails first.
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.left = AutoLength::Value(f32::from_bits(F32_2P103));
-    let floor = 2 * size_of::<SequenceNormalPlacement>();
+    let floor = 2 * size_of::<SequenceNormalPlacement>() + 6 * size_of::<MarginMember>();
     let mut limit = limits(6);
     limit.retained_bytes = NonZeroUsize::new(floor - 1).unwrap();
     assert!(matches!(
@@ -2748,7 +2816,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 1484, 419), (6, 1836, 501), (7, 2189, 584)] {
+    for (count, work, old_work) in [(5, 2057, 419), (6, 2671, 501), (7, 3286, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -2780,13 +2848,15 @@ fn nonzero_float_margin_work_bounds_are_exact() {
         let (outer, parent, mut children) = facts(&sources);
         margins(&mut children);
         let tail_count = count - 4;
-        let floor = tail_count * size_of::<SequenceNormalPlacement>();
+        let floor = tail_count * size_of::<SequenceNormalPlacement>()
+            + 2 * (count - 3) * size_of::<MarginMember>();
         let mut limit = limits(count);
         limit.work = NonZeroUsize::new(work).unwrap();
         limit.retained_bytes = NonZeroUsize::new(floor).unwrap();
         let owner = build(&sources, outer, parent, &children, limit).unwrap();
         assert_eq!(owner.receipt().work, work);
         assert_eq!(owner.receipt().record_capacity, tail_count);
+        assert_eq!(owner.receipt().member_capacity, 2 * (count - 3));
         assert_eq!(owner.receipt().retained_bytes, floor);
         assert_eq!(
             (owner.placed_float().left, owner.placed_float().right),
@@ -3095,7 +3165,7 @@ fn nonzero_float_vertical_margin_admission_keeps_fault_precedence() {
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.top = AutoLength::Value(f32::from_bits(F32_2P103));
     children[1].height = OwnerHeight::Explicit(f32::MAX);
-    let floor = 2 * size_of::<SequenceNormalPlacement>();
+    let floor = 2 * size_of::<SequenceNormalPlacement>() + 6 * size_of::<MarginMember>();
     let mut limit = limits(6);
     limit.retained_bytes = NonZeroUsize::new(floor - 1).unwrap();
     assert!(matches!(
@@ -3130,7 +3200,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 1484, 419), (6, 1836, 501), (7, 2189, 584)] {
+    for (count, work, old_work) in [(5, 2057, 419), (6, 2671, 501), (7, 3286, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3162,13 +3232,15 @@ fn nonzero_float_vertical_margin_work_bounds_are_exact() {
         let (outer, parent, mut children) = facts(&sources);
         margins(&mut children);
         let tail_count = count - 4;
-        let floor = tail_count * size_of::<SequenceNormalPlacement>();
+        let floor = tail_count * size_of::<SequenceNormalPlacement>()
+            + 2 * (count - 3) * size_of::<MarginMember>();
         let mut limit = limits(count);
         limit.work = NonZeroUsize::new(work).unwrap();
         limit.retained_bytes = NonZeroUsize::new(floor).unwrap();
         let owner = build(&sources, outer, parent, &children, limit).unwrap();
         assert_eq!(owner.receipt().work, work);
         assert_eq!(owner.receipt().record_capacity, tail_count);
+        assert_eq!(owner.receipt().member_capacity, 2 * (count - 3));
         assert_eq!(owner.receipt().retained_bytes, floor);
         assert_eq!(
             (owner.placed_float().top, owner.placed_float().bottom),
@@ -3488,7 +3560,7 @@ fn tnb_core_tail_guards_follow_source_order() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 1484), (6, 1836), (7, 2189)] {
+    for (count, work) in [(5, 2057), (6, 2671), (7, 3286)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3503,9 +3575,9 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
         assert_eq!(owner.receipt().work, work);
         assert_eq!(
             work,
-            751 + 12 * count
+            1062 + 12 * count
                 + count * (count - 1) / 2
-                + 71 * (count - 4)
+                + 333 * (count - 4)
                 + 64 * (count - 2)
                 + 200 * (count - 3)
         );
@@ -3773,7 +3845,10 @@ fn signed_float_margins_outer_extent_precedes_the_byte_floor() {
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.left = AutoLength::Value(-11.0);
     let mut limit = limits(6);
-    limit.retained_bytes = NonZeroUsize::new(2 * size_of::<SequenceNormalPlacement>() - 1).unwrap();
+    limit.retained_bytes = NonZeroUsize::new(
+        2 * size_of::<SequenceNormalPlacement>() + 6 * size_of::<MarginMember>() - 1,
+    )
+    .unwrap();
     assert_sfm_core_extent_rejected(build(&sources, outer, parent, &children, limit));
 }
 
@@ -3784,7 +3859,10 @@ fn signed_float_margins_admitted_signed_float_reaches_the_byte_floor() {
     let (outer, parent, mut children) = facts(&sources);
     children[1].margin.left = AutoLength::Value(-1.0);
     let mut limit = limits(6);
-    limit.retained_bytes = NonZeroUsize::new(2 * size_of::<SequenceNormalPlacement>() - 1).unwrap();
+    limit.retained_bytes = NonZeroUsize::new(
+        2 * size_of::<SequenceNormalPlacement>() + 6 * size_of::<MarginMember>() - 1,
+    )
+    .unwrap();
     let result = build(&sources, outer, parent, &children, limit);
     assert!(
         matches!(result, Err(ClearanceSequenceError::Bytes)),
@@ -4380,11 +4458,12 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 1484), (6, 1836), (7, 2189)] {
+    for (count, work) in [(5, 2057), (6, 2671), (7, 3286)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
-        let floor = (count - 4) * size_of::<SequenceNormalPlacement>();
+        let floor = (count - 4) * size_of::<SequenceNormalPlacement>()
+            + 2 * (count - 3) * size_of::<MarginMember>();
         let measured = build(&sources, outer, parent, &children, limits(count))
             .unwrap()
             .receipt();
@@ -4392,6 +4471,7 @@ fn cp_exact_work_and_capacity_boundaries() {
         assert_eq!(
             bytes,
             measured.record_capacity * size_of::<SequenceNormalPlacement>()
+                + measured.member_capacity * size_of::<MarginMember>()
         );
         assert!(bytes >= floor);
         let mut limit = limits(count);
@@ -4413,8 +4493,10 @@ fn cp_exact_work_and_capacity_boundaries() {
         assert_eq!(
             receipt.retained_bytes,
             receipt.record_capacity * size_of::<SequenceNormalPlacement>()
+                + receipt.member_capacity * size_of::<MarginMember>()
         );
         assert!(receipt.record_capacity >= count - 4);
+        assert!(receipt.member_capacity >= 2 * (count - 3));
         limit.work = NonZeroUsize::new(work + 1).unwrap();
         limit.retained_bytes = NonZeroUsize::MAX;
         let above = build(&sources, outer, parent, &children, limit)
@@ -4424,8 +4506,10 @@ fn cp_exact_work_and_capacity_boundaries() {
         assert_eq!(
             above.retained_bytes,
             above.record_capacity * size_of::<SequenceNormalPlacement>()
+                + above.member_capacity * size_of::<MarginMember>()
         );
         assert!(above.record_capacity >= count - 4);
+        assert!(above.member_capacity >= 2 * (count - 3));
     }
 }
 
@@ -4635,7 +4719,7 @@ fn cfh_core_exact_extent_and_later_profile_order() {
 
 #[test]
 fn cfh_core_auto_work_thresholds() {
-    for (count, work) in [(5, 1484), (6, 1836), (7, 2189)] {
+    for (count, work) in [(5, 2057), (6, 2671), (7, 3286)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[1].height = OwnerHeight::Auto;
@@ -5224,7 +5308,7 @@ fn ctb_red_guard_cc3a_signed_and_nan_normal_margins_keep_the_refusal() {
 
 /// One group's members as (source, side, value).
 fn ctb_members(
-    group: &iced_css_core::formatting::clearance_owner::MarginGroup,
+    group: iced_css_core::formatting::clearance_sequence::SequenceMarginGroupView<'_>,
 ) -> Vec<(usize, MarginSide, f32)> {
     group
         .members()
@@ -5253,7 +5337,7 @@ fn ctb_cc1_groups_after_a_collapse_through_b1() {
     let (outer, parent, mut children) = facts(&sources);
     children[0].height = OwnerHeight::Explicit(0.0);
     let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
-    let tail = &owner.tail()[0];
+    let tail = &owner.tail_view(0).unwrap();
     let float = owner.placed_float();
     assert_eq!(
         (owner.before(), float.top, float.bottom, tail.vertical()),
@@ -5295,7 +5379,6 @@ fn ctb_cc1_groups_after_a_collapse_through_b1() {
     );
     let actual: Vec<_> = tail
         .actual_groups()
-        .iter()
         .map(|group| (group.id(), ctb_members(group)))
         .collect();
     assert_eq!(actual, vec![(MarginGroupId::ActualPair, members)]);
@@ -5318,7 +5401,7 @@ fn ctb_cc2_the_barrier_groups() {
     children[0].margin.top = AutoLength::Value(1.0);
     children[1].height = OwnerHeight::Explicit(10.0);
     let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
-    let tail = &owner.tail()[0];
+    let tail = &owner.tail_view(0).unwrap();
     let float = owner.placed_float();
     assert_eq!(
         (owner.before(), float.top, float.bottom, tail.vertical()),
@@ -5353,7 +5436,6 @@ fn ctb_cc2_the_barrier_groups() {
     );
     let actual: Vec<_> = tail
         .actual_groups()
-        .iter()
         .map(|group| (group.id(), ctb_members(group)))
         .collect();
     assert_eq!(
@@ -5523,23 +5605,22 @@ fn ctb_debug_member(source: usize, side: &str, value: f32) -> String {
     format!("MarginMember {{ source_index: {source}, side: {side}, value: {value:?} }}")
 }
 
-/// The `Debug` text of one `MarginGroup` with its three slots, length and extrema.
+/// The logical `Debug` text of one Sequence group, without private storage or padding.
 fn ctb_debug_group(id: &str, slots: [String; 3], len: usize, extrema: (f32, f32)) -> String {
     format!(
-        "MarginGroup {{ id: {id}, members: [{}], len: {len}, extrema: MarginExtrema {{ \
+        "SequenceMarginGroupView {{ id: {id}, members: [{}], extrema: MarginExtrema {{ \
          positive: {:?}, negative: {:?} }} }}",
-        slots.join(", "),
+        slots[..len].join(", "),
         extrema.0,
         extrema.1
     )
 }
 
-/// CTB CC5 (review M-1; CM28, CM29 witness): the published groups, padding included
-/// (`MarginGroup` derives the public `Debug` and `PartialEq`, which read the unused slots;
-/// they repeat the last member): the baseline's pairwise hypothetical group and its two
-/// barrier groups, and after a collapse-through B1 (CC2) the three-member hypothetical
-/// group, the `BeforeBarrier` of B1's pair and the `AfterBarrier`, each by its full
-/// `Debug` text.
+/// CTB CC5, migrated for CTT: the published Sequence groups retain exact logical
+/// membership and extrema in their full `Debug` text. Private arena descriptors and
+/// unused inline padding are not Sequence view observations. The behavioral test name
+/// is retained; Legacy `MarginGroup` padding remains covered by its unchanged tests.
+/// Check the baseline pair and barriers, then the through-B1 triple and barriers.
 #[test]
 fn ctb_cc5_published_groups_pin_their_padding() {
     let b1_bottom = || ctb_debug_member(2, "Bottom", 4.0);
@@ -5553,9 +5634,15 @@ fn ctb_cc5_published_groups_pin_their_padding() {
     let sources = sources(5);
     let (outer, parent, children) = facts(&sources);
     let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
-    let tail = &owner.tail()[0];
+    let tail = &owner.tail_view(0).unwrap();
     assert_eq!(
-        format!("{:?}", (tail.hypothetical_group(), tail.actual_groups())),
+        format!(
+            "{:?}",
+            (
+                tail.hypothetical_group(),
+                tail.actual_groups().collect::<Vec<_>>()
+            )
+        ),
         format!(
             "({}, [{}, {}])",
             ctb_debug_group(
@@ -5578,10 +5665,16 @@ fn ctb_cc5_published_groups_pin_their_padding() {
     children[0].margin.top = AutoLength::Value(1.0);
     children[1].height = OwnerHeight::Explicit(10.0);
     let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
-    let tail = &owner.tail()[0];
+    let tail = &owner.tail_view(0).unwrap();
     let b1_top = || ctb_debug_member(2, "Top", 1.0);
     assert_eq!(
-        format!("{:?}", (tail.hypothetical_group(), tail.actual_groups())),
+        format!(
+            "{:?}",
+            (
+                tail.hypothetical_group(),
+                tail.actual_groups().collect::<Vec<_>>()
+            )
+        ),
         format!(
             "({}, [{}, {}])",
             ctb_debug_group(
@@ -5599,4 +5692,536 @@ fn ctb_cc5_published_groups_pin_their_padding() {
             after
         )
     );
+}
+
+// Prospective CTT core regression additions for tests/clearance_sequence.rs.
+// Append after existing fixtures. No production implementation is copied here.
+// Status: source/arithmetic reviewed only; not compiled or executed.
+
+type CttOwner<'s> = iced_css_core::formatting::clearance_sequence::ClearanceSequenceOwner<'s>;
+
+fn ctt_layout<'s>(
+    nodes: &'s [SourceNode],
+    parent_top: f32,
+    before: [f32; 3],
+    float_height: f32,
+    tails: &[(f32, f32, f32, ClearSide)],
+) -> Result<CttOwner<'s>, ClearanceSequenceError> {
+    assert_eq!(tails.len(), nodes.len() - 4);
+    let (outer, mut parent, mut children) = facts(nodes);
+    parent.content_top = parent_top;
+    children[0].height = OwnerHeight::Explicit(before[0]);
+    children[0].margin.top = AutoLength::Value(before[1]);
+    children[0].margin.bottom = AutoLength::Value(before[2]);
+    children[1].height = OwnerHeight::Explicit(float_height);
+    for (child, &(height, top, bottom, clear)) in children[2..].iter_mut().zip(tails) {
+        child.height = OwnerHeight::Explicit(height);
+        child.margin.top = AutoLength::Value(top);
+        child.margin.bottom = AutoLength::Value(bottom);
+        child.clear = clear;
+    }
+    // Ample bounds isolate geometry; exact work/byte thresholds have separate tests.
+    let mut budget = limits(nodes.len());
+    budget.work = NonZeroUsize::new(1_000_000).unwrap();
+    budget.retained_bytes = NonZeroUsize::new(1_000_000).unwrap();
+    build(nodes, outer, parent, &children, budget)
+}
+
+fn ctt_members(members: &[MarginMember]) -> Vec<(usize, MarginSide, f32)> {
+    members
+        .iter()
+        .map(|member| (member.source_index, member.side, member.value))
+        .collect()
+}
+
+#[test]
+fn ctt_g1_prefix_positions_exclude_own_bottom() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(6);
+    let owner = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        2.,
+        &[
+            (0., 3., 10., ClearSide::None),
+            (0., 2., 1., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        owner.tail()[0].vertical(),
+        BlockVertical {
+            top: 6.,
+            bottom: 6.
+        }
+    );
+    assert_eq!(
+        owner.tail()[1].vertical(),
+        BlockVertical {
+            top: 12.,
+            bottom: 12.
+        }
+    );
+    assert_eq!(
+        ctt_members(owner.tail_view(0).unwrap().hypothetical_group().members()),
+        [(2, B, 4.), (4, T, 3.)]
+    );
+    assert_eq!(
+        ctt_members(owner.tail_view(1).unwrap().hypothetical_group().members()),
+        [(2, B, 4.), (4, T, 3.), (4, B, 10.), (5, T, 2.)]
+    );
+    assert_eq!(
+        ctt_members(owner.terminal_run().members()),
+        [(2, B, 4.), (4, T, 3.), (4, B, 10.), (5, T, 2.), (5, B, 1.)]
+    );
+    assert_eq!(
+        (
+            owner.terminal_run().positive(),
+            owner.terminal_run().negative()
+        ),
+        (10., 0.)
+    );
+    // Observe the earlier immutable prefix after the terminal run and later prefix.
+    let first = owner.tail_view(0).unwrap();
+    let actual = first.actual_groups().collect::<Vec<_>>();
+    assert_eq!(actual.len(), 1);
+    assert_eq!(actual[0].id(), MarginGroupId::ActualPair);
+    assert_eq!(ctt_members(actual[0].members()), [(2, B, 4.), (4, T, 3.)]);
+    assert_eq!(
+        first.hypothetical_group().id(),
+        MarginGroupId::HypotheticalPair
+    );
+    assert_eq!(
+        (
+            first.hypothetical_group().positive(),
+            first.hypothetical_group().negative()
+        ),
+        (4., 0.)
+    );
+    assert_eq!(first.clearance(), None);
+}
+
+#[test]
+fn ctt_g2_positive_separator_resets_terminal_membership() {
+    use MarginSide::Bottom as B;
+    let nodes = sources(7);
+    let owner = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        2.,
+        &[
+            (0., 3., 10., ClearSide::None),
+            (0., 2., 1., ClearSide::None),
+            (1., 2., 1., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        owner.tail()[2].vertical(),
+        BlockVertical {
+            top: 12.,
+            bottom: 13.
+        }
+    );
+    assert_eq!(ctt_members(owner.terminal_run().members()), [(6, B, 1.)]);
+    assert_eq!(
+        (
+            owner.terminal_run().positive(),
+            owner.terminal_run().negative()
+        ),
+        (1., 0.)
+    );
+    // A further positive child must advance from the separator, not the old run.
+    let nodes = sources(8);
+    let extended = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        2.,
+        &[
+            (0., 3., 10., ClearSide::None),
+            (0., 2., 1., ClearSide::None),
+            (1., 2., 1., ClearSide::None),
+            (1., 0., 0., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        extended.tail()[3].vertical(),
+        BlockVertical {
+            top: 14.,
+            bottom: 15.
+        }
+    );
+}
+
+#[test]
+fn ctt_g3_clearance_restarts_with_cleared_own_margins() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(6);
+    let owner = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        20.,
+        &[
+            (0., 3., 10., ClearSide::Both),
+            (0., 2., 1., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    let first = owner.tail_view(0).unwrap();
+    assert_eq!(
+        (
+            first.hypothetical_top(),
+            first.zero_clearance_top(),
+            first.clearance()
+        ),
+        (6., Some(9.), Some(17.))
+    );
+    assert_eq!(
+        first.vertical(),
+        BlockVertical {
+            top: 26.,
+            bottom: 26.
+        }
+    );
+    assert_eq!(first.barrier_source_index(), Some(4));
+    let mut groups = first.actual_groups();
+    assert_eq!(groups.len(), 2);
+    let after = groups.next_back().unwrap();
+    let before = groups.next().unwrap();
+    assert!(groups.next().is_none());
+    assert_eq!(
+        (before.id(), after.id()),
+        (MarginGroupId::BeforeBarrier, MarginGroupId::AfterBarrier)
+    );
+    assert_eq!(ctt_members(before.members()), [(2, B, 4.)]);
+    assert_eq!(ctt_members(after.members()), [(4, T, 3.)]);
+    assert_eq!(
+        owner.tail()[1].vertical(),
+        BlockVertical {
+            top: 33.,
+            bottom: 33.
+        }
+    );
+    assert_eq!(
+        ctt_members(owner.tail_view(1).unwrap().hypothetical_group().members()),
+        [(4, T, 3.), (4, B, 10.), (5, T, 2.)]
+    );
+    assert_eq!(
+        ctt_members(owner.terminal_run().members()),
+        [(4, T, 3.), (4, B, 10.), (5, T, 2.), (5, B, 1.)]
+    );
+}
+
+#[test]
+fn ctt_g4_negative_clearance_amount_keeps_the_barrier() {
+    let nodes = sources(6);
+    let owner = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        7.,
+        &[
+            (0., 10., 20., ClearSide::Both),
+            (0., 2., 1., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    let first = owner.tail_view(0).unwrap();
+    assert_eq!(
+        (
+            first.hypothetical_top(),
+            first.zero_clearance_top(),
+            first.clearance()
+        ),
+        (12., Some(16.), Some(-3.))
+    );
+    assert_eq!(
+        first.vertical(),
+        BlockVertical {
+            top: 13.,
+            bottom: 13.
+        }
+    );
+    assert_eq!(first.barrier_source_index(), Some(4));
+    assert_eq!(first.actual_groups().len(), 2);
+    assert_eq!(
+        owner.tail()[1].vertical(),
+        BlockVertical {
+            top: 23.,
+            bottom: 23.
+        }
+    );
+}
+
+#[test]
+fn ctt_g5_zero_clearance_amount_keeps_the_barrier() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(5);
+    let owner = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        3.,
+        &[(0., 3., 10., ClearSide::Both)],
+    )
+    .unwrap();
+    let first = owner.tail_view(0).unwrap();
+    assert_eq!(
+        (first.hypothetical_top(), first.zero_clearance_top()),
+        (6., Some(9.))
+    );
+    assert_eq!(first.clearance().map(f32::to_bits), Some(0));
+    assert_eq!(first.barrier_source_index(), Some(4));
+    assert_eq!(first.actual_groups().len(), 2);
+    assert_eq!(
+        ctt_members(owner.terminal_run().members()),
+        [(4, T, 3.), (4, B, 10.)]
+    );
+}
+
+#[test]
+fn ctt_g6_equal_selected_bottom_remains_typed_refusal() {
+    let nodes = sources(5);
+    let error = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        0.,
+        &[(0., 3., 10., ClearSide::Both)],
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            ClearanceSequenceError::Placement {
+                source: 4,
+                error: ClearanceOwnerError::UnsupportedEquality,
+            }
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn ctt_g7_initial_through_b1_keeps_float_immobile() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(6);
+    for last_bottom in [1., 100.] {
+        let owner = ctt_layout(
+            &nodes,
+            0.,
+            [0., 1., 4.],
+            2.,
+            &[
+                (0., 3., 10., ClearSide::None),
+                (0., 2., last_bottom, ClearSide::None),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            owner.before(),
+            BlockVertical {
+                top: 1.,
+                bottom: 1.
+            }
+        );
+        assert_eq!(
+            (owner.placed_float().top, owner.placed_float().bottom),
+            (1., 3.)
+        );
+        assert_eq!(
+            owner.tail()[0].vertical(),
+            BlockVertical {
+                top: 4.,
+                bottom: 4.
+            }
+        );
+        assert_eq!(
+            owner.tail()[1].vertical(),
+            BlockVertical {
+                top: 10.,
+                bottom: 10.
+            }
+        );
+        assert_eq!(
+            ctt_members(owner.terminal_run().members()),
+            [
+                (2, T, 1.),
+                (2, B, 4.),
+                (4, T, 3.),
+                (4, B, 10.),
+                (5, T, 2.),
+                (5, B, last_bottom)
+            ]
+        );
+        assert_eq!(
+            ctt_members(owner.tail_view(0).unwrap().hypothetical_group().members()),
+            [(2, T, 1.), (2, B, 4.), (4, T, 3.)]
+        );
+    }
+}
+
+#[test]
+fn ctt_g8_cleared_reference_and_returned_border_round_once() {
+    let nodes = sources(6);
+    let owner = ctt_layout(
+        &nodes,
+        -2.,
+        [1., 0., f32::from_bits(0x3f7fffff)],
+        f32::from_bits(0x33c00000),
+        &[(0., 1., 1., ClearSide::Both), (0., 0., 0., ClearSide::None)],
+    )
+    .unwrap();
+    assert_eq!(owner.placed_float().top.to_bits(), 0xb3800000);
+    assert_eq!(owner.placed_float().bottom.to_bits(), 0x33000000);
+    let first = owner.tail_view(0).unwrap();
+    assert_eq!(first.hypothetical_top().to_bits(), 0);
+    assert_eq!(first.zero_clearance_top().unwrap().to_bits(), 0x3f7fffff);
+    assert_eq!(first.clearance().unwrap().to_bits(), 0xbf7ffffe);
+    // Rebuilding from the rounded amount would publish 0x33800000 instead.
+    assert_eq!(first.vertical().top.to_bits(), 0x33000000);
+    // Publishing a rounded reference anchor would produce positive zero instead.
+    assert_eq!(owner.tail()[1].vertical().top.to_bits(), 0x33000000);
+    assert_eq!(owner.tail()[1].vertical().bottom.to_bits(), 0x33000000);
+}
+
+#[test]
+fn ctt_long_runs_keep_each_source_member_without_a_three_slot_cap() {
+    for count in [1, 2, 3, 17] {
+        let nodes = sources(count + 4);
+        let tails: Vec<_> = (0..count)
+            .map(|i| (0., 0., (i + 1) as f32, ClearSide::None))
+            .collect();
+        let owner = ctt_layout(&nodes, 0., [2., 0., 4.], 2., &tails).unwrap();
+        let run = owner.terminal_run();
+        assert_eq!(run.members().len(), 1 + 2 * count);
+        assert_eq!(
+            ctt_members(&run.members()[..1]),
+            [(2, MarginSide::Bottom, 4.)]
+        );
+        for (i, pair) in run.members()[1..].chunks_exact(2).enumerate() {
+            assert_eq!(
+                ctt_members(pair),
+                [
+                    (i + 4, MarginSide::Top, 0.),
+                    (i + 4, MarginSide::Bottom, (i + 1) as f32)
+                ]
+            );
+        }
+        // Closed-form arithmetic: only preceding bottom margins can move a tail.
+        let expected: Vec<_> = (0..count).map(|i| 2. + (i as f32).max(4.)).collect();
+        let actual: Vec<_> = owner.tail().iter().map(|p| p.vertical().top).collect();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn ctt_views_keep_owner_identity_and_temporary_view_lifetimes() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(6);
+    let a = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        2.,
+        &[
+            (0., 3., 10., ClearSide::None),
+            (0., 2., 1., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    let b = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        2.,
+        &[
+            (0., 7., 20., ClearSide::None),
+            (0., 2., 1., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    // These borrows must survive destruction of the temporary view values.
+    let a_members = a.tail_view(1).unwrap().hypothetical_group().members();
+    let b_members = b.tail_view(1).unwrap().hypothetical_group().members();
+    let mut a_groups = a.tail_view(0).unwrap().actual_groups();
+    let placement = a.tail_view(0).unwrap().placement();
+    let terminal_members = a.terminal_run().members();
+    assert_eq!(
+        ctt_members(b_members),
+        [(2, B, 4.), (4, T, 7.), (4, B, 20.), (5, T, 2.)]
+    );
+    assert_eq!(
+        ctt_members(a_members),
+        [(2, B, 4.), (4, T, 3.), (4, B, 10.), (5, T, 2.)]
+    );
+    assert_eq!(
+        ctt_members(a_groups.next().unwrap().members()),
+        [(2, B, 4.), (4, T, 3.)]
+    );
+    assert_eq!(a_groups.len(), 0);
+    assert!(std::ptr::eq(placement, &a.tail()[0]));
+    assert_eq!(terminal_members.len(), 5);
+    assert!(a.tail_view(2).is_none());
+    assert!(a.tail_view(usize::MAX).is_none());
+    let mut views = a.tail_views();
+    assert_eq!(views.len(), 2);
+    assert_eq!(views.next_back().unwrap().source_index(), 5);
+    assert_eq!(views.next().unwrap().source_index(), 4);
+    assert!(views.next().is_none());
+}
+
+#[test]
+fn ctt_signed_nonthrough_keeps_published_collapse_boundary() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(5);
+    let negative = f32::from_bits(0xb3000000);
+    let owner = ctt_layout(
+        &nodes,
+        -2.,
+        [1., 0., 1.],
+        0.,
+        &[(1., negative, 0., ClearSide::None)],
+    )
+    .unwrap();
+    // RN(1 - 2^-25) is 1; adding published B1 bottom -1 gives +0.
+    // Fusing all three terms would incorrectly give -2^-25.
+    let tail = owner.tail_view(0).unwrap();
+    assert_eq!(tail.hypothetical_top().to_bits(), 0);
+    assert_eq!(
+        tail.vertical(),
+        BlockVertical {
+            top: 0.,
+            bottom: 1.
+        }
+    );
+    let group = tail.hypothetical_group();
+    assert_eq!(group.positive(), 1.);
+    assert_eq!(group.negative().to_bits(), 0xb3000000);
+    assert_eq!(ctt_members(group.members()), [(2, B, 1.), (4, T, negative)]);
+    assert_eq!(ctt_members(owner.terminal_run().members()), [(4, B, 0.)]);
+    assert_eq!(tail.clearance(), None);
+    // A larger signed pair separately rejects substituting the positive maximum.
+    let ordinary = ctt_layout(
+        &nodes,
+        0.,
+        [2., 0., 4.],
+        2.,
+        &[(1., -3., 0., ClearSide::None)],
+    )
+    .unwrap();
+    assert_eq!(
+        ordinary.tail()[0].vertical(),
+        BlockVertical {
+            top: 3.,
+            bottom: 4.
+        }
+    );
+    let group = ordinary.tail_view(0).unwrap().hypothetical_group();
+    assert_eq!((group.positive(), group.negative()), (4., -3.));
 }

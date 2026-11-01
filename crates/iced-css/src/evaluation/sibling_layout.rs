@@ -41,8 +41,8 @@ use iced_css_core::{
         },
         clearance_sequence::{
             ClearanceSequenceError, ClearanceSequenceInput, ClearanceSequenceLimits,
-            ClearanceSequenceOwner, ClearanceSequenceReceipt, SequenceNormalPlacement,
-            build_clearance_sequence,
+            ClearanceSequenceOwner, ClearanceSequenceReceipt, build_clearance_sequence,
+            sequence_requested_retained_bytes,
         },
         display::{Display, DisplayResolution, Float, Flow, Position},
         first_child_origin::{
@@ -405,7 +405,7 @@ impl std::error::Error for SiblingLayoutError {
 
 /// Build source-linked P and principal-child geometry from a complete computed batch.
 ///
-/// Facade work `695 + 32*N + 534*(N-2) + 373*(N-3)` is prepaid before any
+/// Facade work `752 + 32*N + 534*(N-2) + 373*(N-3)` is prepaid before any
 /// proportional join, profile scan, or allocation. Twenty fixed actions cover the
 /// float content band and vertical content span reads and the float's used
 /// horizontal margins; three more cover the former B1/float `hidden`/`auto` source
@@ -489,7 +489,10 @@ impl std::error::Error for SiblingLayoutError {
 /// adjoining role/connective/write 4 and explicit used-write/role/connective 4.
 /// Per normal: the Auto guard 2. The existing category/constrain and DAZ helper
 /// charges are retained once. These policy charges are not measured instruction counts.
+/// CTT retains those charges and prepays 57 fixed policy units for the shared
+/// two-vector requested-byte helper, including its checked count/products/sum.
 /// As in the PHT, PTB, PTA and OCH units, a call of a private facade helper is not charged.
+/// The shared public core byte helper is included explicitly in the CTT unit.
 /// The core is invoked exactly once, with computed Auto preserved and
 /// bounded vertical and float Auto margins given used value zero. Every child also
 /// admits computed `overflow: hidden` or `auto`. Each such child then establishes a block
@@ -580,14 +583,17 @@ impl std::error::Error for SiblingLayoutError {
 /// margins are not adjoining (8.3.1). Any other Auto normal stays refused (`HeightKind`).
 /// An explicit used height of +0 (G6a) is admitted by the core for a normal whose own top
 /// and bottom margins are not adjoining (CSS2.2 8.3.1: `hidden` or `auto`, or a positive
-/// top or bottom border or padding). An ordinary B1 whose computed `height` is zero or
+/// top or bottom border or padding). An ordinary normal whose computed `height` is zero or
 /// `auto` and whose computed `min-height` is zero, neither a percentage nor a length
-/// rounded to +0, and without a top or bottom border or padding, collapses through (CTB,
-/// the user's U1=A; CSS2.2 8.3.1, 9.5.1): F's hypothetical top is B1's top border edge
-/// and the first tail's top margin collapses with both of B1's margins, unless a normal's
-/// used vertical margin is negative (`NonpositiveBlockHeight`); a B1 used as +0 whose
-/// computed `height` or `min-height` is not such a zero is `HeightKind` unless its margins
-/// are separated; any other zero-height normal is `NonpositiveBlockHeight`.
+/// rounded to +0, and without a top or bottom border or padding, collapses through
+/// (CTB/CTT, the user's U1=A; CSS2.2 8.3.1, 9.5.1). F's hypothetical top is B1's
+/// top border edge when B1 collapses through; subsequent through tails extend the
+/// adjoining run unless a normal's used vertical margin is negative
+/// (`NonpositiveBlockHeight`). A normal used as +0 whose computed `height` or
+/// `min-height` is not such a zero is `HeightKind` unless its margins are separated.
+/// P's unsigned Auto-height route keeps the last source normal's border bottom plus
+/// its raw used bottom margin, including through tails (CTT-D1). Terminal collapsed
+/// extrema do not replace this endpoint; raw-margin containment remains separate.
 /// P's Auto height is the tentative placement of either route, then
 /// `constrain_bfc_height`: a limit that applies reruns the explicit route on P's content
 /// top. Containment, offsets and P's bottom read the constrained boxes, so a constraint
@@ -765,12 +771,11 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     }
 
     let child_count = node_count - 2;
-    let tail_count = node_count - 4;
     let requested_scratch = checked_bytes::<ChildFacts<'_>>(child_count).ok_or(E::ScratchBytes)?;
     if requested_scratch > limits.scratch_bytes.get() {
         return Err(E::ScratchBytes);
     }
-    let requested_core = checked_bytes::<SequenceNormalPlacement>(tail_count).ok_or(E::Bytes)?;
+    let requested_core = sequence_requested_retained_bytes(node_count).ok_or(E::Bytes)?;
     let requested_children = checked_bytes::<PrincipalChildBox>(child_count).ok_or(E::Bytes)?;
     requested_core
         .checked_add(requested_children)
@@ -955,10 +960,10 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // computed values and are not separated is `HeightKind`.
         let vertical = resolve_heights(row, child_basis, numeric, source)?;
         let auto_height = constrain(0.0, vertical.min, vertical.max);
-        // CTB (CSS2.2 8.3.1, 10.5, 10.7): B1's own margins may adjoin only with a computed
+        // CTB/CTT (CSS2.2 8.3.1, 10.5, 10.7): a normal's margins adjoin only with a computed
         // `height` of zero or `auto` and a computed `min-height` of zero; a percentage is
         // neither, nor is a length rounded to +0 (CT-2).
-        let adjoining = source == 2
+        let adjoining = source != 3
             && matches!(row.min_height, LengthPercentageBoxFact::Absolute(min)
                 if min.pixels == 0.0 && !min.rounded_to_zero)
             && match row.height {
@@ -969,9 +974,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         let height = match vertical.height {
             BoxLengthFact::Absolute(value) => {
                 let used = constrain(value.pixels, vertical.min, vertical.max);
-                // CTB (ZH-4 scope, Q-4): a zero B1 whose own margins do not adjoin keeps a
+                // CTB/CTT (ZH-4 scope): a zero normal whose own margins do not adjoin keeps a
                 // refusal unless they are separated.
-                if source == 2
+                if source != 3
                     && used == 0.0
                     && !adjoining
                     && !separated_auto(row, parent_solved, numeric)
@@ -1816,8 +1821,8 @@ fn resolve_heights(
 /// content width as in `resolved_row` (CSS2.2 8.4); without P's solve (held, PCT Q-6),
 /// when it does not resolve, or when it rounds to +0, it does not separate by itself
 /// (the core's `vertical_decoration` tests the same edges with `> 0.`); when it is the
-/// only separation of an ordinary normal, the caller's `HeightKind` stands. CTB also asks
-/// it for an explicit B1 used as +0 whose own margins do not adjoin.
+/// only separation of an ordinary normal, the caller's `HeightKind` stands. CTB/CTT also
+/// asks it for an explicit normal used as +0 whose own margins do not adjoin.
 fn separated_auto(
     row: &ClearanceBoxFact,
     parent: Option<&ParentSolve>,
@@ -2354,7 +2359,11 @@ fn facade_work(nodes: usize) -> Option<usize> {
         // Existing category/constrain and DAZ helper charges remain prepaid once.
         .checked_add(25)?
         .checked_add(nodes.checked_sub(2)?.checked_mul(8)?)?
-        .checked_add(nodes.checked_sub(3)?.checked_mul(2)?)
+        .checked_add(nodes.checked_sub(3)?.checked_mul(2)?)?
+        // CTT: shared requested-byte helper57: entry/argument5, tail count4,
+        // zero-tail guard4, member_slots16, two-vector byte helper26, mapping2.
+        // The old record-only byte charge remains, without credit.
+        .checked_add(57)
 }
 
 fn checked_bytes<T>(count: usize) -> Option<usize> {
@@ -2458,9 +2467,9 @@ mod tests {
 
     #[test]
     fn vertical_auto_facade_work_and_runtime_storage_boundaries() {
-        assert_eq!(facade_work(5), Some(3203));
-        assert_eq!(facade_work(6), Some(4142));
-        assert_eq!(facade_work(7), Some(5081));
+        assert_eq!(facade_work(5), Some(3260));
+        assert_eq!(facade_work(6), Some(4199));
+        assert_eq!(facade_work(7), Some(5138));
         assert_eq!(facade_work(2), None);
 
         // Checked byte products reject anything beyond isize::MAX at runtime size.
@@ -2628,7 +2637,7 @@ mod tests {
         };
         for nodes in 5..=7 {
             let count = nodes - 2;
-            let core_bytes = (nodes - 4) * size_of::<SequenceNormalPlacement>();
+            let core_bytes = sequence_requested_retained_bytes(nodes).unwrap();
             let scratch_floor = count * size_of::<ChildFacts<'_>>();
             let child_floor = count * size_of::<PrincipalChildBox>();
             assert!(matches!(
