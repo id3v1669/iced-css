@@ -667,17 +667,23 @@ fn strict_auto_margin_errors_preserve_numeric_precedence() {
         let (outer, parent, mut children) = facts(&source_nodes);
         children[source - 2].margin.left = AutoLength::Auto;
         children[source - 2].height = OwnerHeight::Explicit(0.0);
-        // CTB: a negative normal margin keeps a zero-height B1 refused.
+        // S4: finite signed through geometry coexists with horizontal Auto.
         children[source - 2].margin.top = AutoLength::Value(-1.0);
-        assert!(matches!(
-            build(&source_nodes, outer, parent, &children, limits(6)),
-            Err(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: actual_source,
-                    reason: OwnerProfileReason::NonpositiveBlockHeight,
+        let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+        if source == 2 {
+            assert_eq!(owner.before().top, 10.);
+            assert_eq!(owner.placed_float().top, 11.);
+            assert_eq!(owner.tail()[0].vertical().top, 14.);
+        } else {
+            assert_eq!(owner.placed_float().top, 16.);
+            assert_eq!(
+                owner.tail()[1].vertical(),
+                BlockVertical {
+                    top: 21.,
+                    bottom: 21.
                 }
-            )) if actual_source == source
-        ));
+            );
+        }
     }
 
     let source_nodes = sources(6);
@@ -1204,7 +1210,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
         Err(ClearanceSequenceError::Sources)
     ));
 
-    for (count, work, old_work) in [(5, 2117, 419), (6, 2755, 501), (7, 3394, 584)] {
+    for (count, work, old_work) in [(5, 2141, 419), (6, 2791, 501), (7, 3442, 584)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].margin.left = AutoLength::Auto;
@@ -1236,7 +1242,7 @@ fn source_fact_work_and_requested_byte_boundaries_are_exact() {
                 + count * (count - 1) / 2
                 + 333 * tail_count
                 + 76 * child_count
-                + 212 * (count - 3)
+                + 224 * (count - 3)
         );
         assert!(owner.receipt().record_capacity >= tail_count);
         assert!(owner.receipt().member_capacity >= 2 * (count - 3));
@@ -1314,7 +1320,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[1].margin.left = AutoLength::Auto;
     children[1].margin.right = AutoLength::Auto;
     let mut short = limits(6);
-    short.work = NonZeroUsize::new(2754).unwrap();
+    short.work = NonZeroUsize::new(2790).unwrap();
     assert!(matches!(
         build(&malformed, outer, parent, &children, short),
         Err(ClearanceSequenceError::Work)
@@ -1363,7 +1369,7 @@ fn work_graph_and_profile_failures_follow_the_documented_order() {
     children[3].margin.right = AutoLength::Auto;
     children[3].border.left = -1.0;
     let mut one_short = limits(6);
-    one_short.work = NonZeroUsize::new(2754).unwrap();
+    one_short.work = NonZeroUsize::new(2790).unwrap();
     assert!(matches!(
         build(&sources, outer, parent, &children, one_short),
         Err(ClearanceSequenceError::Work)
@@ -2113,15 +2119,25 @@ fn vertical_auto_keeps_every_sequence_exclusion() {
         let control = build(&source_nodes, outer, parent, &control, limits(6)).unwrap();
         assert_eq!(format!("{owner:?}"), format!("{control:?}"), "slot {slot}");
     }
-    rejected(
-        &|c| {
-            c[2].height = OwnerHeight::Explicit(0.0);
-            // CTT-D2: positive B1 leaves this signed zero tail as the source-4 refusal.
-            c[2].margin.top = AutoLength::Value(-1.0);
-        },
-        4,
-        R::NonpositiveBlockHeight,
-    );
+    // S4: a signed through tail is admitted beside the retained Auto margins.
+    {
+        let (outer, parent, mut children) = facts(&source_nodes);
+        for child in &mut children {
+            child.margin.top = AutoLength::Auto;
+        }
+        children[2].height = OwnerHeight::Explicit(0.);
+        children[2].margin.top = AutoLength::Value(-1.);
+        let owner = build(&source_nodes, outer, parent, &children, limits(6)).unwrap();
+        assert_eq!(
+            owner.tail()[0].vertical(),
+            BlockVertical {
+                top: 18.,
+                bottom: 18.
+            }
+        );
+        assert_eq!(owner.tail()[0].clearance(), Some(3.));
+        assert_eq!(owner.tail()[1].vertical().top, 21.);
+    }
 
     // Signed and Auto normal horizontal plus float horizontal Auto remain admitted
     // alongside every vertical Auto.
@@ -2345,7 +2361,7 @@ fn vertical_auto_priority_rows_have_later_fault_controls() {
 
 #[test]
 fn vertical_auto_work_and_storage_boundaries_are_exact() {
-    for (count, work, old_work) in [(5, 2117, 419), (6, 2755, 501), (7, 3394, 584)] {
+    for (count, work, old_work) in [(5, 2141, 419), (6, 2791, 501), (7, 3442, 584)] {
         let all_auto = |children: &mut Vec<ChildFacts<'_>>| {
             for child in children.iter_mut() {
                 child.margin.top = AutoLength::Auto;
@@ -2816,7 +2832,7 @@ fn float_outer_width_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 2117, 419), (6, 2755, 501), (7, 3394, 584)] {
+    for (count, work, old_work) in [(5, 2141, 419), (6, 2791, 501), (7, 3442, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.left = AutoLength::Value(5.0);
             children[1].margin.right = AutoLength::Value(7.0);
@@ -3200,7 +3216,7 @@ fn float_outer_height_failure_precedes_later_unsupported_equality() {
 
 #[test]
 fn nonzero_float_vertical_margin_work_bounds_are_exact() {
-    for (count, work, old_work) in [(5, 2117, 419), (6, 2755, 501), (7, 3394, 584)] {
+    for (count, work, old_work) in [(5, 2141, 419), (6, 2791, 501), (7, 3442, 584)] {
         let margins = |children: &mut Vec<ChildFacts<'_>>| {
             children[1].margin.top = AutoLength::Value(3.0);
             children[1].margin.bottom = AutoLength::Value(4.0);
@@ -3560,7 +3576,7 @@ fn tnb_core_tail_guards_follow_source_order() {
 
 #[test]
 fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
-    for (count, work) in [(5, 2117), (6, 2755), (7, 3394)] {
+    for (count, work) in [(5, 2141), (6, 2791), (7, 3442)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].context = ChildContext::OtherNewBfc;
@@ -3579,7 +3595,7 @@ fn sequence_b1_other_new_bfc_work_bounds_are_exact() {
                 + count * (count - 1) / 2
                 + 333 * (count - 4)
                 + 76 * (count - 2)
-                + 212 * (count - 3)
+                + 224 * (count - 3)
         );
     }
 }
@@ -4458,7 +4474,7 @@ fn cp_padding_domain_checks_every_source_and_edge() {
 
 #[test]
 fn cp_exact_work_and_capacity_boundaries() {
-    for (count, work) in [(5, 2117), (6, 2755), (7, 3394)] {
+    for (count, work) in [(5, 2141), (6, 2791), (7, 3442)] {
         let sources = sources(count);
         let (outer, parent, mut children) = facts(&sources);
         children[0].padding.top = 2.0;
@@ -4719,7 +4735,7 @@ fn cfh_core_exact_extent_and_later_profile_order() {
 
 #[test]
 fn cfh_core_auto_work_thresholds() {
-    for (count, work) in [(5, 2117), (6, 2755), (7, 3394)] {
+    for (count, work) in [(5, 2141), (6, 2791), (7, 3442)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[1].height = OwnerHeight::Auto;
@@ -5262,10 +5278,8 @@ fn zhn_red_guard_zc1_a_negative_height_new_bfc_tail_stays_refused() {
     );
 }
 
-/// ZHN ZC2 (RED guard; MA11 witness): the height step precedes the edge validation, so a
-/// zero-height ordinary B1 whose top padding is NaN is `NonpositiveBlockHeight` (a NaN
-/// edge never separates the margins), not `InvalidNumber`; B1's negative top margin
-/// keeps the refusal since CTB. Passes before and after ZHN.
+/// S4 admits the finite negative margin, exposing the existing padding validation.
+/// NaN padding still does not establish physical separation or become valid.
 #[test]
 fn zhn_red_guard_zc2_a_nan_padding_does_not_separate_the_margins() {
     let sources = sources(6);
@@ -5276,32 +5290,34 @@ fn zhn_red_guard_zc2_a_nan_padding_does_not_separate_the_margins() {
     let result = build(&sources, outer, parent, &children, limits(6));
     assert_eq!(
         format!("{:?}", result.map(|_| ())),
-        "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
+        "Err(Profile(InvalidNumber { source: 2, field: \"padding\" }))"
     );
 }
 
-/// CTB CC3a (RED guard; CM3, CM4, CM26 witness): a zero-height ordinary B1 stays
-/// `NonpositiveBlockHeight` when B1's own top margin or B2's bottom margin is negative, or
-/// when B2's top margin is NaN (a NaN margin fails the sign scan; root ruling CT-3, review
-/// m-2). Passes before and after CTB.
+/// S4 migrates finite negatives but preserves CT-3's NaN eligibility precedence.
 #[test]
-fn ctb_red_guard_cc3a_signed_and_nan_normal_margins_keep_the_refusal() {
+fn ctb_signed_normals_admitted_while_nan_keeps_eligibility_refusal() {
     let sources = sources(5);
-    for (slot, top, value) in [(0, true, -1.0), (2, false, -1.0), (2, true, f32::NAN)] {
+    for (slot, top, expected_before, expected_tail) in [(0, true, 10., 14.), (2, false, 11., 15.)] {
         let (outer, parent, mut children) = facts(&sources);
         children[0].height = OwnerHeight::Explicit(0.0);
         if top {
-            children[slot].margin.top = AutoLength::Value(value);
+            children[slot].margin.top = AutoLength::Value(-1.);
         } else {
-            children[slot].margin.bottom = AutoLength::Value(value);
+            children[slot].margin.bottom = AutoLength::Value(-1.);
         }
-        let result = build(&sources, outer, parent, &children, limits(5));
-        assert_eq!(
-            format!("{:?}", result.map(|_| ())),
-            "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))",
-            "slot {slot} top {top} value {value}"
-        );
+        let owner = build(&sources, outer, parent, &children, limits(5)).unwrap();
+        assert_eq!(owner.before().top, expected_before);
+        assert_eq!(owner.placed_float().top, 11.);
+        assert_eq!(owner.tail()[0].vertical().top, expected_tail);
     }
+    let (_, _, mut children) = facts(&sources);
+    children[0].height = OwnerHeight::Explicit(0.);
+    children[2].margin.top = AutoLength::Value(f32::NAN);
+    assert_eq!(
+        ctb_result(&sources, &children),
+        "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
+    );
 }
 
 // CTB FLIP rows: they need the collapse-through admission and the three-member groups.
@@ -5536,7 +5552,7 @@ fn ctb_zl6a_a_negative_zero_new_bfc_tail_is_admitted() {
 }
 
 /// CTB ZL6b (ZHN-L6): an ordinary B1 with `Explicit(-0.0)` collapses through since CTB
-/// (ZHN recorded `NonpositiveBlockHeight`); with a negative top margin it still is.
+/// (ZHN recorded `NonpositiveBlockHeight`); S4 also admits a finite negative top margin.
 #[test]
 fn ctb_zl6b_a_negative_zero_ordinary_b1() {
     let sources = sources(5);
@@ -5544,15 +5560,12 @@ fn ctb_zl6b_a_negative_zero_ordinary_b1() {
     children[0].height = OwnerHeight::Explicit(-0.0);
     assert_eq!(ctb_result(&sources, &children), "Ok(())");
     children[0].margin.top = AutoLength::Value(-1.0);
-    assert_eq!(
-        ctb_result(&sources, &children),
-        "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
-    );
+    assert_eq!(ctb_result(&sources, &children), "Ok(())");
 }
 
 /// CTB ZL6c (ZHN-L6): a negative top padding does not separate, so the zero-height
 /// ordinary B1 is admitted and its padding is `InvalidNumber` since CTB (ZHN recorded
-/// `NonpositiveBlockHeight`); with a negative top margin it still is.
+/// `NonpositiveBlockHeight`); S4 retains padding validation with a finite negative margin.
 #[test]
 fn ctb_zl6c_a_negative_padding_reaches_its_validation() {
     let sources = sources(5);
@@ -5566,7 +5579,7 @@ fn ctb_zl6c_a_negative_padding_reaches_its_validation() {
     children[0].margin.top = AutoLength::Value(-1.0);
     assert_eq!(
         ctb_result(&sources, &children),
-        "Err(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))"
+        "Err(Profile(InvalidNumber { source: 2, field: \"padding\" }))"
     );
 }
 
@@ -6425,7 +6438,7 @@ fn nzs_cleared_separator_resets_after_zero_and_negative_clearance() {
 }
 
 #[test]
-fn nzs_signed_separated_zero_does_not_license_an_actual_through_sibling() {
+fn nzs_signed_separated_zero_keeps_provenance_beside_through_sibling() {
     let nodes = sources(5);
     let owner = nzs_layout(
         &nodes,
@@ -6452,31 +6465,33 @@ fn nzs_signed_separated_zero_does_not_license_an_actual_through_sibling() {
             bottom: 0.
         }
     );
-    for (before, after, source) in [
+    // S4 admits both mixtures while preserving which zero actually separates.
+    for (before, after, expected_float, expected_tail, expected_members) in [
         (
             OwnerHeight::NonAdjoiningZero(0.),
             OwnerHeight::Explicit(0.),
-            4,
+            2.,
+            -1.,
+            3,
         ),
         (
             OwnerHeight::Explicit(0.),
             OwnerHeight::NonAdjoiningZero(0.),
-            2,
+            0.,
+            1.,
+            1,
         ),
     ] {
-        nzs_assert_profile_error(
-            nzs_layout(
-                &nodes,
-                (before, -2., 4.),
-                2.,
-                &[(after, -3., 2., ClearSide::None)],
-            )
-            .unwrap_err(),
-            ClearanceOwnerError::Unsupported {
-                source,
-                reason: OwnerProfileReason::NonpositiveBlockHeight,
-            },
-        );
+        let owner = nzs_layout(
+            &nodes,
+            (before, -2., 4.),
+            2.,
+            &[(after, -3., 2., ClearSide::None)],
+        )
+        .unwrap();
+        assert_eq!(owner.placed_float().top, expected_float);
+        assert_eq!(owner.tail()[0].vertical().top, expected_tail);
+        assert_eq!(owner.terminal_run().members().len(), expected_members);
     }
 }
 
@@ -6596,7 +6611,7 @@ fn nzs_category_validation_preserves_profile_order_and_float_refusal() {
 #[test]
 fn nzs_exact_work_and_requested_bytes_gate_new_zero_layouts() {
     use iced_css_core::formatting::clearance_sequence::sequence_requested_retained_bytes;
-    for (count, work, requested) in [(5, 2117, 200), (6, 2755, 368), (7, 3394, 536)] {
+    for (count, work, requested) in [(5, 2141, 200), (6, 2791, 368), (7, 3442, 536)] {
         let nodes = sources(count);
         let (outer, parent, mut children) = facts(&nodes);
         children[0].height = OwnerHeight::NonAdjoiningZero(-0.);
@@ -6691,4 +6706,384 @@ fn nzs_last_separator_keeps_the_exact_cleared_reference() {
     assert_eq!(last.vertical().top.to_bits(), 0x33000000);
     assert_eq!(last.vertical().bottom.to_bits(), 0x33000000);
     assert_eq!(owner.terminal_run().members().len(), 1);
+}
+
+// S4 prospective witnesses: hand-derived geometry, not product-generated oracles.
+#[test]
+fn s4_through_b1_signed_float_clamp_and_members() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(5);
+    for zero in [0.0, -0.0] {
+        let result = nzs_layout(
+            &nodes,
+            (OwnerHeight::Explicit(zero), -2., 4.),
+            2.,
+            &[(OwnerHeight::Explicit(1.), -3., 2., ClearSide::None)],
+        );
+        assert!(
+            result.is_ok(),
+            "S4 finite signed through B1 must be admitted"
+        );
+        let owner = result.unwrap();
+        assert_eq!(
+            owner.before(),
+            BlockVertical {
+                top: -2.,
+                bottom: -2.
+            }
+        );
+        assert_eq!(
+            (owner.placed_float().top, owner.placed_float().bottom),
+            (0., 2.)
+        );
+        let tail = owner.tail_view(0).unwrap();
+        assert_eq!(
+            tail.vertical(),
+            BlockVertical {
+                top: 1.,
+                bottom: 2.
+            }
+        );
+        assert_eq!(tail.clearance(), None);
+        assert_eq!(
+            ctt_members(tail.hypothetical_group().members()),
+            [(2, T, -2.), (2, B, 4.), (4, T, -3.)]
+        );
+        assert_eq!(
+            (
+                tail.hypothetical_group().positive(),
+                tail.hypothetical_group().negative()
+            ),
+            (4., -3.)
+        );
+        assert_eq!(ctt_members(owner.terminal_run().members()), [(4, B, 2.)]);
+    }
+}
+
+#[test]
+fn s4_signed_tail_keeps_prefix_and_moves_later_border_upward() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(6);
+    let result = nzs_layout(
+        &nodes,
+        (OwnerHeight::Explicit(2.), 0., 4.),
+        2.,
+        &[
+            (OwnerHeight::Explicit(0.), 3., -10., ClearSide::None),
+            (OwnerHeight::Explicit(1.), 2., 1., ClearSide::None),
+        ],
+    );
+    assert!(
+        result.is_ok(),
+        "S4 finite signed through tail must be admitted"
+    );
+    let owner = result.unwrap();
+    assert_eq!(
+        (owner.placed_float().top, owner.placed_float().bottom),
+        (6., 8.)
+    );
+    assert_eq!(
+        owner.tail()[0].vertical(),
+        BlockVertical {
+            top: 6.,
+            bottom: 6.
+        }
+    );
+    assert_eq!(
+        owner.tail()[1].vertical(),
+        BlockVertical {
+            top: -4.,
+            bottom: -3.
+        }
+    );
+    let prefix = owner.tail_view(0).unwrap().hypothetical_group();
+    assert_eq!(ctt_members(prefix.members()), [(2, B, 4.), (4, T, 3.)]);
+    assert_eq!(prefix.negative(), 0.);
+    let next = owner.tail_view(1).unwrap().hypothetical_group();
+    assert_eq!(
+        ctt_members(next.members()),
+        [(2, B, 4.), (4, T, 3.), (4, B, -10.), (5, T, 2.)]
+    );
+    assert_eq!((next.positive(), next.negative()), (4., -10.));
+    assert_eq!(ctt_members(owner.terminal_run().members()), [(5, B, 1.)]);
+}
+
+#[test]
+fn s4_second_required_clearance_replaces_the_signed_reference() {
+    use MarginSide::{Bottom as B, Top as T};
+    let nodes = sources(6);
+    let owner = nzs_layout(
+        &nodes,
+        (OwnerHeight::Explicit(2.), 0., 4.),
+        2.,
+        &[
+            (OwnerHeight::Explicit(0.), 3., -10., ClearSide::Both),
+            (OwnerHeight::Explicit(0.), 2., 0., ClearSide::Both),
+        ],
+    )
+    .unwrap();
+    let first = owner.tail_view(0).unwrap();
+    assert_eq!(
+        (
+            first.hypothetical_top(),
+            first.zero_clearance_top(),
+            first.clearance(),
+            first.vertical().top
+        ),
+        (6., Some(9.), Some(-1.), 8.)
+    );
+    assert_eq!(first.barrier_source_index(), Some(4));
+    let second = owner.tail_view(1).unwrap();
+    assert_eq!(
+        (
+            second.hypothetical_top(),
+            second.zero_clearance_top(),
+            second.clearance(),
+            second.vertical().top
+        ),
+        (-2., Some(0.), Some(8.), 8.)
+    );
+    assert_eq!(second.barrier_source_index(), Some(5));
+    let groups = second.actual_groups().collect::<Vec<_>>();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0].id(), MarginGroupId::BeforeBarrier);
+    assert_eq!(groups[1].id(), MarginGroupId::AfterBarrier);
+    assert_eq!(ctt_members(groups[0].members()), [(4, T, 3.), (4, B, -10.)]);
+    assert_eq!(ctt_members(groups[1].members()), [(5, T, 2.)]);
+    assert_eq!(
+        ctt_members(owner.terminal_run().members()),
+        [(5, T, 2.), (5, B, 0.)]
+    );
+    // Earlier prefix observations remain valid after the second barrier.
+    assert_eq!(
+        ctt_members(first.hypothetical_group().members()),
+        [(2, B, 4.), (4, T, 3.)]
+    );
+}
+
+#[test]
+fn s4_all_negative_and_long_runs_keep_extrema_and_members() {
+    let nodes = sources(6);
+    let owner = nzs_layout(
+        &nodes,
+        (OwnerHeight::Explicit(2.), 0., -4.),
+        0.,
+        &[
+            (OwnerHeight::Explicit(0.), -3., -10., ClearSide::None),
+            (OwnerHeight::Explicit(0.), -2., -1., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(owner.tail()[0].vertical().top, -2.);
+    assert_eq!(owner.tail()[1].vertical().top, -8.);
+    assert_eq!(
+        (
+            owner.terminal_run().positive(),
+            owner.terminal_run().negative()
+        ),
+        (0., -10.)
+    );
+    for count in [1, 2, 3, 17] {
+        let nodes = sources(count + 4);
+        let tails = (0..count)
+            .map(|i| {
+                (
+                    OwnerHeight::Explicit(0.),
+                    0.,
+                    -((i + 1) as f32),
+                    ClearSide::None,
+                )
+            })
+            .collect::<Vec<_>>();
+        let owner = nzs_layout(&nodes, (OwnerHeight::Explicit(2.), 0., 4.), 0., &tails).unwrap();
+        assert_eq!(owner.terminal_run().members().len(), 1 + 2 * count);
+        assert_eq!(
+            (
+                owner.terminal_run().positive(),
+                owner.terminal_run().negative()
+            ),
+            (4., -(count as f32))
+        );
+        for (i, normal) in owner.tail().iter().enumerate() {
+            assert_eq!(normal.vertical().top, 6. - i as f32);
+        }
+        for (i, pair) in owner.terminal_run().members()[1..]
+            .chunks_exact(2)
+            .enumerate()
+        {
+            assert_eq!(
+                ctt_members(pair),
+                [
+                    (i + 4, MarginSide::Top, 0.),
+                    (i + 4, MarginSide::Bottom, -((i + 1) as f32))
+                ]
+            );
+        }
+    }
+    // A separated nonliteral zero ends the signed run without losing its incoming prefix.
+    let nodes = sources(21);
+    let mut tails = (0..17)
+        .map(|i| {
+            (
+                OwnerHeight::Explicit(0.),
+                0.,
+                -((i + 1) as f32),
+                ClearSide::None,
+            )
+        })
+        .collect::<Vec<_>>();
+    tails[8].0 = OwnerHeight::NonAdjoiningZero(0.);
+    let owner = nzs_layout(&nodes, (OwnerHeight::Explicit(2.), 0., 4.), 0., &tails).unwrap();
+    assert_eq!(owner.tail()[8].vertical().top, -2.);
+    assert_eq!(owner.tail()[9].vertical().top, -11.);
+    assert_eq!(owner.tail()[16].vertical().top, -18.);
+    assert_eq!(
+        owner
+            .tail_view(8)
+            .unwrap()
+            .hypothetical_group()
+            .members()
+            .len(),
+        18
+    );
+    assert_eq!(owner.terminal_run().members().len(), 17);
+    assert_eq!(
+        (
+            owner.terminal_run().positive(),
+            owner.terminal_run().negative()
+        ),
+        (0., -17.)
+    );
+    assert_eq!(
+        ctt_members(&owner.terminal_run().members()[..1]),
+        [(12, MarginSide::Bottom, -9.)]
+    );
+}
+
+#[test]
+fn s4_nonfinite_margin_eligibility_preserves_first_error() {
+    let nodes = sources(5);
+    for slot in [0, 2] {
+        for top in [true, false] {
+            for value in [f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+                let (outer, parent, mut children) = facts(&nodes);
+                children[0].height = OwnerHeight::Explicit(0.);
+                if top {
+                    children[slot].margin.top = AutoLength::Value(value);
+                } else {
+                    children[slot].margin.bottom = AutoLength::Value(value);
+                }
+                let expected = if value == f32::INFINITY {
+                    ClearanceOwnerError::InvalidNumber {
+                        source: slot + 2,
+                        field: "margin",
+                    }
+                } else {
+                    ClearanceOwnerError::Unsupported {
+                        source: 2,
+                        reason: OwnerProfileReason::NonpositiveBlockHeight,
+                    }
+                };
+                nzs_assert_profile_error(
+                    build(&nodes, outer, parent, &children, limits(5)).unwrap_err(),
+                    expected,
+                );
+            }
+        }
+    }
+    // The float never participates in normal eligibility, even when invalid.
+    let (outer, parent, mut children) = facts(&nodes);
+    children[0].height = OwnerHeight::Explicit(0.);
+    children[1].margin.top = AutoLength::Value(f32::NAN);
+    nzs_assert_profile_error(
+        build(&nodes, outer, parent, &children, limits(5)).unwrap_err(),
+        ClearanceOwnerError::InvalidNumber {
+            source: 3,
+            field: "margin",
+        },
+    );
+}
+
+#[test]
+fn s4_signed_through_keeps_collapsed_f32_publication() {
+    let nodes = sources(6);
+    let negative = f32::from_bits(0xb3000000);
+    let owner = ctt_layout(
+        &nodes,
+        -2.,
+        [1., 0., 1.],
+        0.,
+        &[
+            (0., negative, 0., ClearSide::None),
+            (1., 0., 0., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    // RN(1 - 2^-25) is 1 before adding the published base -1.
+    // A fused fold would publish -2^-25 instead of positive zero.
+    assert_eq!(owner.tail()[0].hypothetical_top().to_bits(), 0);
+    assert_eq!(owner.tail()[0].vertical().top.to_bits(), 0);
+    assert_eq!(owner.tail()[1].vertical().top.to_bits(), 0);
+    assert_eq!(
+        owner
+            .tail_view(1)
+            .unwrap()
+            .hypothetical_group()
+            .negative()
+            .to_bits(),
+        0xb3000000
+    );
+    // Large opposing margins collapse to exact zero before the small published base.
+    let large = 33_554_432.;
+    let owner = nzs_layout(
+        &nodes,
+        (OwnerHeight::Explicit(1.), 0., large),
+        0.,
+        &[
+            (OwnerHeight::Explicit(0.), -large, 0., ClearSide::None),
+            (OwnerHeight::Explicit(1.), 1., 0., ClearSide::None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(owner.tail()[0].vertical().top, 1.);
+    assert_eq!(
+        owner.tail()[1].vertical(),
+        BlockVertical {
+            top: 1.,
+            bottom: 2.
+        }
+    );
+    assert_eq!(
+        (
+            owner.tail_view(1).unwrap().hypothetical_group().positive(),
+            owner.tail_view(1).unwrap().hypothetical_group().negative()
+        ),
+        (large, -large)
+    );
+}
+
+#[test]
+fn s4_exact_work_boundary_precedes_signed_through_geometry() {
+    use iced_css_core::formatting::clearance_sequence::sequence_requested_retained_bytes;
+    for (count, work, requested) in [(5, 2141, 200), (6, 2791, 368), (7, 3442, 536)] {
+        let nodes = sources(count);
+        let (outer, parent, mut children) = facts(&nodes);
+        children[0].height = OwnerHeight::Explicit(0.);
+        children[0].margin.top = AutoLength::Value(-1.);
+        let mut budget = limits(count);
+        budget.work = NonZeroUsize::new(work - 1).unwrap();
+        assert!(
+            matches!(
+                build(&nodes, outer, parent, &children, budget),
+                Err(ClearanceSequenceError::Work)
+            ),
+            "S4 one-short core work must fail before geometry"
+        );
+        budget.work = NonZeroUsize::new(work).unwrap();
+        let owner = build(&nodes, outer, parent, &children, budget).unwrap();
+        assert_eq!(owner.receipt().work, work);
+        assert_eq!(owner.before().top, 10.);
+        assert_eq!(owner.placed_float().top, 11.);
+        assert_eq!(sequence_requested_retained_bytes(count), Some(requested));
+    }
 }

@@ -1369,6 +1369,10 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     // vertical step (a percentage `height` used as `auto` takes the Auto routes, a
     // percentage limit is 0 or `none`); `computed_height` is published unchanged.
     let (parent_min_height, parent_max_height) = (parent_vertical.min, parent_vertical.max);
+    // S4/Q2=B: the signed route includes every normal's raw published margin
+    // edges, including actual through participants. Group endpoints do not replace
+    // these observations. The unsigned route keeps CTT-D1's source-last rule;
+    // the later Auto-overflow check remains independent raw-box containment.
     let tentative = if matches!(parent_vertical.height, BoxLengthFact::Auto { .. })
         && children.iter().any(|child| {
             child.kind() == PrincipalChildKind::Normal

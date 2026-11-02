@@ -178,31 +178,44 @@ fn ptb_v4b_child_basis_includes_the_parent_minimum() {
 }
 
 /// V8 (PTB M7 witness, kept by its explicit-P case): a child's offsets resolve after its
-/// height category: B2's signed-tail `height:auto` reaches the core nonpositive
-/// refusal under Auto P. Under P's `height:<f32::MAX>px`, its `top:200%`
-/// remains the earlier unrepresentable-percentage refusal.
+/// height category: S4 admits the finite signed through tail under Auto P and
+/// resolves its offset against the signed parent height. Under explicit MAX P,
+/// `top:200%` remains the earlier unrepresentable-percentage refusal.
 #[test]
 fn ptb_v8_offsets_follow_the_height_category() {
-    for (parent, top, expected) in [
-        (
-            String::new(),
-            "10%",
-            "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))",
-        ),
-        (
-            format!("#p {{ height:{PCT_F32_MAX_PX}; }}"),
-            "200%",
-            "Percentage { source: 4, property: \"top\", error: Unrepresentable }",
-        ),
-    ] {
-        let css = pct_css(
-            5,
-            &format!(
-                "{parent} #b2 {{ height:auto; margin-top:-1px; position:relative; top:{top}; }}"
-            ),
+    let css = pct_css(
+        5,
+        "#b2 { height:auto; margin-top:-1px; position:relative; top:10%; }",
+    );
+    pct_with(5, &css, PCT_OUTER, layout_limits(), |layout| {
+        let view = pct_view(layout);
+        assert_eq!(
+            view.iter()
+                .find(|(name, _)| name == "c2.border.top")
+                .unwrap()
+                .1,
+            18.0
         );
-        assert_eq!(pht_error_in(&css, PCT_OUTER), expected, "{css}");
-    }
+        assert_eq!(
+            view.iter()
+                .find(|(name, _)| name == "c2.offset.top")
+                .unwrap()
+                .1,
+            1.0
+        );
+        assert_eq!(layout.parent().height().used_height, 10.0);
+    })
+    .unwrap();
+    let css = pct_css(
+        5,
+        &format!(
+            "#p {{ height:{PCT_F32_MAX_PX}; }} #b2 {{ height:auto; margin-top:-1px; position:relative; top:200%; }}"
+        ),
+    );
+    assert_eq!(
+        pht_error_in(&css, PCT_OUTER),
+        "Percentage { source: 4, property: \"top\", error: Unrepresentable }"
+    );
 }
 
 /// V9 (a refusal and the PTB M11, M20, M22 witness until OAH): under an Auto O, P's `top`
@@ -613,7 +626,7 @@ const PTB_WORK_FRAGMENT: &str = "#p { height:20px; } \
 /// 373(N-3)`; the layout equals the control with the children relative and no offsets.
 #[test]
 fn ptb_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             facade,
             752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)
@@ -1021,7 +1034,7 @@ const PTA_WORK_FRAGMENT: &str = "#b1, #f, #b2, #b3, #b4 { position:relative; top
 /// control with the children relative and no offsets.
 #[test]
 fn pta_work_thresholds_under_an_auto_parent() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             facade,
             752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)

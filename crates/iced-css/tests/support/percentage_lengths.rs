@@ -1031,7 +1031,7 @@ const PCT_WORK_FRAGMENT: &str = "#o { width:100%; margin-left:0%; } \
 /// 373(N-3)`; the layout equals the baseline's.
 #[test]
 fn pct_work_thresholds_with_percentages() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             facade,
             752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)

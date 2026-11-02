@@ -3,7 +3,7 @@
 //! still reports NewBfcFloatContact. CTB/CTT admit ordinary literal-zero/Auto through
 //! normals in unsigned-normal scope. NZS additionally admits computed-nonliteral
 //! used-zero normals with separate own margins, including undecorated ordinary boxes.
-//! Existing actual-through signed-margin refusals remain; NZS does not implement S4.
+//! S4 additionally admits actual-through participants with finite signed margins.
 //!
 //! A child module of `em_lengths` (ZHN design section 6): it reuses the `pct`, `pht`, `och`
 //! and `eml` helpers (`pct_css`, `pct_with`, `pct_view`, `assert_pct_view`, `pct_lit`,
@@ -19,9 +19,6 @@
 use super::*;
 
 /// The facade refusal of a zero-height B1 whose own margins may adjoin.
-const ZHN_B1_REFUSAL: &str =
-    "Core(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))";
-
 /// The `nodes`-source layout view of `fragment` on `baseline_css()` (`pct_css`) with O's
 /// content geometry `PCT_OUTER`, or the `Debug` text of the layout error.
 fn zhn_run(nodes: usize, fragment: &str) -> Result<Vec<(String, f32)>, String> {
@@ -90,44 +87,43 @@ fn zhn_red_z1_a_zero_height_new_bfc_b1_is_admitted() {
     zhn_row(5, "#b1 { overflow:hidden; height:0; }", &expected);
 }
 
-/// Z7a (RED guard; MA8 witness): an ordinary zero-height B1 without top or bottom border
-/// or padding may collapse through (G6); with a negative top margin it stays
-/// `NonpositiveBlockHeight` (CTB, CT-3). Passes before and after ZHN.
+/// S4 migration of Z7a: a finite negative top margin preserves ordinary
+/// collapse-through geometry and the containing-top float clamp.
 #[test]
-fn zhn_red_guard_z7a_an_undecorated_ordinary_zero_height_stays_refused() {
-    assert_eq!(
-        zhn_error(5, "#b1 { height:0; margin-top:-1px; }"),
-        ZHN_B1_REFUSAL
-    );
+fn zhn_z7a_signed_undecorated_zero_height_is_through() {
+    let view = zhn_layout(5, "#b1 { height:0; margin-top:-1px; }");
+    assert_eq!(zhn_pick(&view, "c0.border.top"), 10.0);
+    assert_eq!(zhn_pick(&view, "float.top"), 11.0);
+    assert_eq!(zhn_pick(&view, "c2.border.top"), 14.0);
+    assert_eq!(zhn_pick(&view, "p.used_height"), 7.0);
 }
 
-/// Z7b (RED guard; MA9 witness): left and right borders and paddings do not separate the
-/// vertical margins; B1's negative top margin keeps the refusal (CTB, CT-3). Passes
-/// before and after ZHN.
+/// S4 migration of Z7b: horizontal decoration does not separate signed
+/// adjoining vertical margins.
 #[test]
-fn zhn_red_guard_z7b_horizontal_decoration_does_not_separate() {
-    assert_eq!(
-        zhn_error(
-            5,
-            "#b1 { height:0; margin-top:-1px; border-left:1px solid; border-right:1px solid; \
-             padding-left:1px; padding-right:1px; }"
-        ),
-        ZHN_B1_REFUSAL
+fn zhn_z7b_signed_horizontal_decoration_does_not_separate() {
+    let view = zhn_layout(
+        5,
+        "#b1 { height:0; margin-top:-1px; border-left:1px solid; border-right:1px solid; padding-left:1px; padding-right:1px; }",
     );
+    assert_eq!(zhn_pick(&view, "c0.border.top"), 10.0);
+    assert_eq!(zhn_pick(&view, "float.top"), 11.0);
+    assert_eq!(zhn_pick(&view, "c2.border.top"), 14.0);
+    assert_eq!(zhn_pick(&view, "p.used_height"), 7.0);
 }
 
-/// Z7c (RED guard): a top border width with style `none` is a used 0 and does not
-/// separate; B1's negative top margin keeps the refusal (CTB, CT-3). Passes before and
-/// after ZHN.
+/// S4 migration of Z7c: a top border width with style none is used zero
+/// and does not separate the finite signed margins.
 #[test]
-fn zhn_red_guard_z7c_a_borderless_top_width_does_not_separate() {
-    assert_eq!(
-        zhn_error(
-            5,
-            "#b1 { height:0; margin-top:-1px; border-top-width:1px; }"
-        ),
-        ZHN_B1_REFUSAL
+fn zhn_z7c_signed_borderless_top_width_does_not_separate() {
+    let view = zhn_layout(
+        5,
+        "#b1 { height:0; margin-top:-1px; border-top-width:1px; }",
     );
+    assert_eq!(zhn_pick(&view, "c0.border.top"), 10.0);
+    assert_eq!(zhn_pick(&view, "float.top"), 11.0);
+    assert_eq!(zhn_pick(&view, "c2.border.top"), 14.0);
+    assert_eq!(zhn_pick(&view, "p.used_height"), 7.0);
 }
 
 /// Z7d (migrated by MFZ; MN1 witness): a new-BFC Auto-height normal, undecorated or
@@ -427,18 +423,18 @@ fn zhn_z11_a_zero_height_tail_with_a_negative_margin_takes_the_signed_route() {
 }
 
 /// Z12 (MW1, MW2 witness): core work `1062 + 12N + N(N-1)/2 + 333(N-4) + 76(N-2) +
-/// 212(N-3)` (G6a: 62 per normal on every path) is exact at N5, N6 and N7 and one short
+/// 224(N-3)` (G6a: 62 per normal on every path) is exact at N5, N6 and N7 and one short
 /// is `Core(Work)`; the facade work is unchanged.
 #[test]
 fn zhn_z12_core_work_charges_62_per_normal() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             core,
             1062 + 12 * nodes
                 + nodes * (nodes - 1) / 2
                 + 333 * (nodes - 4)
                 + 76 * (nodes - 2)
-                + 212 * (nodes - 3)
+                + 224 * (nodes - 3)
         );
         let css = pct_css(nodes, "");
         let limits = |core_work: usize| {

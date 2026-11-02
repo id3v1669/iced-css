@@ -490,7 +490,7 @@ fn nzs_clear_side_selection_preserves_negative_and_absent_clearance() {
 }
 
 #[test]
-fn nzs_keeps_equality_contact_and_signed_through_refusals() {
+fn nzs_keeps_equality_contact_and_separation_under_signed_through() {
     assert_eq!(
         zhn_error(
             5,
@@ -507,14 +507,14 @@ fn nzs_keeps_equality_contact_and_signed_through_refusals() {
         ),
         "Core(Placement { source: 4, error: NewBfcFloatContact })"
     );
-    assert_eq!(
-        zhn_error(
-            5,
-            "#b1 { height:10px; max-height:0; margin-top:-1px; } \
-        #b2 { height:0; clear:none; }"
-        ),
-        "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))"
+    let signed = zhn_layout(
+        5,
+        "#b1 { height:10px; max-height:0; margin-top:-1px; } #b2 { height:0; clear:none; }",
     );
+    assert_eq!(zhn_pick(&signed, "c0.border.top"), 10.0);
+    assert_eq!(zhn_pick(&signed, "float.top"), 14.0);
+    assert_eq!(zhn_pick(&signed, "c2.border.top"), 14.0);
+    assert_eq!(zhn_pick(&signed, "p.used_height"), 6.0);
     for height in ["0", "auto", "-0"] {
         let view = zhn_layout(6, &format!("{CTT_G1} #b2 {{ height:{height}; }}"));
         assert_eq!(zhn_pick(&view, "c3.border.top"), 23.);
@@ -559,7 +559,7 @@ fn nzs_new_admission_exposes_offsets_padding_later_child_and_width_in_order() {
 
 #[test]
 fn nzs_facade_work_budget_one_short_and_exact_are_behavioral() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         let css = pct_css(nodes, "#b1 { height:10px; max-height:0; }");
         for (work, core_work, expected) in [
             (facade - 1, core, Err("Work".to_owned())),

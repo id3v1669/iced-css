@@ -9,8 +9,9 @@
 //! in-flow children (CSS2.2 8.3.1). Ordinary positive-height B1/B2 cannot collapse
 //! through; nor can a Sequence normal whose own top and bottom margins are not adjoining
 //! (G6a), which may have zero height. CTB/CTT (the user's U1=A): a zero-height ordinary
-//! Sequence normal whose own margins adjoin collapses through when no normal's used
-//! vertical margin is negative or NaN. The Sequence owner also admits a relatively
+//! Sequence normal whose own margins adjoin admits finite signed vertical margins (S4).
+//! NaN and negative-infinity normal margins retain the earlier eligibility refusal;
+//! positive infinity reaches source-ordered finite validation. The Sequence owner also admits a relatively
 //! positioned P or child (REL, CSS2.2 9.4.3) and computes its normal-flow geometry, which
 //! the offsets do not
 //! change; the outer source and every Legacy source stay static. This is not full
@@ -214,8 +215,8 @@ pub enum OwnerProfileReason {
     ParentIsolation,
     HeightKind,
     /// A normal's used height is negative, or +0 while its own top and bottom margins may
-    /// adjoin (Sequence, G6a) and a normal's used vertical margin is negative or NaN
-    /// (CTB/CTT scope: otherwise it collapses through), or always (Legacy).
+    /// adjoin (Sequence, G6a) and a normal's used vertical margin is NaN or negative
+    /// infinity (S4 preserves this invalid-input precedence), or always (Legacy).
     NonpositiveBlockHeight,
     NegativeMargin,
     AutoVerticalMargin,
@@ -731,7 +732,8 @@ pub(super) fn validate_child(
     Ok(height)
 }
 
-/// `collapse_through`: as for `child` (CTB/CTT: unsigned-normal Sequence scope).
+/// `collapse_through`: as for `child`; S4 admits finite signed normal margins
+/// while preserving the existing NaN/negative-infinity eligibility boundary.
 pub(super) fn validate_sequence_child(
     facts: ChildFacts<'_>,
     source: usize,

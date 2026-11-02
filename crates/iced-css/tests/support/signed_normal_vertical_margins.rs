@@ -253,9 +253,9 @@ fn snv_extrema_zero_floor_and_clearance_witnesses() {
 #[test]
 fn snv_matrix_preserves_origins_geometry_containment_and_work() {
     for (n, plain_height, padded_height, core_work, facade_work) in [
-        (5, 7., 17., 2117, 3284),
-        (6, 12., 27., 2755, 4231),
-        (7, 15., 35., 3394, 5178),
+        (5, 7., 17., 2141, 3284),
+        (6, 12., 27., 2791, 4231),
+        (7, 15., 35., 3442, 5178),
     ] {
         for side in ["left", "right"] {
             for direction in ["ltr", "rtl"] {

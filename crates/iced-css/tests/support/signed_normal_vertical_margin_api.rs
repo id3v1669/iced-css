@@ -63,17 +63,24 @@ fn snv_explicit_height_does_not_publish_unused_signed_edges() {
 }
 
 #[test]
-fn snv_source_order_and_later_profile_precede_parent_edges() {
+fn snv_source_order_and_profile_precede_parent_edges() {
     // B2 publishes [-MAX,-MAX]; its bottom margin edge overflows. B3 also
     // publishes [-MAX,-MAX], and its positive top margin overflows its top edge.
-    // The earlier source's bottom must win over the later source's top.
+    // The earlier source's bottom must win over the later source's top for both
+    // positive and zero B3 heights. S4 admits the latter with finite signed margins;
+    // it no longer supplies the old source-5 NonpositiveBlockHeight refusal.
+    // Separately, F's width 10 plus margin-left -11 is a negative outer extent.
+    // That retained source-3 profile refusal must precede parent edge publication.
     let max = "340282346638528859811704183484516925440";
-    for invalid_later_height in [false, true] {
-        let later_height = if invalid_later_height { "0" } else { "1" };
+    for (later_height, float_margin_left, invalid_float_extent) in [
+        ("1", "0px", false),
+        ("0", "0px", false),
+        ("0", "-11px", true),
+    ] {
         let css = format!(
             "#o,#p,#b1,#f,#b2,#b3 {{display:block;margin:0;padding:0;clear:none;}} \
              #o {{width:100px;}} #p {{overflow:hidden;padding-top:1px;padding-bottom:1px;}} \
-             #b1 {{height:1px;}} #f {{float:left;width:10px;height:0px;}} \
+             #b1 {{height:1px;}} #f {{float:left;width:10px;height:0px;margin-left:{float_margin_left};}} \
              #b2 {{height:1px;margin-top:-{max}px;margin-bottom:-{max}px;}} \
              #b3 {{height:{later_height}px;margin-top:{max}px;}}"
         );
@@ -91,13 +98,13 @@ fn snv_source_order_and_later_profile_precede_parent_edges() {
                 layout_limits(),
             )
             .unwrap_err();
-            if invalid_later_height {
+            if invalid_float_extent {
                 assert!(matches!(
                     error,
                     SiblingLayoutError::Core(ClearanceSequenceError::Profile(
                         ClearanceOwnerError::Unsupported {
-                            source: 5,
-                            reason: OwnerProfileReason::NonpositiveBlockHeight
+                            source: 3,
+                            reason: OwnerProfileReason::NegativeFloatOuterExtent
                         }
                     ))
                 ));

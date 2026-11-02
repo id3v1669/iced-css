@@ -7,7 +7,7 @@ use super::*;
 use iced_css_core::formatting::bfc_height::{SignedNormalMarginEdge, SignedNormalMarginError};
 
 /// (nodes, facade exact work, core exact work) from the TNB counted action table.
-const TNB_WORK: [(usize, usize, usize); 3] = [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)];
+const TNB_WORK: [(usize, usize, usize); 3] = [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)];
 
 /// Copied observations of one successful layout.
 #[derive(Debug)]
@@ -280,25 +280,15 @@ fn tnb_error_order_profile_rows() {
             reason: U::ChildOverflow,
         },
     );
-    let error = tnb_error(
+    let signed = tnb_layout(
         7,
         &format!(
             "{} #b2 {{ overflow:auto; }} #b4 {{ margin-top:-1px; }}",
             baseline_css()
         ),
     );
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 6,
-                    reason: OwnerProfileReason::NonpositiveBlockHeight,
-                }
-            ))
-        ),
-        "{error:?}"
-    );
+    assert_eq!(signed.float, (16.0, 18.0));
+    assert_eq!(signed.borders[4], (26.0, 26.0));
     // E4: F width extraction follows the child loop (plan pin P2).
     assert_captured(
         tnb_error(
@@ -686,7 +676,7 @@ fn tnb_exact_and_one_short_work_at_every_node_count() {
                 + nodes * (nodes - 1) / 2
                 + 333 * (nodes - 4)
                 + 76 * (nodes - 2)
-                + 212 * (nodes - 3)
+                + 224 * (nodes - 3)
         );
         for tails in ["", "#b2, #b3, #b4 { overflow:hidden; }"] {
             let css = format!(
@@ -791,26 +781,16 @@ fn tnb_pins_admit_tail_overflow_with_literal_intervals() {
         rows += 1;
     }
     assert_eq!(rows, 9);
-    // P12: a signed B4 tail stays outside CTT and preserves the nonpositive refusal.
-    let error = tnb_error(
+    // S4 migration of P12: finite signed B4 is through after the retained new-BFC barrier.
+    let signed = tnb_layout(
         7,
         &format!(
             "{} #b2 {{ overflow:auto; }} #b4 {{ margin-top:-1px; }}",
             baseline_css()
         ),
     );
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 6,
-                    reason: OwnerProfileReason::NonpositiveBlockHeight,
-                }
-            ))
-        ),
-        "{error:?}"
-    );
+    assert_eq!(signed.float, (16.0, 18.0));
+    assert_eq!(signed.borders[4], (26.0, 26.0));
 }
 
 /// P4: the vertical-Auto priority fixture (tests 6299-6375) with a new-BFC last tail is

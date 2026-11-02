@@ -1,10 +1,10 @@
 //! CTB/CTT: an ordinary undecorated normal with literal computed zero/Auto height
-//! and literal computed zero min-height may collapse through in unsigned-normal scope.
+//! and literal computed zero min-height may collapse through in finite signed scope.
 //! B1 then fixes the float at its first-child hypothetical top; tail runs retain
 //! source-ordered adjoining margin members and the existing clearance split.
 //! NZS adds non-adjoining used-zero normals when computed height/min-height is
 //! nonliteral. Their own margins stay separate without inventing decoration or a BFC.
-//! Actual through participants still refuse a negative normal margin until S4.
+//! S4 admits finite signed normal margins for actual through participants.
 //! Carried first: VPH-L6 rows L1-L3 retain their existing offset witnesses.
 //!
 //! A child module of `viewport_heights` (CTB design section 6): it reuses `vph_row`,
@@ -69,20 +69,49 @@ fn ctb_vph_l6_l3_a_viewport_height_of_minus_one_half() {
 }
 
 /// The core refusal of a zero-height B1 whose own margins may adjoin.
-const CTB_B1_REFUSAL: &str =
-    "Core(Profile(Unsupported { source: 2, reason: NonpositiveBlockHeight }))";
-
-/// CG1 (RED guard; CM3, CM4 witness): a negative used vertical margin on any normal (B1's
-/// own top margin, B2's bottom margin, or at N6 B3's top margin) keeps the zero-height B1
-/// `NonpositiveBlockHeight` (CT-3). Passes before and after CTB.
+/// S4 migration of CG1: each original finite-negative input is admitted; B1/F
+/// placement and raw-edge parent height are pinned independently.
 #[test]
-fn ctb_red_guard_cg1_a_negative_normal_margin_keeps_the_refusal() {
-    for (nodes, fragment) in [
-        (5, "#b1 { height:0; margin-top:-1px; }"),
-        (5, "#b1 { height:0; } #b2 { margin-bottom:-1px; }"),
-        (6, "#b1 { height:0; } #b3 { margin-top:-1px; }"),
+fn ctb_cg1_finite_negative_normal_margins_admit_through_b1() {
+    for (nodes, fragment, b1, float, b2, height) in [
+        (
+            5,
+            "#b1 { height:0; margin-top:-1px; }",
+            10.0_f32,
+            11.0,
+            14.0,
+            7.0,
+        ),
+        (
+            5,
+            "#b1 { height:0; } #b2 { margin-bottom:-1px; }",
+            11.0,
+            11.0,
+            15.0,
+            4.0,
+        ),
+        (
+            6,
+            "#b1 { height:0; } #b3 { margin-top:-1px; }",
+            11.0,
+            11.0,
+            15.0,
+            12.0,
+        ),
     ] {
-        assert_eq!(zhn_error(nodes, fragment), CTB_B1_REFUSAL, "{fragment}");
+        let view = zhn_layout(nodes, fragment);
+        for (name, expected) in [
+            ("c0.border.top", b1),
+            ("float.top", float),
+            ("c2.border.top", b2),
+            ("p.used_height", height),
+        ] {
+            assert_eq!(
+                zhn_pick(&view, name).to_bits(),
+                expected.to_bits(),
+                "{fragment}: {name}"
+            );
+        }
     }
 }
 
@@ -262,14 +291,16 @@ fn ctb_c8_the_float_margins_do_not_count() {
     zhn_row(5, "#b1 { height:0; } #f { margin-bottom:-1px; }", &expected);
 }
 
-/// C9: a zero-height ordinary tail with a negative normal margin stays outside the
-/// CTT unsigned scope. B1 is positive so the first refusal remains source4.
+/// S4 migration of C9: the original signed through tail requires clearance;
+/// the negative margin remains part of the baseline and raw height observation.
 #[test]
-fn ctb_c9_a_zero_height_tail_stays_refused() {
-    assert_eq!(
-        zhn_error(5, "#b1 { height:1px; } #b2 { height:0; margin-top:-1px; }"),
-        "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))"
-    );
+fn ctb_c9_a_signed_through_tail_is_cleared() {
+    let view = zhn_layout(5, "#b1 { height:1px; } #b2 { height:0; margin-top:-1px; }");
+    assert_eq!(zhn_pick(&view, "c2.border.top"), 18.0);
+    // The preceding bottom margin 4 and incoming top -1 give baseline 12 + 4 - 1.
+    // The outgoing bottom margin 3 joins only after placement: clearance is 18 - 15.
+    assert_eq!(zhn_pick(&view, "tail0.clearance"), 3.0);
+    assert_eq!(zhn_pick(&view, "p.used_height"), 10.0);
 }
 
 /// C10 (CM27 witness): at N6 the later tail keeps the pairwise group: B3's hypothetical
@@ -302,12 +333,11 @@ fn ctb_c11_auto_vertical_margins() {
 /// NZS migration: preserve this source family and its next error or separated geometry.
 #[test]
 fn ctb_c12_the_error_order_moves() {
+    let signed = zhn_layout(5, "#b1 { height:auto; margin-top:-1px; }");
+    assert_eq!(zhn_pick(&signed, "c0.border.top"), 10.0);
+    assert_eq!(zhn_pick(&signed, "p.used_height"), 7.0);
     let parent = format!("#p {{ width:{PCT_F32_MAX_PX}; }}");
     for (fragment, expected) in [
-        (
-            "#b1 { height:auto; margin-top:-1px; }".to_owned(),
-            CTB_B1_REFUSAL.to_owned(),
-        ),
         (
             format!("{parent} #b1 {{ height:auto; padding-top:200%; }}"),
             "Percentage { source: 2, property: \"padding-top\", error: Unrepresentable }"
@@ -344,14 +374,14 @@ fn ctb_receipt(layout: &CapturedSiblingLayout<'_>) -> (usize, usize) {
 }
 
 /// CW (KW1-KW9 witness): facade `752 + 32N + 542(N-2) + 373(N-3)`, core
-/// `1062 + 12N + N(N-1)/2 + 333(N-4) + 76(N-2) + 212(N-3)`. Retained CT-15 charges:
+/// `1062 + 12N + N(N-1)/2 + 333(N-4) + 76(N-2) + 224(N-3)`. Retained CT-15 charges:
 /// facade 25 fixed + 8 per child + 2 per normal; core 49 fixed + 3 per child +
 /// 18 per normal + 17 per tail. At N5/N6/N7, a collapse-through B1 and the baseline use
 /// CTT additionally prepays core311+262T and facade57 (CTT-P2), without credit.
-/// exact facade 3284/4231/5178, core 2117/2755/3394; one short is `Work` or `Core(Work)`.
+/// exact facade 3284/4231/5178, core 2141/2791/3442; one short is `Work` or `Core(Work)`.
 #[test]
 fn ctb_cw_work() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             facade,
             752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3),
@@ -363,7 +393,7 @@ fn ctb_cw_work() {
                 + nodes * (nodes - 1) / 2
                 + 333 * (nodes - 4)
                 + 76 * (nodes - 2)
-                + 212 * (nodes - 3),
+                + 224 * (nodes - 3),
             "N{nodes}"
         );
         for fragment in ["#b1 { height:0; }", ""] {
@@ -386,3 +416,6 @@ fn ctb_cw_work() {
 
 #[path = "collapse_through_tails.rs"]
 mod collapse_through_tails;
+
+#[path = "signed_through_normals.rs"]
+mod signed_through_normals;

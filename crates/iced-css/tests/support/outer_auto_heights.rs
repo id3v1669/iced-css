@@ -453,7 +453,7 @@ fn oah_ae6_an_infinite_tentative_outer_height_fails_unless_capped() {
 /// unchanged by OAH (the formula also carries VPH's 45 and CTB's 25 + 8(N-2) + 2(N-3)).
 #[test]
 fn oah_ow_facade_work_charges_79_fixed() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             facade,
             752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3),

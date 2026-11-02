@@ -640,23 +640,25 @@ fn mmx_h3_auto_normal_with_min_height_is_admitted() {
     );
 }
 
-/// H4 (M14 witness): an Auto normal with a signed tail margin remains outside CTT
-/// and reaches the core's nonpositive-height refusal.
+/// S4 migration of H4: a finite signed Auto tail with a nonbinding maximum
+/// is through and retains its clearance baseline.
 #[test]
-fn mmx_h4_auto_normal_without_min_height_stays_height_kind() {
+fn mmx_h4_signed_auto_normal_is_through() {
     let css = mmx_css(5, "#b2 { height:auto; max-height:5px; margin-top:-1px; }");
-    let error = mmx_error(5, &css);
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: 4,
-                    reason: OwnerProfileReason::NonpositiveBlockHeight,
-                }
-            ))
-        ),
-        "{css}: {error:?}"
+    let view = mmx_layout(5, &css);
+    assert_eq!(
+        view.iter()
+            .find(|(name, _)| name == "c2.border.top")
+            .unwrap()
+            .1,
+        18.0
+    );
+    assert_eq!(
+        view.iter()
+            .find(|(name, _)| name == "p.used_height")
+            .unwrap()
+            .1,
+        10.0
     );
 }
 
@@ -1162,7 +1164,7 @@ const MMX_WORK_FRAGMENT: &str = "#o { min-width:1px; max-width:500px; min-height
 /// constraint nondefault; the facade charge is `752 + 32N + 542(N-2) + 373(N-3)`.
 #[test]
 fn mmx_work_thresholds_with_constraints() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             facade,
             752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3)

@@ -584,10 +584,10 @@ fn vph_receipt(layout: &CapturedSiblingLayout<'_>) -> (usize, usize) {
 /// fixed on every path): 3284, 4231 and 5178 at N5, N6 and N7 lay out at the exact limit
 /// and one short is `Work`, both through the new entry with the viewport height 40 on V1's
 /// fragment (the read path) and through the old entry on the baseline; the core work is
-/// 2117, 2755 and 3394.
+/// 2141, 2791 and 3442.
 #[test]
 fn vph_vw_facade_work_charges_45_fixed() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             facade,
             752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3),

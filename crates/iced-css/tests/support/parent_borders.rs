@@ -352,26 +352,6 @@ fn assert_facts_unsupported(
     );
 }
 
-fn assert_profile(
-    error: &SiblingLayoutError,
-    source: usize,
-    reason: OwnerProfileReason,
-    context: &str,
-) {
-    assert!(
-        matches!(
-            error,
-            SiblingLayoutError::Core(ClearanceSequenceError::Profile(
-                ClearanceOwnerError::Unsupported {
-                    source: actual,
-                    reason: actual_reason,
-                }
-            )) if *actual == source && *actual_reason == reason
-        ),
-        "{context}: expected {reason:?} at source {source}, got {error:?}"
-    );
-}
-
 fn assert_captured(error: &SiblingLayoutError, expected: CapturedClearanceError, context: &str) {
     assert!(
         matches!(error, SiblingLayoutError::Captured(actual) if *actual == expected),
@@ -973,20 +953,73 @@ fn pbr_n4_outer_borders_are_admitted_and_unused() {
 
 // Error-order pins (N6 baseline unless stated).
 
-/// X1: a later signed tail's core nonpositive refusal is reported beside B1's
-/// admitted border.
+/// A finite signed auto-height tail is admitted both with and without B1's border.
+/// B3 publishes its raw zero edge after B2's bottom plus max(3, 0) - 1;
+/// its raw bottom margin remains 4, so the parent bottom is that edge plus 4.
+fn assert_pbr_signed_zero_child(view: &PbrView, source: usize, bottom: f32, context: &str) {
+    let child = view
+        .children
+        .iter()
+        .find(|child| child.source == source)
+        .unwrap_or_else(|| panic!("{context}: missing signed zero child {source}"));
+    assert_eq!(child.used_height, 0.0, "{context}: used height");
+    assert_eq!(
+        child.border.top, child.border.bottom,
+        "{context}: border span"
+    );
+    assert_eq!(
+        child.content.top, child.content.bottom,
+        "{context}: content span"
+    );
+    assert_eq!(
+        child.content.top, child.border.top,
+        "{context}: shared zero edge"
+    );
+    assert_eq!(child.margin[0], -1.0, "{context}: signed top margin");
+    assert_eq!(child.margin[2], bottom, "{context}: bottom margin");
+}
+
+/// X1: the earlier admitted top border shifts the signed auto tail by one pixel.
 #[test]
 fn pbr_x01_height_kind_with_an_admitted_child_border() {
-    for fragment in [
-        "#b1 { border-top:1px solid; } #b3 { height:auto; margin-top:-1px; }",
-        "#b3 { height:auto; margin-top:-1px; }",
+    for (fragment, border_top, spans, parent_bottom) in [
+        (
+            "#b1 { border-top:1px solid; } #b3 { height:auto; margin-top:-1px; }",
+            1.0,
+            [(11.0, 13.0), (17.0, 19.0), (19.0, 20.0), (22.0, 22.0)],
+            26.0,
+        ),
+        (
+            "#b3 { height:auto; margin-top:-1px; }",
+            0.0,
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 19.0), (21.0, 21.0)],
+            25.0,
+        ),
     ] {
         let css = pbr_css(6, fragment);
-        assert_profile(
-            &pbr_error(6, &css),
-            5,
-            OwnerProfileReason::NonpositiveBlockHeight,
+        let view = pbr_layout(6, &css);
+        assert_p_vertical(
+            &view,
+            [
+                10.0,
+                11.0,
+                parent_bottom,
+                parent_bottom + 1.0,
+                parent_bottom + 1.0,
+            ],
             &css,
+        );
+        assert_child_spans(&view, &spans, &css);
+        assert_pbr_signed_zero_child(&view, 5, 4.0, &css);
+        assert_eq!(
+            view.children[0].content.top,
+            11.0 + border_top,
+            "{css}: B1 top border"
+        );
+        assert_eq!(
+            view.children[0].content.bottom,
+            12.0 + border_top,
+            "{css}: B1 content height"
         );
     }
 }
@@ -1032,62 +1065,116 @@ fn pbr_x03_parent_overflow_with_an_admitted_child_border() {
     }
 }
 
-/// X4: an earlier child's `NonpositiveBlockHeight` is reported beside a later child's
-/// admitted border (B1's negative top margin keeps it, CTB).
+/// X4: the earlier signed zero child is admitted beside a later horizontal border.
+/// The leading raw edge is 11 - 1 = 10; the float remains at 11. The next
+/// normal starts at 11 + max(4, 3) - 1 = 14, below the float bottom 13.
 #[test]
 fn pbr_x04_earlier_height_with_a_later_child_border() {
-    for fragment in [
-        "#b2 { border-left:1px solid; } #b1 { height:0; margin-top:-1px; }",
-        "#b1 { height:0; margin-top:-1px; }",
+    for (fragment, left_border) in [
+        (
+            "#b2 { border-left:1px solid; } #b1 { height:0; margin-top:-1px; }",
+            1.0,
+        ),
+        ("#b1 { height:0; margin-top:-1px; }", 0.0),
     ] {
         let css = pbr_css(5, fragment);
-        assert_profile(
-            &pbr_error(5, &css),
-            2,
-            OwnerProfileReason::NonpositiveBlockHeight,
-            &css,
+        let view = pbr_layout(5, &css);
+        assert_p_vertical(&view, [10.0, 11.0, 18.0, 19.0, 19.0], &css);
+        assert_child_spans(&view, &[(10.0, 10.0), (11.0, 13.0), (14.0, 15.0)], &css);
+        assert_pbr_signed_zero_child(&view, 2, 4.0, &css);
+        assert_eq!(
+            view.children[2].content.left, left_border,
+            "{css}: B2 left border"
+        );
+        assert_eq!(
+            view.children[2].content.right, 100.0,
+            "{css}: B2 right edge"
+        );
+        assert_eq!(
+            view.children[2].used_width,
+            100.0 - left_border,
+            "{css}: B2 content width"
         );
     }
 }
 
-/// X5 (CBR): an earlier child's admitted border leaves a later child's height fault
-/// as the first error. Its negative tail margin preserves the CTT scope refusal.
+/// X5: an earlier admitted bottom border shifts a later signed zero child.
+/// B1's bottom is 12 + border; the float starts four pixels later and has
+/// height two. Clearance places B2's zero edge at that float bottom, and
+/// B2's retained bottom margin of three determines the parent's content bottom.
 #[test]
-fn pbr_x05_admitted_child_border_leaves_the_later_height_fault() {
-    let css = pbr_css(
-        5,
-        "#b1 { border-bottom:2px solid; } #b2 { height:0; margin-top:-1px; }",
-    );
-    assert_profile(
-        &pbr_error(5, &css),
-        4,
-        OwnerProfileReason::NonpositiveBlockHeight,
-        &css,
-    );
-    let control = pbr_css(5, "#b2 { height:0; margin-top:-1px; }");
-    assert_profile(
-        &pbr_error(5, &control),
-        4,
-        OwnerProfileReason::NonpositiveBlockHeight,
-        &control,
-    );
-}
-
-/// X6: within one child, the height check precedes the border check, which admits
-/// any finite nonnegative width. (ZHN) Left and right borders do not separate the
-/// margins, so the zero height stays refused (B1's negative top margin, CTB).
-#[test]
-fn pbr_x06_own_height_with_an_own_border() {
-    for fragment in [
-        "#b1 { border-left:1px solid; border-right:1px solid; height:0; margin-top:-1px; }",
-        "#b1 { height:0; margin-top:-1px; }",
+fn pbr_x05_admitted_child_border_preserves_later_signed_zero_admission() {
+    for (fragment, border_bottom, spans, parent_bottom) in [
+        (
+            "#b1 { border-bottom:2px solid; } #b2 { height:0; margin-top:-1px; }",
+            2.0,
+            [(11.0, 14.0), (18.0, 20.0), (20.0, 20.0)],
+            23.0,
+        ),
+        (
+            "#b2 { height:0; margin-top:-1px; }",
+            0.0,
+            [(11.0, 12.0), (16.0, 18.0), (18.0, 18.0)],
+            21.0,
+        ),
     ] {
         let css = pbr_css(5, fragment);
-        assert_profile(
-            &pbr_error(5, &css),
-            2,
-            OwnerProfileReason::NonpositiveBlockHeight,
+        let view = pbr_layout(5, &css);
+        assert_p_vertical(
+            &view,
+            [
+                10.0,
+                11.0,
+                parent_bottom,
+                parent_bottom + 1.0,
+                parent_bottom + 1.0,
+            ],
             &css,
+        );
+        assert_child_spans(&view, &spans, &css);
+        assert_pbr_signed_zero_child(&view, 4, 3.0, &css);
+        assert_eq!(
+            view.children[0].content.bottom, 12.0,
+            "{css}: B1 content bottom"
+        );
+        assert_eq!(
+            view.children[0].border.bottom,
+            12.0 + border_bottom,
+            "{css}: B1 bottom border"
+        );
+    }
+}
+
+/// X6: horizontal borders do not separate the zero child's vertical margins.
+/// Both variants have the same signed leading-through geometry as X4; the
+/// admitted left/right borders only inset the child's horizontal content band.
+#[test]
+fn pbr_x06_own_height_with_an_own_border() {
+    for (fragment, horizontal_border) in [
+        (
+            "#b1 { border-left:1px solid; border-right:1px solid; height:0; margin-top:-1px; }",
+            1.0,
+        ),
+        ("#b1 { height:0; margin-top:-1px; }", 0.0),
+    ] {
+        let css = pbr_css(5, fragment);
+        let view = pbr_layout(5, &css);
+        assert_p_vertical(&view, [10.0, 11.0, 18.0, 19.0, 19.0], &css);
+        assert_child_spans(&view, &[(10.0, 10.0), (11.0, 13.0), (14.0, 15.0)], &css);
+        assert_pbr_signed_zero_child(&view, 2, 4.0, &css);
+        assert_eq!(
+            view.children[0].content.left, horizontal_border,
+            "{css}: B1 left inset"
+        );
+        assert_eq!(
+            view.children[0].content.right,
+            100.0 - horizontal_border,
+            "{css}: B1 right inset"
+        );
+        assert_eq!(
+            view.children[0].used_width,
+            100.0 - 2.0 * horizontal_border,
+            "{css}: B1 content width"
         );
     }
 }

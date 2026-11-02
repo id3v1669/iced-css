@@ -151,40 +151,51 @@ fn ctt_separated_nonliteral_zeros_remain_admitted() {
 }
 
 #[test]
-fn ctt_signed_normal_scope_refuses_first_needed_through_tail() {
-    let refusal = "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))";
-    for suffix in [
-        "#b1 { margin-top:-1px; }",
-        "#b1 { margin-bottom:-1px; }",
-        "#b2 { margin-top:-1px; }",
-        "#b2 { margin-bottom:-1px; }",
-        "#b3 { margin-top:-1px; }",
-        "#b3 { margin-bottom:-1px; }",
+fn ctt_signed_normal_scope_admits_finite_through_tails() {
+    for (suffix, b2, b3, height) in [
+        ("#b1 { margin-top:-1px; }", 16.0_f32, 22.0, 15.0),
+        ("#b1 { margin-bottom:-1px; }", 15.0, 22.0, 14.0),
+        ("#b2 { margin-top:-1px; }", 16.0, 22.0, 15.0),
+        ("#b2 { margin-bottom:-1px; }", 17.0, 16.0, 8.0),
+        ("#b3 { margin-top:-1px; }", 17.0, 22.0, 16.0),
+        ("#b3 { margin-bottom:-1px; }", 17.0, 23.0, 16.0),
     ] {
-        assert_eq!(
-            zhn_error(6, &format!("{CTT_G1} {suffix}")),
-            refusal,
-            "{suffix}"
+        let view = zhn_layout(6, &format!("{CTT_G1} {suffix}"));
+        ctt_facade_numbers(
+            &view,
+            &[
+                ("c2.border.top", b2),
+                ("c3.border.top", b3),
+                ("p.used_height", height),
+            ],
+            suffix,
         );
     }
-    assert_eq!(
-        zhn_error(
-            6,
-            &format!("{CTT_G1} #b1 {{ height:0; }} #b3 {{ margin-top:-1px; }}")
-        ),
-        CTB_B1_REFUSAL,
+    let leading = zhn_layout(
+        6,
+        &format!("{CTT_G1} #b1 {{ height:0; }} #b3 {{ margin-top:-1px; }}"),
     );
-    // F's signed margin is excluded; its outer extent is still nonnegative.
+    ctt_facade_numbers(
+        &leading,
+        &[
+            ("float.top", 11.0),
+            ("c2.border.top", 15.0),
+            ("c3.border.top", 20.0),
+            ("p.used_height", 14.0),
+        ],
+        "signed leading through",
+    );
+    // F's signed margin remains outside normal participation; its outer extent is nonnegative.
     let view = zhn_layout(6, &format!("{CTT_G1} #f {{ margin-bottom:-1px; }}"));
     ctt_facade_numbers(
         &view,
         &[
-            ("float.top", 17.),
-            ("float.bottom", 18.),
-            ("c1.border.bottom", 19.),
-            ("c2.border.top", 17.),
-            ("c3.border.top", 23.),
-            ("p.used_height", 13.),
+            ("float.top", 17.0),
+            ("float.bottom", 18.0),
+            ("c1.border.bottom", 19.0),
+            ("c2.border.top", 17.0),
+            ("c3.border.top", 23.0),
+            ("p.used_height", 13.0),
         ],
         "signed F excluded from normal scope",
     );

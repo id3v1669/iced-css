@@ -262,9 +262,10 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// when its own top and bottom margins are not adjoining (G6a, CSS2.2 8.3.1), and Legacy
 /// admission is unchanged.
 /// CTB/CTT (the user's U1=A; CSS2.2 8.3.1, 9.5.1): an ordinary normal with used height
-/// +0 or -0 and no vertical border or padding collapses through when no normal (B1 or a tail)
-/// has a negative or NaN used vertical margin (F's margins do not count); otherwise it
-/// stays `NonpositiveBlockHeight`, a scope choice of this slice. F's hypothetical top is
+/// +0 or -0 and no vertical border or padding admits finite signed normal margins (S4).
+/// A NaN or negative-infinity normal margin retains the earlier eligibility refusal
+/// `NonpositiveBlockHeight`; positive infinity reaches source-ordered validation.
+/// F's margins do not enter this eligibility scan. F's hypothetical top is
 /// B1's top border edge when B1 collapses through. Consecutive through tails extend
 /// the same adjoining member run. Clearance splits the incoming run from the clearing
 /// top margin; later through tails use the published cleared border and clearing top
@@ -276,9 +277,9 @@ impl<'s> ClearanceSequenceOwner<'s> {
 /// P and every child may be relatively positioned (REL, CSS2.2 9.4.3); the owner
 /// publishes their normal-flow geometry, which the offsets do not change, and the
 /// outer source stays static.
-/// NZS admits an explicit NonAdjoiningZero for a normal without extending the
-/// unsigned scope of actual through participants. Its own margins stay separate.
-/// Work `1062 + 12*N + N*(N-1)/2 + 333*(N-4) + 76*(N-2) + 212*(N-3)` is prepaid,
+/// NZS admits an explicit NonAdjoiningZero whose own margins stay separate;
+/// S4 does not change that provenance or the Legacy profile.
+/// Work `1062 + 12*N + N*(N-1)/2 + 333*(N-4) + 76*(N-2) + 224*(N-3)` is prepaid,
 /// including constant-size typed margin validation and used-value service for each
 /// child and the float's outer-extent sign check, outer-extent, content-band and
 /// vertical content stages, every child's border terms and padding publications, and
@@ -385,19 +386,22 @@ fn build_with_reserves<'s>(
 
     validate_outer(input.outer, 0).map_err(profile)?;
     validate_sequence_parent(input.parent, 1).map_err(profile)?;
-    // CTB/CTT (the user's U1=A; CSS2.2 8.3.1): a normal may collapse through only when no normal (B1
-    // or a tail) has a negative used vertical margin. Refusing one is a scope choice of
-    // this slice (the mixed-sign group and the signed P route come later), not a CSS2.2
-    // requirement. F's margins do not count; a NaN margin keeps the refusal.
-    let unsigned_normals = input.children[..1]
+    // S4: admit finite signed normals without changing invalid-input precedence.
+    // NaN and negative infinity retain the old eligibility refusal; positive
+    // infinity reaches source-ordered finite validation. F remains excluded.
+    let through_eligible = input.children[..1]
         .iter()
         .chain(&input.children[2..])
-        .all(|facts| facts.margin.used_top() >= 0. && facts.margin.used_bottom() >= 0.);
+        .all(|facts| {
+            let top = facts.margin.used_top();
+            let bottom = facts.margin.used_bottom();
+            (top >= 0. || top.is_finite()) && (bottom >= 0. || bottom.is_finite())
+        });
     let mut checked_float_height = None;
     for (offset, facts) in input.children.iter().copied().enumerate() {
         let source = offset + 2;
         let height =
-            validate_sequence_child(facts, source, source == 3, source != 3 && unsigned_normals)
+            validate_sequence_child(facts, source, source == 3, source != 3 && through_eligible)
                 .map_err(profile)?;
         if source == 3 {
             checked_float_height = Some(height);
@@ -670,6 +674,11 @@ fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
         // These conservative policy charges retain all CT15/CTT units without credit.
         // NZS-FLIP-CORE-WORK: the FLIP stage omits only these new charges.
         .checked_add(children.checked_mul(12)?)?
+        .checked_add(nodes.checked_sub(3)?.checked_mul(12)?)?
+        // S4: twelve additional units per normal, charged on every path: two
+        // cached scalar bindings (2), two finite predicate call/return/tests (6),
+        // and two disjunctions (4). All prior charges remain without credit.
+        // S4-FLIP-WORK: omit only this addition in the finite accounting stage.
         .checked_add(nodes.checked_sub(3)?.checked_mul(12)?)
 }
 
@@ -752,7 +761,7 @@ mod tests {
         }
         let limits = ClearanceSequenceLimits {
             sources: NonZeroUsize::new(5).unwrap(),
-            work: NonZeroUsize::new(2117).unwrap(),
+            work: NonZeroUsize::new(2141).unwrap(),
             retained_bytes: NonZeroUsize::new(sequence_requested_retained_bytes(5).unwrap())
                 .unwrap(),
         };
@@ -1177,7 +1186,7 @@ mod tests {
         let (sources, mut limits) = fixture();
         let (outer, parent, mut children) = input(&sources);
         vertical_auto(&mut children);
-        for short in [2116, 480, 419, 337, 269, 213] {
+        for short in [2140, 480, 419, 337, 269, 213] {
             limits.work = NonZeroUsize::new(short).unwrap();
             let error = build_with_reserve(
                 &sources,
@@ -1193,7 +1202,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, ClearanceSequenceError::Work));
         }
-        limits.work = NonZeroUsize::new(2117).unwrap();
+        limits.work = NonZeroUsize::new(2141).unwrap();
         let mut calls = 0;
         limits.retained_bytes = NonZeroUsize::MAX;
         let owner = build_with_reserve(
@@ -1213,7 +1222,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(calls, 1);
-        assert_eq!(owner.receipt().work, 2117);
+        assert_eq!(owner.receipt().work, 2141);
         assert_eq!(
             owner.receipt().retained_bytes,
             owner.receipt().record_capacity * size_of::<SequenceNormalPlacement>()
@@ -1243,9 +1252,9 @@ mod tests {
         assert_eq!(retained_bytes(largest, 0), Some(largest * size));
         assert_eq!(retained_bytes(largest + 1, 0), None);
         assert_eq!(retained_bytes(usize::MAX, 0), None);
-        assert_eq!(sequence_work(5, 1), Some(2117));
-        assert_eq!(sequence_work(6, 2), Some(2755));
-        assert_eq!(sequence_work(7, 3), Some(3394));
+        assert_eq!(sequence_work(5, 1), Some(2141));
+        assert_eq!(sequence_work(6, 2), Some(2791));
+        assert_eq!(sequence_work(7, 3), Some(3442));
         assert_eq!(sequence_work(1, 0), None);
     }
     #[test]
@@ -1826,7 +1835,7 @@ mod tests {
                 reason: OwnerProfileReason::HeightKind,
             })
         ));
-        limits.work = NonZeroUsize::new(2116).unwrap();
+        limits.work = NonZeroUsize::new(2140).unwrap();
         assert!(matches!(
             build_with_reserves(
                 &sources,

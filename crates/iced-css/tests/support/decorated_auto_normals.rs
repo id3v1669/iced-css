@@ -95,13 +95,14 @@ fn daz_red_guard_dg5_a_percentage_of_a_zero_width_does_not_separate() {
         "#p { width:0; } #b2 { height:auto; min-height:0%; padding-top:1%; }",
         4,
     );
-    assert_eq!(
-        zhn_error(
-            5,
-            "#p { width:0; } #b2 { height:0; margin-top:-1px; padding-top:1%; }"
-        ),
-        "Core(Profile(Unsupported { source: 4, reason: NonpositiveBlockHeight }))",
+    let signed = zhn_layout(
+        5,
+        "#p { width:0; } #b2 { height:0; margin-top:-1px; padding-top:1%; }",
     );
+    assert_eq!(zhn_pick(&signed, "c2.border.top"), 18.0);
+    // B1 bottom 12 + preceding margin 4 + incoming top -1 = 15; F bottom is 18.
+    assert_eq!(zhn_pick(&signed, "tail0.clearance"), 3.0);
+    assert_eq!(zhn_pick(&signed, "p.used_height"), 10.0);
 }
 
 /// NZS migration: preserve this source family and its next error or separated geometry.
@@ -367,7 +368,7 @@ fn daz_d15_an_em_padding_separates_the_margins() {
 /// is unchanged.
 #[test]
 fn daz_d16_facade_work_charges_58_per_normal() {
-    for (nodes, facade, core) in [(5, 3284, 2117), (6, 4231, 2755), (7, 5178, 3394)] {
+    for (nodes, facade, core) in [(5, 3284, 2141), (6, 4231, 2791), (7, 5178, 3442)] {
         assert_eq!(
             facade,
             752 + 32 * nodes + 542 * (nodes - 2) + 373 * (nodes - 3),
