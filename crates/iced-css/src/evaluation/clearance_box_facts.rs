@@ -28,6 +28,7 @@ use iced_css_core::{
 };
 use std::num::NonZeroUsize;
 mod resolve;
+pub(super) use resolve::fallback_x_height;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoxFactOrigin {
@@ -594,12 +595,52 @@ pub(super) fn prepare_box_facts<'h>(
     })
 }
 
+pub(super) trait BoxRowObserver<'r> {
+    fn observe(
+        &mut self,
+        original: usize,
+        winners: &PropertyWinners<'r>,
+        row: &ClearanceBoxFact,
+        ids: &[PropertyId; 29],
+    );
+}
+
+struct NoBorderObserver;
+impl<'r> BoxRowObserver<'r> for NoBorderObserver {
+    fn observe(
+        &mut self,
+        _original: usize,
+        _winners: &PropertyWinners<'r>,
+        _row: &ClearanceBoxFact,
+        _ids: &[PropertyId; 29],
+    ) {
+    }
+}
+
 pub(super) fn evaluate_box_rows<'h>(
     projection: &impl ProjectionView<'h>,
     display: &SourceDisplay<'_, '_, '_>,
     limits: ClearanceBoxFactsLimits,
     prepared: &mut PreparedBoxFacts,
     rows: &mut [ClearanceBoxFact],
+) -> Result<(), ClearanceBoxFactsError> {
+    evaluate_box_rows_observed(
+        projection,
+        display,
+        limits,
+        prepared,
+        rows,
+        &mut NoBorderObserver,
+    )
+}
+
+pub(super) fn evaluate_box_rows_observed<'h, 'r>(
+    projection: &impl ProjectionView<'h>,
+    display: &SourceDisplay<'_, '_, 'r>,
+    limits: ClearanceBoxFactsLimits,
+    prepared: &mut PreparedBoxFacts,
+    rows: &mut [ClearanceBoxFact],
+    observer: &mut impl BoxRowObserver<'r>,
 ) -> Result<(), ClearanceBoxFactsError> {
     use ClearanceBoxFactsError as E;
     // The mode bound by `prepare_box_facts` selects both the charge and the loop.
@@ -716,6 +757,9 @@ pub(super) fn evaluate_box_rows<'h>(
                 ));
             }
         }
+        // CF-34 captures graph-owned operands only. Reporting failure is retained
+        // by the observer; all ordinary pseudo/remaining-row checks still run.
+        observer.observe(original, &winners, &row, ids);
         for (target, pseudo) in [
             (BoxFactTarget::Before, PseudoElement::Before),
             (BoxFactTarget::After, PseudoElement::After),

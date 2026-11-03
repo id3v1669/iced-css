@@ -142,7 +142,7 @@ fn inherited_length_percentage(
 /// of `ex`. This layer reads no font metrics, so it is the 0.5em fallback: one f32 product,
 /// exact except below 2^-125 with an odd last bit (then nearest, ties to even). A measured
 /// x-height (U5 option A, a later increment) replaces this function and its callers.
-fn fallback_x_height(font_size: f32) -> f32 {
+pub(in crate::evaluation) fn fallback_x_height(font_size: f32) -> f32 {
     0.5 * font_size
 }
 /// One row's longhand resolver: its original index, the numeric limits and (EML) its

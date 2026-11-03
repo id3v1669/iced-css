@@ -126,3 +126,70 @@ fn invalid_configuration_and_insufficient_byte_budget_remain_distinct() {
     assert_eq!(state.live_count(), 0);
     assert_eq!(state.retained_bytes(), 0);
 }
+
+// CF34: replacement must stage an independent candidate and retain all old state
+// on count/byte failure. A mutation that edits self before reserve breaks this.
+#[test]
+fn replacement_preserves_original_on_error() {
+    let first = key();
+    let second = CauseKey {
+        semantic: NonZeroU64::new(2).unwrap(),
+        ..first
+    };
+    let mut old = tracker(1);
+    old.observe(first).unwrap();
+    let bytes = old.retained_bytes();
+    assert!(matches!(
+        old.prepare_replacement(&[first, second]),
+        Err(CauseError::Capacity)
+    ));
+    assert_eq!(old.keys(), &[first]);
+    assert_eq!(old.retained_bytes(), bytes);
+    assert_eq!(old.observe(first), Ok(Observation::Suppressed));
+    let mut replacement = old.prepare_replacement(&[second]).unwrap();
+    assert_eq!(old.keys(), &[first]);
+    assert_eq!(replacement.keys(), &[second]);
+    assert_eq!(replacement.observe(second), Ok(Observation::Suppressed));
+    assert_eq!(replacement.observe(first), Err(CauseError::Capacity));
+    let too_small = CauseTracker::new(CauseLimits::new(2, 1).unwrap());
+    assert!(matches!(
+        too_small.prepare_replacement(&[first]),
+        Err(CauseError::Capacity)
+    ));
+    assert_eq!(too_small.live_count(), 0);
+    assert_eq!(too_small.retained_bytes(), 0);
+}
+
+// Empty replacement must free candidate capacity without clearing the old owner.
+#[test]
+fn replacement_empty_releases_capacity() {
+    let first = key();
+    let mut old = tracker(1);
+    old.observe(first).unwrap();
+    let mut replacement = old.prepare_replacement(&[]).unwrap();
+    assert_eq!(replacement.live_count(), 0);
+    assert_eq!(replacement.retained_bytes(), 0);
+    assert_eq!(old.keys(), &[first]);
+    assert_eq!(replacement.observe(first), Ok(Observation::NewCause));
+    assert_eq!(old.observe(first), Ok(Observation::Suppressed));
+}
+
+// Duplicate input must fail even when count/byte budgets admit both entries.
+#[test]
+fn replacement_rejects_duplicates() {
+    let first = key();
+    let mut old = tracker(3);
+    old.observe(first).unwrap();
+    let second = CauseKey {
+        semantic: NonZeroU64::new(2).unwrap(),
+        ..first
+    };
+    assert!(matches!(
+        old.prepare_replacement(&[second, second]),
+        Err(CauseError::Capacity)
+    ));
+    assert_eq!(old.keys(), &[first]);
+    let distinct = old.prepare_replacement(&[second, first]).unwrap();
+    assert_eq!(distinct.keys(), &[second, first]);
+    assert_eq!(old.observe(first), Ok(Observation::Suppressed));
+}

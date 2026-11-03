@@ -30648,3 +30648,6 @@ fn nzs_assert_zero_layout(nodes: usize, fragment: &str, source: usize) {
         }
     });
 }
+
+#[path = "support/border_diagnostics.rs"]
+mod border_diagnostics;

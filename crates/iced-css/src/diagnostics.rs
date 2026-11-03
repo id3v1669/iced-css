@@ -1,4 +1,5 @@
 //! Host-owned diagnostic delivery through unmodified iced's Subscription API.
+pub mod border;
 use iced::{Subscription, futures::Stream};
 use iced_css_core::diagnostics::{Admission, Delivery, Diagnostic, QueueLimits};
 use std::{
@@ -25,6 +26,7 @@ use std::{
 
 struct State {
     queue: DiagnosticQueue,
+    border: Option<border::BorderState>,
     alive: bool,
     receiver: Weak<()>,
     waker: Option<Waker>,
@@ -62,6 +64,7 @@ impl DiagnosticHost {
             shared: Arc::new(Shared {
                 state: Mutex::new(State {
                     queue: DiagnosticQueue::new(id, limits),
+                    border: None,
                     alive: true,
                     receiver: Weak::new(),
                     waker: None,
@@ -104,6 +107,7 @@ impl Drop for DiagnosticHost {
                 .unwrap_or_else(|error| error.into_inner());
             state.alive = false;
             state.queue.close();
+            state.border = None;
             state.receiver = Weak::new();
             state.waker.take()
         };

@@ -267,7 +267,42 @@ pub enum LengthTarget {
     Percentage(Decimal),
     Auto,
 }
+/// Borrowed normalized operands for bounded border diagnostic identity.
+/// This view performs neither conversion nor allocation. Limbs remain owned by
+/// the immutable parsed value; their base is 10^9, least significant first.
+#[derive(Debug, Clone, Copy)]
+pub enum BorderLengthView<'a> {
+    Absolute {
+        negative: bool,
+        limbs: &'a [u32],
+        denominator: [usize; 4],
+    },
+    Relative {
+        negative: bool,
+        limbs: &'a [u32],
+        scale: usize,
+        unit: RelativeUnit,
+    },
+}
+
 impl LengthTarget {
+    pub fn border_diagnostic_view(&self) -> Option<BorderLengthView<'_>> {
+        match self {
+            Self::Absolute(value) => Some(BorderLengthView::Absolute {
+                negative: value.negative,
+                limbs: &value.numerator.0,
+                denominator: value.denominator,
+            }),
+            Self::Relative(value, unit) => Some(BorderLengthView::Relative {
+                negative: value.is_negative(),
+                limbs: &value.coefficient.0,
+                scale: value.scale,
+                unit: *unit,
+            }),
+            Self::Percentage(_) | Self::Auto => None,
+        }
+    }
+
     /// Parse one decoded length-like value, not a declaration or full CSS token stream.
     /// Property-specific keyword/range validity is a later, separate check.
     pub fn parse(input: &str, limits: NumericLimits) -> Result<Self, NumericError> {
@@ -518,3 +553,85 @@ pub use decimal_arithmetic::{
 
 #[path = "comparison.rs"]
 mod comparison;
+
+#[cfg(test)]
+mod cf34_border_view_tests {
+    use super::*;
+    use std::num::NonZeroUsize;
+
+    fn limits() -> NumericLimits {
+        NumericLimits {
+            digits: NonZeroUsize::new(256).unwrap(),
+            work: NonZeroUsize::new(100_000).unwrap(),
+        }
+    }
+
+    #[test]
+    fn border_view_preserves_canonical_length_equality() {
+        for input in ["1in", "96px", "96.000px"] {
+            let value = LengthTarget::parse(input, limits()).unwrap();
+            let Some(BorderLengthView::Absolute {
+                negative,
+                limbs,
+                denominator,
+            }) = value.border_diagnostic_view()
+            else {
+                panic!("absolute border operand");
+            };
+            assert!(!negative);
+            assert_eq!(limbs, &[96]);
+            assert_eq!(denominator, [0; 4]);
+        }
+        for input in ["10em", "10.000em"] {
+            let value = LengthTarget::parse(input, limits()).unwrap();
+            let Some(BorderLengthView::Relative {
+                negative,
+                limbs,
+                scale,
+                unit,
+            }) = value.border_diagnostic_view()
+            else {
+                panic!("relative border operand");
+            };
+            assert!(!negative);
+            assert_eq!(limbs, &[10]);
+            assert_eq!(scale, 0);
+            assert_eq!(unit, RelativeUnit::Em);
+        }
+        let zero = LengthTarget::parse("-0em", limits()).unwrap();
+        assert!(matches!(
+            zero.border_diagnostic_view(),
+            Some(BorderLengthView::Relative {
+                negative: false,
+                limbs: [],
+                scale: 0,
+                unit: RelativeUnit::Em,
+            })
+        ));
+    }
+
+    #[test]
+    fn border_view_does_not_convert_or_allocate() {
+        let value =
+            LengthTarget::parse("1000000000000000000000000000000000000000px", limits()).unwrap();
+        let LengthTarget::Absolute(original) = &value else {
+            panic!("absolute");
+        };
+        let Some(BorderLengthView::Absolute {
+            limbs, denominator, ..
+        }) = value.border_diagnostic_view()
+        else {
+            panic!("borrowed absolute view");
+        };
+        assert!(std::ptr::eq(limbs, original.numerator.0.as_slice()));
+        assert_eq!(limbs, &[0, 0, 0, 0, 1000]);
+        assert_eq!(denominator, [0; 4]);
+        assert!(
+            LengthTarget::parse("50%", limits())
+                .unwrap()
+                .border_diagnostic_view()
+                .is_none()
+        );
+        assert!(LengthTarget::Auto.border_diagnostic_view().is_none());
+    }
+}

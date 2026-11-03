@@ -63,6 +63,43 @@ impl CauseTracker {
             live: Vec::new(),
         }
     }
+    /// Read the current canonical keys without transferring ownership.
+    pub fn keys(&self) -> &[CauseKey] {
+        &self.live
+    }
+    /// Prepare an independent replacement without changing this tracker.
+    /// Duplicate keys, insufficient capacity and allocation failure leave self intact.
+    pub fn prepare_replacement(&self, keys: &[CauseKey]) -> Result<Self, CauseError> {
+        let requested = keys
+            .len()
+            .checked_mul(std::mem::size_of::<CauseKey>())
+            .ok_or(CauseError::Capacity)?;
+        if keys.len() > self.limits.count || requested > self.limits.bytes {
+            return Err(CauseError::Capacity);
+        }
+        for (index, key) in keys.iter().enumerate() {
+            if keys[..index].contains(key) {
+                return Err(CauseError::Capacity);
+            }
+        }
+        let mut live = Vec::new();
+        if !keys.is_empty() {
+            live.try_reserve_exact(keys.len())
+                .map_err(|_| CauseError::Allocation)?;
+            let actual = live
+                .capacity()
+                .checked_mul(std::mem::size_of::<CauseKey>())
+                .ok_or(CauseError::Capacity)?;
+            if actual > self.limits.bytes {
+                return Err(CauseError::Capacity);
+            }
+            live.extend_from_slice(keys);
+        }
+        Ok(Self {
+            limits: self.limits,
+            live,
+        })
+    }
     /// Suppression precedes report admission. A NewCause can still become a queue
     /// omission; a suppressed duplicate must not increment that omission count.
     pub fn observe(&mut self, key: CauseKey) -> Result<Observation, CauseError> {

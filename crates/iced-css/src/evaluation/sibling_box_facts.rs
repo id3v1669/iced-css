@@ -2,12 +2,17 @@
 //! This stage establishes computed properties only, rather than used geometry.
 
 use super::{
+    border_diagnostics::Collector,
     clearance_box_facts::{
         BoxFactMode, ClearanceBoxFact, ClearanceBoxFactsError, ClearanceBoxFactsLimits,
-        ClearanceBoxFactsReceipt, evaluate_box_rows, initial_box_fact, prepare_box_facts,
+        ClearanceBoxFactsReceipt, evaluate_box_rows, evaluate_box_rows_observed, initial_box_fact,
+        prepare_box_facts,
     },
     sibling_source_projection::SiblingSourceProjection,
     source_display::SourceDisplay,
+};
+use crate::diagnostics::border::{
+    BorderCaptureLimits, BorderDeclarationBinding, BorderReporter, ReportingFacts,
 };
 use iced_css_core::values::{
     NumericLimits,
@@ -192,6 +197,106 @@ pub fn evaluate_sibling_box_facts_with_font_medium<'p, 'h, 'd, 's, 'b, 'r>(
         limits,
         |rows, requested| rows.try_reserve_exact(requested),
     )
+}
+
+/// CF-34: compute the unchanged Sequence facts and separately prepare a complete
+/// border observation batch. Reporting failures are nonfatal to valid facts;
+/// every ordinary fact error keeps its existing precedence. This does not publish.
+pub fn evaluate_sibling_box_facts_reporting<'p, 'h, 'd, 's, 'b, 'r>(
+    projection: &'p SiblingSourceProjection<'h>,
+    display: &'d SourceDisplay<'s, 'b, 'r>,
+    limits: SiblingBoxFactsLimits,
+    reporter: &BorderReporter<'_>,
+    bindings: &[BorderDeclarationBinding<'_>],
+    reporting_limits: BorderCaptureLimits,
+) -> Result<ReportingFacts<SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>>, SiblingBoxFactsError> {
+    evaluate_reporting(
+        projection,
+        display,
+        None,
+        limits,
+        reporter,
+        bindings,
+        reporting_limits,
+    )
+}
+
+/// CF-34 with the same font-medium validation and conversion context as the
+/// existing font-aware Sequence entry. A medium failure precedes all other checks.
+pub fn evaluate_sibling_box_facts_with_font_medium_reporting<'p, 'h, 'd, 's, 'b, 'r>(
+    projection: &'p SiblingSourceProjection<'h>,
+    display: &'d SourceDisplay<'s, 'b, 'r>,
+    medium: f32,
+    limits: SiblingBoxFactsLimits,
+    reporter: &BorderReporter<'_>,
+    bindings: &[BorderDeclarationBinding<'_>],
+    reporting_limits: BorderCaptureLimits,
+) -> Result<ReportingFacts<SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>>, SiblingBoxFactsError> {
+    let table = FontSizeTable::new(medium).map_err(SiblingBoxFactsError::FontMedium)?;
+    evaluate_reporting(
+        projection,
+        display,
+        Some(table),
+        limits,
+        reporter,
+        bindings,
+        reporting_limits,
+    )
+}
+
+fn evaluate_reporting<'p, 'h, 'd, 's, 'b, 'r>(
+    projection: &'p SiblingSourceProjection<'h>,
+    display: &'d SourceDisplay<'s, 'b, 'r>,
+    font: Option<FontSizeTable>,
+    limits: SiblingBoxFactsLimits,
+    reporter: &BorderReporter<'_>,
+    bindings: &[BorderDeclarationBinding<'_>],
+    reporting_limits: BorderCaptureLimits,
+) -> Result<ReportingFacts<SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>>, SiblingBoxFactsError> {
+    use SiblingBoxFactsError as E;
+    let count = projection.nodes().len();
+    if count < 5 || count > limits.sources.get() {
+        return Err(E::Sources);
+    }
+    let mut prepared = prepare_box_facts(
+        projection,
+        display,
+        limits.evaluation,
+        BoxFactMode::Sequence,
+        font,
+    )
+    .map_err(E::Evaluation)?;
+    let (mut rows, owned_heap_bytes) =
+        allocate_rows(count, limits.retained_bytes, |rows, requested| {
+            rows.try_reserve_exact(requested)
+        })?;
+    prepared.receipt.owned_heap_bytes = owned_heap_bytes;
+    let mut collector = Collector::new(count, reporter, reporting_limits);
+    evaluate_box_rows_observed(
+        projection,
+        display,
+        limits.evaluation,
+        &mut prepared,
+        &mut rows,
+        &mut collector,
+    )
+    .map_err(E::Evaluation)?;
+    // Finish reporting only after every row and pseudo passed. The capture stamp
+    // remains the one obtained before the first observation, even if publication
+    // of another completed batch happened while these facts were evaluated.
+    let reporting = collector.finish(projection, display, reporter, bindings);
+    let receipt = SiblingBoxFactsReceipt {
+        evaluation: prepared.receipt,
+        row_capacity: rows.capacity(),
+    };
+    let facts = SiblingBoxFacts {
+        projection,
+        display,
+        rows,
+        receipt,
+        numeric: limits.evaluation.numeric,
+    };
+    Ok(ReportingFacts { facts, reporting })
 }
 
 fn evaluate_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
