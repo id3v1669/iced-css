@@ -823,6 +823,8 @@ pub(super) struct KernelError {
 }
 
 pub(super) struct FirstFloatKernel {
+    pub float_hypothetical_top: f32,
+    pub bands_visited: usize,
     pub before: BlockVertical,
     pub before_content: BlockVertical,
     /// B1 padding span: on a side without border its edge is the border edge.
@@ -836,6 +838,26 @@ pub(super) struct FirstFloatKernel {
     /// edge, on a side without padding the content edge.
     pub float_padding: Band,
     pub float_padding_vertical: BlockVertical,
+}
+
+pub(super) struct FloatBoxInput<'s> {
+    pub parent: ParentFacts<'s>,
+    pub float: ChildFacts<'s>,
+    pub float_height: f32,
+    pub float_width: f32,
+    pub float_source: usize,
+    pub hypothetical_top: f32,
+}
+
+pub(super) struct FloatBoxKernel {
+    pub float_border: Band,
+    pub float_border_vertical: BlockVertical,
+    pub placed_float: PlacedFloat,
+    pub float_content: Band,
+    pub float_content_vertical: BlockVertical,
+    pub float_padding: Band,
+    pub float_padding_vertical: BlockVertical,
+    pub bands_visited: usize,
 }
 
 pub(super) struct FirstFloatInput<'s> {
@@ -973,6 +995,44 @@ pub(super) fn place_first_float(
             error,
         })?
     };
+    let float = place_float_box(
+        FloatBoxInput {
+            parent: input.parent,
+            float: input.float,
+            float_height: input.float_height,
+            float_width: input.float_width,
+            float_source: input.float_source,
+            hypothetical_top: float_top,
+        },
+        &[],
+        NonZeroUsize::MIN,
+    )?;
+    Ok(FirstFloatKernel {
+        before_content,
+        before_padding,
+        before: BlockVertical {
+            top: before_top,
+            bottom: before_bottom,
+        },
+        float_border: float.float_border,
+        float_border_vertical: float.float_border_vertical,
+        placed_float: float.placed_float,
+        float_content: float.float_content,
+        float_content_vertical: float.float_content_vertical,
+        float_padding: float.float_padding,
+        float_padding_vertical: float.float_padding_vertical,
+        float_hypothetical_top: float_top,
+        bands_visited: float.bands_visited,
+    })
+}
+
+/// Shared margin-box placement and staged float publications. The caller has
+/// validated every profile and exact outer extent before geometry begins.
+pub(super) fn place_float_box(
+    input: FloatBoxInput<'_>,
+    preceding: &[PlacedFloat],
+    bands: NonZeroUsize,
+) -> Result<FloatBoxKernel, KernelError> {
     let ml = input.float.margin.float_used_left();
     let mr = input.float.margin.float_used_right();
     let padding = input.float.padding;
@@ -1032,8 +1092,8 @@ pub(super) fn place_first_float(
         )
         .map_err(tagged)?
     };
-    let placed_float = place_float(
-        &[],
+    let placement = place_float(
+        preceding,
         input.parent.containing,
         // The request is the float's margin box. Each extent includes both border and
         // padding edges and both used margins, summed once. The axis-specific
@@ -1047,15 +1107,15 @@ pub(super) fn place_first_float(
             width: outer_width,
             height: outer_height,
             containing_top: input.parent.content_top,
-            hypothetical_top: float_top,
+            hypothetical_top: input.hypothetical_top,
         },
-        NonZeroUsize::MIN,
+        bands,
     )
     .map_err(|error| KernelError {
         source: input.float_source,
         error: ClearanceOwnerError::FloatPlacement(error),
-    })?
-    .placed;
+    })?;
+    let placed_float = placement.placed;
     let (float_content, float_padding, float_border) = if horizontal_undecorated {
         let content = if identity {
             Band {
@@ -1204,20 +1264,15 @@ pub(super) fn place_first_float(
                 },
             )
         };
-    Ok(FirstFloatKernel {
-        before_content,
-        before_padding,
+    Ok(FloatBoxKernel {
         float_border,
         float_border_vertical,
-        before: BlockVertical {
-            top: before_top,
-            bottom: before_bottom,
-        },
         placed_float,
         float_content,
         float_content_vertical,
         float_padding,
         float_padding_vertical,
+        bands_visited: placement.bands,
     })
 }
 

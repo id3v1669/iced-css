@@ -5,7 +5,7 @@
 //! reserving output storage or publishing geometry. The returned owner borrows only
 //! the source slice; copied placement records do not retain the input facts slice.
 
-mod chain;
+pub(super) mod chain;
 
 use chain::{ChainState, GroupSpan};
 pub use chain::{SequenceMarginGroupView, SequenceMarginRunView, SequenceNormalView};
@@ -529,7 +529,7 @@ fn build_with_reserves<'s>(
     })
 }
 
-fn same_source(actual: &SourceNode, expected: &SourceNode) -> bool {
+pub(super) fn same_source(actual: &SourceNode, expected: &SourceNode) -> bool {
     std::ptr::eq(actual, expected) && actual.instance == expected.instance
 }
 
@@ -547,7 +547,7 @@ fn placement(failure: KernelError) -> ClearanceSequenceError {
 /// Both published intervals are nonempty and strictly intersect (CSS2.2 §9.5, Q1).
 /// Or (G6a, Q-3) the normal's border box has zero height and its position lies strictly
 /// inside F's margin interval; contact with either edge of that interval passes (Q1).
-fn new_bfc_intersects_float(
+pub(super) fn new_bfc_intersects_float(
     facts: ChildFacts<'_>,
     border: BlockVertical,
     float: PlacedFloat,
@@ -559,7 +559,7 @@ fn new_bfc_intersects_float(
 }
 
 /// CTB/CTT adjoining provenance is independent of geometric zero height (NZS).
-fn collapses_through(facts: ChildFacts<'_>) -> bool {
+pub(super) fn collapses_through(facts: ChildFacts<'_>) -> bool {
     facts.context == ChildContext::OrdinaryNonBfc
         && matches!(
             facts.height,
@@ -575,7 +575,7 @@ fn zero_border_box(facts: ChildFacts<'_>) -> bool {
     explicit_height(facts) == 0.0 && !vertical_decoration(facts)
 }
 
-fn explicit_height(facts: ChildFacts<'_>) -> f32 {
+pub(super) fn explicit_height(facts: ChildFacts<'_>) -> f32 {
     match facts.height {
         super::clearance_owner::OwnerHeight::Explicit(height)
         | super::clearance_owner::OwnerHeight::NonAdjoiningZero(height) => height,
@@ -583,7 +583,7 @@ fn explicit_height(facts: ChildFacts<'_>) -> f32 {
     }
 }
 
-fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
+pub(super) fn sequence_work(nodes: usize, tail: usize) -> Option<usize> {
     // 272 fixed actions: sixty admission/kernel and vertical used-value actions; 68
     // for the float's horizontal margins (policy restriction 4, two float used
     // getters 8, identity test 4, three-term outer sum 16, near content edge 16, far

@@ -1,4 +1,6 @@
 //! Immutable source-style evaluation candidates.
+//!
+//! `sibling_layout` also offers the opt-in, bounded consecutive-float cluster profile.
 
 pub mod display_rules;
 pub mod source_display;

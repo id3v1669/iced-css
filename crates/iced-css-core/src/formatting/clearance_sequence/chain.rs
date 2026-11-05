@@ -17,7 +17,7 @@ use std::num::NonZeroUsize;
 
 /// Private immutable membership snapshot. Its owner alone resolves the range.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct GroupSpan {
+pub(in crate::formatting) struct GroupSpan {
     start: usize,
     len: usize,
     extrema: MarginExtrema,
@@ -94,7 +94,7 @@ pub struct SequenceMarginRunView<'o> {
 }
 
 impl<'o> SequenceMarginRunView<'o> {
-    pub(super) fn new(span: GroupSpan, arena: &'o [MarginMember]) -> Self {
+    pub(in crate::formatting) fn new(span: GroupSpan, arena: &'o [MarginMember]) -> Self {
         Self {
             members: span.members(arena),
             extrema: span.extrema,
@@ -197,7 +197,10 @@ pub struct SequenceNormalView<'o> {
 }
 
 impl<'o> SequenceNormalView<'o> {
-    pub(super) fn new(placement: &'o SequenceNormalPlacement, members: &'o [MarginMember]) -> Self {
+    pub(in crate::formatting) fn new(
+        placement: &'o SequenceNormalPlacement,
+        members: &'o [MarginMember],
+    ) -> Self {
         Self { placement, members }
     }
 
@@ -268,8 +271,14 @@ impl<'o> SequenceNormalView<'o> {
     }
 }
 
+/// The caller supplies only earlier same-BFC floats and prepays their selection.
+pub(in crate::formatting) struct FloatSelection<'f> {
+    pub floats: &'f [PlacedFloat],
+    pub limit: NonZeroUsize,
+}
+
 #[derive(Clone, Copy)]
-pub(super) struct ChainState {
+pub(in crate::formatting) struct ChainState {
     base: f32,
     subtract: f32,
     pending: GroupSpan,
@@ -287,7 +296,7 @@ fn append(arena: &mut Vec<MarginMember>, source: usize, side: MarginSide, value:
 }
 
 impl ChainState {
-    pub(super) fn first(
+    pub(in crate::formatting) fn first(
         arena: &mut Vec<MarginMember>,
         before: ChildFacts<'_>,
         before_bottom: f32,
@@ -315,11 +324,11 @@ impl ChainState {
         result.map_err(|error| KernelError { source: 2, error })
     }
 
-    pub(super) fn terminal(self) -> GroupSpan {
+    pub(in crate::formatting) fn terminal(self) -> GroupSpan {
         self.pending
     }
 
-    pub(super) fn place_next(
+    pub(in crate::formatting) fn place_next(
         &mut self,
         arena: &mut Vec<MarginMember>,
         next: ChildFacts<'_>,
@@ -327,6 +336,28 @@ impl ChainState {
         source: usize,
         through: bool,
         placed_float: PlacedFloat,
+    ) -> Result<SequenceNormalPlacement, KernelError> {
+        self.place_next_with_floats(
+            arena,
+            next,
+            next_height,
+            source,
+            through,
+            FloatSelection {
+                floats: &[placed_float],
+                limit: NonZeroUsize::MIN,
+            },
+        )
+    }
+
+    pub(in crate::formatting) fn place_next_with_floats(
+        &mut self,
+        arena: &mut Vec<MarginMember>,
+        next: ChildFacts<'_>,
+        next_height: f32,
+        source: usize,
+        through: bool,
+        selection: FloatSelection<'_>,
     ) -> Result<SequenceNormalPlacement, KernelError> {
         let result = (|| {
             let top = next.margin.used_top();
@@ -344,7 +375,7 @@ impl ChainState {
                 "hypothetical_top",
             )?;
             let selected =
-                lowest_clearance_float_bottom(&[placed_float], next.clear, NonZeroUsize::MIN)
+                lowest_clearance_float_bottom(selection.floats, next.clear, selection.limit)
                     .map_err(ClearanceOwnerError::FloatSelection)?;
             let requirement =
                 classify_clearance(hypothetical_top, selected).map_err(|error| match error {

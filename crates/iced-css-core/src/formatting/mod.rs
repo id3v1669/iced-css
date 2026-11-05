@@ -54,6 +54,8 @@ pub mod clearance_owner;
 
 pub mod clearance_sequence;
 
+pub mod clearance_float_cluster;
+
 pub mod first_child_origin;
 
 pub mod bfc_height;

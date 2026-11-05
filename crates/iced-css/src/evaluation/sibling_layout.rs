@@ -35,20 +35,26 @@ use iced_css_core::{
             ClearSide, ClearanceFloatError, ClearancePresenceError, ClearanceRequirement,
             classify_clearance, lowest_clearance_float_bottom,
         },
+        clearance_float_cluster::{
+            ClearanceFloatClusterError, ClearanceFloatClusterInput, ClearanceFloatClusterLimits,
+            ClearanceFloatClusterOwner, ClearanceFloatClusterReceipt, FloatClusterFloatPlacement,
+            build_clearance_float_cluster,
+        },
         clearance_owner::{
-            ChildContext, ChildFacts, OuterFacts, OwnerContent, OwnerEdges, OwnerGenerated,
-            OwnerHeight, ParentBfc, ParentFacts,
+            BlockVertical, ChildContext, ChildFacts, MarginMember, OuterFacts, OwnerContent,
+            OwnerEdges, OwnerGenerated, OwnerHeight, ParentBfc, ParentFacts,
         },
         clearance_sequence::{
             ClearanceSequenceError, ClearanceSequenceInput, ClearanceSequenceLimits,
-            ClearanceSequenceOwner, ClearanceSequenceReceipt, build_clearance_sequence,
-            sequence_requested_retained_bytes,
+            ClearanceSequenceOwner, ClearanceSequenceReceipt, SequenceNormalPlacement,
+            build_clearance_sequence, sequence_requested_retained_bytes,
         },
         display::{Display, DisplayResolution, Float, Flow, Position},
         first_child_origin::{
             FirstChildOriginError, FirstChildOriginInput, FirstChildOriginPlacement,
             place_first_child_origin,
         },
+        floats::{Band, PlacedFloat},
         relative::{RelativeInput, RelativeOffsets, relative_offsets},
     },
     source::SourceNode,
@@ -296,6 +302,89 @@ impl<'p> CapturedSiblingLayout<'p> {
     }
     pub fn receipt(&self) -> SiblingLayoutReceipt {
         self.receipt
+    }
+}
+
+/// Limits for the opt-in consecutive-float profile. Existing one-float limits are unchanged.
+#[derive(Debug, Clone, Copy)]
+pub struct FloatClusterLayoutLimits {
+    pub sources: NonZeroUsize,
+    pub work: NonZeroUsize,
+    pub retained_bytes: NonZeroUsize,
+    pub scratch_bytes: NonZeroUsize,
+    pub core: ClearanceFloatClusterLimits,
+}
+
+/// Prepaid work and actual peak/retained capacities for the cluster facade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FloatClusterLayoutReceipt {
+    pub nodes: usize,
+    pub floats: usize,
+    pub work: usize,
+    pub child_capacity: usize,
+    pub width_capacity: usize,
+    pub retained_bytes: usize,
+    pub scratch_bytes: usize,
+    pub core: ClearanceFloatClusterReceipt,
+}
+
+/// The complete cluster result borrows only the projection's source storage.
+#[derive(Debug)]
+pub struct CapturedFloatClusterLayout<'p> {
+    cluster: ClearanceFloatClusterOwner<'p>,
+    parent: SiblingParentGeometry,
+    children: Vec<PrincipalChildBox>,
+    receipt: FloatClusterLayoutReceipt,
+}
+
+impl<'p> CapturedFloatClusterLayout<'p> {
+    pub fn sources(&self) -> &'p [SourceNode] {
+        self.cluster.sources()
+    }
+    pub fn source(&self, index: usize) -> Option<&'p SourceNode> {
+        self.cluster.source(index)
+    }
+    pub fn parent(&self) -> &SiblingParentGeometry {
+        &self.parent
+    }
+    pub fn children(&self) -> &[PrincipalChildBox] {
+        &self.children
+    }
+    pub fn cluster(&self) -> &ClearanceFloatClusterOwner<'p> {
+        &self.cluster
+    }
+    pub fn receipt(&self) -> FloatClusterLayoutReceipt {
+        self.receipt
+    }
+}
+
+/// Existing numeric and admission failures retain their typed error chain.
+#[derive(Debug)]
+pub enum FloatClusterLayoutError {
+    Existing(SiblingLayoutError),
+    Core(ClearanceFloatClusterError),
+    ClusterOrder { source: usize },
+    FloatWidth { source: usize },
+    FloatHeight { source: usize },
+}
+
+impl From<SiblingLayoutError> for FloatClusterLayoutError {
+    fn from(error: SiblingLayoutError) -> Self {
+        Self::Existing(error)
+    }
+}
+impl std::fmt::Display for FloatClusterLayoutError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "captured float cluster layout: {self:?}")
+    }
+}
+impl std::error::Error for FloatClusterLayoutError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Existing(error) => Some(error),
+            Self::Core(error) => Some(error),
+            _ => None,
+        }
     }
 }
 
@@ -747,6 +836,35 @@ pub fn build_captured_sibling_layout_with_viewport_height<'p, 'h, 'd, 's, 'b, 'r
     )
 }
 
+#[derive(Clone, Copy)]
+enum LayoutProfile {
+    Single,
+    Cluster(ClearanceFloatClusterLimits),
+}
+
+enum GeometryOwner<'p> {
+    Single(ClearanceSequenceOwner<'p>),
+    Cluster(ClearanceFloatClusterOwner<'p>),
+}
+impl<'p> GeometryOwner<'p> {
+    fn view(&self) -> GeometryView<'_, 'p> {
+        match self {
+            Self::Single(owner) => GeometryView::Single(owner),
+            Self::Cluster(owner) => GeometryView::Cluster(owner),
+        }
+    }
+}
+struct GeometryOutput<'p> {
+    owner: GeometryOwner<'p>,
+    parent: SiblingParentGeometry,
+    children: Vec<PrincipalChildBox>,
+    nodes: usize,
+    work: usize,
+    retained_bytes: usize,
+    scratch_bytes: usize,
+    width_capacity: usize,
+}
+
 fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     facts: &SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
     outer: ClearanceOuterContentGeometry<'p>,
@@ -756,7 +874,110 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     reserve_scratch: impl FnOnce(&mut Vec<ChildFacts<'p>>, usize) -> Result<(), TryReserveError>,
     reserve_children: impl FnOnce(&mut Vec<PrincipalChildBox>, usize) -> Result<(), TryReserveError>,
 ) -> Result<CapturedSiblingLayout<'p>, SiblingLayoutError> {
+    let result = build_geometry(
+        facts,
+        outer,
+        outer_content_height,
+        viewport_height,
+        limits,
+        LayoutProfile::Single,
+        (reserve_scratch, reserve_children),
+    )
+    .map_err(|error| match error {
+        FloatClusterLayoutError::Existing(error) => error,
+        // Single never enters cluster admission or its core builder.
+        _ => unreachable!("single profile produced a cluster-only error"),
+    })?;
+    let GeometryOwner::Single(sequence) = result.owner else {
+        unreachable!("single profile owner")
+    };
+    let receipt = SiblingLayoutReceipt {
+        nodes: result.nodes,
+        work: result.work,
+        child_capacity: result.children.capacity(),
+        retained_bytes: result.retained_bytes,
+        scratch_bytes: result.scratch_bytes,
+        core: sequence.receipt(),
+    };
+    Ok(CapturedSiblingLayout {
+        sequence,
+        parent: result.parent,
+        children: result.children,
+        receipt,
+    })
+}
+
+/// Lay out a childless B1, consecutive explicitly sized floats, and a normal tail.
+///
+/// # Errors
+/// Rejects invalid joins, cluster order, automatic float dimensions, exceeded budgets,
+/// unsupported profiles and numerical publication failures. No partial owner escapes.
+pub fn build_captured_float_cluster_layout<'p, 'h, 'd, 's, 'b, 'r>(
+    facts: &SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
+    outer: ClearanceOuterContentGeometry<'p>,
+    outer_content_height: Option<f32>,
+    viewport_height: Option<f32>,
+    limits: FloatClusterLayoutLimits,
+) -> Result<CapturedFloatClusterLayout<'p>, FloatClusterLayoutError> {
+    let common = SiblingLayoutLimits {
+        sources: limits.sources,
+        work: limits.work,
+        retained_bytes: limits.retained_bytes,
+        scratch_bytes: limits.scratch_bytes,
+        core: ClearanceSequenceLimits {
+            sources: limits.core.sources,
+            work: limits.core.work,
+            retained_bytes: limits.core.retained_bytes,
+        },
+    };
+    let result = build_geometry(
+        facts,
+        outer,
+        outer_content_height,
+        viewport_height,
+        common,
+        LayoutProfile::Cluster(limits.core),
+        (
+            |rows, count| rows.try_reserve_exact(count),
+            |rows, count| rows.try_reserve_exact(count),
+        ),
+    )?;
+    let GeometryOwner::Cluster(cluster) = result.owner else {
+        unreachable!("cluster profile owner")
+    };
+    let core = cluster.receipt();
+    let receipt = FloatClusterLayoutReceipt {
+        nodes: result.nodes,
+        floats: core.floats,
+        work: result.work,
+        child_capacity: result.children.capacity(),
+        width_capacity: result.width_capacity,
+        retained_bytes: result.retained_bytes,
+        scratch_bytes: result.scratch_bytes,
+        core,
+    };
+    Ok(CapturedFloatClusterLayout {
+        cluster,
+        parent: result.parent,
+        children: result.children,
+        receipt,
+    })
+}
+
+fn build_geometry<'p, 'h, 'd, 's, 'b, 'r>(
+    facts: &SiblingBoxFacts<'p, 'h, 'd, 's, 'b, 'r>,
+    outer: ClearanceOuterContentGeometry<'p>,
+    outer_content_height: Option<f32>,
+    viewport_height: Option<f32>,
+    limits: SiblingLayoutLimits,
+    profile: LayoutProfile,
+    reserves: (
+        impl FnOnce(&mut Vec<ChildFacts<'p>>, usize) -> Result<(), TryReserveError>,
+        impl FnOnce(&mut Vec<PrincipalChildBox>, usize) -> Result<(), TryReserveError>,
+    ),
+) -> Result<GeometryOutput<'p>, FloatClusterLayoutError> {
     use SiblingLayoutError as E;
+    let (reserve_scratch, reserve_children) = reserves;
 
     // NonZeroUsize supplies the initial preflight unit. Nothing proportional has
     // been inspected at this point.
@@ -764,51 +985,124 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     let nodes = projection.nodes();
     let node_count = nodes.len();
     if node_count < 5 || node_count > limits.sources.get() {
-        return Err(E::Sources);
+        return Err(E::Sources.into());
     }
     if !same_source(outer.outer, &nodes[0]) {
-        return Err(E::Captured(CapturedClearanceError::GeometrySource));
+        return Err(E::Captured(CapturedClearanceError::GeometrySource).into());
     }
-    let work = facade_work(node_count).ok_or(E::Work)?;
+    let mut work = facade_work(node_count).ok_or(E::Work)?;
     if work > limits.work.get() {
-        return Err(E::Work);
+        return Err(E::Work.into());
     }
 
+    // The existing base work prepays the complete joins and role scan. Cluster
+    // classification adds no role vector and occurs before numerical work.
+    let float_count = match profile {
+        LayoutProfile::Single => 1,
+        LayoutProfile::Cluster(core) => {
+            let count = classify_cluster(facts)?;
+            if node_count > core.sources.get() {
+                return Err(FloatClusterLayoutError::Core(
+                    ClearanceFloatClusterError::Sources,
+                ));
+            }
+            if count > core.floats.get() {
+                return Err(FloatClusterLayoutError::Core(
+                    ClearanceFloatClusterError::Floats,
+                ));
+            }
+            work = work
+                .checked_add(count.checked_mul(512).ok_or(E::Work)?)
+                .and_then(|value| {
+                    node_count
+                        .checked_mul(count)?
+                        .checked_mul(128)?
+                        .checked_add(value)
+                })
+                .ok_or(E::Work)?;
+            if work > limits.work.get() {
+                return Err(E::Work.into());
+            }
+            count
+        }
+    };
+    let float_end = float_count.checked_add(3).ok_or(E::Sources)?;
+    let is_float = |source: usize| (3..float_end).contains(&source);
     let child_count = node_count - 2;
     let requested_scratch = checked_bytes::<ChildFacts<'_>>(child_count).ok_or(E::ScratchBytes)?;
     if requested_scratch > limits.scratch_bytes.get() {
-        return Err(E::ScratchBytes);
+        return Err(E::ScratchBytes.into());
     }
-    let requested_core = sequence_requested_retained_bytes(node_count).ok_or(E::Bytes)?;
+    let requested_core = match profile {
+        LayoutProfile::Single => sequence_requested_retained_bytes(node_count),
+        LayoutProfile::Cluster(_) => cluster_requested_retained(node_count, float_count),
+    }
+    .ok_or(E::Bytes)?;
     let requested_children = checked_bytes::<PrincipalChildBox>(child_count).ok_or(E::Bytes)?;
     requested_core
         .checked_add(requested_children)
         .filter(|&bytes| bytes <= isize::MAX as usize && bytes <= limits.retained_bytes.get())
         .ok_or(E::Bytes)?;
 
+    if matches!(profile, LayoutProfile::Cluster(_)) {
+        // Reject the whole simultaneous scratch floor before the first reserve.
+        requested_scratch
+            .checked_add(checked_bytes::<f32>(float_count).ok_or(E::ScratchBytes)?)
+            .and_then(|sum| sum.checked_add(checked_bytes::<PlacedFloat>(float_count)?))
+            .filter(|&sum| sum <= isize::MAX as usize && sum <= limits.scratch_bytes.get())
+            .ok_or(E::ScratchBytes)?;
+    }
     let (mut child_facts, scratch_bytes) =
         allocate_scratch(child_count, limits.scratch_bytes, reserve_scratch)?;
 
-    // Prove the complete actual row/display/token mapping before numerical work.
-    for source in 0..node_count {
-        fact_row(facts, source, "row")?;
-        joined_display(projection, facts.display(), source).map_err(E::Captured)?;
-    }
-    if facts.row(node_count).is_some() {
-        return Err(E::FactInvariant {
-            source: node_count,
-            property: "row-count",
-        });
-    }
+    let mut widths = Vec::new();
+    let width_bytes = if let LayoutProfile::Cluster(_) = profile {
+        let requested = checked_bytes::<f32>(float_count).ok_or(E::ScratchBytes)?;
+        let core_floor = checked_bytes::<PlacedFloat>(float_count).ok_or(E::ScratchBytes)?;
+        scratch_bytes
+            .checked_add(requested)
+            .and_then(|sum| sum.checked_add(core_floor))
+            .filter(|&sum| sum <= isize::MAX as usize && sum <= limits.scratch_bytes.get())
+            .ok_or(E::ScratchBytes)?;
+        widths
+            .try_reserve_exact(float_count)
+            .map_err(E::Allocation)?;
+        let actual = checked_bytes::<f32>(widths.capacity()).ok_or(E::ScratchBytes)?;
+        scratch_bytes
+            .checked_add(actual)
+            .and_then(|sum| sum.checked_add(core_floor))
+            .filter(|&sum| sum <= isize::MAX as usize && sum <= limits.scratch_bytes.get())
+            .ok_or(E::ScratchBytes)?;
+        actual
+    } else {
+        0
+    };
 
-    for source in 0..node_count {
-        let display = joined_display(projection, facts.display(), source).map_err(E::Captured)?;
-        if !admitted_display(display, source == 3, source == 0) {
-            return Err(E::Captured(unsupported(
-                source,
-                "display/position/float",
-                CapturedClearanceUnsupported::DisplayOrFlow,
-            )));
+    if matches!(profile, LayoutProfile::Single) {
+        // Prove the complete actual row/display/token mapping before numerical work.
+        for source in 0..node_count {
+            fact_row(facts, source, "row")?;
+            joined_display(projection, facts.display(), source).map_err(E::Captured)?;
+        }
+        if facts.row(node_count).is_some() {
+            return Err(E::FactInvariant {
+                source: node_count,
+                property: "row-count",
+            }
+            .into());
+        }
+
+        for source in 0..node_count {
+            let display =
+                joined_display(projection, facts.display(), source).map_err(E::Captured)?;
+            if !admitted_display(display, source == 3, source == 0) {
+                return Err(E::Captured(unsupported(
+                    source,
+                    "display/position/float",
+                    CapturedClearanceUnsupported::DisplayOrFlow,
+                ))
+                .into());
+            }
         }
     }
 
@@ -823,7 +1117,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             1,
             "overflow",
             CapturedClearanceUnsupported::ParentOverflow,
-        )));
+        ))
+        .into());
     }
     let numeric = facts.numeric_limits();
     // PHT, PTB, OCH (CSS2.2 10.5, 10.7, 9.3.2): P's containing block is O. O's computed
@@ -866,7 +1161,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     1,
                     property,
                     CapturedClearanceUnsupported::OuterHeightBasis,
-                )));
+                ))
+                .into());
             };
             let valid = basis.is_finite() && basis >= 0.0;
             if !valid {
@@ -874,7 +1170,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     source: 1,
                     property,
                     error: ConversionError::InvalidContext,
-                });
+                }
+                .into());
             }
         }
     } else if let Some(property) =
@@ -889,7 +1186,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 1,
                 property,
                 CapturedClearanceUnsupported::IndefiniteOffsetBasis,
-            )));
+            ))
+            .into());
         };
         let valid = viewport.is_finite() && viewport >= 0.0;
         if !valid {
@@ -903,7 +1201,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 source: 0,
                 property,
                 error: ConversionError::InvalidContext,
-            });
+            }
+            .into());
         }
     }
     // VPH: O's used limits for the OAH pass, resolved here, at the refusal's position (a
@@ -944,7 +1243,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     source,
                     "overflow",
                     CapturedClearanceUnsupported::ChildOverflow,
-                )));
+                ))
+                .into());
             }
         }
         // MMX (CSS2.2 10.7): the core receives the used height after the min/max
@@ -963,11 +1263,17 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // may collapse through. NZS normals with a non-adjoining computed category
         // carry their zero used height without joining their own top and bottom margins.
         let vertical = resolve_heights(row, child_basis, numeric, source)?;
+        if matches!(profile, LayoutProfile::Cluster(_))
+            && is_float(source)
+            && !matches!(vertical.height, BoxLengthFact::Absolute(_))
+        {
+            return Err(FloatClusterLayoutError::FloatHeight { source });
+        }
         let auto_height = constrain(0.0, vertical.min, vertical.max);
         // CTB/CTT (CSS2.2 8.3.1, 10.5, 10.7): a normal's margins adjoin only with a computed
         // `height` of zero or `auto` and a computed `min-height` of zero; a percentage is
         // neither, nor is a length rounded to +0 (CT-2).
-        let adjoining = source != 3
+        let adjoining = !is_float(source)
             && matches!(row.min_height, LengthPercentageBoxFact::Absolute(min)
                 if min.pixels == 0.0 && !min.rounded_to_zero)
             && match row.height {
@@ -980,7 +1286,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 let used = constrain(value.pixels, vertical.min, vertical.max);
                 // NZS: carry computed non-adjacency explicitly for the formerly
                 // refused zero; existing physically separated cases keep their category.
-                if source != 3
+                if !is_float(source)
                     && used == 0.0
                     && !adjoining
                     && !separated_auto(row, parent_solved, numeric)
@@ -990,7 +1296,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     OwnerHeight::Explicit(used)
                 }
             }
-            BoxLengthFact::Auto { .. } if source == 3 && auto_height == 0.0 => OwnerHeight::Auto,
+            BoxLengthFact::Auto { .. } if is_float(source) && auto_height == 0.0 => {
+                OwnerHeight::Auto
+            }
             BoxLengthFact::Auto { .. } if auto_height > 0.0 => OwnerHeight::Explicit(auto_height),
             BoxLengthFact::Auto { .. } if separated_auto(row, parent_solved, numeric) => {
                 OwnerHeight::Explicit(auto_height)
@@ -998,7 +1306,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             // CTB (10.6.3 "zero, otherwise"): the core decides between separated,
             // collapse-through and `NonpositiveBlockHeight`.
             BoxLengthFact::Auto { .. } if adjoining => OwnerHeight::Explicit(auto_height),
-            BoxLengthFact::Auto { .. } if source != 3 && auto_height == 0.0 => {
+            BoxLengthFact::Auto { .. } if !is_float(source) && auto_height == 0.0 => {
                 OwnerHeight::NonAdjoiningZero(auto_height)
             }
             BoxLengthFact::Auto { .. } => {
@@ -1006,14 +1314,16 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     source,
                     "height",
                     CapturedClearanceUnsupported::HeightKind,
-                )));
+                ))
+                .into());
             }
             // PHT: `resolve_heights` leaves no height percentage.
             BoxLengthFact::Percentage(_) => {
                 return Err(E::FactInvariant {
                     source,
                     property: "height",
-                });
+                }
+                .into());
             }
         };
         // PTB (CSS2.2 9.3.2): `top` and `bottom` percentages resolve against the same
@@ -1025,10 +1335,30 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // PCT: after its admission tests and its height facts (PHT), the child's width-axis
         // percentages resolve against P's used content width; while P's failure is held,
         // only admission and the height facts continue.
+        if matches!(profile, LayoutProfile::Cluster(_))
+            && is_float(source)
+            && matches!(row.width, BoxLengthFact::Auto { .. })
+        {
+            return Err(FloatClusterLayoutError::FloatWidth { source });
+        }
         let Ok(parent) = &parent_solve else {
             continue;
         };
         let used = resolved_row(row, parent.horizontal.used.width, numeric, source)?;
+        if matches!(profile, LayoutProfile::Cluster(_)) && is_float(source) {
+            let BoxLengthFact::Absolute(width) = used.width else {
+                return Err(E::FactInvariant {
+                    source,
+                    property: "width",
+                }
+                .into());
+            };
+            widths.push(constrain(
+                width.pixels,
+                length_operand(used.min_width, source, "min-width")?,
+                max_value(used.max_width, source, "max-width")?,
+            ));
+        }
         let mut child = child_facts_from_row(
             nodes,
             display,
@@ -1042,7 +1372,9 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // `auto` establishes a new block formatting context. The shared conversion labels
         // normals by position, so the Sequence facade, which alone admits such normals,
         // sets their context here.
-        if source != 3 && row.overflow.value != BoxOverflow::Visible {
+        if is_float(source) {
+            child.context = ChildContext::FloatBfc;
+        } else if row.overflow.value != BoxOverflow::Visible {
             child.context = ChildContext::OtherNewBfc;
         }
         child_facts.push(child);
@@ -1050,12 +1382,15 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     // MMX (CSS2.2 10.3.5 with 10.4): F's margins do not depend on its width, so the
     // min/max reruns only replace the width.
     let float_row = fact_row(facts, 3, "width")?;
-    if matches!(float_row.width, BoxLengthFact::Auto { .. }) {
+    if matches!(profile, LayoutProfile::Single)
+        && matches!(float_row.width, BoxLengthFact::Auto { .. })
+    {
         return Err(E::Captured(unsupported(
             3,
             "width",
             CapturedClearanceUnsupported::FloatWidth,
-        )));
+        ))
+        .into());
     }
     // PCT: the held P solve is returned here (Q-6); F's width is then resolved again
     // against P's used content width (C-1), where a failure is an invariant breach.
@@ -1069,31 +1404,36 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     } = parent_solve?;
     // PPM (PL-18): F's `min-width` and `max-width` are resolved there too, so
     // `constrain` reads resolved values only.
-    let Ok(BoxLengthFact::Absolute(float_width)) =
-        resolve_length(float_row.width, horizontal.used.width, numeric)
-    else {
-        return Err(E::FactInvariant {
-            source: 3,
-            property: "width",
-        });
-    };
-    let float_min = resolve_length_percentage(float_row.min_width, horizontal.used.width, numeric)
-        .map_err(|_| E::FactInvariant {
-            source: 3,
-            property: "min-width",
-        })?;
-    let float_max =
-        resolve_max(float_row.max_width, horizontal.used.width, numeric).map_err(|_| {
-            E::FactInvariant {
-                source: 3,
-                property: "max-width",
-            }
-        })?;
-    let float_width = constrain(
-        float_width.pixels,
-        length_operand(float_min, 3, "min-width")?,
-        max_value(float_max, 3, "max-width")?,
-    );
+    let float_width =
+        if matches!(profile, LayoutProfile::Single) {
+            let Ok(BoxLengthFact::Absolute(float_width)) =
+                resolve_length(float_row.width, horizontal.used.width, numeric)
+            else {
+                return Err(E::FactInvariant {
+                    source: 3,
+                    property: "width",
+                }
+                .into());
+            };
+            let float_min =
+                resolve_length_percentage(float_row.min_width, horizontal.used.width, numeric)
+                    .map_err(|_| E::FactInvariant {
+                        source: 3,
+                        property: "min-width",
+                    })?;
+            let float_max = resolve_max(float_row.max_width, horizontal.used.width, numeric)
+                .map_err(|_| E::FactInvariant {
+                    source: 3,
+                    property: "max-width",
+                })?;
+            constrain(
+                float_width.pixels,
+                length_operand(float_min, 3, "min-width")?,
+                max_value(float_max, 3, "max-width")?,
+            )
+        } else {
+            0.0
+        };
     let origin = place_first_child_origin(FirstChildOriginInput {
         containing_top: outer.content_top,
         margin_top: operand(parent_used.margin[0], 1, "margin-top")?,
@@ -1106,7 +1446,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     let parent_clearance =
         classify_clearance(origin.border_top, selected).map_err(E::ParentPresence)?;
     if parent_clearance != ClearanceRequirement::Absent {
-        return Err(E::UnexpectedParentClearance);
+        return Err(E::UnexpectedParentClearance.into());
     }
 
     let remaining_for_core = limits
@@ -1146,42 +1486,84 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
     let parent_masked = vertical_percentages_as_auto(&parent_used);
     let mut parent_relative =
         used_relative_offsets(parent_display, &parent_masked, outer_direction, 1)?;
-    let sequence = build_clearance_sequence(
-        nodes,
-        ClearanceSequenceInput {
-            outer: OuterFacts {
-                source: &nodes[0],
-                display: outer_display,
-                content: OwnerContent::NoOwnContentNonReplaced,
-                generated: OwnerGenerated::None,
-            },
-            parent: ParentFacts {
-                source: &nodes[1],
-                display: parent_display,
-                content: OwnerContent::NoOwnContentNonReplaced,
-                generated: OwnerGenerated::None,
-                bfc: ParentBfc::NewWithEmptyPrefix,
-                content_top: origin.content_top,
-                containing: horizontal.content,
-                border: parent_border,
-                padding: parent_padding,
-            },
-            children: &child_facts,
-            float_width,
-        },
-        core_limits,
-    )
-    .map_err(E::Core)?;
+    let outer_facts = OuterFacts {
+        source: &nodes[0],
+        display: outer_display,
+        content: OwnerContent::NoOwnContentNonReplaced,
+        generated: OwnerGenerated::None,
+    };
+    let parent_facts = ParentFacts {
+        source: &nodes[1],
+        display: parent_display,
+        content: OwnerContent::NoOwnContentNonReplaced,
+        generated: OwnerGenerated::None,
+        bfc: ParentBfc::NewWithEmptyPrefix,
+        content_top: origin.content_top,
+        containing: horizontal.content,
+        border: parent_border,
+        padding: parent_padding,
+    };
+    let owner = match profile {
+        LayoutProfile::Single => GeometryOwner::Single(
+            build_clearance_sequence(
+                nodes,
+                ClearanceSequenceInput {
+                    outer: outer_facts,
+                    parent: parent_facts,
+                    children: &child_facts,
+                    float_width,
+                },
+                core_limits,
+            )
+            .map_err(E::Core)?,
+        ),
+        LayoutProfile::Cluster(mut cluster_limits) => {
+            cluster_limits.retained_bytes = NonZeroUsize::new(
+                cluster_limits
+                    .retained_bytes
+                    .get()
+                    .min(remaining_for_core.get()),
+            )
+            .ok_or(E::Bytes)?;
+            let available_scratch = limits
+                .scratch_bytes
+                .get()
+                .checked_sub(scratch_bytes)
+                .and_then(|value| value.checked_sub(width_bytes))
+                .and_then(NonZeroUsize::new)
+                .ok_or(E::ScratchBytes)?;
+            cluster_limits.scratch_bytes = NonZeroUsize::new(
+                cluster_limits
+                    .scratch_bytes
+                    .get()
+                    .min(available_scratch.get()),
+            )
+            .ok_or(E::ScratchBytes)?;
+            GeometryOwner::Cluster(
+                build_clearance_float_cluster(
+                    nodes,
+                    ClearanceFloatClusterInput {
+                        outer: outer_facts,
+                        parent: parent_facts,
+                        children: &child_facts,
+                        float_widths: &widths,
+                    },
+                    cluster_limits,
+                )
+                .map_err(FloatClusterLayoutError::Core)?,
+            )
+        }
+    };
+    let sequence = owner.view();
 
     sequence
-        .receipt()
-        .retained_bytes
+        .retained_bytes()
         .checked_add(requested_children)
         .filter(|&bytes| bytes <= limits.retained_bytes.get())
         .ok_or(E::Bytes)?;
     let (mut children, child_bytes) = allocate_children(
         child_count,
-        sequence.receipt().retained_bytes,
+        sequence.retained_bytes(),
         limits.retained_bytes,
         reserve_children,
     )?;
@@ -1199,11 +1581,16 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         // PCT (C-1): the row is resolved again against P's used content width; a failure,
         // or a margin (PPM: or a padding) that differs from the first resolution (kept in
         // `child`), is an invariant breach.
-        let used = resolved_row(row, horizontal.used.width, numeric, source).map_err(|_| {
-            E::FactInvariant {
-                source,
-                property: "percentage",
-            }
+        let used = resolved_row_with_width(
+            row,
+            horizontal.used.width,
+            numeric,
+            source,
+            !(matches!(profile, LayoutProfile::Cluster(_)) && is_float(source)),
+        )
+        .map_err(|_| E::FactInvariant {
+            source,
+            property: "percentage",
         })?;
         let margins = [
             child.margin.top,
@@ -1223,20 +1610,25 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             return Err(E::FactInvariant {
                 source,
                 property: "percentage",
-            });
+            }
+            .into());
         }
         // REL: a child's containing block is P's content box (P's direction). PTA: the
         // vertical axis is solved after P's bottom (below); here `top` and `bottom`
         // percentages count as `auto`.
         let masked = vertical_percentages_as_auto(&used);
         let relative = used_relative_offsets(child.display, &masked, parent_direction, source)?;
-        let principal = if source == 3 {
-            let band = sequence.float_content();
-            let span = sequence.float_content_vertical();
-            let padding_band = sequence.float_padding();
-            let padding_span = sequence.float_padding_vertical();
-            let border_band = sequence.float_border();
-            let border_span = sequence.float_border_vertical();
+        let principal = if is_float(source) {
+            let float = sequence.float(source).ok_or(E::FactInvariant {
+                source,
+                property: "cluster-float",
+            })?;
+            let band = float.content;
+            let span = float.content_vertical;
+            let padding_band = float.padding;
+            let padding_span = float.padding_vertical;
+            let border_band = float.border;
+            let border_span = float.border_vertical;
             Principal {
                 kind: PrincipalChildKind::Float,
                 content: PrincipalEdges {
@@ -1257,7 +1649,15 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     top: border_span.top,
                     bottom: border_span.bottom,
                 },
-                used_width: float_width,
+                used_width: match profile {
+                    LayoutProfile::Single => float_width,
+                    LayoutProfile::Cluster(_) => {
+                        *widths.get(source - 3).ok_or(E::FactInvariant {
+                            source,
+                            property: "float-width",
+                        })?
+                    }
+                },
                 normal_width: None,
                 used_margin_left: child.margin.float_used_left(),
                 used_margin_right: child.margin.float_used_right(),
@@ -1270,15 +1670,19 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     sequence.before_content(),
                 )
             } else {
-                let record = sequence.tail().get(source - 4).ok_or(E::FactInvariant {
-                    source,
-                    property: "sequence-tail",
-                })?;
+                let record = sequence
+                    .tail()
+                    .get(source - float_end)
+                    .ok_or(E::FactInvariant {
+                        source,
+                        property: "sequence-tail",
+                    })?;
                 if record.source_index() != source {
                     return Err(E::FactInvariant {
                         source,
                         property: "sequence-source",
-                    });
+                    }
+                    .into());
                 }
                 (
                     record.vertical(),
@@ -1364,6 +1768,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         });
     }
 
+    let greatest_float_bottom = sequence.greatest_float_bottom();
     let computed_height = parent_row.height;
     // PHT (PM-19): P's routes select on its used height category and limits from its
     // vertical step (a percentage `height` used as `auto` takes the Auto routes, a
@@ -1406,7 +1811,7 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             content_top: origin.content_top,
             normal_margin_top,
             normal_margin_bottom,
-            float_bottom: sequence.placed_float().bottom,
+            float_bottom: greatest_float_bottom,
         })
         .map_err(E::SignedHeight)?
     } else {
@@ -1422,7 +1827,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                 return Err(E::FactInvariant {
                     source: 1,
                     property: "height",
-                });
+                }
+                .into());
             }
             BoxLengthFact::Auto { .. } => {
                 let last_source = node_count - 1;
@@ -1434,7 +1840,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     return Err(E::FactInvariant {
                         source: last_source,
                         property: "principal-source",
-                    });
+                    }
+                    .into());
                 }
                 let last_in_flow_margin_bottom = last_child.used_margin_bottom();
                 let last = sequence.tail().last().ok_or(E::FactInvariant {
@@ -1445,12 +1852,13 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
                     return Err(E::FactInvariant {
                         source: last_source,
                         property: "sequence-source",
-                    });
+                    }
+                    .into());
                 }
                 BfcHeightMode::Auto {
                     last_in_flow_border_bottom: last.vertical().bottom,
                     last_in_flow_margin_bottom,
-                    float_bottom: sequence.placed_float().bottom,
+                    float_bottom: greatest_float_bottom,
                 }
             }
         };
@@ -1477,7 +1885,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             return Err(E::FactInvariant {
                 source: 1,
                 property: "height",
-            });
+            }
+            .into());
         }
     };
     // PPM (PL-18): P's bottom reads its resolved row and border edges.
@@ -1562,10 +1971,16 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             top: origin.content_top,
             bottom: height.content_bottom,
         };
-        let placed = sequence.placed_float();
         for child in &children {
             let border = child.border();
             let margin = if child.kind() == PrincipalChildKind::Float {
+                let placed = sequence
+                    .float(child.source_index())
+                    .ok_or(E::FactInvariant {
+                        source: child.source_index(),
+                        property: "cluster-float",
+                    })?
+                    .placed;
                 PrincipalEdges {
                     left: placed.left,
                     right: placed.right,
@@ -1588,7 +2003,8 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
             if !within(border, area) || !within(margin, area) {
                 return Err(E::ParentAutoOverflow {
                     source: child.source_index(),
-                });
+                }
+                .into());
             }
         }
     }
@@ -1608,26 +2024,185 @@ fn build_with_reserve<'p, 'h, 'd, 's, 'b, 'r>(
         clearance: parent_clearance,
         relative: parent_relative,
     };
-    let core_receipt = sequence.receipt();
-    let retained_bytes = core_receipt
-        .retained_bytes
+    let retained_bytes = sequence
+        .retained_bytes()
         .checked_add(child_bytes)
         .ok_or(E::Bytes)?;
-    let receipt = SiblingLayoutReceipt {
-        nodes: node_count,
-        work,
-        child_capacity: children.capacity(),
-        retained_bytes,
-        scratch_bytes,
-        core: core_receipt,
-    };
+    let scratch_bytes = scratch_bytes
+        .checked_add(width_bytes)
+        .and_then(|bytes| bytes.checked_add(sequence.scratch_bytes()))
+        .ok_or(E::ScratchBytes)?;
+    if scratch_bytes > limits.scratch_bytes.get() {
+        return Err(E::ScratchBytes.into());
+    }
+    let width_capacity = widths.capacity();
     drop(child_facts);
-    Ok(CapturedSiblingLayout {
-        sequence,
+    drop(widths);
+    Ok(GeometryOutput {
+        owner,
         parent,
         children,
-        receipt,
+        nodes: node_count,
+        work,
+        retained_bytes,
+        scratch_bytes,
+        width_capacity,
     })
+}
+
+struct FloatGeometry {
+    placed: PlacedFloat,
+    border: Band,
+    border_vertical: BlockVertical,
+    padding: Band,
+    padding_vertical: BlockVertical,
+    content: Band,
+    content_vertical: BlockVertical,
+}
+
+enum GeometryView<'o, 'p> {
+    Single(&'o ClearanceSequenceOwner<'p>),
+    Cluster(&'o ClearanceFloatClusterOwner<'p>),
+}
+impl GeometryView<'_, '_> {
+    fn before(&self) -> BlockVertical {
+        match self {
+            Self::Single(v) => v.before(),
+            Self::Cluster(v) => v.before(),
+        }
+    }
+    fn before_content(&self) -> BlockVertical {
+        match self {
+            Self::Single(v) => v.before_content(),
+            Self::Cluster(v) => v.before_content(),
+        }
+    }
+    fn before_padding(&self) -> BlockVertical {
+        match self {
+            Self::Single(v) => v.before_padding(),
+            Self::Cluster(v) => v.before_padding(),
+        }
+    }
+    fn tail(&self) -> &[SequenceNormalPlacement] {
+        match self {
+            Self::Single(v) => v.tail(),
+            Self::Cluster(v) => v.tail(),
+        }
+    }
+    fn retained_bytes(&self) -> usize {
+        match self {
+            Self::Single(v) => v.receipt().retained_bytes,
+            Self::Cluster(v) => v.receipt().retained_bytes,
+        }
+    }
+    fn scratch_bytes(&self) -> usize {
+        match self {
+            Self::Single(_) => 0,
+            Self::Cluster(v) => v.receipt().scratch_bytes,
+        }
+    }
+    fn float(&self, source: usize) -> Option<FloatGeometry> {
+        match self {
+            Self::Single(v) if source == 3 => Some(FloatGeometry {
+                placed: v.placed_float(),
+                border: v.float_border(),
+                border_vertical: v.float_border_vertical(),
+                content: v.float_content(),
+                content_vertical: v.float_content_vertical(),
+                padding: v.float_padding(),
+                padding_vertical: v.float_padding_vertical(),
+            }),
+            Self::Single(_) => None,
+            Self::Cluster(v) => {
+                let f = v.floats().get(source.checked_sub(3)?)?;
+                if f.source_index() != source {
+                    return None;
+                }
+                Some(FloatGeometry {
+                    placed: f.placed_float(),
+                    border: f.border(),
+                    border_vertical: f.border_vertical(),
+                    content: f.content(),
+                    content_vertical: f.content_vertical(),
+                    padding: f.padding(),
+                    padding_vertical: f.padding_vertical(),
+                })
+            }
+        }
+    }
+    fn greatest_float_bottom(&self) -> f32 {
+        match self {
+            Self::Single(v) => v.placed_float().bottom,
+            Self::Cluster(v) => {
+                let mut floats = v.floats().iter();
+                let first = floats
+                    .next()
+                    .expect("validated nonempty float cluster")
+                    .placed_float()
+                    .bottom;
+                floats.fold(first, |bottom, f| bottom.max(f.placed_float().bottom))
+            }
+        }
+    }
+}
+
+fn cluster_requested_retained(nodes: usize, floats: usize) -> Option<usize> {
+    let tail = nodes.checked_sub(floats)?.checked_sub(3)?;
+    let members = tail.checked_add(1)?.checked_mul(2)?;
+    checked_bytes::<FloatClusterFloatPlacement>(floats)?
+        .checked_add(checked_bytes::<SequenceNormalPlacement>(tail)?)?
+        .checked_add(checked_bytes::<MarginMember>(members)?)
+        .filter(|&bytes| bytes <= isize::MAX as usize)
+}
+
+fn classify_cluster(
+    facts: &SiblingBoxFacts<'_, '_, '_, '_, '_, '_>,
+) -> Result<usize, FloatClusterLayoutError> {
+    use SiblingLayoutError as E;
+    let projection = facts.projection();
+    let count = projection.nodes().len();
+    for source in 0..count {
+        fact_row(facts, source, "row")?;
+        joined_display(projection, facts.display(), source).map_err(E::Captured)?;
+    }
+    if facts.row(count).is_some() {
+        return Err(E::FactInvariant {
+            source: count,
+            property: "row-count",
+        }
+        .into());
+    }
+    let mut floats = 0usize;
+    let mut tail = false;
+    for source in 0..count {
+        let display = joined_display(projection, facts.display(), source).map_err(E::Captured)?;
+        let floating = display.flow == Flow::Floating;
+        if floating && (source < 3 || tail) {
+            return Err(FloatClusterLayoutError::ClusterOrder { source });
+        }
+        if source == 3 && !floating {
+            return Err(FloatClusterLayoutError::ClusterOrder { source });
+        }
+        if !admitted_display(display, floating, source == 0) {
+            return Err(E::Captured(unsupported(
+                source,
+                "display/position/float",
+                CapturedClearanceUnsupported::DisplayOrFlow,
+            ))
+            .into());
+        }
+        if source >= 3 {
+            if floating {
+                floats = floats.checked_add(1).ok_or(E::Sources)?;
+            } else {
+                tail = true;
+            }
+        }
+    }
+    if !tail {
+        return Err(FloatClusterLayoutError::ClusterOrder { source: count - 1 });
+    }
+    Ok(floats)
 }
 
 // Named fields instead of a positional tuple (NFH-T2Q-002).
@@ -2059,6 +2634,16 @@ fn resolved_row(
     limits: NumericLimits,
     source: usize,
 ) -> Result<ClearanceBoxFact, SiblingLayoutError> {
+    resolved_row_with_width(row, basis, limits, source, true)
+}
+
+fn resolved_row_with_width(
+    row: &ClearanceBoxFact,
+    basis: f32,
+    limits: NumericLimits,
+    source: usize,
+    resolve_width: bool,
+) -> Result<ClearanceBoxFact, SiblingLayoutError> {
     let resolve = |fact: BoxLengthFact, property: &'static str| {
         resolve_length(fact, basis, limits).map_err(|error| SiblingLayoutError::Percentage {
             source,
@@ -2076,7 +2661,9 @@ fn resolved_row(
         })
     };
     let mut used = *row;
-    used.width = resolve(row.width, "width")?;
+    if resolve_width {
+        used.width = resolve(row.width, "width")?;
+    }
     used.margin[0] = resolve(row.margin[0], "margin-top")?;
     used.margin[1] = resolve(row.margin[1], "margin-right")?;
     used.margin[2] = resolve(row.margin[2], "margin-bottom")?;
@@ -2089,14 +2676,16 @@ fn resolved_row(
     used.padding[1] = resolve_lp(row.padding[1], "padding-right")?;
     used.padding[2] = resolve_lp(row.padding[2], "padding-bottom")?;
     used.padding[3] = resolve_lp(row.padding[3], "padding-left")?;
-    used.min_width = resolve_lp(row.min_width, "min-width")?;
-    used.max_width = resolve_max(row.max_width, basis, limits).map_err(|error| {
-        SiblingLayoutError::Percentage {
-            source,
-            property: "max-width",
-            error,
-        }
-    })?;
+    if resolve_width {
+        used.min_width = resolve_lp(row.min_width, "min-width")?;
+        used.max_width = resolve_max(row.max_width, basis, limits).map_err(|error| {
+            SiblingLayoutError::Percentage {
+                source,
+                property: "max-width",
+                error,
+            }
+        })?;
+    }
     Ok(used)
 }
 

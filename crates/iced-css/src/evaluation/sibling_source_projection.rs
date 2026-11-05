@@ -31,7 +31,8 @@ pub struct SiblingProjectionLimits {
 pub struct SiblingProjectionReceipt {
     /// Complete projected source count.
     pub nodes: usize,
-    /// Number of normal siblings following the single float.
+    /// Structural child-row count after source 3. The single-float layout interprets
+    /// these as its normal tail; the cluster layout classifies its own float/tail partition.
     pub tail: usize,
     /// Prepaid named operations.
     pub work: usize,
