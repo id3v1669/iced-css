@@ -48,7 +48,8 @@ capturing the tree again, which is enough to build hot reload on.
   and remote URLs draw nothing.
 - **Keyboard:** boxes with a press message or `tabindex` take focus by click and Tab, and
   match `:focus`; Enter and Space press them.
-- **Native widgets:** any iced `Element` can sit in a leaf box and receives input.
+- **Native widgets:** any iced `Element` can sit in a leaf box and receives input; Tab moves through
+  focusable ones such as `text_input` in box order.
 
 ## Animation
 

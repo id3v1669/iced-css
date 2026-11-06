@@ -747,3 +747,36 @@ fn text_indent_and_small_caps_draw() {
             .unwrap()
     );
 }
+
+#[test]
+fn tab_reaches_hosted_text_inputs_in_box_order() {
+    let root = node(
+        "page",
+        vec![
+            node("one", vec![]),
+            node("card", vec![]),
+            node("two", vec![]),
+        ],
+    );
+    let tree = BoxTree::new(root, "#one, #card, #two { height:30px; width:200px; }").unwrap();
+    let input = |message: u8| iced::widget::text_input("", "").on_input(move |_| message);
+    let view: Element<'_, u8> = tree
+        .interactive()
+        .widget("one", input(1))
+        .widget("two", input(2))
+        .on_press("card", 9)
+        .into();
+    let mut ui = iced_test::simulator(view);
+    use iced::keyboard::key::Named;
+    let _ = ui.tap_key(Named::Tab);
+    let _ = ui.typewrite("a");
+    let _ = ui.tap_key(Named::Tab);
+    let _ = ui.tap_key(Named::Enter);
+    let _ = ui.tap_key(Named::Tab);
+    let _ = ui.typewrite("b");
+    // Past the last, Tab comes round to the first.
+    let _ = ui.tap_key(Named::Tab);
+    let _ = ui.typewrite("c");
+    let messages: Vec<u8> = ui.into_messages().collect();
+    assert_eq!(messages, vec![1, 9, 2, 1]);
+}

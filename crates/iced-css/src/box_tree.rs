@@ -1573,6 +1573,42 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
     })
 }
 
+/// What Tab asks of the focusable widgets inside a hosted element.
+enum HostFocus {
+    Has(bool),
+    IsFocused(bool),
+    /// Focus the first one; the flag says it is still to do.
+    Focus(bool),
+    Unfocus,
+}
+
+impl Operation for HostFocus {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        operate(self);
+    }
+
+    fn focusable(
+        &mut self,
+        _id: Option<&iced::advanced::widget::Id>,
+        _bounds: Rectangle,
+        state: &mut dyn iced::advanced::widget::operation::Focusable,
+    ) {
+        match self {
+            Self::Has(found) => *found = true,
+            Self::IsFocused(found) => *found |= state.is_focused(),
+            Self::Focus(pending) => {
+                if *pending {
+                    state.focus();
+                    *pending = false;
+                } else {
+                    state.unfocus();
+                }
+            }
+            Self::Unfocus => state.unfocus(),
+        }
+    }
+}
+
 /// The pixels one wheel line scrolls.
 const WHEEL_LINE: f32 = 40.0;
 
@@ -2363,7 +2399,7 @@ where
     /// Boxes that take focus, in tab order: positive `tabindex` ascending, then the rest
     /// in document order. A press message makes a box focusable; a negative `tabindex`
     /// keeps it out of the Tab order while a click can still focus it.
-    fn tab_order(&self) -> Vec<usize> {
+    fn tab_order(&self, hosts: &[(usize, usize)]) -> Vec<usize> {
         let nodes = self.tree.source.construction.nodes();
         let mut order: Vec<(i64, usize, usize)> = Vec::new();
         for (projected, &node) in self.tree.originals.iter().enumerate() {
@@ -2372,7 +2408,8 @@ where
             if !rendered {
                 continue;
             }
-            match self.tab_index(nodes, node) {
+            let hosted = hosts.iter().any(|host| host.1 == node).then_some(0);
+            match self.tab_index(nodes, node).or(hosted) {
                 Some(index) if index >= 0 => {
                     order.push((if index == 0 { i64::MAX } else { index }, projected, node));
                 }
@@ -2381,6 +2418,48 @@ where
         }
         order.sort_unstable();
         order.into_iter().map(|(_, _, node)| node).collect()
+    }
+
+    /// Runs `operation` on one hosted element.
+    fn operate_host(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        index: usize,
+        operation: &mut HostFocus,
+    ) {
+        if let (Some(element), Some(child), Some(child_layout)) = (
+            self.elements.get_mut(index),
+            tree.children.get_mut(index),
+            layout.children().nth(index),
+        ) {
+            element
+                .as_widget_mut()
+                .operate(child, child_layout, renderer, operation);
+        }
+    }
+
+    /// The hosted elements holding something focusable, with their source nodes, by index.
+    fn focus_hosts(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+    ) -> Vec<(usize, usize)> {
+        let mut hosts = Vec::new();
+        for index in 0..self.elements.len() {
+            let Some(arena) = self.visible_slot(index) else {
+                continue;
+            };
+            let node = self.tree.originals[self.tree.prepared.positions[arena].0];
+            let mut has = HostFocus::Has(false);
+            self.operate_host(tree, layout, renderer, index, &mut has);
+            if matches!(has, HostFocus::Has(true)) {
+                hosts.push((index, node));
+            }
+        }
+        hosts
     }
 
     /// A box's `tabindex`; a press message implies 0.
@@ -2854,14 +2933,24 @@ where
                 return;
             }
             // A rebuilt view may have fewer nodes, and a restyle may have hidden the box.
-            let focused = tree
+            let mut focused = tree
                 .state
                 .downcast_ref::<Interaction>()
                 .focused
                 .filter(|node| self.takes_focus(*node));
+            let mut hosts = Vec::new();
             let next = match key.as_ref() {
                 keyboard::Key::Named(keyboard::key::Named::Tab) => {
-                    let order = self.tab_order();
+                    // A widget focused by a click counts as where Tab starts from.
+                    hosts = self.focus_hosts(tree, layout, renderer);
+                    for &(index, node) in &hosts {
+                        let mut found = HostFocus::IsFocused(false);
+                        self.operate_host(tree, layout, renderer, index, &mut found);
+                        if matches!(found, HostFocus::IsFocused(true)) {
+                            focused = Some(node);
+                        }
+                    }
+                    let order = self.tab_order(&hosts);
                     if order.is_empty() {
                         return;
                     }
@@ -2887,6 +2976,14 @@ where
                 }
                 _ => return,
             };
+            for &(index, node) in &hosts {
+                let mut change = if next == Some(node) {
+                    HostFocus::Focus(true)
+                } else {
+                    HostFocus::Unfocus
+                };
+                self.operate_host(tree, layout, renderer, index, &mut change);
+            }
             let state = tree.state.downcast_mut::<Interaction>();
             let before = (state.hovered, state.active, state.focused);
             state.focused = next;
