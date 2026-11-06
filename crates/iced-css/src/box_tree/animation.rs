@@ -16,7 +16,7 @@ use iced_css_core::{
     values::registry::{AnimationRule, PropertyId},
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     num::{NonZeroU64, NonZeroUsize},
     sync::Arc,
     time::Instant,
@@ -133,6 +133,14 @@ pub(super) struct Follower {
 
 /// One presented value this frame. It holds only while the tree still computes `target`: any
 /// other value is a newer style, and an unrequested style change applies at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum InlineSide {
+    Top,
+    Bottom,
+    Start,
+    End,
+}
+
 /// Everything an animated `color` carries to, as of the request.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Followers {
@@ -140,6 +148,8 @@ pub(super) struct Followers {
     /// Text runs by arena slot, place and owner, each showing the color at both ends. An
     /// interaction styling can shift slots, so the owner is checked again when presenting.
     runs: Vec<(usize, usize, usize)>,
+    /// Inline box sides showing the color at both ends, by box and side.
+    inline_sides: BTreeSet<(usize, InlineSide)>,
 }
 
 #[derive(Debug, Clone)]
@@ -177,7 +187,7 @@ impl BoxTree {
                 (Some(value), None) => Value::Color(value),
                 (Some(value), Some(alpha)) => Value::Fade(value, alpha),
             }),
-            Field::BorderColor(side) => color(paint.border[side]),
+            Field::BorderColor(side) => color(own.and(paint.border[side])),
             Field::OutlineColor => color(own.and(paint.outline).map(|outline| outline.1)),
             Field::OutlineWidth => own
                 .and(paint.outline)
@@ -321,6 +331,32 @@ impl BoxTree {
                 }
             }
         }
+        // An inline box's sides wherever they fall, whatever text color their runs have.
+        let follows =
+            |node: usize, side: InlineSide| followers.inline_sides.contains(&(node, side));
+        for leaf in self.texts.iter_mut().flatten() {
+            for run in &mut leaf.runs {
+                let owner = run.owner;
+                for sides in &mut run.inline_boxes {
+                    if follows(sides.owner, InlineSide::Top) {
+                        swap(&mut sides.border[0].1);
+                    }
+                    if follows(sides.owner, InlineSide::Bottom) {
+                        swap(&mut sides.border[1].1);
+                    }
+                }
+                if let Some((start, _, edge)) = &mut run.edge {
+                    let side = if *start {
+                        InlineSide::Start
+                    } else {
+                        InlineSide::End
+                    };
+                    if follows(owner, side) && *edge == target {
+                        *edge = now;
+                    }
+                }
+            }
+        }
         for &(arena, at, owner) in &followers.runs {
             if let Some(run) = self
                 .texts
@@ -330,16 +366,6 @@ impl BoxTree {
                 .filter(|run| run.owner == owner)
             {
                 swap(&mut run.color);
-                // An inline box's sides without a color of their own use this one.
-                for sides in &mut run.inline_boxes {
-                    swap(&mut sides.border[0].1);
-                    swap(&mut sides.border[1].1);
-                }
-                if let Some((_, _, edge)) = &mut run.edge
-                    && *edge == target
-                {
-                    *edge = now;
-                }
             }
         }
     }
@@ -382,23 +408,56 @@ impl BoxTree {
             let Some(leaf) = leaf else { continue };
             for (at, run) in leaf.runs.iter().enumerate() {
                 // By content, not place: spaces for sides can differ between the two stylings.
-                let old = self
-                    .texts
-                    .get(arena)
-                    .and_then(Option::as_ref)
-                    .and_then(|leaf| {
-                        leaf.runs
-                            .iter()
-                            .find(|old| old.owner == run.owner && old.text == run.text)
-                    });
-                if followers.boxes.iter().any(|f| f.node == run.owner)
-                    && old.is_some_and(|old| same(old.color, run.color))
-                {
+                let shown_before =
+                    self.texts
+                        .get(arena)
+                        .and_then(Option::as_ref)
+                        .is_some_and(|leaf| {
+                            leaf.runs.iter().any(|old| {
+                                old.owner == run.owner
+                                    && old.text == run.text
+                                    && same(old.color, run.color)
+                            })
+                        });
+                if followers.boxes.iter().any(|f| f.node == run.owner) && shown_before {
                     followers.runs.push((arena, at, run.owner));
                 }
             }
         }
+        let old_sides = self.inline_side_colors();
+        for (key, color) in to.inline_side_colors() {
+            if to.within(key.0, root) && same(old_sides.get(&key).copied(), Some(color)) {
+                followers.inline_sides.insert(key);
+            }
+        }
         followers
+    }
+
+    fn inline_side_colors(&self) -> BTreeMap<(usize, InlineSide), [f32; 3]> {
+        let mut found = BTreeMap::new();
+        for run in self.texts.iter().flatten().flat_map(|leaf| &leaf.runs) {
+            for sides in &run.inline_boxes {
+                if let (width, Some(color)) = sides.border[0]
+                    && width > 0.0
+                {
+                    found.insert((sides.owner, InlineSide::Top), color);
+                }
+                if let (width, Some(color)) = sides.border[1]
+                    && width > 0.0
+                {
+                    found.insert((sides.owner, InlineSide::Bottom), color);
+                }
+            }
+            if let Some((start, _, color)) = run.edge {
+                let side = if start {
+                    InlineSide::Start
+                } else {
+                    InlineSide::End
+                };
+                found.insert((run.owner, side), color);
+            }
+        }
+        found
     }
 }
 

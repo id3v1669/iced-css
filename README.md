@@ -71,7 +71,7 @@ floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated conten
 text properties, not other box properties. `list-style-image` replaces outside markers only, and needs the `image` feature. Inline box sides take spaces across, so widths round to about a sixth of the font size, a percentage or negative margin is 0, a line can break between a side and its text, `justify` stretches them, right-to-left text keeps them in logical order, and an inline with no runs draws none; their height follows each run's font size. An rtl scroller does not scroll across. `table-layout: fixed` reads `table-column` widths but not column groups, ignores column elements past the cells, keeps a right-anchored absolute table's left edge when its columns grow it, and lets content pick collapsed-border overlaps. A row of hidden
 empty cells keeps its height. `clip`ped content still extends a scroller's range. An own-text
 scrolling list item's outside marker moves with the text, unclipped. Animations do not cover `auto`, transparent borders, a length to a percentage,
-inline backgrounds, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the
+inline backgrounds and border colors, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.
 
 Not read at all: `letter-spacing`, `word-spacing`, and URL cursors (their

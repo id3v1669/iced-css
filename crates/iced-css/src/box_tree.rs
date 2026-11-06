@@ -836,7 +836,9 @@ impl BoxTree {
                                 let Some(here) = owner else { break };
                                 if prepared.slot[here].is_some_and(|slot| prepared.anonymous[slot])
                                 {
-                                    background = raw_paints[here].background;
+                                    background = raw_paints[here]
+                                        .background
+                                        .filter(|_| raw_paints[here].visible);
                                 }
                                 owner = prepared.inline_parent[here];
                             }
@@ -851,7 +853,9 @@ impl BoxTree {
                             let mut owner = Some(at);
                             let mut background = None;
                             while let Some(here) = owner {
-                                background = raw_paints[here].background;
+                                background = raw_paints[here]
+                                    .background
+                                    .filter(|_| raw_paints[here].visible);
                                 if background.is_some() {
                                     break;
                                 }
@@ -943,6 +947,10 @@ impl BoxTree {
         };
         let mut last_leaf: BTreeMap<usize, usize> = BTreeMap::new();
         for (arena, runs) in prepared.runs.iter().enumerate() {
+            // A leaf of collapsed white space draws nothing, so it cannot close a box.
+            if texts[arena].as_ref().is_none_or(TextLeaf::is_empty) {
+                continue;
+            }
             for &source in runs {
                 let (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at)) = source;
                 for element in inline_chain(Some(at)) {
@@ -1002,12 +1010,25 @@ impl BoxTree {
                                     (sides.border[2], colors[2]),
                                 ],
                                 background: raw_paints[element].background,
+                                owner: projection.original_index(element).unwrap_or_default(),
                             }
                         })
                         .collect()
                 };
                 // A margin lies in the boxes around this one, and border and padding in this
                 // one as well, as one space holding an exact border bar.
+                let around = |mut at: Option<usize>| {
+                    while let Some(here) = at {
+                        if let Some(color) = raw_paints[here]
+                            .background
+                            .filter(|_| raw_paints[here].visible)
+                        {
+                            return Some(color);
+                        }
+                        at = prepared.inline_parent[here];
+                    }
+                    None
+                };
                 let side = |element: usize, across: usize, run: &TextRun, depth: usize| {
                     let sides = sides_of(element);
                     let owner_of = |at: Option<usize>| {
@@ -1019,6 +1040,7 @@ impl BoxTree {
                         .then(|| indent_run(run, sides.margin[across]))
                         .flatten()
                         .map(|spacer| TextRun {
+                            background: around(prepared.inline_parent[element]),
                             inline_boxes: decorations(&here[..depth]),
                             owner: owner_of(outer.or(Some(container_of[arena]))),
                             ..spacer
@@ -1035,6 +1057,12 @@ impl BoxTree {
                         .then(|| indent_run(run, (room / step).ceil() * step * 1.0001))
                         .flatten()
                         .map(|spacer| TextRun {
+                            // Its own background comes with its box, over its padding too.
+                            background: if raw_paints[element].background.is_some() && visible {
+                                None
+                            } else {
+                                around(prepared.inline_parent[element])
+                            },
                             inline_boxes: decorations(&here[..=depth]),
                             edge,
                             visible,
@@ -1688,6 +1716,8 @@ pub struct InlineDecoration {
     pub padding: [f32; 2],
     pub border: [(f32, Option<[f32; 3]>); 2],
     pub background: Option<[f32; 3]>,
+    /// The source node of the box.
+    pub owner: usize,
 }
 
 /// A run in capitals, with what was lowercase at a smaller size.
@@ -2085,7 +2115,8 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
         );
     };
     for (index, run) in leaf.runs.iter().enumerate() {
-        if !run.visible {
+        // A hidden run keeps its room inside the visible boxes around it.
+        if !run.visible && run.inline_boxes.is_empty() {
             continue;
         }
         let color = run.color.unwrap_or([0.0; 3]);
@@ -2130,6 +2161,9 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                         quad(renderer, bounds, edge);
                     }
                 }
+            }
+            if !run.visible {
+                continue;
             }
             if let Some(background) = run.background {
                 let bounds = Rectangle {

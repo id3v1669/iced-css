@@ -2670,6 +2670,68 @@ mod animation {
         assert!(near(text.color.unwrap(), [0.5; 3]), "{:?}", text.color);
     }
 
+    type Rgb = Option<[f32; 3]>;
+
+    fn inline_sides(shown: &BoxTree) -> Vec<(Rgb, Rgb)> {
+        let leaves = shown.text_leaves();
+        let mut found = Vec::new();
+        for run in &leaves[0].1.runs {
+            for sides in &run.inline_boxes {
+                found.push((sides.border[0].1, run.edge.map(|edge| edge.2)));
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn inline_borders_follow_their_box_and_only_it() {
+        // The text inside has its own color, and the border takes the box's.
+        let source = || {
+            node(
+                "page",
+                vec![node("s", vec![node("b", vec![text("x", "x")])])],
+            )
+        };
+        let css = |color: &str| {
+            format!(
+                "#s {{ display:inline; color:{color}; border:2px solid; }}
+                 #b {{ display:inline; color:#00ff00; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("#000000")).unwrap();
+        let to = from.restyled(&[&css("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "s", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        for (top, edge) in inline_sides(&animations.presented(&to)) {
+            assert!(near(top.unwrap(), [0.5; 3]), "{top:?}");
+            if let Some(edge) = edge {
+                assert!(near(edge, [0.5; 3]), "{edge:?}");
+            }
+        }
+        // A border with a color of its own stays put.
+        let css = |color: &str| {
+            format!("#s {{ display:inline; color:{color}; border:2px solid #ffffff; }}")
+        };
+        let source = || node("page", vec![node("s", vec![text("x", "x")])]);
+        let from = BoxTree::new(source(), &css("#000000")).unwrap();
+        let to = from.restyled(&[&css("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "s", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        for (top, edge) in inline_sides(&animations.presented(&to)) {
+            assert_eq!(top, Some([1.0; 3]));
+            if let Some(edge) = edge {
+                assert_eq!(edge, [1.0; 3]);
+            }
+        }
+    }
+
     #[test]
     fn repeats_and_hidden_ends_start_nothing_extra() {
         let from = tree("#box { width:100px; height:10px; background-color:#000000; }");
@@ -3248,6 +3310,59 @@ fn nested_inline_boxes_paint_every_level_and_blocks_do_not_repeat_sides() {
     let leaves = tree.text_leaves();
     assert_eq!(leaves[0].1.text(), "\u{2003}one");
     assert_eq!(leaves[1].1.text(), "two\u{2003}");
+}
+
+#[test]
+fn a_box_closes_before_trailing_white_space_and_spaces_show_backgrounds_around_them() {
+    let root = node(
+        "page",
+        vec![node(
+            "span",
+            vec![text("a", "one"), node("block", vec![]), text("gap", "\n")],
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { font-size:12px; }
+         #span { display:inline; padding:0 12px; }
+         #block { display:block; height:1px; }",
+    )
+    .unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "\u{2003}one\u{2003}");
+
+    let root = node(
+        "page",
+        vec![node("o", vec![node("i", vec![text("x", "x")])])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { font-size:12px; }
+         #o { display:inline; background-color:#ff0000; }
+         #i { display:inline; padding:0 12px; margin:0 12px; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let red = Some([1.0, 0.0, 0.0]);
+    assert!(
+        leaves[0].1.runs.iter().all(|run| run.background == red),
+        "{:?}",
+        leaves[0].1.runs
+    );
+}
+
+#[test]
+fn a_hidden_box_lends_no_background() {
+    let root = node("page", vec![node("s", vec![text("x", "x")])]);
+    let tree = BoxTree::new(
+        root,
+        "#s { display:inline; visibility:hidden; background-color:#0000ff; }
+         #x { visibility:visible; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let run = &leaves[0].1.runs[0];
+    assert!(run.visible);
+    assert_eq!(run.background, None);
 }
 
 #[test]
