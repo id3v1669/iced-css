@@ -161,19 +161,61 @@ fn leaf_content_measures_by_source_node_and_shrinks_floats() {
 #[test]
 fn outside_block_flow_is_refused_by_source() {
     assert!(matches!(
-        run("#b { position:absolute; }", |_| None),
-        Err(TreeLayoutError::Unsupported {
-            projected: B,
-            property: "position"
-        })
-    ));
-    assert!(matches!(
         run("#c { display:inline; }", |_| None),
         Err(TreeLayoutError::Unsupported {
             projected: C,
             property: "display"
         })
     ));
+}
+
+#[test]
+fn absolute_box_uses_the_nearest_positioned_ancestor_padding_box() {
+    let g = solved(
+        "#a { position:relative; margin-top:10px; padding:5px; border:1px solid; height:100px; }
+         #a2 { position:absolute; left:2px; top:3px; width:50px; height:20px; }
+         #deep { height:50%; }
+         #a1 { height:7px; }
+         #b { height:1px; }",
+    );
+    assert_eq!(g[A].border.top, 10.0);
+    // a's padding box starts at (1, 11).
+    assert_eq!((g[A2].border.left, g[A2].border.top), (3.0, 14.0));
+    assert_eq!(g[A2].border.right, 53.0);
+    assert_eq!(g[DEEP].border.top, 14.0);
+    assert_eq!(g[DEEP].border.bottom, 24.0);
+    // The absolute box takes no room in flow.
+    assert_eq!(g[A1].border.bottom, 23.0);
+    assert_eq!(g[B].border.top, 122.0);
+}
+
+#[test]
+fn absolute_without_offsets_stays_at_its_static_position_and_shrinks() {
+    let result = run(
+        "#a1 { height:10px; margin-bottom:4px; }
+         #b { position:absolute; margin-top:6px; }
+         #c { height:1px; }",
+        |_| None,
+    )
+    .unwrap();
+    let b = result[B].unwrap();
+    // The static margin edge is the flow position; its own margin then applies.
+    assert_eq!(b.border.top, 20.0);
+    assert_eq!(b.border.right - b.border.left, 0.0);
+    assert_eq!(result[C].unwrap().border.top, 14.0);
+}
+
+#[test]
+fn absolute_stretches_between_offsets_and_fixed_uses_the_viewport() {
+    let g = solved(
+        "#a { position:relative; height:100px; width:100px; }
+         #a1 { position:absolute; left:10px; right:20px; top:5px; bottom:15px; }
+         #a2 { position:fixed; right:0; bottom:0; width:30px; height:10px; }",
+    );
+    assert_eq!((g[A1].border.left, g[A1].border.right), (10.0, 80.0));
+    assert_eq!((g[A1].border.top, g[A1].border.bottom), (5.0, 85.0));
+    assert_eq!((g[A2].border.left, g[A2].border.right), (170.0, 200.0));
+    assert_eq!((g[A2].border.top, g[A2].border.bottom), (390.0, 400.0));
 }
 
 #[test]

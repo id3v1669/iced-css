@@ -3,8 +3,8 @@
 //! child, collapse-through), 9.5.1 float placement, 9.5.2 clearance, 9.5 new-BFC float
 //! avoidance, 10.3.3/10.3.5 widths and 10.6.3/10.6.7 heights.
 //!
-//! Leaf content is an opaque measured rectangle. Inline layout, positioning and paint
-//! are the caller's. Policy: a clearance equal to zero is no clearance (9.5.2 "past"),
+//! Leaf content is an opaque measured rectangle. Inline layout, relative and absolute
+//! positioning and paint are the caller's. Policy: a clearance equal to zero is no clearance (9.5.2 "past"),
 //! and a float whose margin box would be negative occupies zero extent (user U7=A by
 //! delegated decision), keeping its border box where its margins put it.
 use super::{
@@ -59,6 +59,9 @@ pub struct FlowBox {
     pub direction: Direction,
     pub float: Option<FloatSide>,
     pub clear: ClearSide,
+    /// Absolutely positioned: takes no part in flow; the result holds only its static
+    /// position, in `border.left` and `border.top`, for the caller's 10.3.7/10.6.4 pass.
+    pub out_of_flow: bool,
     /// `overflow` other than visible, or any other 9.4.1 establishing condition.
     pub establishes_bfc: bool,
     pub width: Dim,
@@ -82,6 +85,7 @@ impl Default for FlowBox {
             direction: Direction::Ltr,
             float: None,
             clear: ClearSide::None,
+            out_of_flow: false,
             establishes_bfc: false,
             width: Dim::Auto,
             min_width: Dim::Auto,
@@ -265,6 +269,16 @@ pub fn layout_block_flow(
     Ok(solver.geometry)
 }
 
+/// The (preferred minimum, preferred) content widths of a box, for shrink-to-fit.
+#[must_use]
+pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
+    Solver {
+        boxes,
+        geometry: Vec::new(),
+    }
+    .measure(node)
+}
+
 fn validate(boxes: &[FlowBox]) -> Result<(), FlowError> {
     let mut seen = vec![false; boxes.len()];
     seen[0] = true;
@@ -340,6 +354,9 @@ impl Solver<'_> {
         }
         let (mut minimum, mut preferred, mut row) = (0.0_f32, 0.0_f32, 0.0_f32);
         for &child in &value.children {
+            if self.boxes[child].out_of_flow {
+                continue;
+            }
             let (child_min, child_preferred) = self.outer_measure(child);
             minimum = minimum.max(child_min);
             if self.boxes[child].float.is_some() {
@@ -417,7 +434,12 @@ impl Solver<'_> {
         cb: Containing,
     ) -> Result<(), FlowError> {
         for &child in &self.boxes[node].children.clone() {
-            if self.boxes[child].float.is_some() {
+            if self.boxes[child].out_of_flow {
+                // 10.3.7/10.6.4: the static margin edge, with the run collapsed so far.
+                self.geometry[child].border.left = cb.left;
+                self.geometry[child].border.right = cb.left + cb.width;
+                self.geometry[child].border.top = flow.position();
+            } else if self.boxes[child].float.is_some() {
                 self.layout_float(child, flow, cb)?;
             } else if self.boxes[child].establishes_bfc {
                 self.layout_bfc_block(child, flow, cb)?;
@@ -682,7 +704,14 @@ impl Solver<'_> {
             edges.bottom += dy;
         }
         for &child in &self.boxes[node].children {
-            self.translate(child, dx, dy);
+            if self.boxes[child].out_of_flow {
+                let moved = &mut self.geometry[child].border;
+                moved.left += dx;
+                moved.right += dx;
+                moved.top += dy;
+            } else {
+                self.translate(child, dx, dy);
+            }
         }
     }
 

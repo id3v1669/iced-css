@@ -439,6 +439,8 @@ pub(super) enum BoxFactMode {
 }
 
 pub(super) struct PreparedBoxFacts {
+    /// Whole-tree layout places absolute boxes; the sibling facade refuses them unread.
+    pub(super) absolute_offsets: bool,
     pub(super) ids: [PropertyId; 29],
     pub(super) receipt: ClearanceBoxFactsReceipt,
     pub(super) per_target: RuleBatchLimits,
@@ -587,6 +589,7 @@ pub(super) fn prepare_box_facts<'h>(
         .retained_bytes
         .min(NonZeroUsize::new(isize::MAX as usize).expect("isize::MAX is positive"));
     Ok(PreparedBoxFacts {
+        absolute_offsets: false,
         ids,
         receipt,
         per_target,
@@ -645,6 +648,7 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
     use ClearanceBoxFactsError as E;
     // The mode bound by `prepare_box_facts` selects both the charge and the loop.
     let mode = prepared.mode;
+    let absolute_offsets = prepared.absolute_offsets;
     let font = prepared.font;
     let per_target = prepared.per_target;
     let ids = &prepared.ids;
@@ -738,7 +742,9 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
                     .flatten()
                     .find(|row| row.original == original_parent)
             });
-            if position == Position::Relative {
+            if position == Position::Relative
+                || (absolute_offsets && matches!(position, Position::Absolute | Position::Fixed))
+            {
                 row.offset = Some(resolve::offsets(
                     &winners,
                     ids,

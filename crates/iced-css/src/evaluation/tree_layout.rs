@@ -1,7 +1,8 @@
 //! Whole-tree block layout from the real cascade: projects any captured source tree
 //! to preorder, evaluates computed box facts for every row and runs the general block
-//! flow. Display none removes a subtree. Inline-level and absolutely positioned boxes
-//! are refused by source, not approximated. Leaf content comes from the caller.
+//! flow, then 9.4.3 relative offsets and 10.3.7/10.6.4 absolute placement in preorder.
+//! Display none removes a subtree. Inline-level boxes are refused by source, not
+//! approximated. Leaf content comes from the caller.
 use super::{
     clearance_box_facts::{
         BoxFactMode, BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact,
@@ -17,10 +18,12 @@ use crate::{
 };
 use iced_css_core::{
     formatting::{
-        block::Direction,
+        absolute::{AbsoluteWidthError, AbsoluteWidthInput, absolute_width},
+        absolute_height::{AbsoluteHeightError, AbsoluteHeightInput, absolute_height},
+        block::{AutoLength, Direction},
         block_flow::{
             Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
-            layout_block_flow,
+            layout_block_flow, preferred_content_widths,
         },
         display::{Display, Float, Position},
         floats::FloatSide,
@@ -105,6 +108,14 @@ pub enum TreeLayoutError {
         error: ConversionError,
     },
     Flow(FlowError),
+    AbsoluteWidth {
+        projected: usize,
+        error: AbsoluteWidthError,
+    },
+    AbsoluteHeight {
+        projected: usize,
+        error: AbsoluteHeightError,
+    },
 }
 
 impl std::fmt::Display for TreeLayoutError {
@@ -204,6 +215,7 @@ pub fn layout_captured_tree(
     let count = projection.len();
     let mut prepared = prepare_box_facts(projection, display, facts, BoxFactMode::Sequence, None)
         .map_err(E::Facts)?;
+    prepared.absolute_offsets = true;
     let mut rows = vec![initial_box_fact(); count];
     evaluate_box_rows(projection, display, facts, &mut prepared, &mut rows).map_err(E::Facts)?;
 
@@ -211,6 +223,7 @@ pub fn layout_captured_tree(
     let mut slot: Vec<Option<usize>> = vec![None; count];
     let mut boxes: Vec<FlowBox> = Vec::new();
     let mut offsets: Vec<(usize, [Dim; 4])> = Vec::new();
+    let mut positions: Vec<(usize, Position)> = Vec::new();
     for index in 0..count {
         let original = projection.original[index];
         let resolution =
@@ -238,12 +251,6 @@ pub fn layout_captured_tree(
                 property: "display",
             });
         }
-        if matches!(resolution.position, Position::Absolute | Position::Fixed) {
-            return Err(E::Unsupported {
-                projected: index,
-                property: "position",
-            });
-        }
         let row = &rows[index];
         let numeric = facts.numeric;
         let mut value = flow_box(row, numeric).map_err(|error| E::Percentage {
@@ -261,9 +268,15 @@ pub fn layout_captured_tree(
             Float::Right => Some(FloatSide::Right),
             Float::None => None,
         };
-        if resolution.position == Position::Relative
-            && let Some(offset) = row.offset
-        {
+        value.out_of_flow = matches!(resolution.position, Position::Absolute | Position::Fixed);
+        if value.out_of_flow {
+            // 9.7: an absolutely positioned box is never floating.
+            value.float = None;
+            value.establishes_bfc = true;
+        }
+        // Absent offsets are all auto: every positioned box is a containing block.
+        positions.push((index, resolution.position));
+        if let Some(offset) = row.offset {
             offsets.push((
                 boxes.len(),
                 offset
@@ -293,17 +306,231 @@ pub fn layout_captured_tree(
         return Ok(vec![None; count]);
     }
     let mut geometry = layout_block_flow(&boxes, viewport, limits).map_err(E::Flow)?;
-    // 9.4.3: relative offsets move a subtree after flow, in source order. Parents come
-    // first and carry their children; floats and later flow do not react.
-    for &(arena, offset) in &offsets {
-        let parent_width = parent_content(&boxes, &geometry, arena, viewport);
-        let (dx, dy) = relative_shift(&boxes[arena], offset, parent_width);
-        shift(&boxes, &mut geometry, arena, dx, dy);
+    // Arena order is preorder, so every box's ancestors have settled before it. A
+    // relative offset moves a subtree after flow; floats and later flow do not react.
+    let auto = [Dim::Auto; 4];
+    for arena in 0..boxes.len() {
+        let (index, position) = positions[arena];
+        let offset = offsets
+            .iter()
+            .find(|(at, _)| *at == arena)
+            .map_or(auto, |(_, offset)| *offset);
+        match position {
+            Position::Relative => {
+                let basis = parent_content(&boxes, &geometry, arena, viewport);
+                let (dx, dy) = relative_shift(&boxes[arena], offset, basis);
+                shift(&boxes, &mut geometry, arena, dx, dy);
+            }
+            Position::Absolute | Position::Fixed => {
+                place_absolute(
+                    &boxes,
+                    &mut geometry,
+                    &positions,
+                    arena,
+                    position,
+                    offset,
+                    viewport,
+                    limits,
+                )
+                .map_err(|error| error.at(index))?;
+            }
+            Position::Static => {}
+        }
     }
     Ok(slot
         .into_iter()
         .map(|value| value.map(|arena| geometry[arena]))
         .collect())
+}
+
+enum AbsoluteFailure {
+    Width(AbsoluteWidthError),
+    Height(AbsoluteHeightError),
+    Flow(FlowError),
+}
+impl AbsoluteFailure {
+    fn at(self, projected: usize) -> TreeLayoutError {
+        match self {
+            Self::Width(error) => TreeLayoutError::AbsoluteWidth { projected, error },
+            Self::Height(error) => TreeLayoutError::AbsoluteHeight { projected, error },
+            Self::Flow(error) => TreeLayoutError::Flow(error),
+        }
+    }
+}
+
+fn parent_of(boxes: &[FlowBox], arena: usize) -> Option<usize> {
+    boxes
+        .iter()
+        .position(|candidate| candidate.children.contains(&arena))
+}
+
+/// 10.1: the padding box of the nearest positioned ancestor, or the initial block.
+fn containing_block(
+    boxes: &[FlowBox],
+    geometry: &[FlowGeometry],
+    positions: &[(usize, Position)],
+    arena: usize,
+    position: Position,
+    viewport: FlowViewport,
+) -> (FlowRect, Direction) {
+    let initial = FlowRect {
+        left: viewport.left,
+        right: viewport.left + viewport.width,
+        top: viewport.top,
+        bottom: viewport.top + viewport.height.unwrap_or(0.0),
+    };
+    if position == Position::Fixed {
+        return (initial, boxes[0].direction);
+    }
+    let mut at = parent_of(boxes, arena);
+    while let Some(ancestor) = at {
+        if positions[ancestor].1 != Position::Static {
+            return (geometry[ancestor].padding, boxes[ancestor].direction);
+        }
+        at = parent_of(boxes, ancestor);
+    }
+    (initial, boxes[0].direction)
+}
+
+fn subtree(boxes: &[FlowBox], root: usize) -> Vec<usize> {
+    let mut order = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        order.push(node);
+        stack.extend(boxes[node].children.iter().rev().copied());
+    }
+    order
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_absolute(
+    boxes: &[FlowBox],
+    geometry: &mut [FlowGeometry],
+    positions: &[(usize, Position)],
+    arena: usize,
+    position: Position,
+    offset: [Dim; 4],
+    viewport: FlowViewport,
+    limits: FlowLimits,
+) -> Result<(), AbsoluteFailure> {
+    let value = &boxes[arena];
+    let (block, direction) =
+        containing_block(boxes, geometry, positions, arena, position, viewport);
+    let cb_width = block.right - block.left;
+    let cb_height = block.bottom - block.top;
+    let auto = |dim: Dim, basis: f32| match dim {
+        Dim::Auto => AutoLength::Auto,
+        Dim::Px(number) => AutoLength::Value(number),
+        Dim::Percent(number) => AutoLength::Value(basis * number / 100.0),
+    };
+    let zero = |dim: Dim, basis: f32| match auto(dim, basis) {
+        AutoLength::Auto => 0.0,
+        AutoLength::Value(number) => number,
+    };
+    let padding = value.padding.map(|dim| zero(dim, cb_width));
+    let (preferred_min_width, preferred_width) = preferred_content_widths(boxes, arena);
+    let static_border = geometry[arena].border;
+    let width = absolute_width(AbsoluteWidthInput {
+        containing_width: cb_width,
+        containing_direction: direction,
+        static_direction: value.direction,
+        static_left: static_border.left - block.left,
+        static_right: block.right - static_border.right,
+        left: auto(offset[3], cb_width),
+        width: auto(value.width, cb_width),
+        right: auto(offset[1], cb_width),
+        margin_left: auto(value.margin[3], cb_width),
+        margin_right: auto(value.margin[1], cb_width),
+        border_left: value.border[3],
+        padding_left: padding[3],
+        padding_right: padding[1],
+        border_right: value.border[1],
+        preferred_min_width,
+        preferred_width,
+        min_width: zero(value.min_width, cb_width),
+        max_width: match value.max_width {
+            Dim::Auto => None,
+            other => Some(zero(other, cb_width)),
+        },
+    })
+    .map_err(AbsoluteFailure::Width)?;
+    // The contents form a new BFC: lay the subtree out alone, once to learn its 10.6.7
+    // height and again with the used height so percentages see a definite basis.
+    let nodes = subtree(boxes, arena);
+    let local = |node: usize| nodes.iter().position(|candidate| *candidate == node);
+    let solve = |height: Dim| -> Result<Vec<FlowGeometry>, FlowError> {
+        let mut arena_copy: Vec<FlowBox> = nodes.iter().map(|&node| boxes[node].clone()).collect();
+        for item in &mut arena_copy {
+            item.children = item.children.iter().filter_map(|&c| local(c)).collect();
+        }
+        let root = &mut arena_copy[0];
+        root.out_of_flow = false;
+        root.width = Dim::Px(width.width);
+        root.min_width = Dim::Auto;
+        root.max_width = Dim::Auto;
+        root.height = height;
+        root.min_height = Dim::Auto;
+        root.max_height = Dim::Auto;
+        root.margin = [Dim::Px(0.0); 4];
+        layout_block_flow(
+            &arena_copy,
+            FlowViewport {
+                left: 0.0,
+                top: 0.0,
+                width: padding[3] + padding[1] + value.border[3] + value.border[1] + width.width,
+                height: Some(cb_height),
+            },
+            limits,
+        )
+    };
+    let specified = match value.height {
+        Dim::Percent(_) if viewport.height.is_none() && position == Position::Fixed => Dim::Auto,
+        other => other,
+    };
+    let first = solve(Dim::Auto).map_err(AbsoluteFailure::Flow)?;
+    let content_height = first[0].content.bottom - first[0].content.top;
+    let height = absolute_height(AbsoluteHeightInput {
+        containing_height: cb_height,
+        static_top: static_border.top - block.top,
+        top: auto(offset[0], cb_height),
+        height: auto(specified, cb_height),
+        bottom: auto(offset[2], cb_height),
+        margin_top: auto(value.margin[0], cb_width),
+        margin_bottom: auto(value.margin[2], cb_width),
+        border_top: value.border[0],
+        padding_top: padding[0],
+        padding_bottom: padding[2],
+        border_bottom: value.border[2],
+        content_height,
+        min_height: zero(value.min_height, cb_height),
+        max_height: match value.max_height {
+            Dim::Auto => None,
+            other => Some(zero(other, cb_height)),
+        },
+    })
+    .map_err(AbsoluteFailure::Height)?;
+    let second = solve(Dim::Px(height.height)).map_err(AbsoluteFailure::Flow)?;
+    let dx = block.left + width.left + width.margin_left;
+    let dy = block.top + height.top + height.margin_top;
+    for (index, &node) in nodes.iter().enumerate() {
+        let mut placed = second[index];
+        for rect in [&mut placed.border, &mut placed.padding, &mut placed.content] {
+            rect.left += dx;
+            rect.right += dx;
+            rect.top += dy;
+            rect.bottom += dy;
+        }
+        if index == 0 {
+            placed.margin = [
+                height.margin_top,
+                width.margin_right,
+                height.margin_bottom,
+                width.margin_left,
+            ];
+        }
+        geometry[node] = placed;
+    }
+    Ok(())
 }
 
 fn parent_content(
@@ -312,16 +539,13 @@ fn parent_content(
     arena: usize,
     viewport: FlowViewport,
 ) -> (f32, Option<f32>) {
-    boxes
-        .iter()
-        .position(|candidate| candidate.children.contains(&arena))
-        .map_or((viewport.width, viewport.height), |parent| {
-            let content: FlowRect = geometry[parent].content;
-            (
-                content.right - content.left,
-                Some(content.bottom - content.top),
-            )
-        })
+    parent_of(boxes, arena).map_or((viewport.width, viewport.height), |parent| {
+        let content: FlowRect = geometry[parent].content;
+        (
+            content.right - content.left,
+            Some(content.bottom - content.top),
+        )
+    })
 }
 
 fn relative_shift(value: &FlowBox, offset: [Dim; 4], basis: (f32, Option<f32>)) -> (f32, f32) {
