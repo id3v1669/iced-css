@@ -61,10 +61,10 @@ offsets). A style change without a request applies at once. Timing is linear, th
 Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
 one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at
 their bottoms rather than baselines; `border-collapse` shares each edge at the widest cell border, with
-the later cell on top rather than resolving conflicts per edge; `justify` (start-aligned);
+the later cell on top rather than resolving conflicts per edge; `justify` in rtl (start-aligned);
 one line height and alignment per paragraph; inline box padding and borders; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
-text properties, not other box properties. An rtl scroller does not scroll across. Animations do not cover `auto`, `transparent`, a length to a percentage,
+text properties, not other box properties. An rtl scroller does not scroll across. Animations do not cover `auto`, transparent borders, a length to a percentage,
 inline backgrounds, fonts or keyword values (those apply at once), and an `!important`
 declaration is animated like any other. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.

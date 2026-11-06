@@ -598,3 +598,31 @@ fn text_a_child_clips_does_not_extend_the_scroller() {
             .unwrap()
     );
 }
+
+#[test]
+fn justified_text_reaches_both_edges() {
+    let root = node(
+        "page",
+        vec![text(
+            "copy",
+            "several words of ordinary text wrap across more than one line here so that the \
+             first line has to stretch out to meet both edges of a narrow box while the last \
+             one does not",
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background-color:white; color:black; width:300px; }
+         #copy { display:block; text-align:justify; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    let name = format!("justify-{}.png", std::process::id());
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    );
+}

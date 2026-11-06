@@ -1257,6 +1257,8 @@ pub struct BoxPaint {
     pub color: Option<[f32; 3]>,
     /// Red, green, blue in 0 to 1.
     pub background: Option<[f32; 3]>,
+    /// The background's opacity while an animation fades it; `None` is opaque.
+    pub background_fade: Option<f32>,
     /// Top, right, bottom, left.
     pub border: [Option<[f32; 3]>; 4],
 }
@@ -1871,8 +1873,9 @@ pub fn evaluate_tree_paint<'r>(
                 ComputedTextAlign::Right => "right",
                 ComputedTextAlign::Center => "center",
                 ComputedTextAlign::DirectionalInitial if rtl => "right",
-                // A renderer paragraph cannot justify: justified text stays start-aligned.
+                // An rtl paragraph stays start-aligned rather than justified.
                 ComputedTextAlign::Justify if rtl => "right",
+                ComputedTextAlign::Justify => "justify",
                 _ => "left",
             },
             white_space: keywords.map_or("normal", |value| value.white_space().keyword().as_str()),
@@ -1928,6 +1931,7 @@ pub fn evaluate_tree_paint<'r>(
                 _ => paint(0),
             },
             background: paint(1),
+            background_fade: None,
             border: [paint(2), paint(3), paint(4), paint(5)],
             visible,
             z_index,

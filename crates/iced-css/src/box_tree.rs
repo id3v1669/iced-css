@@ -1607,6 +1607,7 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
         align_x: match leaf.align {
             "center" => text::Alignment::Center,
             "right" => text::Alignment::Right,
+            "justify" => text::Alignment::Justified,
             _ => text::Alignment::Left,
         },
         align_y: iced::alignment::Vertical::Top,
@@ -1990,10 +1991,24 @@ fn draw_box<Renderer: renderer::Renderer>(
     let border = geometry.border;
     if let Some(color) = paint.background.filter(|_| parts != BoxParts::Border) {
         // 14.2: the background extends under the border.
-        quad(
-            renderer,
-            rectangle(border.left, border.right, border.top, border.bottom),
-            color,
+        renderer.fill_quad(
+            Quad {
+                bounds: {
+                    let bounds = rectangle(border.left, border.right, border.top, border.bottom);
+                    Rectangle {
+                        x: bounds.x + origin.x,
+                        y: bounds.y + origin.y,
+                        ..bounds
+                    }
+                },
+                ..Quad::default()
+            },
+            Color::from_rgba(
+                color[0],
+                color[1],
+                color[2],
+                paint.background_fade.unwrap_or(1.0),
+            ),
         );
     }
     if parts != BoxParts::Background {
@@ -2832,17 +2847,16 @@ where
             })
         };
         // 14.2: the root's background covers the whole canvas.
-        if let Some(color) = prepared
-            .positions
-            .first()
-            .and_then(|(root, _)| self.tree.paints[*root].background)
-        {
+        if let Some((color, fade)) = prepared.positions.first().and_then(|(root, _)| {
+            let paint = &self.tree.paints[*root];
+            paint.background.map(|color| (color, paint.background_fade))
+        }) {
             renderer.fill_quad(
                 Quad {
                     bounds,
                     ..Quad::default()
                 },
-                Color::from_rgb(color[0], color[1], color[2]),
+                Color::from_rgba(color[0], color[1], color[2], fade.unwrap_or(1.0)),
             );
         }
         // 14.2: the root's image covers the canvas too, placed against the root box.

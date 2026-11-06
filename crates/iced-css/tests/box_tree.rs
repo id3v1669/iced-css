@@ -1283,6 +1283,26 @@ mod interactive {
     }
 
     #[test]
+    fn a_diagonal_wheel_moves_one_box_both_ways() {
+        let root = node("page", vec![node("list", vec![node("slot", vec![])])]);
+        let tree = BoxTree::new(
+            root,
+            "#list { overflow:auto; height:50px; width:60px; }
+             #slot { width:100px; height:90px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(90.0)).into();
+        let mut rig = Rig::new(view);
+        rig.send(
+            mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Pixels { x: -10.0, y: -20.0 },
+            },
+            Point::new(5.0, 5.0),
+        );
+        assert_eq!((rig.slot().x, rig.slot().y), (-10.0, -20.0));
+    }
+
+    #[test]
     fn an_absolute_box_escaping_a_static_clip_still_extends_the_scroller() {
         let root = node(
             "page",
@@ -2370,7 +2390,7 @@ mod animation {
     fn nothing_starts_without_a_changed_animatable_target() {
         let from = tree("#box { width:10px; background-color:#000000; }");
         let to = from
-            .restyled(&["#box { width:10px; display:inline-block; background-color:transparent; }"])
+            .restyled(&["#box { width:10px; display:inline-block; }"])
             .unwrap();
         let mut animations = BoxTreeAnimations::new();
         let now = Instant::now();
@@ -2381,7 +2401,6 @@ mod animation {
         };
         assert_eq!(count(&["width"], "box"), 0);
         assert_eq!(count(&["display"], "box"), 0);
-        assert_eq!(count(&["background-color"], "box"), 0);
         assert_eq!(count(&["width"], "absent"), 0);
         assert!(!animations.is_animating());
         assert!(
@@ -2427,6 +2446,43 @@ mod animation {
             .request(&from, &fresh, "box", &["width"], second(), start)
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn a_background_fades_to_and_from_transparent() {
+        let from = tree("#box { background-color:transparent; }");
+        let to = from
+            .restyled(&["#box { background-color:#ff0000; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let count = animations
+            .request(&from, &to, "box", &["background-color"], second(), start)
+            .unwrap();
+        assert_eq!(count, 1);
+        animations.advance(start + Duration::from_millis(250), &to);
+        let shown = animations.presented(&to);
+        let fade = shown.paints()[1];
+        // Premultiplied: the color stays the far end's while it fades in.
+        assert!(near(fade.background.unwrap(), [1.0, 0.0, 0.0]), "{fade:?}");
+        assert!(
+            (fade.background_fade.unwrap() - 0.25).abs() < 0.01,
+            "{fade:?}"
+        );
+        // Interrupted, it fades back out from what shows.
+        let halfway = start + Duration::from_millis(250);
+        animations
+            .request(&to, &from, "box", &["background-color"], second(), halfway)
+            .unwrap();
+        animations.advance(halfway + Duration::from_millis(500), &from);
+        let fade = animations.presented(&from).paints()[1];
+        assert!(near(fade.background.unwrap(), [1.0, 0.0, 0.0]), "{fade:?}");
+        assert!(
+            (fade.background_fade.unwrap() - 0.125).abs() < 0.01,
+            "{fade:?}"
+        );
+        animations.advance(halfway + Duration::from_secs(1), &from);
+        assert_eq!(animations.presented(&from), from);
     }
 
     #[test]

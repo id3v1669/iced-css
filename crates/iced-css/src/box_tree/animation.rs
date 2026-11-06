@@ -24,7 +24,18 @@ use std::{
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum Value {
     Color([f32; 3]),
+    /// A background on its way to or from transparent: color and opacity. Transparent has
+    /// opacity 0.
+    Fade([f32; 3], f32),
     Length(Dim),
+}
+
+fn rgba(value: Value) -> Option<([f32; 3], f32)> {
+    match value {
+        Value::Color(color) => Some((color, 1.0)),
+        Value::Fade(color, alpha) => Some((color, alpha)),
+        Value::Length(_) => None,
+    }
 }
 
 /// Where one longhand lives in a styled tree.
@@ -85,11 +96,21 @@ fn field(name: &str) -> Option<Field> {
 fn mix(from: Value, to: Value, progress: f32) -> Option<Value> {
     let along = |a: f32, b: f32| a + (b - a) * progress;
     match (from, to) {
-        (Value::Color(a), Value::Color(b)) => Some(Value::Color([
-            along(a[0], b[0]),
-            along(a[1], b[1]),
-            along(a[2], b[2]),
-        ])),
+        (Value::Color(_) | Value::Fade(..), Value::Color(_) | Value::Fade(..)) => {
+            // Q070: gamma-encoded sRGB with premultiplied alpha. Fully transparent has no
+            // color of its own, so premultiplying takes the other end's.
+            let ((a, from_alpha), (b, to_alpha)) = (rgba(from)?, rgba(to)?);
+            let alpha = along(from_alpha, to_alpha);
+            let mixed = std::array::from_fn(|at| {
+                let value = along(a[at] * from_alpha, b[at] * to_alpha);
+                if alpha > 0.0 { value / alpha } else { value }
+            });
+            Some(if alpha == 1.0 {
+                Value::Color(mixed)
+            } else {
+                Value::Fade(mixed, alpha)
+            })
+        }
         (Value::Length(Dim::Px(a)), Value::Length(Dim::Px(b))) => {
             Some(Value::Length(Dim::Px(along(a, b))))
         }
@@ -149,7 +170,11 @@ impl BoxTree {
         let length = |value: Dim| Some(Value::Length(value));
         match field {
             Field::Color => color(paint.color),
-            Field::Background => color(paint.background),
+            Field::Background => Some(match (paint.background, paint.background_fade) {
+                (None, _) => Value::Fade([0.0; 3], 0.0),
+                (Some(value), None) => Value::Color(value),
+                (Some(value), Some(alpha)) => Value::Fade(value, alpha),
+            }),
             Field::BorderColor(side) => color(paint.border[side]),
             Field::OutlineColor => color(paint.outline.map(|outline| outline.1)),
             Field::OutlineWidth => paint.outline.and_then(|outline| length(Dim::Px(outline.0))),
@@ -175,7 +200,14 @@ impl BoxTree {
         let paint = &mut self.paints[projected];
         match (field, value) {
             (Field::Color, Value::Color(value)) => paint.color = Some(value),
-            (Field::Background, Value::Color(value)) => paint.background = Some(value),
+            (Field::Background, Value::Color(value)) => {
+                paint.background = Some(value);
+                paint.background_fade = None;
+            }
+            (Field::Background, Value::Fade(value, alpha)) => {
+                paint.background = Some(value);
+                paint.background_fade = Some(alpha);
+            }
             (Field::BorderColor(side), Value::Color(value)) => paint.border[side] = Some(value),
             (Field::OutlineColor, Value::Color(value)) => {
                 if let Some(outline) = &mut paint.outline {
