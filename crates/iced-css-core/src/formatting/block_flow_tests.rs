@@ -1308,3 +1308,81 @@ fn a_floating_table_keeps_its_minimum_width() {
     );
     assert_eq!(g[1].border.right, 80.0);
 }
+
+fn spanned(cols: usize, rows: usize, width: Dim, height: f32) -> FlowBox {
+    FlowBox {
+        col_span: cols,
+        row_span: rows,
+        ..cell(width, height)
+    }
+}
+
+#[test]
+fn colspan_takes_columns_and_shares_its_shortfall() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([2.0, 0.0], Dim::Auto),
+            row(),
+            spanned(2, 1, Dim::Px(62.0), 1.0),
+            cell(Dim::Px(5.0), 1.0),
+            row(),
+            cell(Dim::Px(10.0), 1.0),
+            cell(Dim::Px(20.0), 1.0),
+            cell(Dim::Px(5.0), 1.0),
+        ],
+        &[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (2, 4),
+            (1, 5),
+            (5, 6),
+            (5, 7),
+            (5, 8),
+        ],
+    );
+    // 62 less the inner 2px gap is 60; the columns give 30, so each gets 15 more.
+    assert_eq!((g[6].border.left, g[6].border.right), (2.0, 27.0));
+    assert_eq!((g[7].border.left, g[7].border.right), (29.0, 64.0));
+    assert_eq!((g[3].border.left, g[3].border.right), (2.0, 64.0));
+    assert_eq!((g[4].border.left, g[8].border.left), (66.0, 66.0));
+    assert_eq!(g[1].border.right, 73.0);
+}
+
+#[test]
+fn rowspan_holds_its_slots_and_extra_height_goes_to_its_last_row() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 1.0], Dim::Auto),
+            row(),
+            spanned(1, 2, Dim::Px(10.0), 30.0),
+            cell(Dim::Px(20.0), 5.0),
+            row(),
+            cell(Dim::Px(20.0), 6.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4), (1, 5), (5, 6)],
+    );
+    // The second row's only cell moves past the slot the rowspan holds.
+    assert_eq!((g[6].border.left, g[6].border.right), (10.0, 30.0));
+    // 30 needs 5 + 1 + 24: the last row grows from 6 to 24.
+    assert_eq!((g[3].border.top, g[3].border.bottom), (1.0, 31.0));
+    assert_eq!((g[6].border.top, g[6].border.bottom), (7.0, 31.0));
+    assert_eq!(g[1].border.bottom, 32.0);
+}
+
+#[test]
+fn a_rowspan_past_the_last_row_stops_there() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Auto),
+            row(),
+            spanned(1, 9, Dim::Px(10.0), 4.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3)],
+    );
+    assert_eq!(g[3].border.bottom, 4.0);
+    assert_eq!(g[1].border.bottom, 4.0);
+}

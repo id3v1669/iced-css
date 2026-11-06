@@ -1417,3 +1417,109 @@ fn a_reset_reaches_later_siblings_and_counters_nest_outermost_first() {
     let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
     assert_eq!(texts, vec!["05", "1.2", "3"]);
 }
+
+#[test]
+fn colspan_and_rowspan_come_from_source_attributes() {
+    let attrs = AttributeLimits {
+        entries: NonZeroUsize::new(100).unwrap(),
+        retained_bytes: NonZeroUsize::new(100_000).unwrap(),
+        work: NonZeroUsize::new(100_000).unwrap(),
+    };
+    let wide = node("wide", vec![])
+        .style_attribute("colspan", "2", attrs)
+        .unwrap();
+    let root = node(
+        "t",
+        vec![
+            node("r1", vec![wide]),
+            node("r2", vec![node("a", vec![]), node("b", vec![])]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#t { display:table; width:100px; }
+         #r1, #r2 { display:table-row; }
+         #wide, #a, #b { display:table-cell; height:5px; }
+         #a { width:30px; } #b { width:70px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[2].unwrap().border.right, 100.0);
+    assert_eq!(g[5].unwrap().border.left, 30.0);
+}
+
+#[test]
+fn the_root_scope_encloses_its_childrens_and_out_of_scope_reads_instantiate() {
+    let root = node("page", vec![node("a", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { counter-reset:n 1; } #a { counter-reset:n 2; }
+         #a:before { content:counters(n, \".\"); }",
+    )
+    .unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "1.2");
+    let root = node(
+        "page",
+        vec![node(
+            "a",
+            vec![
+                node("b", vec![node("c", vec![])]),
+                node("d", vec![node("e", vec![])]),
+            ],
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#a:before { content:counter(x); }
+         #c, #e { counter-increment:x; }
+         #e:before { content:counter(x); }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    assert_eq!(texts, vec!["0", "2"]);
+}
+
+#[test]
+fn quotes_follow_the_property_and_an_unmatched_close_prints_nothing() {
+    let root = node("page", vec![node("a", vec![]), node("b", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#a:before { content:\"x\" close-quote; }
+         #b { quotes:\"<\" \">\" \"[\" \"]\"; }
+         #b:before { content:open-quote open-quote open-quote; }
+         #b:after { content:close-quote close-quote close-quote; }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    assert_eq!(texts, vec!["x", "<[[]]>"]);
+    let root = node("page", vec![node("a", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { quotes:none; } #a:before { content:\"x\" open-quote; }",
+    )
+    .unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "x");
+}
+
+#[test]
+fn hidden_pseudo_with_an_inside_marker_does_not_count_and_counter_inherit_copies() {
+    let root = node("page", vec![node("li", vec![]), node("next", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { counter-reset:n; }
+         #li { display:list-item; list-style-position:inside; }
+         #li:before { display:none; counter-increment:n 5; content:\"gone\"; }
+         #next:before { content:counter(n); }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    assert_eq!(texts[1], "0");
+    let root = node("page", vec![node("a", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { counter-reset:n 7; } #a { counter-reset:inherit; }
+         #a:before { content:counters(n, \".\"); }",
+    )
+    .unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "7.7");
+}

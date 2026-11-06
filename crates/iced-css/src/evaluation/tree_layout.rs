@@ -607,6 +607,19 @@ pub fn prepare_captured_tree(
         }
         if let Some(role) = table_role {
             value.table = Some(role);
+            if matches!(role, TableRole::Cell) {
+                // 17.5: spans come from the document, here as source attributes.
+                let span = |name: &str| {
+                    source_node
+                        .metadata()
+                        .attribute(name)
+                        .and_then(|text| text.trim().parse::<usize>().ok())
+                        .filter(|span| *span > 0 && *span <= 1000)
+                        .unwrap_or(1)
+                };
+                value.col_span = span("colspan");
+                value.row_span = span("rowspan");
+            }
             // These parts' direct children must be table parts: generated text would need
             // an anonymous cell (17.2.1).
             if !matches!(role, TableRole::Cell | TableRole::Caption)
@@ -1287,6 +1300,8 @@ struct PendingContent {
     marker: String,
     items: Vec<ContentItem>,
     actions: CounterActions,
+    /// The computed `quotes` pairs; `None` is the initial value's curly marks.
+    quotes: Option<Vec<[String; 2]>>,
 }
 
 /// Document-order generated text: 12.4's counter scopes and 12.3.2's quote depth. A
@@ -1306,20 +1321,30 @@ struct CounterWalk<'a> {
 }
 
 impl CounterWalk<'_> {
-    /// The nearest scope with this name, from `at` outward.
-    fn find(&mut self, at: usize, name: &str) -> Option<&mut i32> {
+    /// The scope holders in reach of `at`, innermost first. The last slot belongs to the
+    /// root's own resets, whose scope encloses everything its children open.
+    fn chain(&self, at: usize) -> Vec<usize> {
+        let mut holders = Vec::new();
         let mut here = Some(at);
         while let Some(node) = here {
-            if self.scopes[node].iter().any(|(owned, _)| owned == name) {
-                return self.scopes[node]
-                    .iter_mut()
-                    .rev()
-                    .find(|(owned, _)| owned == name)
-                    .map(|(_, value)| value);
-            }
+            holders.push(node);
             here = self.parents[node];
         }
-        None
+        holders.push(self.parents.len());
+        holders
+    }
+
+    /// The nearest scope with this name, from `at` outward.
+    fn find(&mut self, at: usize, name: &str) -> Option<&mut i32> {
+        let holder = self
+            .chain(at)
+            .into_iter()
+            .find(|node| self.scopes[*node].iter().any(|(owned, _)| owned == name))?;
+        self.scopes[holder]
+            .iter_mut()
+            .rev()
+            .find(|(owned, _)| owned == name)
+            .map(|(_, value)| value)
     }
 
     fn apply(&mut self, holder: usize, reader: usize, actions: &CounterActions) {
@@ -1350,28 +1375,35 @@ impl CounterWalk<'_> {
                         text.push_str(&value);
                     }
                 }
-                // 12.3.2: quote depth nests; an unmatched close stays at the outside.
-                ContentItem::Quote(keyword) => match keyword.as_str() {
-                    "open-quote" => {
-                        text.push(if self.quotes == 0 {
-                            '\u{201c}'
-                        } else {
-                            '\u{2018}'
-                        });
-                        self.quotes += 1;
+                // 12.3.2: the depth picks the pair, its last for anything deeper. A close
+                // with nothing open is ignored and prints nothing.
+                ContentItem::Quote(keyword) => {
+                    let default = [
+                        ["\u{201c}".to_owned(), "\u{201d}".to_owned()],
+                        ["\u{2018}".to_owned(), "\u{2019}".to_owned()],
+                    ];
+                    let pairs = pending.quotes.as_deref().unwrap_or(&default);
+                    let mark = |depth: usize, side: usize| {
+                        pairs
+                            .get(depth)
+                            .or(pairs.last())
+                            .map(|pair| pair[side].clone())
+                            .unwrap_or_default()
+                    };
+                    match keyword.as_str() {
+                        "open-quote" => {
+                            text.push_str(&mark(self.quotes, 0));
+                            self.quotes += 1;
+                        }
+                        "close-quote" if self.quotes > 0 => {
+                            self.quotes -= 1;
+                            text.push_str(&mark(self.quotes, 1));
+                        }
+                        "no-open-quote" => self.quotes += 1,
+                        "no-close-quote" => self.quotes = self.quotes.saturating_sub(1),
+                        _ => {}
                     }
-                    "close-quote" => {
-                        self.quotes = self.quotes.saturating_sub(1);
-                        text.push(if self.quotes == 0 {
-                            '\u{201d}'
-                        } else {
-                            '\u{2019}'
-                        });
-                    }
-                    "no-open-quote" => self.quotes += 1,
-                    "no-close-quote" => self.quotes = self.quotes.saturating_sub(1),
-                    _ => {}
-                },
+                }
                 ContentItem::Uri(_) => {}
                 ContentItem::Counter {
                     name,
@@ -1381,23 +1413,29 @@ impl CounterWalk<'_> {
                     let kind = style.as_str();
                     match separator {
                         None => {
+                            // 12.4: reading a counter out of scope instantiates it here.
+                            if self.find(at, name).is_none() {
+                                self.scopes[at].push((name.clone(), 0));
+                            }
                             let value = self.find(at, name).map_or(0, |value| *value);
                             text.push_str(&counter_label(kind, value));
                         }
                         Some(separator) => {
                             // counters(): every scope in reach, outermost first.
-                            let mut chain = Vec::new();
-                            let mut here = Some(at);
-                            while let Some(node) = here {
-                                if let Some(entry) = self.scopes[node]
-                                    .iter()
-                                    .rev()
-                                    .find(|(owned, _)| owned == name)
-                                {
-                                    chain.push(entry.1);
-                                }
-                                here = self.parents[node];
+                            if self.find(at, name).is_none() {
+                                self.scopes[at].push((name.clone(), 0));
                             }
+                            let mut chain: Vec<i32> = self
+                                .chain(at)
+                                .into_iter()
+                                .filter_map(|node| {
+                                    self.scopes[node]
+                                        .iter()
+                                        .rev()
+                                        .find(|(owned, _)| owned == name)
+                                        .map(|entry| entry.1)
+                                })
+                                .collect();
                             if chain.is_empty() {
                                 chain.push(0);
                             }
@@ -1419,7 +1457,8 @@ impl CounterWalk<'_> {
         if !self.rendered[at] {
             return;
         }
-        let holder = self.parents[at].unwrap_or(at);
+        // The root's own resets sit in the slot past the last row.
+        let holder = self.parents[at].unwrap_or(self.parents.len());
         let actions = self.actions;
         self.apply(holder, at, &actions[at]);
         let pending = self.pending;
@@ -1551,14 +1590,28 @@ pub fn evaluate_tree_paint<'r>(
     let mut counter_actions: Vec<CounterActions> = Vec::with_capacity(projection.len());
     let mut pending: Vec<[Option<PendingContent>; 2]> = Vec::with_capacity(projection.len());
     let mut rendered: Vec<bool> = Vec::with_capacity(projection.len());
-    let directives = |value: DefaultedValueRef<'_>| -> Vec<(String, i32)> {
+    let mut quote_pairs: Vec<Option<Vec<[String; 2]>>> = Vec::with_capacity(projection.len());
+    let directives = |value: DefaultedValueRef<'_>, inherited: &[(String, i32)]| {
         match value {
             DefaultedValueRef::Compute(SpecifiedValue::Counters(list)) => list
                 .iter()
                 .map(|directive| (directive.name.clone(), directive.value.saturating_i32()))
                 .collect(),
+            // These properties do not inherit by default, so this is an authored inherit.
+            DefaultedValueRef::ParentComputed => inherited.to_vec(),
             _ => Vec::new(),
         }
+    };
+    let quotes_of = |value: DefaultedValueRef<'_>, inherited: Option<Vec<[String; 2]>>| match value
+    {
+        DefaultedValueRef::Compute(SpecifiedValue::Quotes(pairs)) => Some(pairs.clone()),
+        DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
+            if keyword.as_str() == "none" =>
+        {
+            Some(Vec::new())
+        }
+        DefaultedValueRef::ParentComputed => inherited,
+        _ => None,
     };
     for (index, &font_size) in font_sizes.iter().enumerate() {
         let original = projection.original[index];
@@ -1866,10 +1919,20 @@ pub fn evaluate_tree_paint<'r>(
             (None, marker)
         };
         markers.push(outside.map(|text| text.trim_end_matches('\u{a0}').to_owned()));
-        counter_actions.push(CounterActions {
-            reset: directives(defaulted("counter-reset")?),
-            increment: directives(defaulted("counter-increment")?),
-        });
+        let inherited_actions = parent_index
+            .map(|parent| counter_actions[parent].clone())
+            .unwrap_or_default();
+        let actions = CounterActions {
+            reset: directives(defaulted("counter-reset")?, &inherited_actions.reset),
+            increment: directives(
+                defaulted("counter-increment")?,
+                &inherited_actions.increment,
+            ),
+        };
+        let element_quotes = quotes_of(
+            defaulted("quotes")?,
+            parent_index.and_then(|parent| quote_pairs[parent].clone()),
+        );
         rendered.push(
             display
                 .resolution(original)
@@ -1943,13 +2006,19 @@ pub fn evaluate_tree_paint<'r>(
             if content.is_none() && marker_text.is_none() {
                 continue;
             }
+            // A `display: none` pseudo affects no counter (12.4.3); an inside marker stays.
             pending_pair[side] = Some(PendingContent {
                 marker: marker_text.unwrap_or_default(),
                 items: content.unwrap_or_default(),
-                actions: CounterActions {
-                    reset: directives(cascaded("counter-reset")?),
-                    increment: directives(cascaded("counter-increment")?),
+                actions: if hide_display {
+                    CounterActions::default()
+                } else {
+                    CounterActions {
+                        reset: directives(cascaded("counter-reset")?, &actions.reset),
+                        increment: directives(cascaded("counter-increment")?, &actions.increment),
+                    }
                 },
+                quotes: quotes_of(cascaded("quotes")?, element_quotes.clone()),
             });
             // Filled in document order below, once every counter has been seen.
             let text = String::new();
@@ -2070,6 +2139,8 @@ pub fn evaluate_tree_paint<'r>(
         }
         generated.push(pair);
         pending.push(pending_pair);
+        counter_actions.push(actions);
+        quote_pairs.push(element_quotes);
     }
     let parents: Vec<Option<usize>> = projection
         .original
@@ -2099,7 +2170,7 @@ pub fn evaluate_tree_paint<'r>(
         actions: &counter_actions,
         pending: &pending,
         attribute: &attribute,
-        scopes: vec![Vec::new(); parents.len()],
+        scopes: vec![Vec::new(); parents.len() + 1],
         quotes: 0,
         out: vec![[None, None]; parents.len()],
     };

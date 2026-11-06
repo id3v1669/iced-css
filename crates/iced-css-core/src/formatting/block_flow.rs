@@ -61,9 +61,8 @@ pub enum RowAlign {
     Right,
 }
 
-/// A box's part in a table (17.2). Column spans and rowspans are not modeled, `border-collapse`
-/// is treated as separate borders with no spacing, and extra specified table height is
-/// not distributed to rows.
+/// A box's part in a table (17.2). `border-collapse` is treated as separate borders with
+/// no spacing, and extra specified table height is not distributed to rows.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TableRole {
     /// Horizontal and vertical `border-spacing`.
@@ -86,6 +85,9 @@ pub struct FlowBox {
     pub float: Option<FloatSide>,
     pub clear: ClearSide,
     pub table: Option<TableRole>,
+    /// A cell's columns and rows, at least 1 (17.5: spans come from the document language).
+    pub col_span: usize,
+    pub row_span: usize,
     /// Where a cell's content sits in a taller row (17.5.3). A baseline is treated as top.
     pub cell_align: RowAlign,
     /// A caption placed below the table (`caption-side: bottom`).
@@ -121,6 +123,8 @@ impl Default for FlowBox {
             float: None,
             clear: ClearSide::None,
             table: None,
+            col_span: 1,
+            row_span: 1,
             cell_align: RowAlign::Left,
             caption_below: false,
             inline_row: None,
@@ -286,6 +290,16 @@ impl Flow {
         lowest_clearance_float_bottom(&self.floats, clear, limit)
             .map_err(|error| FlowError::Clear { node, error })
     }
+}
+
+/// One cell's place in the table grid.
+#[derive(Debug, Clone, Copy)]
+struct GridCell {
+    cell: usize,
+    row: usize,
+    column: usize,
+    col_span: usize,
+    row_span: usize,
 }
 
 struct Solver<'a> {
@@ -502,21 +516,96 @@ impl Solver<'_> {
         (head, captions)
     }
 
-    /// Each column's narrowest and preferred width over its cells (17.5.2.2).
-    fn table_columns(&self, rows: &[usize]) -> (Vec<f32>, Vec<f32>) {
-        let (mut mins, mut prefs) = (Vec::new(), Vec::new());
-        for &row in rows {
-            for (column, &cell) in self.boxes[row].children.iter().enumerate() {
-                if column == mins.len() {
-                    mins.push(0.0_f32);
-                    prefs.push(0.0_f32);
+    /// 17.5: cells claim grid slots row by row, skipping slots a rowspan from above holds.
+    fn table_grid(&self, rows: &[usize]) -> (Vec<GridCell>, usize) {
+        let mut held: Vec<usize> = Vec::new();
+        let mut placed = Vec::new();
+        let mut columns = 0;
+        for (row_index, &row) in rows.iter().enumerate() {
+            let mut column = 0;
+            for &cell in &self.boxes[row].children {
+                while held.get(column).is_some_and(|rest| *rest > 0) {
+                    column += 1;
                 }
-                let (minimum, preferred) = self.outer_measure(cell);
-                mins[column] = mins[column].max(minimum);
-                prefs[column] = prefs[column].max(preferred);
+                let value = &self.boxes[cell];
+                let col_span = value.col_span.max(1);
+                // A rowspan stops at the last row (17.5).
+                let row_span = value.row_span.max(1).min(rows.len() - row_index);
+                if held.len() < column + col_span {
+                    held.resize(column + col_span, 0);
+                }
+                for rest in &mut held[column..column + col_span] {
+                    *rest = (*rest).max(row_span);
+                }
+                placed.push(GridCell {
+                    cell,
+                    row: row_index,
+                    column,
+                    col_span,
+                    row_span,
+                });
+                column += col_span;
+                columns = columns.max(column);
+            }
+            for rest in &mut held {
+                *rest = rest.saturating_sub(1);
             }
         }
+        (placed, columns)
+    }
+
+    /// Each column's narrowest and preferred width (17.5.2.2): single-column cells first,
+    /// then each spanning cell's shortfall shared evenly over its columns.
+    fn table_columns(&self, rows: &[usize]) -> (Vec<f32>, Vec<f32>) {
+        let (placed, columns) = self.table_grid(rows);
+        let (mut mins, mut prefs) = (vec![0.0_f32; columns], vec![0.0_f32; columns]);
+        for item in placed.iter().filter(|item| item.col_span == 1) {
+            let (minimum, preferred) = self.outer_measure(item.cell);
+            mins[item.column] = mins[item.column].max(minimum);
+            prefs[item.column] = prefs[item.column].max(preferred);
+        }
+        let mut spanning: Vec<_> = placed.iter().filter(|item| item.col_span > 1).collect();
+        spanning.sort_by_key(|item| item.col_span);
+        for item in spanning {
+            let range = item.column..item.column + item.col_span;
+            // The gaps inside the span count toward the cell's room.
+            let gaps = self.table_spacing_of(rows) * (item.col_span - 1) as f32;
+            let (minimum, preferred) = self.outer_measure(item.cell);
+            for (widths, wanted) in [(&mut mins, minimum), (&mut prefs, preferred)] {
+                let shortfall = wanted - gaps - widths[range.clone()].iter().sum::<f32>();
+                if shortfall > 0.0 {
+                    for width in &mut widths[range.clone()] {
+                        *width += shortfall / item.col_span as f32;
+                    }
+                }
+            }
+        }
+        for column in 0..columns {
+            prefs[column] = prefs[column].max(mins[column]);
+        }
         (mins, prefs)
+    }
+
+    /// The horizontal spacing of the table a row list belongs to, found through a row.
+    fn table_spacing_of(&self, rows: &[usize]) -> f32 {
+        let Some(&first) = rows.first() else {
+            return 0.0;
+        };
+        self.boxes
+            .iter()
+            .find_map(|candidate| match candidate.table {
+                Some(TableRole::Table { spacing })
+                    if candidate.children.contains(&first)
+                        || candidate
+                            .children
+                            .iter()
+                            .any(|child| self.boxes[*child].children.contains(&first)) =>
+                {
+                    Some(spacing[0])
+                }
+                _ => None,
+            })
+            .unwrap_or(0.0)
     }
 
     /// Lays out rows and captions in `inner`; returns the content bottom.
@@ -583,61 +672,99 @@ impl Solver<'_> {
         }
         let grid_top = y;
         y += spacing[1];
-        for &row in &rows {
-            let mut height = self.boxes[row].height.vertical(None).unwrap_or(0.0);
-            let cells = self.boxes[row].children.clone();
-            let mut x = 0.0;
-            let mut natural = Vec::with_capacity(cells.len());
-            for (column, &cell) in cells.iter().enumerate() {
-                x += spacing[0];
-                let width = widths[column];
-                let bottom = cell_box(self, cell, width, inner.width)?;
-                let left = match inner.direction {
-                    Direction::Ltr => inner.left + x,
-                    Direction::Rtl => inner.left + inner.width - x - width,
-                };
-                self.translate(cell, left, y);
-                height = height.max(bottom);
-                natural.push(self.last_flowed);
-                x += width;
+        let (placed, _) = self.table_grid(&rows);
+        // First every cell at its width, which gives the rows their heights.
+        let mut heights: Vec<f32> = rows
+            .iter()
+            .map(|row| self.boxes[*row].height.vertical(None).unwrap_or(0.0))
+            .collect();
+        let mut measures = Vec::with_capacity(placed.len());
+        for item in &placed {
+            let width = widths[item.column..item.column + item.col_span]
+                .iter()
+                .sum::<f32>()
+                + spacing[0] * (item.col_span - 1) as f32;
+            let bottom = cell_box(self, item.cell, width, inner.width)?;
+            measures.push((width, bottom, self.last_flowed));
+            if item.row_span == 1 {
+                heights[item.row] = heights[item.row].max(bottom);
             }
-            // 17.5.3: every cell fills its row; its content stays at the top.
-            for (&cell, cell_natural) in cells.iter().zip(natural) {
-                let geometry = &mut self.geometry[cell];
-                let extra = y + height - geometry.border.bottom;
-                geometry.border.bottom += extra;
-                geometry.padding.bottom += extra;
-                // The room the content can move in is the box less its frame.
-                let top_frame = geometry.content.top - geometry.border.top;
-                let bottom_frame =
-                    self.boxes[cell].border[2] + self.boxes[cell].padding[2].zero_auto(inner.width);
-                let room = height - top_frame - bottom_frame - cell_natural;
-                let offset = match self.boxes[cell].cell_align {
-                    RowAlign::Left => 0.0,
-                    RowAlign::Center => (room / 2.0).max(0.0),
-                    RowAlign::Right => room.max(0.0),
-                };
-                if offset != 0.0 {
-                    let geometry = &mut self.geometry[cell];
-                    geometry.content.top += offset;
-                    geometry.content.bottom = geometry.content.top + cell_natural;
-                    if let Some(band) = &mut geometry.leaf_band {
-                        band.top += offset;
-                        band.bottom += offset;
-                    }
-                    for child in self.boxes[cell].children.clone() {
-                        self.translate(child, 0.0, offset);
-                    }
+        }
+        // 17.5.3: a rowspan's extra height goes to its last row.
+        let mut order: Vec<usize> = (0..placed.len()).collect();
+        order.sort_by_key(|index| placed[*index].row_span);
+        for index in order {
+            let item = placed[index];
+            if item.row_span > 1 {
+                let range = item.row..item.row + item.row_span;
+                let span = heights[range.clone()].iter().sum::<f32>()
+                    + spacing[1] * (item.row_span - 1) as f32;
+                let shortfall = measures[index].1 - span;
+                if shortfall > 0.0 {
+                    heights[range.end - 1] += shortfall;
                 }
             }
-            let area = rect(inner.left, inner.left + inner.width, y, y + height);
+        }
+        let mut tops = Vec::with_capacity(rows.len());
+        for &height in &heights {
+            tops.push(y);
+            y += height + spacing[1];
+        }
+        for (item, (width, _, cell_natural)) in placed.iter().zip(measures) {
+            let before: f32 =
+                widths[..item.column].iter().sum::<f32>() + spacing[0] * (item.column + 1) as f32;
+            let left = match inner.direction {
+                Direction::Ltr => inner.left + before,
+                Direction::Rtl => inner.left + inner.width - before - width,
+            };
+            let top = tops[item.row];
+            let height = heights[item.row..item.row + item.row_span]
+                .iter()
+                .sum::<f32>()
+                + spacing[1] * (item.row_span - 1) as f32;
+            let cell = item.cell;
+            self.translate(cell, left, top);
+            // 17.5.3: every cell fills its rows; its content sits as `vertical-align` says.
+            let geometry = &mut self.geometry[cell];
+            let extra = top + height - geometry.border.bottom;
+            geometry.border.bottom += extra;
+            geometry.padding.bottom += extra;
+            // The room the content can move in is the box less its frame.
+            let top_frame = geometry.content.top - geometry.border.top;
+            let bottom_frame =
+                self.boxes[cell].border[2] + self.boxes[cell].padding[2].zero_auto(inner.width);
+            let room = height - top_frame - bottom_frame - cell_natural;
+            let offset = match self.boxes[cell].cell_align {
+                RowAlign::Left => 0.0,
+                RowAlign::Center => (room / 2.0).max(0.0),
+                RowAlign::Right => room.max(0.0),
+            };
+            if offset != 0.0 {
+                let geometry = &mut self.geometry[cell];
+                geometry.content.top += offset;
+                geometry.content.bottom = geometry.content.top + cell_natural;
+                if let Some(band) = &mut geometry.leaf_band {
+                    band.top += offset;
+                    band.bottom += offset;
+                }
+                for child in self.boxes[cell].children.clone() {
+                    self.translate(child, 0.0, offset);
+                }
+            }
+        }
+        for (index, &row) in rows.iter().enumerate() {
+            let area = rect(
+                inner.left,
+                inner.left + inner.width,
+                tops[index],
+                tops[index] + heights[index],
+            );
             self.geometry[row] = FlowGeometry {
                 border: area,
                 padding: area,
                 content: area,
                 ..FlowGeometry::default()
             };
-            y += height + spacing[1];
         }
         for caption in below {
             let height = cell_box(self, caption, inner.width, inner.width)?;
