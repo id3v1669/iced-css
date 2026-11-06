@@ -727,10 +727,6 @@ pub struct BoxPaint {
     pub border: [Option<[f32; 3]>; 4],
 }
 
-fn channel(number: Result<f32, ConversionError>) -> Option<f32> {
-    number.ok().map(|value| value.clamp(0.0, 1.0))
-}
-
 fn rgb(color: &Color, numeric: NumericLimits) -> Option<[f32; 3]> {
     match color {
         Color::Srgb([r, g, b]) => Some([*r, *g, *b].map(|value| f32::from(value) / 255.0)),
@@ -738,14 +734,15 @@ fn rgb(color: &Color, numeric: NumericLimits) -> Option<[f32; 3]> {
             Some([r, g, b].map(|value| f32::from(value.clamped_byte()) / 255.0))
         }
         Color::PercentageRgb([r, g, b]) => {
-            let unit = |value: &iced_css_core::values::Decimal| {
-                channel(
-                    value
-                        .percentage_finite_f32(1.0, numeric)
-                        .map(|converted| converted.value),
-                )
+            // 4.3.6: out of range clips, including values too long to convert.
+            let unit = |value: &iced_css_core::values::Decimal| match value
+                .percentage_finite_f32(1.0, numeric)
+            {
+                Ok(converted) => converted.value.clamp(0.0, 1.0),
+                Err(_) if value.is_negative() => 0.0,
+                Err(_) => 1.0,
             };
-            Some([unit(r)?, unit(g)?, unit(b)?])
+            Some([unit(r), unit(g), unit(b)])
         }
         // A system palette and outline invert have no fixed value here.
         Color::Transparent | Color::Invert | Color::System(_) => None,
@@ -779,7 +776,8 @@ pub fn evaluate_tree_paint<'r>(
     let source = snapshot
         .selector_source(limits.selectors)
         .map_err(|error| E::Facts(ClearanceBoxFactsError::Source(error)))?;
-    let mut colors: Vec<ComputedColor<'r>> = Vec::with_capacity(projection.len());
+    // Per row: color, background, then the four border colors, for `inherit`.
+    let mut colors: Vec<[ComputedColor<'r>; 6]> = Vec::with_capacity(projection.len());
     let mut paints = Vec::with_capacity(projection.len());
     for index in 0..projection.len() {
         let original = projection.original[index];
@@ -805,11 +803,12 @@ pub fn evaluate_tree_paint<'r>(
         let parent = snapshot.construction().nodes()[original]
             .parent()
             .map(|parent| colors[projection.projected[parent]]);
+        let parent_of_slot = |slot: usize| parent.map(|row: [ComputedColor<'r>; 6]| row[slot]);
         let current = compute_color(
             &winners,
             foreground,
             ColorComputationContext {
-                parent,
+                parent: parent_of_slot(0),
                 current_color: None,
                 user_agent_color: Some(&BLACK),
             },
@@ -818,36 +817,34 @@ pub fn evaluate_tree_paint<'r>(
             projected: index,
             error,
         })?;
-        colors.push(current);
-        let side = |property: PropertyId| -> Result<Option<[f32; 3]>, TreeLayoutError> {
-            // Background and border colors do not inherit unless `inherit` is authored,
-            // which the context does not supply yet: treat that as not representable.
-            let color = compute_color(
+        let side = |property: PropertyId, slot: usize| {
+            compute_color(
                 &winners,
                 property,
                 ColorComputationContext {
-                    parent: None,
+                    parent: parent_of_slot(slot),
                     current_color: Some(current),
                     user_agent_color: Some(&BLACK),
                 },
-            );
-            match color {
-                Ok(color) => Ok(rgb(color.value(), limits.numeric)),
-                Err(ColorComputationError::Defaulting(_)) => Ok(None),
-                Err(error) => Err(E::Color {
-                    projected: index,
-                    error,
-                }),
-            }
+            )
+            .map_err(|error| E::Color {
+                projected: index,
+                error,
+            })
         };
+        let row = [
+            current,
+            side(background, 1)?,
+            side(border[0], 2)?,
+            side(border[1], 3)?,
+            side(border[2], 4)?,
+            side(border[3], 5)?,
+        ];
+        colors.push(row);
+        let paint = |slot: usize| rgb(row[slot].value(), limits.numeric);
         paints.push(BoxPaint {
-            background: side(background)?,
-            border: [
-                side(border[0])?,
-                side(border[1])?,
-                side(border[2])?,
-                side(border[3])?,
-            ],
+            background: paint(1),
+            border: [paint(2), paint(3), paint(4), paint(5)],
         });
     }
     Ok(paints)

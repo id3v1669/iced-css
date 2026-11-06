@@ -533,6 +533,13 @@ impl Solver<'_> {
         top_margin: f32,
     ) -> Result<Option<f32>, FlowError> {
         let clear = self.boxes[node].clear;
+        // Earlier floats waiting on an open parent must exist before clear reads them.
+        // They take the parent's position so far; a parent later pushed down by this
+        // box's own margin (only when no clearance results) is not re-placed.
+        if clear != ClearSide::None && !flow.deferred.is_empty() {
+            let top = flow.position();
+            self.flush(flow, top)?;
+        }
         let Some(bottom) = flow.lowest(clear, node)? else {
             flow.adjoin(top_margin, node)?;
             return Ok(None);
@@ -642,7 +649,14 @@ impl Solver<'_> {
         let content_bottom = match height {
             Some(specified) => content_top + clamp(specified, minimum, maximum),
             None if bottom_adjoins => {
-                content_top + clamp((flow.y - content_top).max(0.0), 0.0, maximum)
+                // 10.6.3: a last-child margin that cannot collapse through this box
+                // counts toward its height.
+                let end = if flow.clearance_through {
+                    flow.position()
+                } else {
+                    flow.y
+                };
+                content_top + clamp((end - content_top).max(0.0), 0.0, maximum)
             }
             None => {
                 let flowed = (flow.position() - content_top).max(0.0);

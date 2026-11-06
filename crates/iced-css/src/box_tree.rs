@@ -364,20 +364,17 @@ impl BoxTree {
     #[must_use]
     pub fn paint_order(&self) -> Vec<usize> {
         let prepared = &self.prepared;
-        let mut layer = vec![0_u8; prepared.boxes.len()];
-        for arena in 0..prepared.boxes.len() {
-            if prepared.boxes[arena].float.is_some() {
-                layer[arena] = layer[arena].max(1);
-            }
-            if prepared.positions[arena].1 != Position::Static {
-                layer[arena] = 2;
-            }
-            for &child in &prepared.boxes[arena].children {
-                layer[child] = layer[arena];
-            }
+        let mut order = Vec::with_capacity(prepared.boxes.len());
+        let mut positioned = Vec::new();
+        if !prepared.boxes.is_empty() {
+            paint_context(prepared, 0, &mut positioned, &mut order);
         }
-        let mut order: Vec<usize> = (0..prepared.boxes.len()).collect();
-        order.sort_by_key(|&arena| layer[arena]);
+        // A positioned box found while painting one is appended and handled in turn.
+        let mut next = 0;
+        while next < positioned.len() {
+            paint_context(prepared, positioned[next], &mut positioned, &mut order);
+            next += 1;
+        }
         order
             .into_iter()
             .map(|arena| prepared.positions[arena].0)
@@ -393,6 +390,41 @@ impl BoxTree {
             tree: self,
             geometry: Vec::new(),
         })
+    }
+}
+
+/// One 9.9 layer: this box and its in-flow blocks, then its floats, each as a unit.
+/// Positioned descendants go to the caller's list.
+fn paint_context(
+    prepared: &PreparedTree,
+    root: usize,
+    positioned: &mut Vec<usize>,
+    order: &mut Vec<usize>,
+) {
+    let mut floats = Vec::new();
+    let mut stack = vec![root];
+    while let Some(arena) = stack.pop() {
+        order.push(arena);
+        for &child in prepared.boxes[arena].children.iter().rev() {
+            if prepared.positions[child].1 != Position::Static {
+                continue;
+            }
+            if prepared.boxes[child].float.is_some() {
+                continue;
+            }
+            stack.push(child);
+        }
+        // Children in source order, whatever the stack order above.
+        for &child in &prepared.boxes[arena].children {
+            if prepared.positions[child].1 != Position::Static {
+                positioned.push(child);
+            } else if prepared.boxes[child].float.is_some() {
+                floats.push(child);
+            }
+        }
+    }
+    for float in floats {
+        paint_context(prepared, float, positioned, order);
     }
 }
 
@@ -456,7 +488,8 @@ where
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
-        let origin = layout.bounds().position();
+        let bounds = layout.bounds();
+        let origin = bounds.position();
         let at = |rect: Rectangle| Rectangle {
             x: rect.x + origin.x,
             y: rect.y + origin.y,
@@ -473,27 +506,29 @@ where
                 );
             }
         };
-        for index in self.tree.paint_order() {
-            let Some(Some(geometry)) = self.geometry.get(index) else {
-                continue;
-            };
-            let paint = self.tree.paints[index];
-            let border = geometry.border;
-            if let Some(color) = paint.background {
-                // 14.2: the background extends under the border.
-                quad(
-                    renderer,
-                    rectangle(border.left, border.right, border.top, border.bottom),
-                    color,
-                );
-            }
-            let bands = border_bands(border, geometry.padding);
-            for (band, color) in bands.into_iter().zip(paint.border) {
-                if let Some(color) = color {
-                    quad(renderer, band, color);
+        renderer.with_layer(bounds, |renderer| {
+            for index in self.tree.paint_order() {
+                let Some(Some(geometry)) = self.geometry.get(index) else {
+                    continue;
+                };
+                let paint = self.tree.paints[index];
+                let border = geometry.border;
+                if let Some(color) = paint.background {
+                    // 14.2: the background extends under the border.
+                    quad(
+                        renderer,
+                        rectangle(border.left, border.right, border.top, border.bottom),
+                        color,
+                    );
+                }
+                let bands = border_bands(border, geometry.padding);
+                for (band, color) in bands.into_iter().zip(paint.border) {
+                    if let Some(color) = color {
+                        quad(renderer, band, color);
+                    }
                 }
             }
-        }
+        });
     }
 }
 

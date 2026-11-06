@@ -538,9 +538,9 @@ fn empty_box_with_clearance_keeps_its_bottom_margin_from_its_parent() {
         &[(0, 1), (0, 2), (2, 3), (0, 4)],
     );
     assert_eq!(g[3].clearance, Some(50.0));
-    // P ends at E's border bottom, and only P's own margin follows it.
-    assert_eq!(g[2].border.bottom, 50.0);
-    assert_eq!(g[4].border.top, 55.0);
+    // E's margin stays inside P (10.6.3), and only P's own margin follows it.
+    assert_eq!(g[2].border.bottom, 60.0);
+    assert_eq!(g[4].border.top, 65.0);
 }
 
 #[test]
@@ -617,4 +617,62 @@ fn preferred_width_honours_a_child_max_width() {
         &[(0, 1), (1, 2)],
     );
     assert_eq!(g[1].border.right, 20.0);
+}
+
+#[test]
+fn clear_sees_a_float_deferred_inside_the_same_open_parent() {
+    let clearing = FlowBox {
+        clear: ClearSide::Left,
+        ..h(10.0)
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox::default(),
+            float(FloatSide::Left, 50.0, 100.0),
+            clearing,
+        ],
+        &[(0, 1), (1, 2), (1, 3)],
+    );
+    assert_eq!(g[3].border.top, 100.0);
+    assert_eq!(g[1].border.bottom, 110.0);
+}
+
+#[test]
+fn clearfix_child_contains_the_float_and_clear_ignores_stale_bottoms() {
+    let clearing = FlowBox {
+        clear: ClearSide::Both,
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            float(FloatSide::Left, 10.0, 50.0),
+            FlowBox::default(),
+            float(FloatSide::Left, 10.0, 100.0),
+            clearing,
+        ],
+        &[(0, 1), (0, 2), (2, 3), (2, 4)],
+    );
+    assert_eq!(g[4].border.top, 100.0);
+    assert_eq!(g[2].border.bottom, 100.0);
+}
+
+#[test]
+fn clear_on_an_uncle_sees_a_float_from_a_closed_empty_parent() {
+    let clearing = FlowBox {
+        clear: ClearSide::Left,
+        ..h(1.0)
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox::default(),
+            FlowBox::default(),
+            float(FloatSide::Left, 10.0, 30.0),
+            clearing,
+        ],
+        &[(0, 1), (1, 2), (2, 3), (1, 4)],
+    );
+    assert_eq!(g[4].border.top, 30.0);
 }

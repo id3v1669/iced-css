@@ -96,3 +96,46 @@ fn unsupported_display_is_reported() {
     let error = BoxTree::new(page(), "#note { display:inline; }").unwrap_err();
     assert!(error.to_string().contains("display"));
 }
+
+#[test]
+fn inside_a_positioned_box_blocks_paint_before_floats() {
+    let tree = BoxTree::new(
+        node(
+            "page",
+            vec![node(
+                "main",
+                vec![node("side", vec![]), node("card", vec![])],
+            )],
+        ),
+        "#main { position:relative; }
+         #side { float:left; width:10px; height:10px; }
+         #card { height:10px; }",
+    )
+    .unwrap();
+    assert_eq!(tree.paint_order(), vec![0, 1, 3, 2]);
+}
+
+#[test]
+fn inherit_reads_the_parent_same_property_color() {
+    let tree = BoxTree::new(
+        page(),
+        "#main { background-color:#ff0000; border:2px solid #00ff00; }
+         #card { background-color:inherit; color:#0000ff;
+                 border:2px solid; border-top-color:inherit; }",
+    )
+    .unwrap();
+    let card = tree.paints()[3];
+    assert_eq!(card.background, Some([1.0, 0.0, 0.0]));
+    assert_eq!(card.border[0], Some([0.0, 1.0, 0.0]));
+    assert_eq!(card.border[1], Some([0.0, 0.0, 1.0]));
+}
+
+#[test]
+fn out_of_range_percentages_clip() {
+    let tree = BoxTree::new(
+        page(),
+        "#card { background-color:rgb(150%,-20%,99999999999999999999999999999999999999999999%); }",
+    )
+    .unwrap();
+    assert_eq!(tree.paints()[3].background, Some([1.0, 0.0, 1.0]));
+}
