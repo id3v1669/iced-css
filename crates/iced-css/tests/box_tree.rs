@@ -2918,6 +2918,28 @@ fn fixed_tables_ignore_content_and_grow_only_for_their_columns() {
         across("#table { width:100px; } #a, #b { width:80%; }", cells(), 0),
         (0.0, 160.0)
     );
+    // A percent table's own width is recovered from the grown one.
+    let grown = |at: usize| {
+        let root = node(
+            "page",
+            vec![node(
+                "table",
+                vec![node("r1", vec![node("a", vec![]), node("b", vec![])])],
+            )],
+        );
+        let css = "#page { width:200px; }
+             #table { display:table; table-layout:fixed; width:50%; }
+             #r1 { display:table-row; }
+             #a, #b { display:table-cell; height:5px; width:80%; }";
+        let geometry = BoxTree::new(root, css)
+            .unwrap()
+            .layout(800.0, None)
+            .unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (border.left, border.right)
+    };
+    assert_eq!(grown(1), (0.0, 160.0));
+    assert_eq!(grown(4), (80.0, 160.0));
     // Against the table's own width, so the grown table still holds them.
     assert_eq!(
         across("#table { width:100px; } #a, #b { width:80%; }", cells(), 3),
@@ -3017,6 +3039,36 @@ fn clip_cuts_absolute_boxes_and_what_they_hold() {
     )
     .unwrap();
     assert_eq!(tree.paints()[1].clip.map(|sides| sides[0]), Some(Some(5.0)));
+}
+
+#[test]
+fn a_huge_text_indent_is_bounded_and_a_row_piece_can_lead() {
+    let root = node("page", vec![text("a", "words")]);
+    let tree = BoxTree::new(root, "#page { text-indent:1000000000px; font-size:16px; }").unwrap();
+    assert_eq!(tree.text_leaves()[0].1.runs[0].text.chars().count(), 512);
+
+    let root = node(
+        "page",
+        vec![text("a", "first"), node("chip", vec![]), text("b", "later")],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { text-indent:10px; font-size:10px; }
+         #chip { display:inline-block; width:5px; text-indent:0; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves[0].1.text(), "\u{2003}first");
+    assert_eq!(leaves[1].1.text(), "later");
+}
+
+#[test]
+fn small_letters_keep_the_line_height_of_their_computed_size() {
+    let root = node("page", vec![text("t", "Ab")]);
+    let tree = BoxTree::new(root, "#page { font-variant:small-caps; font-size:20px; }").unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves[0].1.runs[0].line_size, None);
+    assert_eq!(leaves[0].1.runs[1].line_size, Some(20.0));
 }
 
 #[test]

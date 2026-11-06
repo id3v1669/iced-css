@@ -780,11 +780,24 @@ impl Solver<'_> {
         let fixed =
             (self.boxes[node].fixed_table && self.boxes[node].width != Dim::Auto).then(|| {
                 // Percentages resolve against the table's own width, not one its columns grew.
+                // A percent table's own is gone by now, but columns past it grew the table to
+                // exactly their sum, which is linear in that width: solve for it.
+                let columns = |solver: &Self, basis: f32| {
+                    solver.fixed_columns(node, &rows, count, spacing[0], available, basis)
+                };
                 let basis = match self.boxes[node].width {
                     Dim::Px(width) => width,
-                    _ => inner.width,
+                    _ => {
+                        let sum = |basis: f32| columns(self, basis).iter().sum::<f32>();
+                        let (fixed, whole) = (sum(0.0), sum(inner.width));
+                        if whole > available && whole > fixed {
+                            inner.width * (available - fixed) / (whole - fixed)
+                        } else {
+                            inner.width
+                        }
+                    }
                 };
-                self.fixed_columns(node, &rows, count, spacing[0], available, basis)
+                columns(self, basis)
             });
         let widths: Vec<f32> = fixed.unwrap_or_else(|| {
             (0..count)

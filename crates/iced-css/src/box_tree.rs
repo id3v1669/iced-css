@@ -249,6 +249,9 @@ pub fn capture_limits() -> CaptureLimits {
 pub struct TextRun {
     pub text: String,
     pub size: f32,
+    /// The size its line height comes from, when it is drawn smaller than its computed one:
+    /// the small letters of `small-caps`.
+    pub line_size: Option<f32>,
     pub color: Option<[f32; 3]>,
     pub background: Option<[f32; 3]>,
     pub weight: u16,
@@ -861,6 +864,7 @@ impl BoxTree {
                     TextRun {
                         text,
                         size,
+                        line_size: None,
                         color,
                         background,
                         weight: style.weight,
@@ -933,35 +937,45 @@ impl BoxTree {
         }
         // 16.1: `text-indent` applies to the first line of a block container, so to the leaf
         // that holds it: spaces of a known fraction of the font size come closest.
+        let mut parent_of = vec![None; prepared.boxes.len()];
+        for (arena, value) in prepared.boxes.iter().enumerate() {
+            for &child in &value.children {
+                parent_of[child] = Some(arena);
+            }
+        }
         for arena in 0..prepared.boxes.len() {
             let owner = if prepared.anonymous[arena] {
-                let first_line = prepared
-                    .boxes
-                    .iter()
-                    .enumerate()
-                    .find_map(|(parent, value)| {
-                        let found = value.children.contains(&arena);
-                        let first = value.children.iter().find(|child| {
-                            let child = &prepared.boxes[**child];
-                            child.float.is_none() && !child.out_of_flow
-                        });
-                        (found && first == Some(&arena) && value.inline_row.is_none())
-                            .then_some(parent)
-                    });
-                if first_line.is_none() {
-                    continue;
-                }
                 container_of[arena]
             } else {
                 prepared.positions[arena].0
             };
             let indent = styles[owner].text_indent;
-            let Some(leaf) = texts[arena].as_mut().filter(|leaf| !leaf.is_empty()) else {
+            let Some(leaf) = texts[arena]
+                .as_mut()
+                .filter(|leaf| indent > 0.0 && !leaf.is_empty())
+            else {
                 continue;
             };
-            if indent > 0.0
-                && let Some(spacer) = indent_run(&leaf.runs[0], indent)
-            {
+            // An anonymous box must come first in its parent, and a text piece in its line.
+            let leads = |at: usize| {
+                !prepared.anonymous[at]
+                    || parent_of[at].is_none_or(|parent: usize| {
+                        prepared.boxes[parent].children.iter().find(|child| {
+                            let child = &prepared.boxes[**child];
+                            child.float.is_none() && !child.out_of_flow
+                        }) == Some(&at)
+                    })
+            };
+            let line_leads = parent_of[arena]
+                .filter(|parent| prepared.boxes[*parent].inline_row.is_some())
+                .is_none_or(leads);
+            if !leads(arena) || !line_leads {
+                continue;
+            }
+            let lead = leaf.runs.iter().find(|run| !run.text.is_empty());
+            if let Some(mut spacer) = lead.and_then(|first| indent_run(first, indent)) {
+                // Blank space of the block, not of whatever the first word sits in.
+                spacer.owner = projection.original_index(owner).unwrap_or(spacer.owner);
                 leaf.runs.insert(0, spacer);
             }
         }
@@ -978,6 +992,7 @@ impl BoxTree {
                         runs: vec![TextRun {
                             text,
                             size: prepared.font_sizes[projected],
+                            line_size: None,
                             color: raw_paints[projected].color,
                             background: None,
                             weight: style.weight,
@@ -1020,12 +1035,6 @@ impl BoxTree {
         // 17.6.1.1: `empty-cells: hide` draws no background or border on a cell with no
         // content but collapsed white space and out-of-flow boxes. It has no effect in a table
         // with collapsed borders, whose edges are shared.
-        let mut parent_of = vec![None; prepared.boxes.len()];
-        for (arena, value) in prepared.boxes.iter().enumerate() {
-            for &child in &value.children {
-                parent_of[child] = Some(arena);
-            }
-        }
         let blank = |arena: usize| texts[arena].as_ref().is_none_or(TextLeaf::is_empty);
         for (arena, value) in prepared.boxes.iter().enumerate() {
             let owner = prepared.positions[arena].0;
@@ -1212,7 +1221,8 @@ impl BoxTree {
     }
 
     /// Projected box indices in 9.9 paint order: flow blocks, then floats, then
-    /// positioned boxes in tree order, each with the descendants that belong to them.
+    /// positioned boxes in tree order, each with the descendants that belong to them. It
+    /// includes cells `empty-cells: hide` keeps from drawing; see `BoxPaint::hidden_empty`..
     #[must_use]
     pub fn paint_order(&self) -> Vec<usize> {
         self.paint_steps(&BTreeSet::new())
@@ -1544,6 +1554,7 @@ fn small_capitals(run: &TextRun) -> Vec<TextRun> {
             parts.push(TextRun {
                 text: String::new(),
                 size: if here { run.size * 0.8 } else { run.size },
+                line_size: here.then_some(run.size),
                 ..run.clone()
             });
             lower = here;
@@ -1557,7 +1568,8 @@ fn small_capitals(run: &TextRun) -> Vec<TextRun> {
 
 /// Invisible spaces about `indent` wide at `first`'s font, or `None` when too small to show.
 fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
-    let mut left = indent / first.size.max(1.0);
+    // No line is this wide: more only costs shaping, and text past it is off the box anyway.
+    let mut left = (indent / first.size.max(1.0)).min(512.0);
     let mut text = String::new();
     for (width, space) in [
         (1.0, '\u{2003}'),
@@ -1566,10 +1578,9 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         (0.25, '\u{2005}'),
         (1.0 / 6.0, '\u{2006}'),
     ] {
-        while left >= width {
-            text.push(space);
-            left -= width;
-        }
+        let count = (left / width).floor();
+        text.extend(std::iter::repeat_n(space, count as usize));
+        left -= count * width;
     }
     (!text.is_empty()).then(|| TextRun {
         text,
@@ -1851,6 +1862,14 @@ fn font_of(base: iced::Font, run: &TextRun) -> iced::Font {
     }
 }
 
+fn line_height_of(leaf: &TextLeaf) -> text::LineHeight {
+    match leaf.line_height {
+        TextLineHeight::Normal => text::LineHeight::default(),
+        TextLineHeight::Multiplier(factor) => text::LineHeight::Relative(factor),
+        TextLineHeight::Px(px) => text::LineHeight::Absolute(Pixels(px)),
+    }
+}
+
 fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
@@ -1864,6 +1883,10 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
             let mut span = text::Span::new(run.text.as_str())
                 .size(Pixels(run.size))
                 .font(font_of(base, run));
+            if let Some(line_size) = run.line_size {
+                let height = line_height_of(leaf).to_absolute(Pixels(line_size));
+                span = span.line_height(text::LineHeight::Absolute(height));
+            }
             if !run.visible {
                 return span.color(Color::TRANSPARENT);
             }
@@ -1878,11 +1901,7 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
         content: spans.as_slice(),
         bounds: Size::new(width, f32::INFINITY),
         size: Pixels(size),
-        line_height: match leaf.line_height {
-            TextLineHeight::Normal => text::LineHeight::default(),
-            TextLineHeight::Multiplier(factor) => text::LineHeight::Relative(factor),
-            TextLineHeight::Px(px) => text::LineHeight::Absolute(Pixels(px)),
-        },
+        line_height: line_height_of(leaf),
         font: base,
         align_x: match leaf.align {
             "center" => text::Alignment::Center,
@@ -2045,13 +2064,12 @@ fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
     leaf: &TextLeaf,
 ) -> f32 {
     let mut widest = 0.0_f32;
-    for run in &leaf.runs {
-        for word in run.text.split_whitespace() {
+    // A word can run across runs: `<b>a</b>b`, or the sizes of small capitals.
+    let mut word: Vec<TextRun> = Vec::new();
+    let mut flush = |word: &mut Vec<TextRun>| {
+        if !word.is_empty() {
             let single = TextLeaf {
-                runs: vec![TextRun {
-                    text: word.to_owned(),
-                    ..run.clone()
-                }],
+                runs: std::mem::take(word),
                 ..leaf.clone()
             };
             widest = widest.max(
@@ -2060,7 +2078,22 @@ fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
                     .width,
             );
         }
+    };
+    for run in &leaf.runs {
+        for chunk in run.text.split_inclusive(char::is_whitespace) {
+            let body = chunk.trim_end();
+            if !body.is_empty() {
+                word.push(TextRun {
+                    text: body.to_owned(),
+                    ..run.clone()
+                });
+            }
+            if body.len() != chunk.len() {
+                flush(&mut word);
+            }
+        }
     }
+    flush(&mut word);
     widest
 }
 
@@ -2960,6 +2993,22 @@ where
         }
         if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
             if shell.is_event_captured() {
+                // A widget that took Escape dropped its focus: `:focus` goes with it.
+                let escaped = matches!(
+                    key.as_ref(),
+                    keyboard::Key::Named(keyboard::key::Named::Escape)
+                );
+                let held = tree.state.downcast_ref::<Interaction>().focused;
+                if escaped
+                    && self
+                        .focus_hosts(tree, layout, renderer)
+                        .iter()
+                        .any(|host| Some(host.1) == held)
+                {
+                    tree.state.downcast_mut::<Interaction>().focused = None;
+                    shell.invalidate_layout();
+                    shell.request_redraw();
+                }
                 return;
             }
             // A rebuilt view may have fewer nodes, and a restyle may have hidden the box.
@@ -2998,6 +3047,14 @@ where
                 keyboard::Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space)
                     if focused.is_some() =>
                 {
+                    // Keys in a focused widget are its own, whatever boxes hold it.
+                    let in_host = self
+                        .focus_hosts(tree, layout, renderer)
+                        .iter()
+                        .any(|host| Some(host.1) == focused);
+                    if in_host {
+                        return;
+                    }
                     if let Some(message) = self.press_message(focused) {
                         shell.publish(message);
                         shell.capture_event();
@@ -3006,14 +3063,19 @@ where
                 }
                 _ => return,
             };
-            for &(index, node) in &hosts {
-                let mut change = if next == Some(node) {
+            // Every element, hidden ones too: their widgets keep their state.
+            for index in 0..self.elements.len() {
+                let target = hosts
+                    .iter()
+                    .any(|&(host, node)| host == index && next == Some(node));
+                let mut change = if target {
                     HostFocus::Focus(true)
                 } else {
                     HostFocus::Unfocus
                 };
                 self.operate_host(tree, layout, renderer, index, &mut change);
             }
+            shell.request_redraw();
             let state = tree.state.downcast_mut::<Interaction>();
             let before = (state.hovered, state.active, state.focused);
             state.focused = next;

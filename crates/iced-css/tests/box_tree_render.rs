@@ -814,3 +814,59 @@ fn list_style_images_replace_outside_markers_and_fall_back_to_text() {
             .unwrap()
     );
 }
+
+#[test]
+fn keys_in_a_hosted_input_stay_its_own() {
+    use iced::keyboard::key::Named;
+    let root = node("page", vec![node("card", vec![node("one", vec![])])]);
+    let tree = BoxTree::new(
+        root,
+        "#card { padding:5px; } #one { height:30px; width:200px; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree
+        .interactive()
+        .widget("one", iced::widget::text_input("", "").on_input(|_| 1))
+        .on_press("card", 9)
+        .into();
+    let mut ui = iced_test::simulator(view);
+    // The press box comes first in Tab order, then the input.
+    let _ = ui.tap_key(Named::Tab);
+    let _ = ui.tap_key(Named::Tab);
+    let _ = ui.tap_key(Named::Enter);
+    let messages: Vec<u8> = ui.into_messages().collect();
+    assert!(!messages.contains(&9), "{messages:?}");
+}
+
+#[test]
+fn narrow_columns_hold_whole_small_caps_words() {
+    // A word's minimum width is its whole width, so a shrunken column matches an unwrapped one.
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "t",
+            vec![node(
+                "r",
+                vec![
+                    node("c", vec![text("w", "Extraordinary")]),
+                    node("d", vec![]),
+                ],
+            )],
+        );
+        let sheet = format!(
+            "#t {{ display:table; width:1px; color:black; }}
+             #r {{ display:table-row; }}
+             #c {{ display:table-cell; font-variant:small-caps; {css} }}
+             #d {{ display:table-cell; width:50px; height:30px; background-color:#d9534f; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("small-caps-column-{}.png", std::process::id());
+    assert!(draw("white-space:nowrap;", &name));
+    assert!(draw("", &name));
+}

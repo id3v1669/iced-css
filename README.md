@@ -49,7 +49,8 @@ capturing the tree again, which is enough to build hot reload on.
 - **Keyboard:** boxes with a press message or `tabindex` take focus by click and Tab, and
   match `:focus`; Enter and Space press them.
 - **Native widgets:** any iced `Element` can sit in a leaf box and receives input; Tab moves through
-  focusable ones such as `text_input` in box order.
+  them in box order, entering the first focusable one each holds, disabled or not. `:focus` matches
+  a widget's box after Tab but not after a click on it.
 
 ## Animation
 
@@ -75,7 +76,8 @@ animated `color` moves with it.
 
 Not read at all: `letter-spacing`, `word-spacing`, and URL cursors (their
 keyword fallback is used). `text-indent` is approximated by leading spaces, positive lengths only
-(no percentages or hanging indents). `font-variant: small-caps` scales capitals.
+(no percentages or hanging indents), and a word too wide beside it moves to the next line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
+sizing decorations by part; generated content and markers take it only from their element.
 
 ## Status
 
