@@ -152,11 +152,6 @@ fn inline_blocks_lay_out_as_a_navigation_row() {
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     assert!(snapshot.matches_image(path.join("nav.png")).unwrap());
-    // Text and inline-blocks in one run are refused, not misdrawn.
-    let mixed = node("page", vec![text("t", "words"), node("b", vec![])]);
-    assert!(BoxTree::new(mixed, "#b { display:inline-block; }").is_err());
-    let mixed = node("page", vec![node("b", vec![]), text("t", "words")]);
-    assert!(BoxTree::new(mixed, "#b { display:inline-block; }").is_err());
     let spaced = node(
         "page",
         vec![node("b", vec![]), text("t", "   "), node("c", vec![])],
@@ -453,6 +448,151 @@ fn unbreakable_text_can_be_scrolled_to() {
     })]);
     assert!(
         !ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+}
+
+#[test]
+fn a_frame_of_an_animation_draws_between_its_ends() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let root = node("page", vec![node("bar", vec![text("line", "words")])]);
+    let from = BoxTree::new(
+        root,
+        "#page { background-color:white; }
+         #bar { width:100px; height:40px; background-color:#ff0000; color:#000000; border:4px solid; }",
+    )
+    .unwrap();
+    let to = from
+        .restyled(&[
+            "#page { background-color:white; }
+             #bar { width:300px; height:40px; background-color:#0000ff; color:#ffffff; border:4px solid; }",
+        ])
+        .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    let start = Instant::now();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    let count = animations
+        .request(
+            &from,
+            &to,
+            "bar",
+            &["width", "background-color", "color"],
+            timing,
+            start,
+        )
+        .unwrap();
+    assert_eq!(count, 3);
+    animations.advance(start + Duration::from_millis(500), &to);
+    let view: Element<'_, u8> = animations.presented(&to).view();
+    let mut ui = iced_test::simulator(view);
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(
+                std::env::temp_dir().join(format!("animation-frame-{}.png", std::process::id()))
+            )
+            .unwrap()
+    );
+}
+
+#[test]
+fn text_sits_in_a_line_beside_inline_blocks() {
+    let root = node(
+        "page",
+        vec![
+            text("before", "before"),
+            node("chip", vec![]),
+            text("after", "after"),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background-color:white; color:black; }
+         #chip { display:inline-block; width:40px; height:30px; background-color:#2a4d69; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(
+                std::env::temp_dir().join(format!("row-text-{}.png", std::process::id()))
+            )
+            .unwrap()
+    );
+}
+
+#[test]
+fn a_scrollers_own_text_can_be_scrolled_to() {
+    let root = node(
+        "page",
+        vec![text("line", "a line that is much wider than its box")],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background:white; } #line { display:block; overflow:auto; width:60px; white-space:nowrap; color:black; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    let picture = std::env::temp_dir().join(format!(
+        "a_scrollers_own_text_can_be_scrolled_to-{}.png",
+        std::process::id()
+    ));
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    ui.point_at(Point::new(10.0, 10.0));
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Pixels { x: -40.0, y: 0.0 },
+    })]);
+    assert!(
+        !ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+}
+
+#[test]
+fn text_a_child_clips_does_not_extend_the_scroller() {
+    let root = node(
+        "page",
+        vec![node(
+            "list",
+            vec![text("line", "a line that is much wider than its box")],
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background:white; } #list { overflow:auto; width:100px; white-space:nowrap; color:black; } #line { display:block; overflow:hidden; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    let picture = std::env::temp_dir().join(format!(
+        "text_a_child_clips_does_not_extend_the_scroller-{}.png",
+        std::process::id()
+    ));
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    ui.point_at(Point::new(10.0, 10.0));
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Pixels { x: -40.0, y: 0.0 },
+    })]);
+    assert!(
+        ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(&picture)
             .unwrap()

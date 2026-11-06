@@ -2,11 +2,15 @@
 //! widths, float avoidance and the absolute badge follow without rebuilding the tree.
 use iced::{Element, Theme};
 use iced_css::{
-    box_tree::{BoxTree, capture_limits},
+    animation::clock::AnimationTiming,
+    box_tree::{BoxTree, BoxTreeAnimations, capture_limits},
     capture::{CapturedElement, adapters},
 };
 use iced_css_core::source::AttributeLimits;
-use std::num::NonZeroUsize;
+use std::{
+    num::NonZeroUsize,
+    time::{Duration, Instant},
+};
 
 type Node = CapturedElement<'static, (), Theme, iced::Renderer>;
 
@@ -28,6 +32,9 @@ const CSS: &str = "
     #badge   { position:absolute; top:24px; right:24px; width:40px; height:40px;
                background-color:#d9534f; }
 ";
+
+/// Pressing the card widens and recolors the bar below it, on request.
+const OPEN: &str = "#wide { width:100%; height:72px; background-color:#d9534f; }";
 
 fn node(id: &str, children: Vec<Node>) -> Node {
     let bound = NonZeroUsize::new(1000).expect("positive");
@@ -90,11 +97,9 @@ fn tree() -> BoxTree {
 #[cfg(test)]
 #[test]
 fn hosted_button_and_box_press_work_on_the_real_renderer() {
-    let app = App {
-        tree: tree(),
-        button: 3,
-        card: 1,
-    };
+    let mut app = App::new();
+    app.button = 3;
+    app.card = 1;
     let mut ui = iced_test::simulator(view(&app));
     ui.click("Button: 3  Card: 1")
         .expect("the hosted button's label is findable");
@@ -115,29 +120,76 @@ fn the_example_stylesheet_is_accepted() {
     assert!(geometry.iter().all(Option::is_some));
 }
 
+#[cfg(test)]
+#[test]
+fn pressing_the_card_animates_and_finishes() {
+    let mut app = App::new();
+    update(&mut app, Message::Card);
+    assert!(app.animations.is_animating());
+    update(
+        &mut app,
+        Message::Frame(Instant::now() + Duration::from_secs(1)),
+    );
+    assert!(!app.animations.is_animating());
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Message {
     Button,
     Card,
+    Frame(Instant),
 }
 
 struct App {
     tree: BoxTree,
+    animations: BoxTreeAnimations,
     button: u32,
     card: u32,
+}
+
+impl App {
+    fn new() -> Self {
+        Self {
+            tree: tree(),
+            animations: BoxTreeAnimations::new(),
+            button: 0,
+            card: 0,
+        }
+    }
 }
 
 fn update(app: &mut App, message: Message) {
     match message {
         Message::Button => app.button += 1,
-        Message::Card => app.card += 1,
+        Message::Card => {
+            app.card += 1;
+            let sheets: &[&str] = if app.card % 2 == 1 {
+                &[CSS, OPEN]
+            } else {
+                &[CSS]
+            };
+            let next = app.tree.restyled(sheets).expect("stylesheet");
+            let timing = AnimationTiming::new(Duration::from_millis(300), Duration::ZERO);
+            app.animations
+                .request(
+                    &app.tree,
+                    &next,
+                    "wide",
+                    &["width", "height", "background-color"],
+                    timing,
+                    Instant::now(),
+                )
+                .expect("known properties");
+            app.tree = next;
+        }
+        Message::Frame(now) => app.animations.advance(now, &app.tree),
     }
 }
 
 fn view(app: &App) -> Element<'_, Message> {
     let label = format!("Button: {}  Card: {}", app.button, app.card);
-    app.tree
-        .clone()
+    app.animations
+        .presented(&app.tree)
         .interactive()
         .widget(
             "action",
@@ -150,15 +202,8 @@ fn view(app: &App) -> Element<'_, Message> {
 }
 
 fn main() -> iced::Result {
-    iced::application(
-        || App {
-            tree: tree(),
-            button: 0,
-            card: 0,
-        },
-        update,
-        view,
-    )
-    .title("iced-css box tree")
-    .run()
+    iced::application(App::new, update, view)
+        .subscription(|app: &App| app.animations.frames(Message::Frame))
+        .title("iced-css box tree")
+        .run()
 }

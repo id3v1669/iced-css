@@ -66,8 +66,14 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     num::{NonZeroU64, NonZeroUsize},
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
 };
+
+mod animation;
+pub use animation::BoxTreeAnimations;
 
 /// What building a box tree can refuse. Each cause keeps its own message.
 #[derive(Debug)]
@@ -347,6 +353,8 @@ type InteractionKey = (Option<usize>, Option<usize>, Option<usize>);
 
 #[derive(Debug)]
 struct Source {
+    /// Which capture this is; restyles share it, so it tells one element from a reused id.
+    capture: u64,
     construction: Construction,
     sheets: Vec<String>,
     /// What relative `url()`s resolve against.
@@ -354,6 +362,8 @@ struct Source {
     /// Restyles already cascaded. Pointerless, so nothing here keeps the source alive.
     variants: Mutex<BTreeMap<InteractionKey, Style>>,
 }
+
+static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
 
 /// Interaction states the cache holds before starting over: each is a whole style.
 const VARIANT_LIMIT: usize = 64;
@@ -386,6 +396,8 @@ pub struct BoxTree {
     /// Background images that can load, by projected index.
     backgrounds: BTreeMap<usize, (BackgroundImage, image::Handle)>,
     source: Arc<Source>,
+    /// Temporary values of running animations, laid over every interaction styling.
+    presentation: Option<Arc<Vec<animation::Presented>>>,
 }
 
 impl PartialEq for BoxTree {
@@ -419,6 +431,7 @@ impl BoxTree {
     ) -> Result<Self, BoxTreeError> {
         let (_, construction) = root.into_parts();
         let source = Arc::new(Source {
+            capture: NEXT_CAPTURE.fetch_add(1, Ordering::Relaxed),
             construction,
             sheets: vec![css.to_owned()],
             base: base.to_owned(),
@@ -436,6 +449,7 @@ impl BoxTree {
     /// Returns a stylesheet, cascade or unsupported-display failure.
     pub fn restyled(&self, sheets: &[&str]) -> Result<Self, BoxTreeError> {
         let source = Arc::new(Source {
+            capture: self.source.capture,
             construction: self.source.construction.clone(),
             sheets: sheets.iter().map(|sheet| (*sheet).to_owned()).collect(),
             base: self.source.base.clone(),
@@ -447,6 +461,13 @@ impl BoxTree {
     /// This tree restyled for an interaction state, cascading it the first time. A
     /// refused restyle keeps this styling: hovering must not take the view away.
     fn variant(&self, key: InteractionKey) -> Self {
+        let mut tree = self.unpresented_variant(key);
+        tree.presentation.clone_from(&self.presentation);
+        tree.present();
+        tree
+    }
+
+    fn unpresented_variant(&self, key: InteractionKey) -> Self {
         let cached = self
             .source
             .variants
@@ -457,7 +478,12 @@ impl BoxTree {
         if let Some(style) = cached {
             return Self::from_style(style, Arc::clone(&self.source));
         }
-        let built = Self::styled(&self.source, key).unwrap_or_else(|_| self.clone());
+        let built = match Self::styled(&self.source, key) {
+            Ok(built) => built,
+            // This tree may carry a frame's presented values; those are not a style to keep.
+            Err(_) if self.presentation.is_some() => return self.clone(),
+            Err(_) => self.clone(),
+        };
         let mut variants = self
             .source
             .variants
@@ -493,6 +519,7 @@ impl BoxTree {
             markers: style.markers,
             backgrounds: style.backgrounds,
             source,
+            presentation: None,
         }
     }
 
@@ -938,6 +965,7 @@ impl BoxTree {
             markers: marker_leaves,
             backgrounds: background_images,
             source: Arc::clone(source),
+            presentation: None,
         })
     }
 
@@ -1386,7 +1414,7 @@ fn apply_scrolling(
     prepared: &PreparedTree,
     geometry: &mut [FlowGeometry],
     scrolled: impl Fn(usize) -> (f32, f32),
-    text_width: impl Fn(usize, f32) -> Option<f32>,
+    text_size: impl Fn(usize, f32) -> Option<Size>,
     viewport: Size,
 ) -> Vec<(f32, f32)> {
     let mut limits = vec![(0.0_f32, 0.0_f32); prepared.boxes.len()];
@@ -1402,15 +1430,24 @@ fn apply_scrolling(
             (padding.bottom, padding.right)
         };
         let (mut reach, mut reach_x) = (bottom, right);
+        // A scroller's own text scrolls in it too.
+        let place = geometry[arena].leaf_band.unwrap_or(geometry[arena].content);
+        if let Some(size) = text_size(arena, place.right - place.left) {
+            reach = reach.max(place.top + size.height);
+            reach_x = reach_x.max(place.left + size.width);
+        }
         scrolling_descendants(prepared, arena, |child, reaches| {
             if reaches {
                 let box_of = &geometry[child];
                 reach = reach.max(box_of.border.bottom);
                 reach_x = reach_x.max(box_of.border.right);
-                // Text that will not break runs past its box.
-                let place = box_of.leaf_band.unwrap_or(box_of.content);
-                if let Some(width) = text_width(child, place.right - place.left) {
-                    reach_x = reach_x.max(place.left + width);
+                // Text runs past a box too small for it, unless that box clips it.
+                if !prepared.clipped[child] {
+                    let place = box_of.leaf_band.unwrap_or(box_of.content);
+                    if let Some(size) = text_size(child, place.right - place.left) {
+                        reach = reach.max(place.top + size.height);
+                        reach_x = reach_x.max(place.left + size.width);
+                    }
                 }
             }
         });
@@ -2379,7 +2416,7 @@ where
             |arena, width| {
                 texts[arena]
                     .as_ref()
-                    .map(|leaf| paragraph(renderer, leaf, width).min_bounds().width)
+                    .map(|leaf| paragraph(renderer, leaf, width).min_bounds())
             },
             available,
         );
@@ -2636,6 +2673,8 @@ where
             let (mut left, mut left_x) = (amount != 0.0, amount_x != 0.0);
             let mut moved = false;
             let mut at = hit;
+            // What the wheel is over moves only with its containing blocks.
+            let mut position = None;
             while let Some(node) = at {
                 let arena = self
                     .tree
@@ -2643,8 +2682,19 @@ where
                     .iter()
                     .position(|value| *value == node)
                     .and_then(|projected| self.tree.prepared.slot[projected]);
-                if let Some(&(limit, limit_x)) =
-                    arena.and_then(|arena| self.scroll_limits.get(arena))
+                if position == Some(Position::Fixed) {
+                    break;
+                }
+                let here = arena.map(|arena| self.tree.prepared.positions[arena].1);
+                let skipped = position == Some(Position::Absolute)
+                    && here == Some(Position::Static)
+                    && arena != Some(0);
+                if !skipped && here.is_some() {
+                    position = here;
+                }
+                if let Some(&(limit, limit_x)) = arena
+                    .filter(|_| !skipped)
+                    .and_then(|arena| self.scroll_limits.get(arena))
                 {
                     let current = state
                         .scrolled

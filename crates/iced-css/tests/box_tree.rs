@@ -110,13 +110,6 @@ fn paint_order_is_flow_then_float_then_positioned() {
 }
 
 #[test]
-fn text_beside_an_inline_block_is_reported() {
-    let root = node("page", vec![text("t", "words"), node("b", vec![])]);
-    let error = BoxTree::new(root, "#b { display:inline-block; }").unwrap_err();
-    assert!(error.to_string().contains("display"));
-}
-
-#[test]
 fn inside_a_positioned_box_blocks_paint_before_floats() {
     let tree = BoxTree::new(
         node(
@@ -1319,6 +1312,48 @@ mod interactive {
     }
 
     #[test]
+    fn a_presented_value_survives_an_interaction_restyle() {
+        let root = || node("page", vec![node("slot", vec![]), node("other", vec![])]);
+        let sheet = |width: u32| {
+            format!(
+                "#slot {{ width:{width}px; height:10px; }} #other {{ height:10px; }} #other:hover {{ margin-top:5px; }}"
+            )
+        };
+        let from = BoxTree::new(root(), &sheet(100)).unwrap();
+        let to = from.restyled(&[&sheet(200)]).unwrap();
+        let mut animations = iced_css::box_tree::BoxTreeAnimations::new();
+        let start = std::time::Instant::now();
+        animations
+            .request(
+                &from,
+                &to,
+                "slot",
+                &["width"],
+                iced_css::animation::clock::AnimationTiming::new(
+                    std::time::Duration::from_secs(1),
+                    std::time::Duration::ZERO,
+                ),
+                start,
+            )
+            .unwrap();
+        animations.advance(start + std::time::Duration::from_millis(500), &to);
+        let view: View<'_> = animations
+            .presented(&to)
+            .interactive()
+            .widget("slot", space(10.0))
+            .into();
+        let mut rig = Rig::new(view);
+        assert_eq!(rig.slot().width, 150.0);
+        rig.send(
+            mouse::Event::CursorMoved {
+                position: Point::new(5.0, 15.0),
+            },
+            Point::new(5.0, 15.0),
+        );
+        assert_eq!(rig.slot().width, 150.0);
+    }
+
+    #[test]
     fn draw_with_clips_widgets_and_text_runs_without_panicking() {
         let root = node(
             "page",
@@ -1717,15 +1752,30 @@ fn row_and_text_alignment_come_from_the_block_container() {
 }
 
 #[test]
-fn inline_generated_text_beside_inline_blocks_is_refused_and_blank_text_is_not() {
+fn text_beside_inline_blocks_takes_a_box_in_the_line_and_blank_text_does_not() {
     let root = node("page", vec![node("a", vec![])]);
-    let css = "#a { display:inline-block; } #page:after { content:\"x\"; }";
-    assert!(
-        BoxTree::new(root, css)
-            .unwrap_err()
-            .to_string()
-            .contains("content")
+    let css =
+        "#a { display:inline-block; width:40px; height:10px; } #page:after { content:\"x\"; }";
+    let tree = BoxTree::new(root, css).unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "x");
+    let root = node(
+        "page",
+        vec![text("one", "one"), node("a", vec![]), text("two", "two")],
     );
+    let tree = BoxTree::new(
+        root,
+        "#a { display:inline-block; width:40px; height:10px; }",
+    )
+    .unwrap();
+    let mut widths = tree.clone();
+    widths.set_text_widths(|_| (30.0, 30.0));
+    let geometry = widths
+        .layout_text(800.0, Some(600.0), &mut |_, _| 10.0)
+        .unwrap();
+    let chip = geometry[2].as_ref().unwrap();
+    assert_eq!((chip.border.left, chip.border.right), (30.0, 70.0));
+    assert_eq!(geometry[3].as_ref().unwrap().border.left, 70.0);
+    assert_eq!(geometry[1].as_ref().unwrap().border.left, 0.0);
     let root = node("page", vec![node("a", vec![])]);
     let css = "#a { display:inline-block; } #page:after { content:\"x\"; display:block; }";
     assert_eq!(
@@ -2184,4 +2234,314 @@ fn restyling_swaps_sheets_later_over_earlier_and_keeps_the_tree() {
     );
     // No sheets is legal: the user agent's defaults remain.
     assert!(tree.restyled(&[]).is_ok());
+}
+
+mod animation {
+    use super::*;
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+
+    fn second() -> AnimationTiming {
+        AnimationTiming::new(Duration::from_secs(1), Duration::ZERO)
+    }
+    fn near(left: [f32; 3], right: [f32; 3]) -> bool {
+        left.iter().zip(right).all(|(a, b)| (a - b).abs() < 0.01)
+    }
+    fn tree(css: &str) -> BoxTree {
+        let root = node(
+            "page",
+            vec![node("box", vec![node("kid", vec![]), node("own", vec![])])],
+        );
+        BoxTree::new(root, css).unwrap()
+    }
+    fn index(tree: &BoxTree, _name: &str, at: usize) -> Option<[f32; 3]> {
+        tree.paints()[at].background
+    }
+
+    #[test]
+    fn a_requested_color_runs_from_old_to_new_and_lets_go() {
+        let from = tree("#box { background-color:#ff0000; }");
+        let to = from
+            .restyled(&["#box { background-color:#0000ff; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let count = animations
+            .request(&from, &to, "box", &["background-color"], second(), start)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert!(animations.is_animating());
+        let shown = animations.presented(&to);
+        assert!(near(index(&shown, "box", 1).unwrap(), [1.0, 0.0, 0.0]));
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        assert!(
+            near(index(&shown, "box", 1).unwrap(), [0.5, 0.0, 0.5]),
+            "{shown:?}"
+        );
+        // The committed tree is never touched.
+        assert_eq!(index(&to, "box", 1), Some([0.0, 0.0, 1.0]));
+        animations.advance(start + Duration::from_secs(1), &to);
+        assert!(!animations.is_animating());
+        assert_eq!(animations.presented(&to), to);
+    }
+
+    #[test]
+    fn lengths_animate_through_layout_and_mixed_kinds_apply_at_once() {
+        let from = tree(
+            "#box { width:100px; margin-left:10px; padding-top:50%; height:10px; top:0px; position:relative; }",
+        );
+        let to = from
+            .restyled(&["#box { width:200px; margin-left:30px; padding-top:10px; height:auto; top:40px; position:relative; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        // Shorthands expand. padding-top mixes a percentage and a length; height meets auto.
+        let count = animations
+            .request(
+                &from,
+                &to,
+                "box",
+                &["width", "margin", "padding", "height", "top"],
+                second(),
+                start,
+            )
+            .unwrap();
+        assert_eq!(count, 3);
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let geometry = shown.layout(800.0, Some(600.0)).unwrap();
+        let moved = geometry[1].as_ref().unwrap();
+        assert_eq!(moved.border.right - moved.border.left, 150.0);
+        assert_eq!(moved.border.left, 20.0);
+        assert_eq!(moved.border.top, 20.0);
+        // Padding took its target at once.
+        assert_eq!(moved.padding.top, 20.0);
+        assert_eq!(moved.content.top - moved.padding.top, 10.0);
+    }
+
+    #[test]
+    fn an_interruption_starts_from_what_is_shown() {
+        let from = tree("#box { background-color:#000000; }");
+        let middle = from
+            .restyled(&["#box { background-color:#ffffff; }"])
+            .unwrap();
+        let back = from
+            .restyled(&["#box { background-color:#000000; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(
+                &from,
+                &middle,
+                "box",
+                &["background-color"],
+                second(),
+                start,
+            )
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &middle);
+        let halfway = start + Duration::from_millis(500);
+        animations
+            .request(
+                &middle,
+                &back,
+                "box",
+                &["background-color"],
+                second(),
+                halfway,
+            )
+            .unwrap();
+        let shown = animations.presented(&back);
+        assert!(
+            near(index(&shown, "box", 1).unwrap(), [0.5, 0.5, 0.5]),
+            "{shown:?}"
+        );
+        animations.advance(halfway + Duration::from_millis(500), &back);
+        let shown = animations.presented(&back);
+        assert!(
+            near(index(&shown, "box", 1).unwrap(), [0.25, 0.25, 0.25]),
+            "{shown:?}"
+        );
+    }
+
+    #[test]
+    fn nothing_starts_without_a_changed_animatable_target() {
+        let from = tree("#box { width:10px; background-color:#000000; }");
+        let to = from
+            .restyled(&["#box { width:10px; display:inline-block; background-color:transparent; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let now = Instant::now();
+        let mut count = |names: &[&str], id: &str| {
+            animations
+                .request(&from, &to, id, names, second(), now)
+                .unwrap()
+        };
+        assert_eq!(count(&["width"], "box"), 0);
+        assert_eq!(count(&["display"], "box"), 0);
+        assert_eq!(count(&["background-color"], "box"), 0);
+        assert_eq!(count(&["width"], "absent"), 0);
+        assert!(!animations.is_animating());
+        assert!(
+            animations
+                .request(&from, &to, "box", &["no-such"], second(), now)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn an_unrequested_style_change_wins_at_once_and_cancels() {
+        let from = tree("#box { width:100px; }");
+        let to = from.restyled(&["#box { width:200px; }"]).unwrap();
+        let other = from.restyled(&["#box { width:300px; }"]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["width"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(300), &to);
+        assert_eq!(animations.presented(&other), other);
+        // A frame sees the tree moved on: going back later does not revive the animation.
+        animations.advance(start + Duration::from_millis(400), &other);
+        assert!(!animations.is_animating());
+        assert_eq!(animations.presented(&to), to);
+    }
+
+    #[test]
+    fn another_capture_with_the_same_id_inherits_nothing() {
+        let from = tree("#box { width:100px; }");
+        let to = from.restyled(&["#box { width:200px; }"]).unwrap();
+        let fresh = tree("#box { width:200px; }");
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["width"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        assert_eq!(animations.presented(&fresh), fresh);
+        animations.advance(start + Duration::from_millis(600), &fresh);
+        assert!(!animations.is_animating());
+        let count = animations
+            .request(&from, &fresh, "box", &["width"], second(), start)
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn repeats_and_hidden_ends_start_nothing_extra() {
+        let from = tree("#box { width:100px; height:10px; background-color:#000000; }");
+        let to = from
+            .restyled(&["#box { width:200px; height:20px; background-color:#ffffff; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let count = animations
+            .request(
+                &from,
+                &to,
+                "box",
+                &["width", "height", "width"],
+                second(),
+                start,
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        let gone = from
+            .restyled(&["#box { display:none; background-color:#ffffff; }"])
+            .unwrap();
+        let count = animations
+            .request(&from, &gone, "box", &["background-color"], second(), start)
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn frames_builds_with_a_function_item() {
+        fn tick(_: Instant) -> u8 {
+            0
+        }
+        let _idle: iced::Subscription<u8> = BoxTreeAnimations::new().frames(tick);
+    }
+
+    #[test]
+    fn generated_text_of_a_constant_color_stays_put() {
+        let source = || node("page", vec![text("line", "words")]);
+        let from = BoxTree::new(
+            source(),
+            "#page { color:#000000; } #page:before { content:\"x\"; color:#ffffff; }",
+        )
+        .unwrap();
+        let to = from
+            .restyled(&["#page { color:#ffffff; } #page:before { content:\"x\"; color:#ffffff; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "page", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let leaves = shown.text_leaves();
+        let runs = &leaves[0].1.runs;
+        assert_eq!(runs[0].color, Some([1.0; 3]), "{runs:?}");
+        assert!(near(runs[1].color.unwrap(), [0.5; 3]), "{runs:?}");
+    }
+
+    #[test]
+    fn a_presented_color_reaches_what_inherits_it_and_nothing_else() {
+        let from = tree(
+            "#box { color:#000000; border:1px solid; }
+             #kid { border:1px solid; }
+             #own { color:#ffffff; border:1px solid #ffffff; }",
+        );
+        let to = from
+            .restyled(&["#box { color:#ffffff; border:1px solid; }
+                 #kid { border:1px solid; }
+                 #own { color:#ffffff; border:1px solid #ffffff; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let gray = [0.5; 3];
+        let paints = shown.paints();
+        assert!(near(paints[1].color.unwrap(), gray), "{:?}", paints[1]);
+        assert!(near(paints[1].border[0].unwrap(), gray));
+        assert!(near(paints[2].color.unwrap(), gray));
+        assert!(near(paints[2].border[3].unwrap(), gray));
+        // Always white, so it does not move from black.
+        assert_eq!(paints[3].color, Some([1.0; 3]));
+        assert_eq!(paints[3].border[0], Some([1.0; 3]));
+        assert_eq!(paints[0].color, to.paints()[0].color);
+    }
+
+    #[test]
+    fn presented_text_color_and_delay() {
+        let source = || node("page", vec![text("line", "words")]);
+        let from = BoxTree::new(source(), "#page { color:#000000; }").unwrap();
+        let to = from.restyled(&["#page { color:#ffffff; }"]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let timing = AnimationTiming::new(Duration::from_secs(1), Duration::from_secs(1));
+        animations
+            .request(&from, &to, "page", &["color"], timing, start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let black = animations.presented(&to);
+        assert!(near(
+            black.text_leaves()[0].1.runs[0].color.unwrap(),
+            [0.0; 3]
+        ));
+        animations.advance(start + Duration::from_millis(1500), &to);
+        let gray = animations.presented(&to);
+        assert!(near(
+            gray.text_leaves()[0].1.runs[0].color.unwrap(),
+            [0.5; 3]
+        ));
+    }
 }

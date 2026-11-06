@@ -3,8 +3,8 @@
 //! flow, then 9.4.3 relative offsets and 10.3.7/10.6.4 absolute placement in preorder.
 //! Display none removes a subtree. Consecutive inline-level siblings share one anonymous
 //! block (9.2.1.1) holding their text runs in source order; inline elements are flattened
-//! into it. Floats among them are placed before the anonymous block. Table and
-//! inline-block displays are refused by source. Other leaf content comes from the caller.
+//! into it. Floats among them are placed before the anonymous block. Inline-blocks form
+//! lines in which text takes boxes of its own. Other leaf content comes from the caller.
 use super::{
     clearance_box_facts::{
         BoxFactMode, BoxFactTarget, BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact,
@@ -383,15 +383,41 @@ impl Build {
         group
     }
 
+    /// The box text goes in on a line of inline-blocks: the piece the last text opened, or
+    /// a new one. Each piece sits in the line as one box, breaking only inside itself.
+    fn row_text(&mut self, group: usize, owner: usize) -> usize {
+        if let Some(&last) = self.boxes[group].children.last()
+            && self.anonymous[last]
+            && self.boxes[last].table.is_none()
+        {
+            return last;
+        }
+        let piece = self.anonymous_box(group, owner, ClearSide::None);
+        self.boxes[piece].establishes_bfc = true;
+        piece
+    }
+
     /// Adds generated text to an element's content: in the current run, or its own block.
-    fn generated(&mut self, target: usize, owner: usize, run: RunSource, value: &GeneratedRun) {
+    fn generated(
+        &mut self,
+        rows: &[usize],
+        target: usize,
+        owner: usize,
+        run: RunSource,
+        value: &GeneratedRun,
+    ) {
         if value.block {
             self.open[target] = None;
             let arena = self.anonymous_box(target, owner, value.clear);
             self.runs[arena].push(run);
         } else {
             let group = self.inline_group(target, owner);
-            self.runs[group].push(run);
+            let holder = if rows.contains(&group) {
+                self.row_text(group, owner)
+            } else {
+                group
+            };
+            self.runs[holder].push(run);
         }
     }
 }
@@ -521,8 +547,7 @@ pub fn prepare_captured_tree(
                     build.runs[target].push(RunSource::After(top));
                 } else {
                     let target = build.table_parent(target, top, None);
-                    refuse_in_row(&build, &inline_rows, target, value, top)?;
-                    build.generated(target, top, RunSource::After(top), value);
+                    build.generated(&inline_rows, target, top, RunSource::After(top), value);
                 }
             }
         }
@@ -564,8 +589,7 @@ pub fn prepare_captured_tree(
             inline_element[index] = true;
             inline_parent[index] = parent.filter(|&outer| inline_element[outer]);
             if let Some(value) = pseudo(index, 0) {
-                refuse_in_row(&build, &inline_rows, target, value, index)?;
-                build.generated(target, index, RunSource::Before(index), value);
+                build.generated(&inline_rows, target, index, RunSource::Before(index), value);
             }
             if is_text {
                 let group = build.inline_group(target, index);
@@ -575,10 +599,9 @@ pub fn prepare_captured_tree(
                 if inline_rows.contains(&group) {
                     // White space between inline-blocks generates nothing here.
                     if !blank {
-                        return Err(E::Unsupported {
-                            projected: index,
-                            property: "display",
-                        });
+                        let piece = build.row_text(group, index);
+                        build.runs[piece].push(RunSource::Node(index));
+                        slot[index] = Some(piece);
                     }
                 } else {
                     build.runs[group].push(RunSource::Node(index));
@@ -601,14 +624,16 @@ pub fn prepare_captured_tree(
         let table_role = table_role_of(resolution.display);
         // 17.2.1: a misplaced table part, or a non-table box in one, gets anonymous parts.
         let parent_slot = parent_slot.map(|target| build.table_parent(target, index, table_role));
-        // 9.2.2: inline-blocks in a run form lines of their own. Mixing them with text in
-        // one line needs atomic inlines in a paragraph, which is refused below.
+        // 9.2.2: inline-blocks in a run form lines of their own, and text beside them takes
+        // a box in those lines. So a line never breaks between words of different pieces.
         if in_row
             && let Some(target) = parent_slot
             && !build.open[target].is_some_and(|group| inline_rows.contains(&group))
         {
-            // Blank text before the first inline-block generates nothing either.
+            // Blank text before the first inline-block generates nothing either; other text
+            // moves into a piece of the line.
             let source_nodes = projection.snapshot.construction().nodes();
+            let mut earlier = Vec::new();
             if let Some(group) = build.open[target] {
                 let has_content = build.runs[group].iter().any(|run| match run {
                     RunSource::Node(at) => source_nodes[projection.original[*at]]
@@ -616,17 +641,23 @@ pub fn prepare_captured_tree(
                         .is_some_and(|text| !text.trim().is_empty()),
                     _ => true,
                 });
-                if has_content {
-                    return Err(E::Unsupported {
-                        projected: index,
-                        property: "display",
-                    });
+                earlier = std::mem::take(&mut build.runs[group]);
+                if !has_content {
+                    earlier.clear();
                 }
-                build.runs[group].clear();
             }
             let group = build.inline_group(target, index);
             inline_rows.push(group);
             build.boxes[group].inline_row = Some(RowAlign::Left);
+            if !earlier.is_empty() {
+                let piece = build.row_text(group, index);
+                for run in &earlier {
+                    if let RunSource::Node(at) = run {
+                        slot[*at] = Some(piece);
+                    }
+                }
+                build.runs[piece] = earlier;
+            }
         }
         if parent.is_some()
             && table_role.is_none()
@@ -767,7 +798,7 @@ pub fn prepare_captured_tree(
                 build.runs[arena].push(RunSource::Before(index));
             } else {
                 let target = build.table_parent(arena, index, None);
-                build.generated(target, index, RunSource::Before(index), value);
+                build.generated(&inline_rows, target, index, RunSource::Before(index), value);
             }
         }
         if is_text {
@@ -1103,22 +1134,6 @@ fn place_absolute(
 }
 
 /// Inline generated text beside inline-blocks needs atomic inlines in a paragraph.
-fn refuse_in_row(
-    build: &Build,
-    rows: &[usize],
-    target: usize,
-    value: &GeneratedRun,
-    projected: usize,
-) -> Result<(), TreeLayoutError> {
-    if !value.block && build.open[target].is_some_and(|group| rows.contains(&group)) {
-        return Err(TreeLayoutError::Unsupported {
-            projected,
-            property: "content",
-        });
-    }
-    Ok(())
-}
-
 fn table_role_of(display: Display) -> Option<TableRole> {
     Some(match display {
         Display::Table | Display::InlineTable => TableRole::Table {

@@ -49,16 +49,25 @@ capturing the tree again, which is enough to build hot reload on.
   match `:focus`; Enter and Space press them.
 - **Native widgets:** any iced `Element` can sit in a leaf box and receives input.
 
+## Animation
+
+`BoxTreeAnimations` runs explicit requests between two styled trees: colors (`color` reaches
+what inherits or uses it, plus `background-color`, border and outline colors) and lengths
+(`width`, `height`, their min and max, margins, paddings, border and outline widths, box
+offsets). A style change without a request applies at once. Timing is linear, through luminate.
+
 ## Known limits
 
-Refused with an error rather than approximated: `inline-block` or `inline-table` mixed with
-text in one line.
-
-Approximated or missing: `border-collapse` shares each edge at the widest cell border, with
+Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
+one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at
+their bottoms rather than baselines; `border-collapse` shares each edge at the widest cell border, with
 the later cell on top rather than resolving conflicts per edge; `justify` (start-aligned);
 one line height and alignment per paragraph; inline box padding and borders; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
-text properties, not other box properties. An rtl scroller does not scroll across.
+text properties, not other box properties. An rtl scroller does not scroll across. Animations do not cover `auto`, `transparent`, a length to a percentage,
+inline backgrounds, fonts or keyword values (those apply at once), and an `!important`
+declaration is animated like any other. A descendant or border whose own color has the same two ends as the
+animated `color` moves with it.
 
 ## Status
 
