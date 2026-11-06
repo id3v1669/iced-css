@@ -118,6 +118,10 @@ impl<'a> ConstructionSource<'a> {
             return Err(ConstructionSourceError::Bytes);
         }
         indexed.resize(nodes.len(), Indexed::default());
+        let mut seen_ids = std::collections::HashSet::new();
+        seen_ids
+            .try_reserve(nodes.len())
+            .map_err(|_| ConstructionSourceError::Allocation)?;
         for (position, node) in nodes.iter().enumerate() {
             let metadata = node.metadata();
             // Two exact-name linear lookups, bounded by the fixed key lengths.
@@ -130,20 +134,15 @@ impl<'a> ConstructionSource<'a> {
             )?;
             let css_id = metadata.css_id();
             if let Some(id) = css_id {
-                for earlier in &indexed[..position] {
-                    charge(&mut work, 1)?;
-                    if let Some(other) = earlier.css_id {
-                        charge(
-                            &mut work,
-                            id.len()
-                                .min(other.len())
-                                .checked_add(1)
-                                .ok_or(ConstructionSourceError::Work)?,
-                        )?;
-                        if id == other {
-                            return Err(ConstructionSourceError::DuplicateCssId);
-                        }
-                    }
+                // Hashes the id, so this costs its length and not the ids before it.
+                charge(
+                    &mut work,
+                    id.len()
+                        .checked_add(1)
+                        .ok_or(ConstructionSourceError::Work)?,
+                )?;
+                if !seen_ids.insert(id) {
+                    return Err(ConstructionSourceError::DuplicateCssId);
                 }
             }
             let local_language = metadata.attribute("lang");
@@ -254,15 +253,15 @@ mod work_tests {
     #[test]
     fn actual_view_work_and_observed_terminal_allowance() {
         let cases = [
-            (vec![None], None, false, 5),
-            (vec![None, None], None, false, 13),
-            (vec![Some("a")], None, false, 13),
-            (vec![Some("a"), None], Some("root"), false, 33),
-            (vec![Some("a"), Some("bb")], Some("root"), false, 47),
-            (vec![Some("a"), Some("bb")], Some("root"), true, 55),
-            (vec![Some("a"), Some("")], Some("root"), false, 41),
+            (vec![None], None, false),
+            (vec![None, None], None, false),
+            (vec![Some("a")], None, false),
+            (vec![Some("a"), None], Some("root"), false),
+            (vec![Some("a"), Some("bb")], Some("root"), false),
+            (vec![Some("a"), Some("bb")], Some("root"), true),
+            (vec![Some("a"), Some("")], Some("root"), false),
         ];
-        for (ids, root_id, lang, expected) in cases {
+        for (ids, root_id, lang) in cases {
             let mut element = if ids.len() == 1 {
                 leaf(ids[0])
             } else {
@@ -307,6 +306,16 @@ mod work_tests {
                 expected_ids
             );
             let states = vec![ConstructionState::default(); nodes.len()];
+            // Four per node and one, eight per attribute, and each id's length and one.
+            let expected = 4 * nodes.len()
+                + 1
+                + nodes
+                    .iter()
+                    .map(|node| {
+                        8 * node.metadata().attribute_count()
+                            + node.metadata().css_id().map_or(0, |id| id.len() + 1)
+                    })
+                    .sum::<usize>();
             for work in [expected, 100000, usize::MAX] {
                 let view = ConstructionSource::new(
                     &construction,

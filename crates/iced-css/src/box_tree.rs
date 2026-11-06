@@ -95,6 +95,9 @@ fn nz(value: usize) -> NonZeroUsize {
 const COUNT: usize = 100_000;
 const BYTES: usize = 64_000_000;
 const WORK: usize = 200_000_000;
+/// For limits that multiply worst cases ahead of time (every number at its longest in every
+/// box), which would refuse a page of a few hundred boxes. `COUNT` and `BYTES` bound the input.
+const WORST_CASE: usize = 1 << 60;
 
 fn big() -> NonZeroUsize {
     nz(COUNT)
@@ -118,7 +121,7 @@ fn selectors() -> SelectorTreeLimits {
     SelectorTreeLimits {
         entries: big(),
         retained_bytes: nz(BYTES),
-        work: nz(WORK),
+        work: nz(WORST_CASE),
     }
 }
 fn per_target() -> RuleBatchLimits {
@@ -135,12 +138,12 @@ fn per_target() -> RuleBatchLimits {
 }
 fn facts() -> ClearanceBoxFactsLimits {
     ClearanceBoxFactsLimits {
-        work: nz(WORK),
-        rule_visits: nz(WORK),
-        matching_work: nz(2_000_000_000),
-        declaration_offers: nz(WORK),
-        membership_work: nz(WORK),
-        numeric_work: nz(WORK),
+        work: nz(WORST_CASE),
+        rule_visits: nz(WORST_CASE),
+        matching_work: nz(WORST_CASE),
+        declaration_offers: nz(WORST_CASE),
+        membership_work: nz(WORST_CASE),
+        numeric_work: nz(WORST_CASE),
         selectors: selectors(),
         per_target: per_target(),
         numeric: numeric(),
@@ -611,7 +614,8 @@ impl BoxTree {
         let snapshot = host
             .snapshot()
             .ok_or_else(|| BoxTreeError("snapshot".to_owned()))?;
-        let projection = prepare_tree_source_projection(&host, snapshot, big()).map_err(failed)?;
+        let projection =
+            prepare_tree_source_projection(&host, snapshot, nz(WORK)).map_err(failed)?;
         let catalog = UaDisplayCatalog::new(UaDisplayLimits {
             rules: big(),
             retained_bytes: nz(BYTES),
@@ -674,11 +678,11 @@ impl BoxTree {
             SourceDisplayLimits {
                 nodes: big(),
                 retained_bytes: nz(BYTES),
-                work: nz(WORK),
-                rule_visits: nz(WORK),
-                matching_work: nz(2_000_000_000),
-                declaration_offers: nz(WORK),
-                membership_work: nz(WORK),
+                work: nz(WORST_CASE),
+                rule_visits: nz(WORST_CASE),
+                matching_work: nz(WORST_CASE),
+                declaration_offers: nz(WORST_CASE),
+                membership_work: nz(WORST_CASE),
                 selectors: selectors(),
                 per_target: per_target(),
             },
