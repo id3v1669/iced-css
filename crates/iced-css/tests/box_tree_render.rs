@@ -1032,3 +1032,31 @@ fn a_hidden_child_leaves_a_parent_without_sides_whole() {
     assert!(draw("", &name));
     assert!(draw("visibility:hidden;", &name));
 }
+
+#[test]
+fn authored_wide_spaces_still_break_a_columns_minimum() {
+    let draw = |words: &'static str, name: &str| {
+        let root = node(
+            "t",
+            vec![node(
+                "r",
+                vec![node("c", vec![text("w", words)]), node("d", vec![])],
+            )],
+        );
+        let sheet = "#t { display:table; width:1px; color:black; }
+             #r { display:table-row; }
+             #c { display:table-cell; }
+             #d { display:table-cell; width:50px; height:30px; background-color:#d9534f; }";
+        let tree = BoxTree::new(root, sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // The neighbour sits past the wider word in both: the space counts for nothing.
+    let name = format!("wide-space-{}.png", std::process::id());
+    assert!(draw("aaaa\u{2003}bbbb", &name));
+    assert!(!draw("aaaa\u{a0}bbbb", &name));
+}

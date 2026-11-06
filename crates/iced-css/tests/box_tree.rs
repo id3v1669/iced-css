@@ -3097,6 +3097,41 @@ fn an_absolute_auto_table_stays_automatic_and_an_empty_element_is_content() {
 }
 
 #[test]
+fn a_percent_fixed_table_finds_its_width_past_a_spanning_cell() {
+    let attrs = AttributeLimits {
+        entries: NonZeroUsize::new(1000).unwrap(),
+        retained_bytes: NonZeroUsize::new(1000).unwrap(),
+        work: NonZeroUsize::new(1000).unwrap(),
+    };
+    let wide = adapters::column_from_vec(vec![], capture_limits())
+        .unwrap()
+        .style_id("a", attrs)
+        .unwrap()
+        .style_attribute("colspan", "2", attrs)
+        .unwrap()
+        .erase();
+    let root = node(
+        "page",
+        vec![node("t", vec![node("r", vec![wide, node("b", vec![])])])],
+    );
+    let css = "#page { width:200px; }
+        #t { display:table; table-layout:fixed; width:50%; border-spacing:40px; }
+        #r { display:table-row; }
+        #a, #b { display:table-cell; width:100%; height:5px; }";
+    let geometry = BoxTree::new(root, css)
+        .unwrap()
+        .layout(800.0, None)
+        .unwrap();
+    for at in [3, 4] {
+        let border = geometry[at].as_ref().unwrap().border;
+        assert!(
+            (border.right - border.left - 100.0).abs() < 0.1,
+            "{border:?}"
+        );
+    }
+}
+
+#[test]
 fn fixed_tables_read_column_elements_first() {
     let root = node(
         "table",

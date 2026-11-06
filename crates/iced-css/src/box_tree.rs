@@ -254,6 +254,9 @@ pub struct TextRun {
     pub line_size: Option<f32>,
     /// The inline boxes it sits in, outermost first, as painted above and below the line.
     pub inline_boxes: Vec<InlineDecoration>,
+    /// Spaces standing in for an indent or an inline box's side: they stay with the next or
+    /// previous word when measuring its minimum width.
+    pub spacer: bool,
     /// A side border in this run's room: at its start (`true`) or end, its width and color.
     pub edge: Option<(bool, f32, [f32; 3])>,
     pub color: Option<[f32; 3]>,
@@ -873,6 +876,7 @@ impl BoxTree {
                         text,
                         size,
                         line_size: None,
+                        spacer: false,
                         inline_boxes: Vec::new(),
                         edge: None,
                         color,
@@ -1035,14 +1039,22 @@ impl BoxTree {
                         at.and_then(|at| projection.original_index(at))
                             .unwrap_or(run.owner)
                     };
-                    let outer = depth.checked_sub(1).map(|at| here[at]);
+
                     let margin = (sides.margin[across] > 0.0)
                         .then(|| indent_run(run, sides.margin[across]))
                         .flatten()
                         .map(|spacer| TextRun {
                             background: around(prepared.inline_parent[element]),
                             inline_boxes: decorations(&here[..depth]),
-                            owner: owner_of(outer.or(Some(container_of[arena]))),
+                            // Nothing hidden answers input: the nearest box around that shows.
+                            owner: owner_of(
+                                here[..depth]
+                                    .iter()
+                                    .rev()
+                                    .find(|at| raw_paints[**at].visible)
+                                    .copied()
+                                    .or(Some(container_of[arena])),
+                            ),
                             ..spacer
                         });
                     let bar = sides.border[across];
@@ -1156,6 +1168,7 @@ impl BoxTree {
                             text,
                             size: prepared.font_sizes[projected],
                             line_size: None,
+                            spacer: false,
                             inline_boxes: Vec::new(),
                             edge: None,
                             color: raw_paints[projected].color,
@@ -1760,6 +1773,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
     }
     (!text.is_empty()).then(|| TextRun {
         text,
+        spacer: true,
         background: None,
         underline: false,
         line_through: false,
@@ -2321,12 +2335,13 @@ fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
         }
     };
     // The spaces that hold an indent or an inline box's sides stay with their word.
-    let breaks = |character: char| {
-        character.is_whitespace() && !matches!(character, '\u{2002}'..='\u{2006}')
-    };
     for run in &leaf.runs {
-        for chunk in run.text.split_inclusive(breaks) {
-            let body = chunk.trim_end_matches(breaks);
+        if run.spacer {
+            word.push(run.clone());
+            continue;
+        }
+        for chunk in run.text.split_inclusive(char::is_whitespace) {
+            let body = chunk.trim_end();
             if !body.is_empty() {
                 word.push(TextRun {
                     text: body.to_owned(),
@@ -4007,5 +4022,60 @@ mod tests {
         );
         let slot = tree.prepared.slot[2].unwrap();
         assert!(drawn(&BTreeSet::from([slot])));
+    }
+
+    #[test]
+    fn a_shifted_slot_does_not_lend_a_presented_color_to_its_new_owner() {
+        type Node = CapturedElement<'static, (), Theme, iced::Renderer>;
+        let bound = nz(1000);
+        let limits = AttributeLimits {
+            entries: bound,
+            retained_bytes: bound,
+            work: bound,
+        };
+        let line = |id: &str, words: &'static str| -> Node {
+            adapters::text(words, capture_limits())
+                .unwrap()
+                .style_id(id, limits)
+                .unwrap()
+                .erase()
+        };
+        let root: Node = adapters::column_from_vec(
+            vec![line("y", "gone"), line("x", "moves"), line("z", "fixed")],
+            capture_limits(),
+        )
+        .unwrap()
+        .style_id("page", limits)
+        .unwrap()
+        .erase();
+        let sheet = |color: &str| {
+            format!(
+                "#y, #x, #z {{ display:block; }}
+                 #y:hover {{ display:none; }}
+                 #x {{ color:{color}; }}
+                 #z {{ color:#ffffff; }}"
+            )
+        };
+        let from = BoxTree::new(root, &sheet("#000000")).unwrap();
+        let to = from.restyled(&[&sheet("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = std::time::Instant::now();
+        let second = crate::animation::clock::AnimationTiming::new(
+            std::time::Duration::from_secs(1),
+            std::time::Duration::ZERO,
+        );
+        animations
+            .request(&from, &to, "x", &["color"], second, start)
+            .unwrap();
+        animations.advance(start + std::time::Duration::from_millis(500), &to);
+        let hovered = animations
+            .presented(&to)
+            .variant((Some(to.originals[1]), None, None));
+        let leaves = hovered.text_leaves();
+        let fixed = leaves
+            .iter()
+            .find(|(_, leaf)| leaf.text() == "fixed")
+            .unwrap();
+        assert_eq!(fixed.1.runs[0].color, Some([1.0; 3]));
     }
 }
