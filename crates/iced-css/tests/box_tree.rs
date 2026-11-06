@@ -2804,7 +2804,8 @@ fn table_layout_does_not_fix_an_auto_width_table() {
         .layout(800.0, None)
         .unwrap();
     let border = geometry[3].as_ref().unwrap().border;
-    assert!(border.right > border.left, "{border:?}");
+    // Automatic layout: the second cell after the first's preferred width, nothing shared out.
+    assert_eq!((border.left, border.right), (70.0, 100.0));
 }
 
 #[test]
@@ -2833,6 +2834,12 @@ fn empty_cells_hide_only_without_content_and_without_collapse() {
     };
     let tree = BoxTree::new(root(), &css("separate", "")).unwrap();
     let hidden = |tree: &BoxTree, id: usize| tree.paints()[id].hidden_empty;
+    let shown = BoxTree::new(
+        root(),
+        "#table { display:table; } #r { display:table-row; } #a { display:table-cell; }",
+    )
+    .unwrap();
+    assert!(!hidden(&shown, 2), "`show` is the initial value");
     assert!(hidden(&tree, 2));
     assert!(!hidden(&tree, 3));
     assert!(hidden(&tree, 5), "white space collapses away");

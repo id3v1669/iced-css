@@ -3390,4 +3390,23 @@ mod tests {
         assert_eq!(geometry[1].content.left, left - 15.0);
         assert_eq!(geometry[1].padding, padding);
     }
+
+    #[test]
+    fn a_hidden_empty_cell_still_draws_for_a_hosted_widget() {
+        let tree = BoxTree::new(
+            node("t", vec![node("r", vec![node("c", vec![])])]),
+            "#t { display:table; empty-cells:hide; }
+             #r { display:table-row; }
+             #c { display:table-cell; background-color:#ff0000; }",
+        )
+        .unwrap();
+        let drawn = |embedded: &BTreeSet<usize>| {
+            tree.paint_steps(embedded)
+                .iter()
+                .any(|step| matches!(step, PaintStep::Box(2)))
+        };
+        assert!(!drawn(&BTreeSet::new()));
+        let slot = tree.prepared.slot[2].unwrap();
+        assert!(drawn(&BTreeSet::from([slot])));
+    }
 }

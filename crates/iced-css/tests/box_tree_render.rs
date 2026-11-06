@@ -700,3 +700,24 @@ fn a_fixed_child_stays_inside_its_ancestors_clip() {
     assert!(picture("clip:rect(0, 10px, 10px, 0);", &name));
     assert!(!picture("", &name));
 }
+
+#[test]
+fn clip_does_nothing_on_a_static_box() {
+    let picture = |css: &str, name: &str| {
+        let root = node("page", vec![node("still", vec![])]);
+        let css = format!(
+            "#page {{ background-color:white; }}
+             #still {{ width:100px; height:100px; background-color:#d9534f; {css} }}"
+        );
+        let tree = BoxTree::new(root, &css).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("static-clip-{}.png", std::process::id());
+    assert!(picture("", &name));
+    assert!(picture("clip:rect(0, 10px, 10px, 0);", &name));
+}
