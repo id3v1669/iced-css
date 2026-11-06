@@ -1555,3 +1555,30 @@ fn negative_spacing_overlaps_cells_without_touching_captions_or_going_negative()
     );
     assert_eq!(g[1].border.right, 0.0);
 }
+
+#[test]
+fn collapsed_overlap_skips_empty_tracks() {
+    let empty = FlowBox {
+        table: Some(TableRole::Cell),
+        establishes_bfc: true,
+        ..FlowBox::default()
+    };
+    // An empty first column and first row: nothing overlaps past the table's edge.
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([-10.0, -10.0], Dim::Auto),
+            row(),
+            empty.clone(),
+            empty.clone(),
+            row(),
+            empty,
+            cell(Dim::Px(30.0), 25.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4), (1, 5), (5, 6), (5, 7)],
+    );
+    assert_eq!(g[7].border.left, 0.0);
+    assert_eq!(g[7].border.top, 0.0);
+    assert_eq!(g[1].border.bottom, 25.0);
+    assert_eq!(g[1].border.right, 30.0);
+}

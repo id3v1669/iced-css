@@ -4,7 +4,8 @@
 //! underline, strikethrough and background. One line height and alignment apply per
 //! paragraph. Inline boxes draw no border or padding. Native iced widgets can be placed
 //! in leaf boxes by CSS id, where they receive input; boxes can publish a message on press;
-//! `:hover` and `:active` restyle the tree. `overflow` other than visible clips, and
+//! `:hover`, `:active` and `:focus` restyle the tree. Boxes with a press message or a
+//! `tabindex` attribute take focus by click and Tab; Enter and Space press the focused box. `overflow` other than visible clips, and
 //! `auto` and `scroll` boxes scroll vertically with the wheel; there is no horizontal
 //! scrolling or draggable bar. Captured payloads themselves are not drawn.
 use crate::{
@@ -28,7 +29,9 @@ use iced::advanced::{
     text::{self, Paragraph as _},
     widget::{Operation, Tree, tree},
 };
-use iced::{Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector, mouse};
+use iced::{
+    Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector, keyboard, mouse,
+};
 use iced_css_core::{
     cascade::{
         rule::{RuleBatchLimits, RuleCascadeLimits, RuleContext},
@@ -37,7 +40,7 @@ use iced_css_core::{
     },
     formatting::{
         block_flow::{
-            FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
+            Dim, FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
         },
         display::Position,
     },
@@ -334,8 +337,8 @@ fn collapse(texts: &mut [(String, &'static str)]) {
     }
 }
 
-/// The hovered and active source nodes a tree is styled for.
-type InteractionKey = (Option<usize>, Option<usize>);
+/// The hovered, active and focused source nodes a tree is styled for.
+type InteractionKey = (Option<usize>, Option<usize>, Option<usize>);
 
 #[derive(Debug)]
 struct Source {
@@ -396,7 +399,7 @@ impl BoxTree {
             css: css.to_owned(),
             variants: Mutex::new(BTreeMap::new()),
         });
-        Self::styled(&source, (None, None))
+        Self::styled(&source, (None, None, None))
     }
 
     /// This tree restyled for an interaction state, cascading it the first time. A
@@ -481,6 +484,9 @@ impl BoxTree {
         }
         if let Some(state) = key.1.and_then(|node| states.get_mut(node)) {
             state.active = true;
+        }
+        if let Some(state) = key.2.and_then(|node| states.get_mut(node)) {
+            state.focused = true;
         }
         let mut host = InitialSourceHost::new(
             NonZeroU64::new(COUNT as u64).expect("positive"),
@@ -607,6 +613,8 @@ impl BoxTree {
             {
                 continue;
             }
+            // 17.6.2: a collapsed table has no padding.
+            prepared.boxes[table].padding = [Dim::Px(0.0); 4];
             let (mut across, mut down) = (0.0_f32, 0.0_f32);
             let mut stack = prepared.boxes[table].children.clone();
             while let Some(part) = stack.pop() {
@@ -1191,7 +1199,7 @@ where
         Element::new(BoxTreeWidget {
             base: tree.clone(),
             tree,
-            key: (None, None),
+            key: (None, None, None),
             measured: false,
             geometry: Vec::new(),
             slot_geometry: Vec::new(),
@@ -1224,6 +1232,7 @@ enum PaintStep {
 struct Interaction {
     hovered: Option<usize>,
     active: Option<usize>,
+    focused: Option<usize>,
     /// Vertical scroll offsets by source node. They outlive restyles and view rebuilds.
     scrolled: BTreeMap<usize, f32>,
 }
@@ -1818,6 +1827,54 @@ where
             .then_some(arena)
     }
 
+    /// Boxes that take focus, in tab order: positive `tabindex` ascending, then the rest
+    /// in document order. A press message makes a box focusable; a negative `tabindex`
+    /// keeps it out of the Tab order while a click can still focus it.
+    fn tab_order(&self) -> Vec<usize> {
+        let nodes = self.tree.source.construction.nodes();
+        let mut order: Vec<(i64, usize, usize)> = Vec::new();
+        for (projected, &node) in self.tree.originals.iter().enumerate() {
+            let rendered =
+                self.tree.prepared.slot[projected].is_some() && self.tree.paints[projected].visible;
+            if !rendered {
+                continue;
+            }
+            match self.tab_index(nodes, node) {
+                Some(index) if index >= 0 => {
+                    order.push((if index == 0 { i64::MAX } else { index }, projected, node));
+                }
+                _ => {}
+            }
+        }
+        order.sort_unstable();
+        order.into_iter().map(|(_, _, node)| node).collect()
+    }
+
+    /// A box's `tabindex`; a press message implies 0.
+    fn tab_index(&self, nodes: &[crate::capture::ConstructionNode], node: usize) -> Option<i64> {
+        let metadata = nodes[node].metadata();
+        let explicit = metadata
+            .attribute("tabindex")
+            .and_then(|text| text.trim().parse::<i64>().ok());
+        let pressable = metadata
+            .css_id()
+            .is_some_and(|id| self.presses.iter().any(|(owner, _)| owner == id));
+        explicit.or(pressable.then_some(0))
+    }
+
+    /// The nearest focusable box from `node` outward, as a click finds it.
+    fn focus_target(&self, node: Option<usize>) -> Option<usize> {
+        let nodes = self.tree.source.construction.nodes();
+        let mut at = node;
+        while let Some(here) = at {
+            if self.tab_index(nodes, here).is_some() {
+                return Some(here);
+            }
+            at = nodes[here].parent();
+        }
+        None
+    }
+
     fn embedded(&self) -> BTreeSet<usize> {
         self.slots.iter().copied().flatten().collect()
     }
@@ -1861,7 +1918,7 @@ where
         let available = limits.max();
         let interaction = tree.state.downcast_ref::<Interaction>().clone();
         // A rebuilt view keeps this state; `styled` ignores a node this tree lacks.
-        let key = (interaction.hovered, interaction.active);
+        let key = (interaction.hovered, interaction.active, interaction.focused);
         if key != self.key {
             self.key = key;
             self.tree = self.base.variant(key);
@@ -2118,11 +2175,56 @@ where
                 viewport,
             );
         }
+        if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
+            if shell.is_event_captured() {
+                return;
+            }
+            let focused = tree.state.downcast_ref::<Interaction>().focused;
+            let next = match key.as_ref() {
+                keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                    let order = self.tab_order();
+                    if order.is_empty() {
+                        return;
+                    }
+                    let at = focused.and_then(|node| order.iter().position(|item| *item == node));
+                    let count = order.len();
+                    let index = match (at, modifiers.shift()) {
+                        (Some(index), false) => (index + 1) % count,
+                        (Some(index), true) => (index + count - 1) % count,
+                        (None, false) => 0,
+                        (None, true) => count - 1,
+                    };
+                    Some(order[index])
+                }
+                keyboard::Key::Named(keyboard::key::Named::Escape) if focused.is_some() => None,
+                keyboard::Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space)
+                    if focused.is_some() =>
+                {
+                    if let Some(message) = self.press_message(focused) {
+                        shell.publish(message);
+                        shell.capture_event();
+                    }
+                    return;
+                }
+                _ => return,
+            };
+            let state = tree.state.downcast_mut::<Interaction>();
+            let before = (state.hovered, state.active, state.focused);
+            state.focused = next;
+            let after = (state.hovered, state.active, state.focused);
+            shell.capture_event();
+            if self.base.variant(after) != self.base.variant(before) {
+                shell.invalidate_layout();
+                shell.request_redraw();
+            }
+            return;
+        }
         let Event::Mouse(mouse_event) = event else {
             return;
         };
         let bounds = layout.bounds();
         let hit = cursor.position_in(bounds).and_then(|point| self.hit(point));
+        let focus_after_press = self.focus_target(hit);
         let state = tree.state.downcast_mut::<Interaction>();
         if let mouse::Event::WheelScrolled { delta } = mouse_event {
             if shell.is_event_captured() {
@@ -2167,6 +2269,7 @@ where
         match mouse_event {
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 next.active = hit;
+                next.focused = focus_after_press;
                 if !shell.is_event_captured()
                     && let Some(message) = self.press_message(hit)
                 {
@@ -2178,7 +2281,7 @@ where
             _ => {}
         }
         if next != *state {
-            let key = (next.hovered, next.active);
+            let key = (next.hovered, next.active, next.focused);
             *state = next;
             // Only states that a rule distinguishes need a new layout. Compare styles
             // before measuring: the current tree carries measured widths.

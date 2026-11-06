@@ -745,6 +745,162 @@ mod interactive {
         assert_eq!(rig.node.children()[2].bounds().y, 30.0);
     }
 
+    fn key(rig: &mut Rig<'_>, named: iced::keyboard::key::Named, shift: bool) -> Vec<u8> {
+        let modifiers = if shift {
+            iced::keyboard::Modifiers::SHIFT
+        } else {
+            iced::keyboard::Modifiers::empty()
+        };
+        let event = Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(named),
+            modified_key: iced::keyboard::Key::Named(named),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        });
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        rig.element.as_widget_mut().update(
+            &mut rig.tree,
+            &event,
+            Layout::new(&rig.node),
+            mouse::Cursor::Unavailable,
+            &(),
+            &mut clipboard::Null,
+            &mut shell,
+            &Rectangle::new(Point::ORIGIN, Size::new(100.0, 200.0)),
+        );
+        rig.captured = shell.is_event_captured();
+        let relayout = shell.is_layout_invalid();
+        drop(shell);
+        if relayout {
+            rig.node = rig
+                .element
+                .as_widget_mut()
+                .layout(&mut rig.tree, &(), &limits());
+        }
+        messages
+    }
+
+    fn focus_rig<'a>() -> Rig<'a> {
+        let attrs = AttributeLimits {
+            entries: NonZeroUsize::new(100).unwrap(),
+            retained_bytes: NonZeroUsize::new(100_000).unwrap(),
+            work: NonZeroUsize::new(100_000).unwrap(),
+        };
+        let tabbed = node("second", vec![])
+            .style_attribute("tabindex", "2", attrs)
+            .unwrap();
+        let first = node("first", vec![])
+            .style_attribute("tabindex", "1", attrs)
+            .unwrap();
+        let skipped = node("skip", vec![])
+            .style_attribute("tabindex", "-1", attrs)
+            .unwrap();
+        let root = node(
+            "page",
+            vec![
+                tabbed,
+                first,
+                node("act", vec![]),
+                skipped,
+                node("slot", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#first, #second, #act, #skip { height:5px; }
+             #first:focus { height:10px; }
+             #second:focus { height:20px; }
+             #act:focus { height:40px; }
+             #skip:focus { height:80px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(1.0))
+            .on_press("act", 5)
+            .into();
+        Rig::new(view)
+    }
+
+    #[test]
+    fn tab_cycles_by_tabindex_then_document_order_and_shift_goes_back() {
+        use iced::keyboard::key::Named;
+        let mut rig = focus_rig();
+        assert_eq!(rig.slot().y, 20.0);
+        key(&mut rig, Named::Tab, false);
+        assert!(rig.captured);
+        assert_eq!(rig.slot().y, 25.0); // #first
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(rig.slot().y, 35.0); // #second
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(rig.slot().y, 55.0); // #act; #skip is not in the order
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(rig.slot().y, 25.0); // wraps
+        key(&mut rig, Named::Tab, true);
+        assert_eq!(rig.slot().y, 55.0); // back to #act
+        key(&mut rig, Named::Escape, false);
+        assert_eq!(rig.slot().y, 20.0);
+    }
+
+    #[test]
+    fn enter_and_space_press_the_focused_box_and_a_click_moves_focus() {
+        use iced::keyboard::key::Named;
+        let mut rig = focus_rig();
+        assert!(key(&mut rig, Named::Enter, false).is_empty());
+        assert!(!rig.captured);
+        for _ in 0..3 {
+            key(&mut rig, Named::Tab, false);
+        }
+        assert_eq!(key(&mut rig, Named::Enter, false), vec![5]);
+        assert_eq!(key(&mut rig, Named::Space, false), vec![5]);
+        assert!(rig.captured);
+        // #skip sits at 50 here (5+5+40): a click focuses it, outside the Tab order.
+        let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+        let release = mouse::Event::ButtonReleased(mouse::Button::Left);
+        rig.send(press, Point::new(5.0, 52.0));
+        rig.send(release, Point::new(5.0, 52.0));
+        assert_eq!(rig.slot().y, 95.0);
+        // A click on nothing focusable clears it.
+        rig.send(press, Point::new(5.0, 190.0));
+        rig.send(release, Point::new(5.0, 190.0));
+        assert_eq!(rig.slot().y, 20.0);
+    }
+
+    #[test]
+    fn hidden_and_absent_boxes_take_no_focus() {
+        use iced::keyboard::key::Named;
+        let root = node(
+            "page",
+            vec![
+                node("gone", vec![]),
+                node("none", vec![]),
+                node("slot", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#gone { visibility:hidden; height:3px; } #none { display:none; }
+             #gone:focus, #none:focus { height:9px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(1.0))
+            .on_press("gone", 1)
+            .on_press("none", 2)
+            .into();
+        let mut rig = Rig::new(view);
+        key(&mut rig, Named::Tab, false);
+        assert!(!rig.captured);
+        assert_eq!(rig.slot().y, 3.0);
+    }
+
     fn wheel(lines: f32) -> mouse::Event {
         mouse::Event::WheelScrolled {
             delta: mouse::ScrollDelta::Pixels { x: 0.0, y: lines },
@@ -1682,7 +1838,7 @@ fn collapse_overlaps_per_axis_and_a_loose_cell_keeps_its_paint() {
     );
     let tree = BoxTree::new(
         root,
-        "#t { display:table; border-collapse:collapse; width:100%; }
+        "#t { display:table; border-collapse:collapse; width:100%; padding:20px; }
          #r1, #r2 { display:table-row; }
          #a, #b { display:table-cell; border-left:10px solid; height:5px; }",
     )
@@ -1690,6 +1846,7 @@ fn collapse_overlaps_per_axis_and_a_loose_cell_keeps_its_paint() {
     let g = tree.layout(200.0, None).unwrap();
     assert_eq!(g[4].unwrap().border.top, 5.0);
     assert_eq!(g[0].unwrap().border.right, 200.0);
+    assert_eq!(g[2].unwrap().border.left, 0.0);
     let root = node("page", vec![node("a", vec![])]);
     let tree = BoxTree::new(
         root,
