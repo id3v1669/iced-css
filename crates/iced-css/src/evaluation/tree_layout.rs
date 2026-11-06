@@ -319,8 +319,7 @@ pub struct PreparedTree {
     pub font_sizes: Vec<f32>,
     /// Whether the arena slot is an anonymous block around inline content, per slot.
     pub anonymous: Vec<bool>,
-    /// The slots that hold lines of inline-blocks, which paint and hit as their children.
-    pub inline_rows: Vec<usize>,
+
     /// Projected indices of the text runs each arena slot holds, in source order.
     pub runs: Vec<Vec<RunSource>>,
     /// The enclosing inline element of each projected index, if any.
@@ -431,6 +430,7 @@ pub fn prepare_captured_tree(
                 if text_block[top] {
                     build.runs[target].push(RunSource::After(top));
                 } else {
+                    refuse_in_row(&build, &inline_rows, target, value, top)?;
                     build.generated(target, top, RunSource::After(top), value);
                 }
             }
@@ -466,6 +466,7 @@ pub fn prepare_captured_tree(
             inline_element[index] = true;
             inline_parent[index] = parent.filter(|&outer| inline_element[outer]);
             if let Some(value) = pseudo(index, 0) {
+                refuse_in_row(&build, &inline_rows, target, value, index)?;
                 build.generated(target, index, RunSource::Before(index), value);
             }
             if is_text {
@@ -501,11 +502,22 @@ pub fn prepare_captured_tree(
             && let Some(target) = parent_slot
             && !build.open[target].is_some_and(|group| inline_rows.contains(&group))
         {
-            if build.open[target].is_some_and(|group| !build.runs[group].is_empty()) {
-                return Err(E::Unsupported {
-                    projected: index,
-                    property: "display",
+            // Blank text before the first inline-block generates nothing either.
+            let source_nodes = projection.snapshot.construction().nodes();
+            if let Some(group) = build.open[target] {
+                let has_content = build.runs[group].iter().any(|run| match run {
+                    RunSource::Node(at) => source_nodes[projection.original[*at]]
+                        .text()
+                        .is_some_and(|text| !text.trim().is_empty()),
+                    _ => true,
                 });
+                if has_content {
+                    return Err(E::Unsupported {
+                        projected: index,
+                        property: "display",
+                    });
+                }
+                build.runs[group].clear();
             }
             let group = build.inline_group(target, index);
             inline_rows.push(group);
@@ -516,28 +528,29 @@ pub fn prepare_captured_tree(
         // 17.2.1 would wrap misplaced table parts in anonymous boxes. Those are not built
         // here, so a table part must sit in its proper parent, and vice versa.
         let parent_role = parent_slot.and_then(|target| build.boxes[target].table);
-        let placed = match (parent_role, table_role) {
-            (None, None) => true,
-            (None, Some(TableRole::Table { .. })) => true,
-            (Some(TableRole::Cell | TableRole::Caption), None) => true,
-            (Some(TableRole::Cell | TableRole::Caption), Some(TableRole::Table { .. })) => true,
-            (
-                Some(TableRole::Table { .. }),
-                Some(
-                    TableRole::HeaderGroup
-                    | TableRole::BodyGroup
-                    | TableRole::FooterGroup
-                    | TableRole::Row
-                    | TableRole::Caption,
-                ),
-            ) => true,
-            (
-                Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup),
-                Some(TableRole::Row),
-            ) => true,
-            (Some(TableRole::Row), Some(TableRole::Cell)) => true,
-            _ => false,
-        };
+        let placed = matches!(
+            (parent_role, table_role),
+            (None | Some(TableRole::Cell | TableRole::Caption), None)
+                | (
+                    None | Some(TableRole::Cell | TableRole::Caption),
+                    Some(TableRole::Table { .. })
+                )
+                | (
+                    Some(TableRole::Table { .. }),
+                    Some(
+                        TableRole::HeaderGroup
+                            | TableRole::BodyGroup
+                            | TableRole::FooterGroup
+                            | TableRole::Row
+                            | TableRole::Caption
+                    )
+                )
+                | (
+                    Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup),
+                    Some(TableRole::Row)
+                )
+                | (Some(TableRole::Row), Some(TableRole::Cell))
+        );
         if !placed
             || (parent.is_some()
                 && table_role.is_none()
@@ -692,7 +705,6 @@ pub fn prepare_captured_tree(
         slot,
         font_sizes,
         anonymous,
-        inline_rows,
         runs,
         inline_parent,
         clipped,
@@ -753,7 +765,6 @@ impl PreparedTree {
             slot,
             font_sizes: _,
             anonymous: _,
-            inline_rows: _,
             runs: _,
             inline_parent: _,
             clipped: _,
@@ -1000,6 +1011,23 @@ fn place_absolute(
             ];
         }
         geometry[node] = placed;
+    }
+    Ok(())
+}
+
+/// Inline generated text beside inline-blocks needs atomic inlines in a paragraph.
+fn refuse_in_row(
+    build: &Build,
+    rows: &[usize],
+    target: usize,
+    value: &GeneratedRun,
+    projected: usize,
+) -> Result<(), TreeLayoutError> {
+    if !value.block && build.open[target].is_some_and(|group| rows.contains(&group)) {
+        return Err(TreeLayoutError::Unsupported {
+            projected,
+            property: "content",
+        });
     }
     Ok(())
 }
@@ -1599,6 +1627,9 @@ pub fn evaluate_tree_paint<'r>(
         };
         vertical_aligns.push(match defaulted("vertical-align")? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => Some(keyword.as_str()),
+            DefaultedValueRef::ParentComputed => {
+                parent_index.and_then(|parent| vertical_aligns[parent])
+            }
             _ => None,
         });
         let caption_below = match defaulted("caption-side")? {

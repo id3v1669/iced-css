@@ -1191,3 +1191,120 @@ fn a_caption_can_sit_below_the_grid() {
     assert_eq!(g[2].border.top, 3.0);
     assert_eq!(g[1].border.bottom, 10.0);
 }
+
+#[test]
+fn a_cell_with_a_specified_height_still_aligns_its_content() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        table_of([0.0, 0.0], Dim::Auto),
+        row(),
+        FlowBox {
+            cell_align: RowAlign::Center,
+            padding: [Dim::Px(2.0), Dim::Px(0.0), Dim::Px(4.0), Dim::Px(0.0)],
+            ..cell(Dim::Px(10.0), 100.0)
+        },
+        h(10.0),
+    ];
+    boxes[0].children = vec![1];
+    boxes[1].children = vec![2];
+    boxes[2].children = vec![3];
+    boxes[3].children = vec![4];
+    let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
+    // A 106 tall box, 100 of content room, 10 of content: 45 down from the content top.
+    assert_eq!(g[3].border.bottom, 106.0);
+    assert_eq!(g[4].border.top, 47.0);
+    assert_eq!(g[3].content.bottom, 57.0);
+}
+
+#[test]
+fn rows_avoid_floats_measure_as_their_sum_and_run_from_the_right_in_rtl() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            float(FloatSide::Left, 30.0, 20.0),
+            row_of(RowAlign::Left),
+            inline_block(30.0, 5.0),
+            inline_block(30.0, 5.0),
+            inline_block(30.0, 5.0),
+        ],
+        &[(0, 1), (0, 2), (2, 3), (2, 4), (2, 5)],
+    );
+    assert_eq!((g[3].border.left, g[3].border.top), (30.0, 0.0));
+    assert_eq!(g[4].border.left, 60.0);
+    // The third doesn't fit beside the float on the next line either, at 5..10 or 10..15:
+    // it wraps, still clear of the float.
+    assert_eq!((g[5].border.left, g[5].border.top), (30.0, 5.0));
+    // A box wider than the room beside the float moves below it.
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            float(FloatSide::Left, 80.0, 20.0),
+            row_of(RowAlign::Left),
+            inline_block(30.0, 5.0),
+        ],
+        &[(0, 1), (0, 2), (2, 3)],
+    );
+    assert_eq!((g[3].border.left, g[3].border.top), (0.0, 20.0));
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox {
+                float: Some(FloatSide::Left),
+                ..FlowBox::default()
+            },
+            row_of(RowAlign::Left),
+            inline_block(50.0, 1.0),
+            inline_block(30.0, 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4)],
+    );
+    assert_eq!(g[1].border.right, 80.0);
+    assert_eq!((g[4].border.left, g[4].border.top), (50.0, 0.0));
+    let mut rtl = row_of(RowAlign::Right);
+    rtl.direction = Direction::Rtl;
+    let mut parent = FlowBox {
+        direction: Direction::Rtl,
+        ..FlowBox::default()
+    };
+    parent.children = vec![1];
+    rtl.children = vec![2, 3];
+    let g = layout_block_flow(
+        &[
+            parent,
+            rtl,
+            inline_block(10.0, 1.0),
+            inline_block(20.0, 1.0),
+        ],
+        viewport(),
+        limits(),
+    )
+    .unwrap();
+    assert_eq!(g[2].border.right, 100.0);
+    assert_eq!(g[3].border.right, 90.0);
+    // An overlong centered box starts at the line's start.
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            row_of(RowAlign::Center),
+            inline_block(500.0, 1.0),
+        ],
+        &[(0, 1), (1, 2)],
+    );
+    assert_eq!(g[2].border.left, 0.0);
+}
+
+#[test]
+fn a_floating_table_keeps_its_minimum_width() {
+    let mut floating = table_of([0.0, 0.0], Dim::Px(10.0));
+    floating.float = Some(FloatSide::Left);
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            floating,
+            row(),
+            cell(Dim::Px(80.0), 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3)],
+    );
+    assert_eq!(g[1].border.right, 80.0);
+}

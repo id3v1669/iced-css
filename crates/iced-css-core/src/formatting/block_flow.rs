@@ -291,6 +291,8 @@ impl Flow {
 struct Solver<'a> {
     boxes: &'a [FlowBox],
     geometry: Vec<FlowGeometry>,
+    /// The height the last finished box's contents flowed to, whatever its `height` says.
+    last_flowed: f32,
     /// A leaf's content height at its used width, overriding the static measurement.
     text_height: &'a mut dyn FnMut(usize, f32) -> Option<f32>,
 }
@@ -330,6 +332,7 @@ pub fn layout_block_flow_measured(
     let mut solver = Solver {
         boxes,
         geometry: vec![FlowGeometry::default(); boxes.len()],
+        last_flowed: 0.0,
         text_height,
     };
     let containing = Containing {
@@ -349,6 +352,7 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
     Solver {
         boxes,
         geometry: Vec::new(),
+        last_flowed: 0.0,
         text_height: &mut |_, _| None,
     }
     .measure(node)
@@ -431,6 +435,18 @@ impl Solver<'_> {
     /// Longest-line and narrowest-line content widths (10.3.5's preferred widths).
     fn measure(&self, node: usize) -> (f32, f32) {
         let value = &self.boxes[node];
+        if value.inline_row.is_some() {
+            // A row wraps only as it must: its longest line holds every box.
+            let (mut minimum, mut preferred) = (0.0_f32, 0.0_f32);
+            for &child in &value.children {
+                if self.boxes[child].float.is_none() && !self.boxes[child].out_of_flow {
+                    let (child_min, child_preferred) = self.outer_measure(child);
+                    minimum = minimum.max(child_min);
+                    preferred += child_preferred;
+                }
+            }
+            return (minimum, preferred.max(minimum));
+        }
         if let Some(TableRole::Table { spacing }) = value.table {
             let (rows, captions) = self.table_parts(node);
             let (mins, prefs) = self.table_columns(&rows);
@@ -582,7 +598,7 @@ impl Solver<'_> {
                 };
                 self.translate(cell, left, y);
                 height = height.max(bottom);
-                natural.push(bottom);
+                natural.push(self.last_flowed);
                 x += width;
             }
             // 17.5.3: every cell fills its row; its content stays at the top.
@@ -591,15 +607,20 @@ impl Solver<'_> {
                 let extra = y + height - geometry.border.bottom;
                 geometry.border.bottom += extra;
                 geometry.padding.bottom += extra;
+                // The room the content can move in is the box less its frame.
+                let top_frame = geometry.content.top - geometry.border.top;
+                let bottom_frame =
+                    self.boxes[cell].border[2] + self.boxes[cell].padding[2].zero_auto(inner.width);
+                let room = height - top_frame - bottom_frame - cell_natural;
                 let offset = match self.boxes[cell].cell_align {
                     RowAlign::Left => 0.0,
-                    RowAlign::Center => (height - cell_natural) / 2.0,
-                    RowAlign::Right => height - cell_natural,
+                    RowAlign::Center => (room / 2.0).max(0.0),
+                    RowAlign::Right => room.max(0.0),
                 };
                 if offset != 0.0 {
                     let geometry = &mut self.geometry[cell];
                     geometry.content.top += offset;
-                    geometry.content.bottom += offset;
+                    geometry.content.bottom = geometry.content.top + cell_natural;
                     if let Some(band) = &mut geometry.leaf_band {
                         band.top += offset;
                         band.bottom += offset;
@@ -1137,6 +1158,7 @@ impl Solver<'_> {
             .floats
             .iter()
             .fold(flow.position(), |bottom, float| bottom.max(float.bottom));
+        self.last_flowed = (flowed - content_top).max(0.0);
         let used = match height {
             // 17.5.3: on a table or cell a height is a minimum.
             Some(specified)
@@ -1235,6 +1257,12 @@ impl Solver<'_> {
             },
         })
         .map_err(|error| FlowError::Shrink { node, error })?;
+        // 17.5.2.2 holds for a floating or inline table too.
+        let used_width = if matches!(value.table, Some(TableRole::Table { .. })) {
+            used.width.max(preferred_min_width)
+        } else {
+            used.width
+        };
         let mt = value.margin[0].zero_auto(basis);
         let mb = value.margin[2].zero_auto(basis);
         // The contents are laid out at a provisional origin, then moved.
@@ -1245,7 +1273,7 @@ impl Solver<'_> {
                 top: Some(0.0),
                 ..cb
             },
-            (used.width, 0.0, 0.0),
+            (used_width, 0.0, 0.0),
             0.0,
             0.0,
             padding,
@@ -1287,25 +1315,57 @@ impl Solver<'_> {
                 margin: [mt, mr, mb, ml],
             });
         }
+        // 9.5: lines stay clear of floats. Every line is checked as tall as the tallest
+        // box in the row, so a line can only be shorter than it had to be, never overlap.
+        let tallest = items
+            .iter()
+            .fold(0.0_f32, |most, item| most.max(item.height));
+        let float_error = |error| FlowError::Float { node, error };
+        let (full_left, full_right) = (cb.left, cb.left + cb.width);
         let mut y = flow.y;
         let mut start = 0;
         while start < items.len() {
+            let (mut near, mut far) = (full_left, full_right);
+            for float in flow
+                .floats
+                .iter()
+                .filter(|float| float.top < y + tallest && float.bottom > y)
+            {
+                match float.side {
+                    FloatSide::Left => near = near.max(float.right),
+                    FloatSide::Right => far = far.min(float.left),
+                }
+            }
+            let room = far - near;
+            if items[start].width > room
+                && let Some(edge) = next_band_edge(&flow.floats, y).map_err(float_error)?
+            {
+                y = edge;
+                continue;
+            }
             let mut end = start + 1;
             let mut used = items[start].width;
-            while end < items.len() && used + items[end].width <= cb.width {
+            while end < items.len() && used + items[end].width <= room {
                 used += items[end].width;
                 end += 1;
             }
             let line = items[start..end]
                 .iter()
                 .fold(0.0_f32, |tallest, item| tallest.max(item.height));
-            let mut x = cb.left
+            let mut x = near
                 + match align {
                     RowAlign::Left => 0.0,
-                    RowAlign::Center => (cb.width - used) / 2.0,
-                    RowAlign::Right => cb.width - used,
+                    RowAlign::Center => ((room - used) / 2.0).max(0.0),
+                    RowAlign::Right => (room - used).max(0.0),
                 };
-            for item in &items[start..end] {
+            // 9.2.4: an rtl container lays its inline boxes out from the right.
+            let order: Vec<usize> = if cb.direction == Direction::Rtl {
+                (start..end).rev().collect()
+            } else {
+                (start..end).collect()
+            };
+            for index in order {
+                let item = &items[index];
                 self.translate(item.node, x + item.ml, y + line - item.height + item.mt);
                 self.geometry[item.node].margin = item.margin;
                 x += item.width;

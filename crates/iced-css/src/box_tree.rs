@@ -596,6 +596,16 @@ impl BoxTree {
             &generated,
         )
         .map_err(failed)?;
+        // Each slot's enclosing box owner: anonymous blocks answer to their block container.
+        let mut container_of: Vec<usize> =
+            prepared.positions.iter().map(|&(owner, _)| owner).collect();
+        for (arena, value) in prepared.boxes.iter().enumerate() {
+            for &child in &value.children {
+                if prepared.anonymous[child] {
+                    container_of[child] = prepared.positions[arena].0;
+                }
+            }
+        }
         for (arena, value) in prepared.boxes.iter_mut().enumerate() {
             let owner = prepared.positions[arena].0;
             if let Some(TableRole::Table { spacing }) = &mut value.table {
@@ -608,7 +618,8 @@ impl BoxTree {
             };
             value.caption_below = captions_below[owner];
             if value.inline_row.is_some() {
-                value.inline_row = Some(match styles[owner].align {
+                // 16.2: a line's alignment comes from its block container.
+                value.inline_row = Some(match styles[container_of[arena]].align {
                     "center" => RowAlign::Center,
                     "right" => RowAlign::Right,
                     _ => RowAlign::Left,
@@ -723,7 +734,12 @@ impl BoxTree {
             let lead = style_of(first);
             Some(TextLeaf {
                 runs,
-                align: lead.align,
+                // 16.2: alignment belongs to the block container of the lines.
+                align: if prepared.anonymous[arena] {
+                    styles[container_of[arena]].align
+                } else {
+                    lead.align
+                },
                 wraps: !matches!(lead.white_space, "pre" | "nowrap"),
                 line_height: lead.line_height,
             })

@@ -1277,3 +1277,47 @@ fn vertical_align_and_caption_side_reach_the_table() {
     assert_eq!(g[5].unwrap().border.top, 15.0);
     assert_eq!(g[1].unwrap().border.top, 40.0);
 }
+
+#[test]
+fn row_and_text_alignment_come_from_the_block_container() {
+    let root = node("page", vec![node("a", vec![]), node("b", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#a, #b { display:inline-block; width:10px; height:1px; text-align:center; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[1].unwrap().border.left, 0.0);
+    let root = node("page", vec![node("a", vec![]), node("b", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { text-align:right; } #a, #b { display:inline-block; width:10px; height:1px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[2].unwrap().border.right, 100.0);
+    // A span's own text-align does nothing to the line it sits in.
+    let root = node("page", vec![node("span", vec![text("t", "x")])]);
+    let tree = BoxTree::new(root, "#span { display:inline; text-align:right; }").unwrap();
+    assert_eq!(tree.text_leaves()[0].1.align, "left");
+}
+
+#[test]
+fn inline_generated_text_beside_inline_blocks_is_refused_and_blank_text_is_not() {
+    let root = node("page", vec![node("a", vec![])]);
+    let css = "#a { display:inline-block; } #page:after { content:\"x\"; }";
+    assert!(
+        BoxTree::new(root, css)
+            .unwrap_err()
+            .to_string()
+            .contains("content")
+    );
+    let root = node("page", vec![node("a", vec![])]);
+    let css = "#a { display:inline-block; } #page:after { content:\"x\"; display:block; }";
+    assert_eq!(
+        BoxTree::new(root, css).unwrap().text_leaves()[0].1.text(),
+        "x"
+    );
+    let root = node("page", vec![text("gap", "  "), node("a", vec![])]);
+    assert!(BoxTree::new(root, "#a { display:inline-block; }").is_ok());
+}
