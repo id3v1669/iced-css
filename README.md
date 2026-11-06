@@ -55,7 +55,8 @@ capturing the tree again, which is enough to build hot reload on.
 `BoxTreeAnimations` runs explicit requests between two styled trees: colors (`color` reaches
 what inherits or uses it, plus `background-color`, border and outline colors) and lengths
 (`width`, `height`, their min and max, margins, paddings, border and outline widths, box
-offsets). A style change without a request applies at once. Timing is linear, through luminate.
+offsets). A style change without a request applies at once. Time comes from luminate; a
+`Transition` adds an easing, cut off at the two ends.
 
 ## Known limits
 

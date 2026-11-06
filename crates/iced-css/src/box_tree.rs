@@ -74,7 +74,7 @@ use std::{
 };
 
 mod animation;
-pub use animation::BoxTreeAnimations;
+pub use animation::{BoxTreeAnimations, Transition};
 
 /// What building a box tree can refuse. Each cause keeps its own message.
 #[derive(Debug)]

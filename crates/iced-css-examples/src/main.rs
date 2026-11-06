@@ -3,7 +3,7 @@
 use iced::{Element, Theme};
 use iced_css::{
     animation::clock::AnimationTiming,
-    box_tree::{BoxTree, BoxTreeAnimations, capture_limits},
+    box_tree::{BoxTree, BoxTreeAnimations, Transition, capture_limits},
     capture::{CapturedElement, adapters},
 };
 use iced_css_core::source::AttributeLimits;
@@ -169,14 +169,17 @@ fn update(app: &mut App, message: Message) {
                 &[CSS]
             };
             let next = app.tree.restyled(sheets).expect("stylesheet");
-            let timing = AnimationTiming::new(Duration::from_millis(300), Duration::ZERO);
+            let transition = Transition {
+                timing: AnimationTiming::new(Duration::from_millis(300), Duration::ZERO),
+                easing: iced::animation::Easing::EaseInOut,
+            };
             app.animations
                 .request(
                     &app.tree,
                     &next,
                     "wide",
                     &["width", "height", "background-color"],
-                    timing,
+                    transition,
                     Instant::now(),
                 )
                 .expect("known properties");

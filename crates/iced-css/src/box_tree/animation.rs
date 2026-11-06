@@ -8,6 +8,7 @@ use crate::animation::{
     clock::AnimationTiming,
     engine::{ProgressEngine, ProgressLimits},
 };
+use iced::animation::Easing;
 use iced_css_core::{
     animation::registry::AnimationSelection,
     formatting::block_flow::Dim,
@@ -386,6 +387,24 @@ impl BoxTree {
     }
 }
 
+/// When an animation runs and how it moves. Plain `AnimationTiming` is linear.
+#[derive(Debug, Clone, Copy)]
+pub struct Transition {
+    pub timing: AnimationTiming,
+    /// Stays within its two ends: an easing that overshoots is cut off there, since not
+    /// every property has a meaning past them.
+    pub easing: Easing,
+}
+
+impl From<AnimationTiming> for Transition {
+    fn from(timing: AnimationTiming) -> Self {
+        Self {
+            timing,
+            easing: Easing::Linear,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Track {
     id: String,
@@ -396,6 +415,7 @@ struct Track {
     followers: Followers,
     /// The capture it belongs to: another tree with this id is another element.
     capture: u64,
+    easing: Easing,
 }
 
 /// Running explicit animations. It lives in the application state, beside the tree, and
@@ -464,9 +484,10 @@ impl BoxTreeAnimations {
         to: &BoxTree,
         id: &str,
         properties: &[&str],
-        timing: AnimationTiming,
+        transition: impl Into<Transition>,
         now: Instant,
     ) -> Result<usize, BoxTreeError> {
+        let Transition { timing, easing } = transition.into();
         let mut longhands = Vec::new();
         for name in properties {
             let property = PropertyId::lookup(name)
@@ -525,6 +546,7 @@ impl BoxTreeAnimations {
                     Followers::default()
                 },
                 capture,
+                easing,
             });
         }
         if started.is_empty() && !self.sources.contains_key(id) {
@@ -569,7 +591,8 @@ impl BoxTreeAnimations {
 
     fn progress(&self, track: &Track) -> Option<f32> {
         let source = self.sources.get(&track.id)?;
-        self.engine.sample(source, track.property).ok().flatten()
+        let linear = self.engine.sample(source, track.property).ok().flatten()?;
+        Some(track.easing.value(linear).clamp(0.0, 1.0))
     }
 
     /// Moves time on, and lets go of finished animations and of any `tree`, your current

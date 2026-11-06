@@ -2583,6 +2583,41 @@ mod animation {
     }
 
     #[test]
+    fn an_easing_shapes_progress_and_stays_between_the_ends() {
+        use iced::animation::Easing;
+        use iced_css::box_tree::Transition;
+        let from = tree("#box { width:100px; }");
+        let to = from.restyled(&["#box { width:200px; }"]).unwrap();
+        let width = |shown: &BoxTree| {
+            let geometry = shown.layout(800.0, Some(600.0)).unwrap();
+            let border = geometry[1].as_ref().unwrap().border;
+            border.right - border.left
+        };
+        let start = Instant::now();
+        let mut animations = BoxTreeAnimations::new();
+        let quad = Transition {
+            timing: second(),
+            easing: Easing::EaseInQuad,
+        };
+        animations
+            .request(&from, &to, "box", &["width"], quad, start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        assert!((width(&animations.presented(&to)) - 125.0).abs() < 0.5);
+        // EaseInBack dips below its start early on.
+        let mut animations = BoxTreeAnimations::new();
+        let back = Transition {
+            timing: second(),
+            easing: Easing::EaseInBack,
+        };
+        animations
+            .request(&from, &to, "box", &["width"], back, start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(200), &to);
+        assert_eq!(width(&animations.presented(&to)), 100.0);
+    }
+
+    #[test]
     fn repeats_and_hidden_ends_start_nothing_extra() {
         let from = tree("#box { width:100px; height:10px; background-color:#000000; }");
         let to = from
