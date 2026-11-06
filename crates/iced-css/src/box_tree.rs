@@ -97,7 +97,7 @@ const BYTES: usize = 64_000_000;
 const WORK: usize = 200_000_000;
 /// For limits that multiply worst cases ahead of time (every number at its longest in every
 /// box), which would refuse a page of a few hundred boxes. `COUNT` and `BYTES` bound the input.
-const WORST_CASE: usize = 1 << 60;
+const WORST_CASE: usize = usize::MAX >> 4;
 
 fn big() -> NonZeroUsize {
     nz(COUNT)
@@ -378,9 +378,12 @@ impl PseudoReach {
     fn of(sheets: &[String], pseudo: &str) -> Self {
         let mut reach = Self::default();
         for sheet in sheets {
-            let text = sheet.to_lowercase();
-            // An escape can spell the pseudo-class or a name in a way this does not read.
-            if text.contains('\\') {
+            // ASCII only: full lowercasing depends on context (a final sigma), so one name
+            // could fold differently here and on the node, and the matcher does not fold it.
+            let text = sheet.to_ascii_lowercase();
+            // An escape can spell the pseudo-class or a name in a way this does not read, and
+            // a comment can sit between the colon and the name.
+            if text.contains('\\') || text.contains(":/*") {
                 reach.any = true;
                 continue;
             }
@@ -419,11 +422,11 @@ impl PseudoReach {
         self.any
             || metadata
                 .css_id()
-                .is_some_and(|id| self.ids.contains(&id.to_lowercase()))
+                .is_some_and(|id| self.ids.contains(&id.to_ascii_lowercase()))
             || metadata.attribute("class").is_some_and(|classes| {
                 classes
                     .split_whitespace()
-                    .any(|class| self.classes.contains(&class.to_lowercase()))
+                    .any(|class| self.classes.contains(&class.to_ascii_lowercase()))
             })
     }
 }
@@ -655,7 +658,10 @@ impl BoxTree {
                 Arc::ptr_eq(&one, &other)
                     || (one.prepared == other.prepared
                         && one.paints == other.paints
-                        && one.texts == other.texts)
+                        && one.texts == other.texts
+                        && one.markers == other.markers
+                        && one.backgrounds == other.backgrounds
+                        && one.marker_images == other.marker_images)
             }
             (None, None) => true,
             _ => false,
@@ -4294,6 +4300,30 @@ mod tests {
                 (Some(b), None, None),
                 "{css}"
             );
+        }
+        // A comment after the colon, and a name whose lowercase depends on its context.
+        let shown = tree("#a:/**/hover { color:#ff0000; }");
+        assert_eq!(
+            shown.source.normal_key((Some(b), None, None)),
+            (Some(b), None, None)
+        );
+        let named = BoxTree::new(
+            node("\u{391}\u{3a3}", vec![]),
+            "#\u{391}\u{3a3}:hover { color:#ff0000; }",
+        )
+        .unwrap();
+        let only = named.originals[0];
+        assert_eq!(
+            named.source.normal_key((Some(only), None, None)),
+            (Some(only), None, None)
+        );
+        // What is not in the box's paint still counts as a difference.
+        for css in [
+            "#a:hover { background-image:url(b.png); }",
+            "#a { display:list-item; } #a:hover { list-style-type:square; }",
+        ] {
+            let shown = tree(css);
+            assert!(!shown.same_variant((Some(a), None, None), none), "{css}");
         }
         // No rule at all: nothing differs, and nothing cascades again.
         let shown = tree("#a { color:#ff0000; }");
