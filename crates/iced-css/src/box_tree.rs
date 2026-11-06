@@ -1,5 +1,5 @@
 //! A stylesheet-driven iced widget for captured box trees: real cascade, general block
-//! flow, background and border paint, and inline text: consecutive inline siblings share
+//! flow, background colors and images and border paint, and inline text: consecutive inline siblings share
 //! one wrapped paragraph of styled runs. Runs carry size, color, weight, style, family,
 //! underline, strikethrough and background. One line height and alignment apply per
 //! paragraph. Inline boxes draw no border or padding. Native iced widgets can be placed
@@ -16,15 +16,15 @@ use crate::{
         display_rules::{BundleLimits, DisplayRuleBundle, GraphBinding, GraphOrigin},
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
-            BoxPaint, GeneratedRun, PreparedTree, RunSource, TextLineHeight, TextStyle,
-            TreeLayoutError, TreePaint, evaluate_tree_paint, prepare_captured_tree,
-            prepare_tree_source_projection,
+            BackgroundImage, BackgroundOffset, BoxPaint, GeneratedRun, PreparedTree, RunSource,
+            TextLineHeight, TextStyle, TreeLayoutError, TreePaint, evaluate_tree_paint,
+            prepare_captured_tree, prepare_tree_source_projection,
         },
     },
     host::source_publication::{InitialSourceHost, PublicationLimits},
 };
 use iced::advanced::{
-    Clipboard, Layout, Shell, Widget, layout, overlay,
+    Clipboard, Layout, Shell, Widget, image, layout, overlay,
     renderer::{self, Quad},
     text::{self, Paragraph as _},
     widget::{Operation, Tree, tree},
@@ -65,6 +65,7 @@ use iced_css_core::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     num::{NonZeroU64, NonZeroUsize},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError},
 };
 
@@ -344,6 +345,8 @@ type InteractionKey = (Option<usize>, Option<usize>, Option<usize>);
 struct Source {
     construction: Construction,
     css: String,
+    /// What relative `url()`s resolve against.
+    base: PathBuf,
     /// Restyles already cascaded. Pointerless, so nothing here keeps the source alive.
     variants: Mutex<BTreeMap<InteractionKey, Style>>,
 }
@@ -360,6 +363,7 @@ struct Style {
     ids: Vec<Option<String>>,
     originals: Vec<usize>,
     markers: BTreeMap<usize, TextLeaf>,
+    backgrounds: BTreeMap<usize, (BackgroundImage, image::Handle)>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -375,6 +379,8 @@ pub struct BoxTree {
     originals: Vec<usize>,
     /// Outside list markers, by projected index of their item.
     markers: BTreeMap<usize, TextLeaf>,
+    /// Background images that can load, by projected index.
+    backgrounds: BTreeMap<usize, (BackgroundImage, image::Handle)>,
     source: Arc<Source>,
 }
 
@@ -393,10 +399,25 @@ impl BoxTree {
         root: CapturedElement<'_, Message, Theme, Renderer>,
         css: &str,
     ) -> Result<Self, BoxTreeError> {
+        Self::with_base(root, css, Path::new("."))
+    }
+
+    /// As [`BoxTree::new`], resolving relative `url()`s against `base`. Only local files
+    /// load: a `url()` with a scheme draws nothing. A missing or undecodable file draws
+    /// nothing too, as 14.2.1 lets a box show its background color instead.
+    ///
+    /// # Errors
+    /// Returns a stylesheet, capture, cascade or unsupported-display failure.
+    pub fn with_base<Message, Theme, Renderer>(
+        root: CapturedElement<'_, Message, Theme, Renderer>,
+        css: &str,
+        base: &Path,
+    ) -> Result<Self, BoxTreeError> {
         let (_, construction) = root.into_parts();
         let source = Arc::new(Source {
             construction,
             css: css.to_owned(),
+            base: base.to_owned(),
             variants: Mutex::new(BTreeMap::new()),
         });
         Self::styled(&source, (None, None, None))
@@ -437,6 +458,7 @@ impl BoxTree {
             ids: self.ids.clone(),
             originals: self.originals.clone(),
             markers: self.markers.clone(),
+            backgrounds: self.backgrounds.clone(),
         }
     }
 
@@ -448,6 +470,7 @@ impl BoxTree {
             ids: style.ids,
             originals: style.originals,
             markers: style.markers,
+            backgrounds: style.backgrounds,
             source,
         }
     }
@@ -589,6 +612,7 @@ impl BoxTree {
             generated,
             markers,
             spacings,
+            backgrounds,
             collapses,
             vertical_aligns,
             captions_below,
@@ -835,6 +859,19 @@ impl BoxTree {
                 ))
             })
             .collect();
+        let background_images = backgrounds
+            .into_iter()
+            .enumerate()
+            .filter_map(|(projected, value)| {
+                let value = value?;
+                prepared.slot[projected].filter(|slot| !prepared.anonymous[*slot])?;
+                if value.uri.contains("://") || value.uri.starts_with("data:") {
+                    return None;
+                }
+                let handle = image::Handle::from_path(source.base.join(&value.uri));
+                Some((projected, (value, handle)))
+            })
+            .collect();
         let originals: Vec<usize> = (0..count)
             .map(|projected| projection.original_index(projected).unwrap_or_default())
             .collect();
@@ -855,6 +892,7 @@ impl BoxTree {
             ids,
             originals,
             markers: marker_leaves,
+            backgrounds: background_images,
             source: Arc::clone(source),
         })
     }
@@ -964,6 +1002,15 @@ impl BoxTree {
     #[must_use]
     pub fn markers(&self) -> &BTreeMap<usize, TextLeaf> {
         &self.markers
+    }
+
+    /// The background images that can load, by projected index.
+    #[must_use]
+    pub fn background_images(&self) -> Vec<(usize, &BackgroundImage)> {
+        self.backgrounds
+            .iter()
+            .map(|(projected, (value, _))| (*projected, value))
+            .collect()
     }
 
     /// The inline content of each box, by projected index of its first run.
@@ -1092,7 +1139,7 @@ impl BoxTree {
         self,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: text::Renderer<Font = iced::Font> + 'a,
+        Renderer: text::Renderer<Font = iced::Font> + BackgroundRenderer + 'a,
     {
         self.interactive().into()
     }
@@ -1191,7 +1238,7 @@ impl<'a, Message, Theme, Renderer> From<BoxTreeView<'a, Message, Theme, Renderer
 where
     Message: Clone + 'a,
     Theme: 'a,
-    Renderer: text::Renderer<Font = iced::Font> + 'a,
+    Renderer: text::Renderer<Font = iced::Font> + BackgroundRenderer + 'a,
 {
     fn from(view: BoxTreeView<'a, Message, Theme, Renderer>) -> Self {
         let tree = view.tree;
@@ -1628,6 +1675,104 @@ fn border_bands(border: FlowRect, padding: FlowRect) -> [Rectangle; 4] {
     ]
 }
 
+/// What a renderer needs to draw background images. iced only provides this with its
+/// `image` feature, so without this crate's `image` or `image-without-codecs` feature they
+/// draw nothing.
+pub trait BackgroundRenderer {
+    /// The image's size in pixels, once known.
+    fn background_size(&self, handle: &image::Handle) -> Option<(f32, f32)>;
+    /// Draws the image in `bounds`, clipped to `clip`.
+    fn draw_background(&mut self, handle: &image::Handle, bounds: Rectangle, clip: Rectangle);
+}
+
+#[cfg(feature = "image-without-codecs")]
+impl<Renderer: image::Renderer<Handle = image::Handle>> BackgroundRenderer for Renderer {
+    fn background_size(&self, handle: &image::Handle) -> Option<(f32, f32)> {
+        self.measure_image(handle)
+            .map(|size| (size.width as f32, size.height as f32))
+    }
+    fn draw_background(&mut self, handle: &image::Handle, bounds: Rectangle, clip: Rectangle) {
+        self.draw_image(image::Image::new(handle.clone()), bounds, clip);
+    }
+}
+
+#[cfg(not(feature = "image-without-codecs"))]
+impl<Renderer> BackgroundRenderer for Renderer {
+    fn background_size(&self, _handle: &image::Handle) -> Option<(f32, f32)> {
+        None
+    }
+    fn draw_background(&mut self, _handle: &image::Handle, _bounds: Rectangle, _clip: Rectangle) {}
+}
+
+fn moved_rectangle(rect: FlowRect, origin: Point) -> Rectangle {
+    let moved = rectangle(rect.left, rect.right, rect.top, rect.bottom);
+    Rectangle {
+        x: moved.x + origin.x,
+        y: moved.y + origin.y,
+        ..moved
+    }
+}
+
+/// Whether this step draws something a layer paints after its quads.
+fn paints_over_quads(tree: &BoxTree, step: PaintStep) -> bool {
+    match step {
+        PaintStep::Text(_) | PaintStep::Marker(_) => true,
+        PaintStep::Box(index) => tree.backgrounds.contains_key(&index),
+        PaintStep::Outline(_) => false,
+    }
+}
+
+/// A background image in `area`, placed against `positioning` (14.2.1).
+fn draw_background_image<Renderer: BackgroundRenderer>(
+    renderer: &mut Renderer,
+    background: &(BackgroundImage, image::Handle),
+    positioning: Rectangle,
+    area: Rectangle,
+) {
+    let (value, handle) = background;
+    let Some((width, height)) = renderer.background_size(handle) else {
+        return;
+    };
+    if width <= 0.0 || height <= 0.0 || area.width <= 0.0 || area.height <= 0.0 {
+        return;
+    }
+    let place = |offset: BackgroundOffset, start: f32, room: f32, extent: f32| match offset {
+        BackgroundOffset::Px(pixels) => start + pixels,
+        BackgroundOffset::Percent(percent) => start + (room - extent) * percent / 100.0,
+    };
+    let x0 = place(value.position[0], positioning.x, positioning.width, width);
+    let y0 = place(value.position[1], positioning.y, positioning.height, height);
+    // Tiles run from the first one reaching the area to the last one inside it.
+    let tiles = |origin: f32, extent: f32, start: f32, room: f32, repeat: bool| {
+        if repeat {
+            let first = origin - ((origin - start) / extent).ceil() * extent;
+            let count = ((start + room - first) / extent).ceil() as usize;
+            (first, count)
+        } else {
+            (origin, 1)
+        }
+    };
+    let (first_x, columns) = tiles(x0, width, area.x, area.width, value.repeat_x);
+    let (first_y, rows) = tiles(y0, height, area.y, area.height, value.repeat_y);
+    // A sane bound: an image of one pixel over a large area is still drawn, once per pixel.
+    if columns.saturating_mul(rows) > 1_000_000 {
+        return;
+    }
+    for row in 0..rows {
+        for column in 0..columns {
+            let bounds = Rectangle {
+                x: first_x + column as f32 * width,
+                y: first_y + row as f32 * height,
+                width,
+                height,
+            };
+            if bounds.intersects(&area) {
+                renderer.draw_background(handle, bounds, area);
+            }
+        }
+    }
+}
+
 /// One box's outline, four bands just outside its border edge (18.4).
 fn draw_outline<Renderer: renderer::Renderer>(
     tree: &BoxTree,
@@ -1712,7 +1857,7 @@ fn draw_box<Renderer: renderer::Renderer>(
 
 impl<Message, Theme, Renderer> BoxTreeWidget<'_, Message, Theme, Renderer>
 where
-    Renderer: text::Renderer<Font = iced::Font>,
+    Renderer: text::Renderer<Font = iced::Font> + BackgroundRenderer,
 {
     /// The topmost box under a point relative to the layout, as a source node.
     fn hit(&self, point: Point) -> Option<usize> {
@@ -1884,7 +2029,7 @@ impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for BoxTreeWidget<'_, Message, Theme, Renderer>
 where
     Message: Clone,
-    Renderer: text::Renderer<Font = iced::Font>,
+    Renderer: text::Renderer<Font = iced::Font> + BackgroundRenderer,
 {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<Interaction>()
@@ -2381,15 +2526,32 @@ where
                 Color::from_rgb(color[0], color[1], color[2]),
             );
         }
-        // A layer draws its text over its quads, so anything painted after text needs
-        // a layer of its own, as does any change of clip.
+        // 14.2: the root's image covers the canvas too, placed against the root box.
+        let viewport_box = bounds;
+        if let Some(background) = prepared
+            .positions
+            .first()
+            .and_then(|(root, _)| self.tree.backgrounds.get(root))
+            && let Some(Some(geometry)) = self.geometry.get(prepared.positions[0].0)
+        {
+            let positioning = if background.0.fixed {
+                viewport_box
+            } else {
+                moved_rectangle(geometry.padding, origin)
+            };
+            renderer.with_layer(bounds, |renderer| {
+                draw_background_image(renderer, background, positioning, bounds);
+            });
+        }
+        // A layer draws its text and images over its quads, so anything painted after them
+        // needs a layer of its own, as does any change of clip.
         let mut start = 0;
         while start < steps.len() {
             let clip = clip_of(&steps[start]);
             let mut end = start + 1;
             while end < steps.len()
                 && clip_of(&steps[end]) == clip
-                && !(matches!(steps[end - 1], PaintStep::Text(_) | PaintStep::Marker(_))
+                && !(paints_over_quads(&self.tree, steps[end - 1])
                     && !matches!(steps[end], PaintStep::Text(_) | PaintStep::Marker(_)))
             {
                 end += 1;
@@ -2399,6 +2561,21 @@ where
                     match *step {
                         PaintStep::Box(index) => {
                             draw_box(&self.tree, &self.geometry, renderer, origin, index);
+                            // The root's image was drawn for the canvas already. Other
+                            // images stop at the padding edge, so borders stay on top.
+                            if index != prepared.positions[0].0
+                                && self.tree.paints[index].visible
+                                && let Some(background) = self.tree.backgrounds.get(&index)
+                                && let Some(Some(geometry)) = self.geometry.get(index)
+                            {
+                                let area = moved_rectangle(geometry.padding, origin);
+                                let positioning = if background.0.fixed {
+                                    viewport_box
+                                } else {
+                                    area
+                                };
+                                draw_background_image(renderer, background, positioning, area);
+                            }
                         }
                         PaintStep::Outline(index) => {
                             draw_outline(&self.tree, &self.geometry, renderer, origin, index);

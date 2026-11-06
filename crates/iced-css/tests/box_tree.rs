@@ -1856,3 +1856,33 @@ fn collapse_overlaps_per_axis_and_a_loose_cell_keeps_its_paint() {
     .unwrap();
     assert_eq!(tree.paints()[1].border[0], Some([1.0, 0.0, 0.0]));
 }
+
+#[test]
+fn background_image_properties_cascade_and_remote_urls_are_ignored() {
+    let root = node(
+        "page",
+        vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#a { background:url(tile.png) repeat-x fixed 10px 50%; }
+         #b { background-image:url(http://example.com/x.png); }
+         #c { background-image:url(data:image/png;base64,AAAA); }",
+    )
+    .unwrap();
+    let images = tree.background_images();
+    assert_eq!(images.len(), 1);
+    let (at, value) = images[0];
+    assert_eq!(at, 1);
+    assert_eq!(value.uri, "tile.png");
+    assert!(value.repeat_x && !value.repeat_y && value.fixed);
+    use iced_css::evaluation::tree_layout::BackgroundOffset;
+    assert_eq!(
+        value.position,
+        [BackgroundOffset::Px(10.0), BackgroundOffset::Percent(50.0)]
+    );
+    // display none has no image to load.
+    let root = node("page", vec![node("a", vec![])]);
+    let tree = BoxTree::new(root, "#a { display:none; background-image:url(x.png); }").unwrap();
+    assert!(tree.background_images().is_empty());
+}

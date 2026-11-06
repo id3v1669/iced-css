@@ -253,6 +253,96 @@ fn centered_text_still_splits_and_bidirectional_text_stays_narrow() {
     assert_eq!(click(view(mixed, "left"), Point::new(40.0, 110.0)), vec![3]);
 }
 
+/// A small RGB PNG, written with stored deflate blocks so the test needs no encoder.
+#[cfg(feature = "image")]
+fn checker_png(size: u32) -> Vec<u8> {
+    fn crc(data: &[u8]) -> u32 {
+        let mut value = !0_u32;
+        for byte in data {
+            value ^= u32::from(*byte);
+            for _ in 0..8 {
+                value = if value & 1 == 1 {
+                    (value >> 1) ^ 0xEDB8_8320
+                } else {
+                    value >> 1
+                };
+            }
+        }
+        !value
+    }
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], body: &[u8]) {
+        out.extend((body.len() as u32).to_be_bytes());
+        let mut tagged = kind.to_vec();
+        tagged.extend_from_slice(body);
+        out.extend_from_slice(&tagged);
+        out.extend(crc(&tagged).to_be_bytes());
+    }
+    let mut raw = Vec::new();
+    for y in 0..size {
+        raw.push(0);
+        for x in 0..size {
+            let on = (x < size / 2) == (y < size / 2);
+            raw.extend(if on { [230, 74, 25] } else { [255, 224, 178] });
+        }
+    }
+    let mut stored = vec![0x78, 0x01];
+    let blocks: Vec<&[u8]> = raw.chunks(65_535).collect();
+    for (index, block) in blocks.iter().enumerate() {
+        stored.push(u8::from(index + 1 == blocks.len()));
+        stored.extend((block.len() as u16).to_le_bytes());
+        stored.extend((!(block.len() as u16)).to_le_bytes());
+        stored.extend_from_slice(block);
+    }
+    let (mut a, mut b) = (1_u32, 0_u32);
+    for byte in &raw {
+        a = (a + u32::from(*byte)) % 65_521;
+        b = (b + a) % 65_521;
+    }
+    stored.extend(((b << 16) | a).to_be_bytes());
+    let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    let mut header = Vec::new();
+    header.extend(size.to_be_bytes());
+    header.extend(size.to_be_bytes());
+    header.extend([8, 2, 0, 0, 0]);
+    chunk(&mut out, b"IHDR", &header);
+    chunk(&mut out, b"IDAT", &stored);
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+#[cfg(feature = "image")]
+#[test]
+fn renders_background_images_from_a_stylesheet() {
+    let path = std::env::temp_dir().join("iced-css-box-tree-images");
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("tile.png"), checker_png(32)).unwrap();
+    let root = node(
+        "page",
+        vec![
+            node("repeat", vec![text("t1", "repeat")]),
+            node("across", vec![text("t2", "repeat-x, centred")]),
+            node("single", vec![node("child", vec![])]),
+            node(
+                "missing",
+                vec![text("t3", "a missing file shows the color")],
+            ),
+        ],
+    );
+    let css = "#page { padding:16px; background-color:#fafafa; }
+        #repeat, #across, #single, #missing { height:96px; margin-bottom:12px; width:400px;
+                                              border:2px solid #37474f; }
+        #repeat { background-image:url(tile.png); }
+        #across { background:url(tile.png) repeat-x 50% 50%; }
+        #single { background:#e0f2f1 url(tile.png) no-repeat right bottom; }
+        #child { width:40px; height:40px; background-color:#00796b; }
+        #missing { background:#fff9c4 url(no-such-file.png); }";
+    let view: Element<'_, u8> = BoxTree::with_base(root, css, &path).unwrap().view();
+    let mut ui = iced_test::simulator(view);
+    let snapshot = ui.snapshot(&Theme::Light).unwrap();
+    assert!(snapshot.matches_image(path.join("images.png")).unwrap());
+}
+
 #[test]
 fn centered_and_right_aligned_text_sits_where_it_is_hit() {
     let view = |align: &str| -> Element<'_, u8> {

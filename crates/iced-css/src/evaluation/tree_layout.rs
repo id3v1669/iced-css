@@ -1265,6 +1265,25 @@ fn rgb(color: &Color, numeric: NumericLimits) -> Option<[f32; 3]> {
 
 static BLACK: Color = Color::Srgb([0, 0, 0]);
 
+/// One `background-position` axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BackgroundOffset {
+    Px(f32),
+    /// Of the room left after the image: 14.2.1's percentage rule.
+    Percent(f32),
+}
+
+/// A box's background image (14.2.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackgroundImage {
+    pub uri: String,
+    pub repeat_x: bool,
+    pub repeat_y: bool,
+    pub position: [BackgroundOffset; 2],
+    /// `background-attachment: fixed`: positioned against the viewport.
+    pub fixed: bool,
+}
+
 /// Everything `evaluate_tree_paint` computes per projected row.
 pub struct TreePaint {
     pub paints: Vec<BoxPaint>,
@@ -1274,6 +1293,8 @@ pub struct TreePaint {
     pub markers: Vec<Option<String>>,
     /// The computed `border-spacing` per row, zero under `border-collapse: collapse`.
     pub spacings: Vec<[f32; 2]>,
+    /// The computed background image per row.
+    pub backgrounds: Vec<Option<BackgroundImage>>,
     /// Whether `border-collapse` is `collapse`, per row.
     pub collapses: Vec<bool>,
     /// The computed `vertical-align` keyword per row, for cells.
@@ -1639,6 +1660,7 @@ pub fn evaluate_tree_paint<'r>(
     let mut marker_inside: Vec<bool> = Vec::with_capacity(projection.len());
     let mut markers: Vec<Option<String>> = Vec::with_capacity(projection.len());
     let mut spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
+    let mut backgrounds: Vec<Option<BackgroundImage>> = Vec::with_capacity(projection.len());
     let mut vertical_aligns: Vec<Option<&'static str>> = Vec::with_capacity(projection.len());
     let mut captions_below: Vec<bool> = Vec::with_capacity(projection.len());
     let mut collapses: Vec<bool> = Vec::with_capacity(projection.len());
@@ -1919,6 +1941,59 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => false,
         };
+        let uri = match defaulted("background-image")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Uri(value)) => Some(value.clone()),
+            DefaultedValueRef::ParentComputed => parent_index
+                .and_then(|parent| backgrounds[parent].as_ref())
+                .map(|image| image.uri.clone()),
+            _ => None,
+        };
+        let inherited_background = parent_index.and_then(|parent| backgrounds[parent].clone());
+        let repeat = match defaulted("background-repeat")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => keyword.as_str(),
+            DefaultedValueRef::ParentComputed => {
+                inherited_background.as_ref().map_or("repeat", |image| {
+                    match (image.repeat_x, image.repeat_y) {
+                        (true, true) => "repeat",
+                        (true, false) => "repeat-x",
+                        (false, true) => "repeat-y",
+                        (false, false) => "no-repeat",
+                    }
+                })
+            }
+            _ => "repeat",
+        };
+        let offset = |target: &LengthTarget| match target {
+            LengthTarget::Percentage(value) => BackgroundOffset::Percent(
+                value
+                    .percentage_finite_f32(100.0, limits.numeric)
+                    .map_or(0.0, |c| c.value),
+            ),
+            other => BackgroundOffset::Px(length(other)),
+        };
+        let position = match defaulted("background-position")? {
+            DefaultedValueRef::Compute(SpecifiedValue::LengthPair(x, y)) => [offset(x), offset(y)],
+            DefaultedValueRef::ParentComputed => inherited_background
+                .as_ref()
+                .map_or([BackgroundOffset::Percent(0.0); 2], |image| image.position),
+            _ => [BackgroundOffset::Percent(0.0); 2],
+        };
+        let fixed = match defaulted("background-attachment")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "fixed"
+            }
+            DefaultedValueRef::ParentComputed => inherited_background
+                .as_ref()
+                .is_some_and(|image| image.fixed),
+            _ => false,
+        };
+        backgrounds.push(uri.map(|uri| BackgroundImage {
+            uri,
+            repeat_x: matches!(repeat, "repeat" | "repeat-x"),
+            repeat_y: matches!(repeat, "repeat" | "repeat-y"),
+            position,
+            fixed,
+        }));
         vertical_aligns.push(match defaulted("vertical-align")? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => Some(keyword.as_str()),
             DefaultedValueRef::ParentComputed => {
@@ -2247,6 +2322,7 @@ pub fn evaluate_tree_paint<'r>(
         generated,
         markers,
         spacings,
+        backgrounds,
         collapses,
         vertical_aligns,
         captions_below,

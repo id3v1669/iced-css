@@ -28,7 +28,7 @@ let element = tree
 ## What works
 
 - **Selectors and cascade:** type, class, id, attribute and combinator selectors, including
-  `:hover` and `:active`, which restyle the tree as the pointer moves.
+  `:hover`, `:active` and `:focus`, which restyle the tree live.
 - **Block layout:** nested boxes, margin collapsing, floats, clearance, formatting contexts,
   `min-`/`max-` sizes, percentages, `em` and `ex`.
 - **Positioning:** relative, absolute and fixed, with `z-index` stacking.
@@ -39,6 +39,11 @@ let element = tree
   anonymous parts, `border-spacing`, captions and cell `vertical-align`.
 - **Also:** `inline-block` lines, lists and markers, `:before`/`:after` with counters and
   quotes, `visibility`, outlines, `overflow` clipping and wheel scrolling.
+- **Background images** (with the `image` Cargo feature): local files through `url()`, with `repeat`, `position` and
+  `attachment`; relative paths resolve against `BoxTree::with_base`. They paint inside the
+  padding edge, and remote URLs draw nothing.
+- **Keyboard:** boxes with a press message or `tabindex` take focus by click and Tab, and
+  match `:focus`; Enter and Space press them.
 - **Native widgets:** any iced `Element` can sit in a leaf box and receives input.
 
 ## Known limits
@@ -49,8 +54,7 @@ text in one line.
 Approximated or missing: `border-collapse` shares each edge at the widest cell border, with
 the later cell on top rather than resolving conflicts per edge; `justify` (start-aligned);
 one line height and alignment per paragraph; inline box padding and borders; text widens past
-floats once per paragraph; `background-image`; horizontal scrolling; keyboard focus and
-`:focus`; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
+floats once per paragraph; horizontal scrolling; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
 text properties, not other box properties.
 
 ## Status
