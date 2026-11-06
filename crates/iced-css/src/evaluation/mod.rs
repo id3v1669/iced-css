@@ -27,6 +27,7 @@ pub(crate) mod border_diagnostics;
 pub mod clearance_box_facts;
 pub mod sibling_box_facts;
 pub mod sibling_layout;
+pub mod tree_layout;
 
 mod clearance_profile;
 
