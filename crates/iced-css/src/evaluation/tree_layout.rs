@@ -5,7 +5,7 @@
 //! approximated. Leaf content comes from the caller.
 use super::{
     clearance_box_facts::{
-        BoxFactMode, BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact,
+        BoxFactMode, BoxFactTarget, BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact,
         ClearanceBoxFactsError, ClearanceBoxFactsLimits, LengthPercentageBoxFact,
         evaluate_box_rows, initial_box_fact, prepare_box_facts,
     },
@@ -17,6 +17,10 @@ use crate::{
     host::source_publication::{InitialSourceHost, InitialSourceSnapshot},
 };
 use iced_css_core::{
+    cascade::{
+        rule::{RuleTarget, cascade_positioned_rules},
+        winner_table::PropertyWinners,
+    },
     formatting::{
         absolute::{AbsoluteWidthError, AbsoluteWidthInput, absolute_width},
         absolute_height::{AbsoluteHeightError, AbsoluteHeightInput, absolute_height},
@@ -33,7 +37,12 @@ use iced_css_core::{
     values::{
         ConversionError, NumericLimits,
         bidi::ComputedDirection,
+        color::Color,
+        computed_color::{
+            ColorComputationContext, ColorComputationError, ComputedColor, compute_color,
+        },
         font_size::{FontSizeError, FontSizeTable},
+        registry::PropertyId,
     },
 };
 use std::num::NonZeroUsize;
@@ -112,6 +121,13 @@ pub enum TreeLayoutError {
         error: ConversionError,
     },
     FontMedium(FontSizeError),
+    Paint {
+        property: &'static str,
+    },
+    Color {
+        projected: usize,
+        error: ColorComputationError,
+    },
     Flow(FlowError),
     AbsoluteWidth {
         projected: usize,
@@ -203,6 +219,17 @@ pub fn prepare_tree_source_projection<'h>(
     })
 }
 
+/// Width-independent box tree, ready to lay out at any viewport.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedTree {
+    /// Arena order is preorder; indices differ from projected ones after display none.
+    pub boxes: Vec<FlowBox>,
+    pub offsets: Vec<(usize, [Dim; 4])>,
+    pub positions: Vec<(usize, Position)>,
+    /// Arena slot of each projected index; `None` is display none.
+    pub slot: Vec<Option<usize>>,
+}
+
 /// Evaluates every row and runs block flow. `content` measures a source leaf by its
 /// original index. The result is indexed by projected index; `None` is display none.
 ///
@@ -216,8 +243,23 @@ pub fn layout_captured_tree(
     font_medium: Option<f32>,
     viewport: FlowViewport,
     limits: FlowLimits,
-    mut content: impl FnMut(usize) -> Option<FlowContent>,
+    content: impl FnMut(usize) -> Option<FlowContent>,
 ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
+    prepare_captured_tree(projection, display, facts, font_medium, content)?
+        .layout(viewport, limits)
+}
+
+/// Evaluates every row into the width-independent box tree.
+///
+/// # Errors
+/// Returns fact, unsupported-display and percentage errors.
+pub fn prepare_captured_tree(
+    projection: &TreeSourceProjection<'_>,
+    display: &SourceDisplay<'_, '_, '_>,
+    facts: ClearanceBoxFactsLimits,
+    font_medium: Option<f32>,
+    mut content: impl FnMut(usize) -> Option<FlowContent>,
+) -> Result<PreparedTree, TreeLayoutError> {
     use TreeLayoutError as E;
     let count = projection.len();
     let font = font_medium
@@ -313,47 +355,73 @@ pub fn layout_captured_tree(
             boxes[parent].children.push(arena);
         }
     }
-    if boxes.is_empty() {
-        return Ok(vec![None; count]);
-    }
-    let mut geometry = layout_block_flow(&boxes, viewport, limits).map_err(E::Flow)?;
-    // Arena order is preorder, so every box's ancestors have settled before it. A
-    // relative offset moves a subtree after flow; floats and later flow do not react.
-    let auto = [Dim::Auto; 4];
-    for arena in 0..boxes.len() {
-        let (index, position) = positions[arena];
-        let offset = offsets
-            .iter()
-            .find(|(at, _)| *at == arena)
-            .map_or(auto, |(_, offset)| *offset);
-        match position {
-            Position::Relative => {
-                let basis = parent_content(&boxes, &geometry, arena, viewport);
-                let direction = parent_of(&boxes, arena)
-                    .map_or(boxes[arena].direction, |parent| boxes[parent].direction);
-                let (dx, dy) = relative_shift(direction, offset, basis);
-                shift(&boxes, &mut geometry, arena, dx, dy);
-            }
-            Position::Absolute | Position::Fixed => {
-                place_absolute(
-                    &boxes,
-                    &mut geometry,
-                    &positions,
-                    arena,
-                    position,
-                    offset,
-                    viewport,
-                    limits,
-                )
-                .map_err(|error| error.at(index))?;
-            }
-            Position::Static => {}
+    Ok(PreparedTree {
+        boxes,
+        offsets,
+        positions,
+        slot,
+    })
+}
+
+impl PreparedTree {
+    /// Lays the tree out; indexed by projected index, `None` is display none.
+    ///
+    /// # Errors
+    /// Returns flow and absolute placement errors.
+    pub fn layout(
+        &self,
+        viewport: FlowViewport,
+        limits: FlowLimits,
+    ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
+        use TreeLayoutError as E;
+        let Self {
+            boxes,
+            offsets,
+            positions,
+            slot,
+        } = self;
+        if boxes.is_empty() {
+            return Ok(vec![None; slot.len()]);
         }
+        let mut geometry = layout_block_flow(boxes, viewport, limits).map_err(E::Flow)?;
+        // Arena order is preorder, so every box's ancestors have settled before it. A
+        // relative offset moves a subtree after flow; floats and later flow do not react.
+        let auto = [Dim::Auto; 4];
+        for arena in 0..boxes.len() {
+            let (index, position) = positions[arena];
+            let offset = offsets
+                .iter()
+                .find(|(at, _)| *at == arena)
+                .map_or(auto, |(_, offset)| *offset);
+            match position {
+                Position::Relative => {
+                    let basis = parent_content(boxes, &geometry, arena, viewport);
+                    let direction = parent_of(boxes, arena)
+                        .map_or(boxes[arena].direction, |parent| boxes[parent].direction);
+                    let (dx, dy) = relative_shift(direction, offset, basis);
+                    shift(boxes, &mut geometry, arena, dx, dy);
+                }
+                Position::Absolute | Position::Fixed => {
+                    place_absolute(
+                        boxes,
+                        &mut geometry,
+                        positions,
+                        arena,
+                        position,
+                        offset,
+                        viewport,
+                        limits,
+                    )
+                    .map_err(|error| error.at(index))?;
+                }
+                Position::Static => {}
+            }
+        }
+        Ok(slot
+            .iter()
+            .map(|value| value.map(|arena| geometry[arena]))
+            .collect())
     }
-    Ok(slot
-        .into_iter()
-        .map(|value| value.map(|arena| geometry[arena]))
-        .collect())
 }
 
 enum AbsoluteFailure {
@@ -648,4 +716,139 @@ fn flow_box(row: &ClearanceBoxFact, numeric: NumericLimits) -> Result<FlowBox, C
         border: row.border_widths(),
         ..FlowBox::default()
     })
+}
+
+/// Cascaded paint colors of one box. `None` means transparent or not representable.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BoxPaint {
+    /// Red, green, blue in 0 to 1.
+    pub background: Option<[f32; 3]>,
+    /// Top, right, bottom, left.
+    pub border: [Option<[f32; 3]>; 4],
+}
+
+fn channel(number: Result<f32, ConversionError>) -> Option<f32> {
+    number.ok().map(|value| value.clamp(0.0, 1.0))
+}
+
+fn rgb(color: &Color, numeric: NumericLimits) -> Option<[f32; 3]> {
+    match color {
+        Color::Srgb([r, g, b]) => Some([*r, *g, *b].map(|value| f32::from(value) / 255.0)),
+        Color::IntegerRgb([r, g, b]) => {
+            Some([r, g, b].map(|value| f32::from(value.clamped_byte()) / 255.0))
+        }
+        Color::PercentageRgb([r, g, b]) => {
+            let unit = |value: &iced_css_core::values::Decimal| {
+                channel(
+                    value
+                        .percentage_finite_f32(1.0, numeric)
+                        .map(|converted| converted.value),
+                )
+            };
+            Some([unit(r)?, unit(g)?, unit(b)?])
+        }
+        // A system palette and outline invert have no fixed value here.
+        Color::Transparent | Color::Invert | Color::System(_) => None,
+    }
+}
+
+static BLACK: Color = Color::Srgb([0, 0, 0]);
+
+/// Cascades background and border colors for each projected row; `color` is computed
+/// along the way, since it is both inherited and the initial border color.
+///
+/// # Errors
+/// Returns a named property, cascade or color computation failure.
+pub fn evaluate_tree_paint<'r>(
+    projection: &TreeSourceProjection<'_>,
+    display: &SourceDisplay<'_, '_, 'r>,
+    limits: ClearanceBoxFactsLimits,
+) -> Result<Vec<BoxPaint>, TreeLayoutError> {
+    use TreeLayoutError as E;
+    let id = |name: &'static str| PropertyId::lookup(name).ok_or(E::Paint { property: name });
+    let foreground = id("color")?;
+    let background = id("background-color")?;
+    let border = [
+        id("border-top-color")?,
+        id("border-right-color")?,
+        id("border-bottom-color")?,
+        id("border-left-color")?,
+    ];
+    let bundle = display.bundle();
+    let snapshot = projection.snapshot;
+    let source = snapshot
+        .selector_source(limits.selectors)
+        .map_err(|error| E::Facts(ClearanceBoxFactsError::Source(error)))?;
+    let mut colors: Vec<ComputedColor<'r>> = Vec::with_capacity(projection.len());
+    let mut paints = Vec::with_capacity(projection.len());
+    for index in 0..projection.len() {
+        let original = projection.original[index];
+        let mut winners = PropertyWinners::new();
+        cascade_positioned_rules(
+            &mut winners,
+            bundle.offers().iter().copied(),
+            RuleTarget {
+                source: &source,
+                node: original,
+                pseudo: None,
+            },
+            bundle.sheets(),
+            limits.per_target,
+        )
+        .map_err(|error| {
+            E::Facts(ClearanceBoxFactsError::Cascade {
+                original,
+                target: BoxFactTarget::Element,
+                error,
+            })
+        })?;
+        let parent = snapshot.construction().nodes()[original]
+            .parent()
+            .map(|parent| colors[projection.projected[parent]]);
+        let current = compute_color(
+            &winners,
+            foreground,
+            ColorComputationContext {
+                parent,
+                current_color: None,
+                user_agent_color: Some(&BLACK),
+            },
+        )
+        .map_err(|error| E::Color {
+            projected: index,
+            error,
+        })?;
+        colors.push(current);
+        let side = |property: PropertyId| -> Result<Option<[f32; 3]>, TreeLayoutError> {
+            // Background and border colors do not inherit unless `inherit` is authored,
+            // which the context does not supply yet: treat that as not representable.
+            let color = compute_color(
+                &winners,
+                property,
+                ColorComputationContext {
+                    parent: None,
+                    current_color: Some(current),
+                    user_agent_color: Some(&BLACK),
+                },
+            );
+            match color {
+                Ok(color) => Ok(rgb(color.value(), limits.numeric)),
+                Err(ColorComputationError::Defaulting(_)) => Ok(None),
+                Err(error) => Err(E::Color {
+                    projected: index,
+                    error,
+                }),
+            }
+        };
+        paints.push(BoxPaint {
+            background: side(background)?,
+            border: [
+                side(border[0])?,
+                side(border[1])?,
+                side(border[2])?,
+                side(border[3])?,
+            ],
+        });
+    }
+    Ok(paints)
 }

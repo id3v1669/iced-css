@@ -10,3 +10,4 @@ publish = false
 [dependencies]
 iced.workspace = true
 iced-css.workspace = true
+iced-css-core.workspace = true

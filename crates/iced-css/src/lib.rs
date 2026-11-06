@@ -25,6 +25,7 @@
 //! }
 //! ```
 
+pub mod box_tree;
 pub mod capture;
 mod constrained;
 pub mod diagnostics;

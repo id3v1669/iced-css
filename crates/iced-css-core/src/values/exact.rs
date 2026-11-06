@@ -397,6 +397,17 @@ impl Integer {
     pub fn is_zero(&self) -> bool {
         self.magnitude.is_zero()
     }
+    /// The value clamped to 0..=255 (CSS2.2 4.3.6 rgb() integer clipping).
+    pub fn clamped_byte(&self) -> u8 {
+        if self.negative {
+            return 0;
+        }
+        let limbs = &self.magnitude.0;
+        if limbs.iter().skip(1).any(|limb| *limb != 0) {
+            return u8::MAX;
+        }
+        limbs.first().map_or(0, |limb| (*limb).min(255) as u8)
+    }
     /// Add without modifying either operand. Both input magnitudes and the result
     /// must fit the supplied digit limit; work/allocation exhaustion returns an error.
     /// This is integer arithmetic, not counter scoping or animation rounding.
