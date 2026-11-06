@@ -823,8 +823,6 @@ pub(super) struct KernelError {
 }
 
 pub(super) struct FirstFloatKernel {
-    pub float_hypothetical_top: f32,
-    pub bands_visited: usize,
     pub before: BlockVertical,
     pub before_content: BlockVertical,
     /// B1 padding span: on a side without border its edge is the border edge.
@@ -952,22 +950,24 @@ pub(super) fn normal_vertical(
     ))
 }
 
-pub(super) fn place_first_float(
-    input: FirstFloatInput<'_>,
-) -> Result<FirstFloatKernel, KernelError> {
-    let before_top = sum(
-        &[input.parent.content_top, input.before.margin.used_top()],
+/// B1's vertical publications: border span, content span and padding span.
+pub(super) fn place_leading_normal(
+    parent: ParentFacts<'_>,
+    before: ChildFacts<'_>,
+    height: f32,
+    source: usize,
+) -> Result<(BlockVertical, BlockVertical, BlockVertical), KernelError> {
+    let tagged = |error| KernelError { source, error };
+    let top = sum(
+        &[parent.content_top, before.margin.used_top()],
         "before_top",
     )
-    .map_err(|error| KernelError {
-        source: input.before_source,
-        error,
-    })?;
-    let (before_content, before_padding, before_bottom) = normal_vertical(
-        before_top,
-        input.before_height,
-        input.before.border,
-        input.before.padding,
+    .map_err(tagged)?;
+    let (content, padding, bottom) = normal_vertical(
+        top,
+        height,
+        before.border,
+        before.padding,
         [
             "before_content_top",
             "before_padding_top",
@@ -976,10 +976,20 @@ pub(super) fn place_first_float(
             "before_bottom",
         ],
     )
-    .map_err(|error| KernelError {
-        source: input.before_source,
-        error,
-    })?;
+    .map_err(tagged)?;
+    Ok((BlockVertical { top, bottom }, content, padding))
+}
+
+pub(super) fn place_first_float(
+    input: FirstFloatInput<'_>,
+) -> Result<FirstFloatKernel, KernelError> {
+    let (before, before_content, before_padding) = place_leading_normal(
+        input.parent,
+        input.before,
+        input.before_height,
+        input.before_source,
+    )?;
+    let (before_top, before_bottom) = (before.top, before.bottom);
     // CTB (the user's U1=A; CSS2.2 9.5.1 rule 4, 8.3.1): after a B1 that collapses
     // through, F's hypothetical top is B1's top border edge, placed as with a nonzero
     // bottom border; the placer's containing-top clamp still applies.
@@ -1021,8 +1031,6 @@ pub(super) fn place_first_float(
         float_content_vertical: float.float_content_vertical,
         float_padding: float.float_padding,
         float_padding_vertical: float.float_padding_vertical,
-        float_hypothetical_top: float_top,
-        bands_visited: float.bands_visited,
     })
 }
 

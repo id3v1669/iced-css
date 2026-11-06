@@ -382,3 +382,127 @@ fn g9a_one_float_legacy_bit_parity() {
         }
     }
 }
+
+fn floated<'s>(child: &mut ChildFacts<'s>, side: Float, height: f32) {
+    child.display.float = side;
+    child.display.flow = Flow::Floating;
+    child.context = ChildContext::FloatBfc;
+    child.height = OwnerHeight::Explicit(height);
+}
+fn plain<'s>(child: &mut ChildFacts<'s>, height: f32) {
+    child.display.float = Float::None;
+    child.display.flow = Flow::Normal;
+    child.context = ChildContext::OrdinaryNonBfc;
+    child.height = OwnerHeight::Explicit(height);
+}
+
+#[test]
+fn g9b_float_follows_the_preceding_normal() {
+    // B1 0-10, N 10-15 with bottom margin 5, F at20, then T after N's margin.
+    let nodes = sources(1, 2);
+    let (outer, parent, mut children) = facts(&nodes, 1);
+    plain(&mut children[1], 5.0);
+    children[1].margin.bottom = AutoLength::Value(5.0);
+    floated(&mut children[2], Float::Left, 20.0);
+    plain(&mut children[3], 1.0);
+    let owner = build(&nodes, outer, parent, &children, &[40.0]).unwrap();
+    assert_eq!(float_edges(&owner), vec![[0.0, 40.0, 20.0, 40.0]]);
+    assert_eq!(owner.floats()[0].source_index(), 4);
+    let sources: Vec<_> = owner.tail().iter().map(|t| t.source_index()).collect();
+    assert_eq!(sources, vec![3, 5]);
+    assert_eq!(owner.tail()[1].vertical().top, 20.0);
+}
+
+#[test]
+fn g9b_clear_sees_only_earlier_floats() {
+    // Clear on the first tail cannot see the float that follows it in source.
+    let nodes = sources(1, 2);
+    let (outer, parent, mut children) = facts(&nodes, 1);
+    plain(&mut children[1], 5.0);
+    children[1].clear = ClearSide::Both;
+    floated(&mut children[2], Float::Left, 20.0);
+    plain(&mut children[3], 1.0);
+    children[3].clear = ClearSide::Both;
+    let owner = build(&nodes, outer, parent, &children, &[40.0]).unwrap();
+    assert_eq!(owner.tail()[0].clearance(), None);
+    assert_eq!(owner.tail()[0].vertical().top, 10.0);
+    // The float starts at15 and ends35.
+    assert_eq!(owner.tail()[1].vertical().top, 35.0);
+    assert!(owner.tail()[1].clearance().is_some());
+}
+
+#[test]
+fn g9b_float_after_through_normal_uses_its_top_edge() {
+    let nodes = sources(1, 2);
+    let (outer, parent, mut children) = facts(&nodes, 1);
+    plain(&mut children[1], 0.0);
+    children[1].margin.top = AutoLength::Value(6.0);
+    children[1].margin.bottom = AutoLength::Value(9.0);
+    floated(&mut children[2], Float::Left, 20.0);
+    plain(&mut children[3], 1.0);
+    let owner = build(&nodes, outer, parent, &children, &[40.0]).unwrap();
+    // U1=A: the through normal's top border edge is 10+6, ignoring its bottom margin.
+    assert_eq!(float_edges(&owner), vec![[0.0, 40.0, 16.0, 36.0]]);
+    // The margin chain is unbroken by the float: 10 + max(6,9) with a zero top.
+    assert_eq!(owner.tail()[1].vertical().top, 19.0);
+}
+
+#[test]
+fn g9b_later_float_descends_past_earlier_floats_across_normals() {
+    let nodes = sources(2, 2);
+    let (outer, parent, mut children) = facts(&nodes, 1);
+    floated(&mut children[1], Float::Left, 50.0);
+    plain(&mut children[2], 5.0);
+    floated(&mut children[3], Float::Left, 5.0);
+    plain(&mut children[4], 1.0);
+    children[4].clear = ClearSide::Left;
+    // F1 occupies10-60. Width80 cannot share with it, so F2 descends to60.
+    let owner = build(&nodes, outer, parent, &children, &[40.0, 80.0]).unwrap();
+    assert_eq!(float_edges(&owner)[1], [0.0, 80.0, 60.0, 65.0]);
+    assert_eq!(owner.tail()[1].vertical().top, 65.0);
+    assert_eq!(owner.terminal_margin_run().members().len(), 1);
+}
+
+#[test]
+fn g9b_trailing_floats_without_a_tail() {
+    let nodes = sources(1, 0);
+    let (outer, parent, children) = facts(&nodes, 1);
+    let owner = build(&nodes, outer, parent, &children, &[40.0]).unwrap();
+    assert!(owner.tail().is_empty());
+    assert_eq!(float_edges(&owner), vec![[0.0, 40.0, 10.0, 30.0]]);
+}
+
+#[test]
+fn g9b_later_float_overlapping_an_earlier_new_bfc_normal_refused() {
+    let nodes = sources(1, 1);
+    let (outer, parent, mut children) = facts(&nodes, 1);
+    plain(&mut children[1], 20.0);
+    children[1].context = ChildContext::OtherNewBfc;
+    floated(&mut children[2], Float::Left, 5.0);
+    // N's negative bottom margin pulls the following float up into N.
+    children[1].margin.bottom = AutoLength::Value(-3.0);
+    assert!(matches!(
+        build(&nodes, outer, parent, &children, &[40.0]),
+        Err(ClearanceFloatClusterError::Placement {
+            source: 3,
+            error: ClearanceOwnerError::NewBfcFloatContact,
+        })
+    ));
+}
+
+#[test]
+fn g9b_float_count_and_first_child_validated() {
+    let nodes = sources(1, 1);
+    let (outer, parent, children) = facts(&nodes, 1);
+    assert!(matches!(
+        build(&nodes, outer, parent, &children, &[40.0, 10.0]),
+        Err(ClearanceFloatClusterError::Floats)
+    ));
+    let mut first = children.clone();
+    floated(&mut first[0], Float::Left, 5.0);
+    plain(&mut first[1], 5.0);
+    assert!(matches!(
+        build(&nodes, outer, parent, &first, &[40.0]),
+        Err(ClearanceFloatClusterError::ClusterOrder { source: 2 })
+    ));
+}

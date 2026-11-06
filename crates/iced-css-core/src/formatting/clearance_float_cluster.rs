@@ -1,12 +1,12 @@
-//! Bounded ownership for B1, one consecutive explicitly sized float cluster, and
-//! a nonempty normal tail in one new BFC. Geometry remains private until success.
+//! Bounded ownership for B1 followed by explicitly sized floats and normals in any
+//! source order, in one new BFC. Geometry remains private until success.
 
 use super::{
     clearance::lowest_clearance_float_bottom,
     clearance_owner::{
-        BlockVertical, ChildContext, ChildFacts, ClearanceOwnerError, FirstFloatInput,
-        FloatBoxInput, FloatBoxKernel, KernelError, MarginMember, OuterFacts, OwnerHeight,
-        OwnerProfileReason, ParentFacts, place_first_float, place_float_box, validate_outer,
+        BlockVertical, ChildContext, ChildFacts, ClearanceOwnerError, FloatBoxInput,
+        FloatBoxKernel, KernelError, MarginMember, OuterFacts, OwnerHeight, OwnerProfileReason,
+        ParentFacts, place_float_box, place_leading_normal, sum, validate_outer,
         validate_sequence_child, validate_sequence_float_extents, validate_sequence_float_width,
         validate_sequence_parent,
     },
@@ -25,9 +25,9 @@ use std::{collections::TryReserveError, mem::size_of, num::NonZeroUsize};
 pub struct ClearanceFloatClusterInput<'s, 'f> {
     pub outer: OuterFacts<'s>,
     pub parent: ParentFacts<'s>,
-    /// B1, the consecutive floats, then the nonempty normal tail in source order.
+    /// B1, then floats and normals in source order; at least one float.
     pub children: &'f [ChildFacts<'s>],
-    /// One finite nonnegative used content width for each consecutive float.
+    /// One finite nonnegative used content width per float, in source order.
     pub float_widths: &'f [f32],
 }
 
@@ -202,8 +202,9 @@ impl<'s> ClearanceFloatClusterOwner<'s> {
 /// Build a complete, bounded flat BFC owner without partial publication.
 ///
 /// Every float must have an explicit finite nonnegative used content height and
-/// width. Float clear selects only earlier matching floats; normal clear retains
-/// the existing equality refusal and two-scalar adjoining-margin reference.
+/// width. Both float and normal clear select only earlier matching floats; normal
+/// clear retains the existing equality refusal and two-scalar adjoining-margin
+/// reference. Floats never enter the margin chain.
 ///
 /// # Errors
 /// Returns count, work, allocation/byte, complete source/profile or source-tagged
@@ -239,7 +240,7 @@ fn build_with_reserves<'s>(
 ) -> Result<ClearanceFloatClusterOwner<'s>, ClearanceFloatClusterError> {
     use ClearanceFloatClusterError as Error;
     let nodes = sources.len();
-    if nodes < 5 || nodes > limits.sources.get() {
+    if nodes < 4 || nodes > limits.sources.get() {
         return Err(Error::Sources);
     }
     if input.children.len() != nodes - 2 {
@@ -248,7 +249,11 @@ fn build_with_reserves<'s>(
     // The width count gives a bounded proposed partition before any source scan.
     // Full role checks below authenticate that partition, including reentry.
     let count = input.float_widths.len();
-    if count == 0 || count > limits.floats.get() || count > nodes - 4 {
+    if count == 0 || count > limits.floats.get() || count > nodes - 3 {
+        return Err(Error::Floats);
+    }
+    let floating = |facts: &ChildFacts<'_>| facts.display.float != Float::None;
+    if input.children.iter().filter(|f| floating(f)).count() != count {
         return Err(Error::Floats);
     }
     let tail_count = nodes - count - 3;
@@ -259,22 +264,23 @@ fn build_with_reserves<'s>(
     validate_graph(sources, input)?;
     validate_outer(input.outer, 0).map_err(Error::Profile)?;
     validate_sequence_parent(input.parent, 1).map_err(Error::Profile)?;
-    let through_eligible = input.children[..1]
+    let through_eligible = input
+        .children
         .iter()
-        .chain(&input.children[count + 1..])
+        .filter(|facts| !floating(facts))
         .all(|facts| {
             let top = facts.margin.used_top();
             let bottom = facts.margin.used_bottom();
             (top >= 0.0 || top.is_finite()) && (bottom >= 0.0 || bottom.is_finite())
         });
     for (offset, facts) in input.children.iter().copied().enumerate() {
-        let floating = offset >= 1 && offset <= count;
-        if (facts.display.float != Float::None) != floating {
-            return Err(Error::ClusterOrder { source: offset + 2 });
+        let is_float = floating(&facts);
+        if offset == 0 && is_float {
+            return Err(Error::ClusterOrder { source: 2 });
         }
-        validate_sequence_child(facts, offset + 2, floating, !floating && through_eligible)
+        validate_sequence_child(facts, offset + 2, is_float, !is_float && through_eligible)
             .map_err(Error::Profile)?;
-        if floating && !matches!(facts.height, OwnerHeight::Explicit(_)) {
+        if is_float && !matches!(facts.height, OwnerHeight::Explicit(_)) {
             return Err(Error::Profile(ClearanceOwnerError::Unsupported {
                 source: offset + 2,
                 reason: OwnerProfileReason::HeightKind,
@@ -283,12 +289,20 @@ fn build_with_reserves<'s>(
     }
     // Preserve the one-float ordering: complete child profiles, width domain,
     // then exact outer extents, all before the first reserve.
-    for (index, width) in input.float_widths.iter().copied().enumerate() {
-        validate_sequence_float_width(width, index + 3).map_err(Error::Profile)?;
+    let float_rows = || {
+        input
+            .children
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, facts)| floating(facts))
+            .zip(input.float_widths.iter().copied())
+    };
+    for ((offset, _), width) in float_rows() {
+        validate_sequence_float_width(width, offset + 2).map_err(Error::Profile)?;
     }
-    for (index, width) in input.float_widths.iter().copied().enumerate() {
-        let facts = input.children[index + 1];
-        validate_sequence_float_extents(facts, width, explicit_height(facts), index + 3)
+    for ((offset, facts), width) in float_rows() {
+        validate_sequence_float_extents(facts, width, explicit_height(facts), offset + 2)
             .map_err(Error::Profile)?;
     }
     let member_count = tail_count
@@ -346,99 +360,104 @@ fn build_with_reserves<'s>(
 
     let before_facts = input.children[0];
     let through = collapses_through(before_facts);
-    let first = place_first_float(FirstFloatInput {
-        parent: input.parent,
-        before: before_facts,
-        before_height: explicit_height(before_facts),
-        before_source: 2,
-        float: input.children[1],
-        float_height: explicit_height(input.children[1]),
-        float_width: input.float_widths[0],
-        float_source: 3,
-        before_collapses_through: through,
-    })
-    .map_err(placement)?;
-    check_contact(before_facts, first.before, first.placed_float, 2)?;
-    floats.push(FloatClusterFloatPlacement {
-        source_index: 3,
-        placed_float: first.placed_float,
-        border: first.float_border,
-        border_vertical: first.float_border_vertical,
-        content: first.float_content,
-        content_vertical: first.float_content_vertical,
-        padding: first.float_padding,
-        padding_vertical: first.float_padding_vertical,
-        bands_visited: first.bands_visited,
-    });
-    preceding.push(first.placed_float);
-    for index in 1..count {
-        let source = index + 3;
-        let facts = input.children[index + 1];
-        let selected = lowest_clearance_float_bottom(
-            &preceding,
-            facts.clear,
-            NonZeroUsize::new(index).expect("later float has a preceding float"),
-        )
-        .map_err(|error| Error::Placement {
-            source,
-            error: ClearanceOwnerError::FloatSelection(error),
-        })?;
-        let hypothetical_top = match selected {
-            Some(bottom) if bottom > first.float_hypothetical_top => bottom,
-            _ => first.float_hypothetical_top,
-        };
-        // index+1 is bounded by the already admitted nonempty count.
-        let next = place_float_box(
-            FloatBoxInput {
-                parent: input.parent,
-                float: facts,
-                float_height: explicit_height(facts),
-                float_width: input.float_widths[index],
-                float_source: source,
-                hypothetical_top,
-            },
-            &preceding,
-            NonZeroUsize::new(index + 1).expect("positive band count"),
-        )
-        .map_err(placement)?;
-        check_contact(before_facts, first.before, next.placed_float, 2)?;
-        preceding.push(next.placed_float);
-        floats.push(FloatClusterFloatPlacement::from_kernel(source, next));
-    }
+    let (before, before_content, before_padding) =
+        place_leading_normal(input.parent, before_facts, explicit_height(before_facts), 2)
+            .map_err(placement)?;
     let mut chain = ChainState::first(
         &mut members,
         before_facts,
-        first.before.bottom,
+        before.bottom,
         input.parent.content_top,
         through,
     )
     .map_err(placement)?;
     let selection_limit = NonZeroUsize::new(count).expect("nonempty validated cluster");
-    for (index, facts) in input.children[count + 1..].iter().copied().enumerate() {
-        let source = count + 3 + index;
-        let next = chain
-            .place_next_with_floats(
-                &mut members,
-                facts,
-                explicit_height(facts),
-                source,
-                collapses_through(facts),
-                FloatSelection {
-                    floats: &preceding,
-                    limit: selection_limit,
-                },
-            )
-            .map_err(placement)?;
-        for float in &preceding {
-            check_contact(facts, next.vertical(), *float, source)?;
+    // The most recent normal fixes every following float's hypothetical top.
+    let mut anchor = (before_facts, before, through);
+    let mut widths = input.float_widths.iter().copied();
+    for (index, facts) in input.children.iter().copied().enumerate().skip(1) {
+        let source = index + 2;
+        if !floating(&facts) {
+            let next_through = collapses_through(facts);
+            let next = chain
+                .place_next_with_floats(
+                    &mut members,
+                    facts,
+                    explicit_height(facts),
+                    source,
+                    next_through,
+                    FloatSelection {
+                        floats: &preceding,
+                        limit: selection_limit,
+                    },
+                )
+                .map_err(placement)?;
+            for float in &preceding {
+                check_contact(facts, next.vertical(), *float, source)?;
+            }
+            anchor = (facts, next.vertical(), next_through);
+            tail.push(next);
+            continue;
         }
-        tail.push(next);
+        let (anchor_facts, anchor_box, anchor_through) = anchor;
+        // CTB (the user's U1=A; CSS2.2 9.5.1 rule 4, 8.3.1): after a normal that
+        // collapses through, the top border edge, placed as with a nonzero bottom
+        // border. Otherwise below its bottom margin. Floats never advance this.
+        let flow_top = if anchor_through {
+            anchor_box.top
+        } else {
+            sum(
+                &[anchor_box.bottom, anchor_facts.margin.used_bottom()],
+                "float_top",
+            )
+            .map_err(|error| Error::Placement { source, error })?
+        };
+        let selected =
+            match NonZeroUsize::new(preceding.len()) {
+                Some(limit) => lowest_clearance_float_bottom(&preceding, facts.clear, limit)
+                    .map_err(|error| Error::Placement {
+                        source,
+                        error: ClearanceOwnerError::FloatSelection(error),
+                    })?,
+                None => None,
+            };
+        let hypothetical_top = match selected {
+            Some(bottom) if bottom > flow_top => bottom,
+            _ => flow_top,
+        };
+        // The candidate bands are bounded by the distinct earlier float bottoms.
+        let next = place_float_box(
+            FloatBoxInput {
+                parent: input.parent,
+                float: facts,
+                float_height: explicit_height(facts),
+                float_width: widths.next().ok_or(Error::Floats)?,
+                float_source: source,
+                hypothetical_top,
+            },
+            &preceding,
+            NonZeroUsize::new(preceding.len() + 1).expect("positive band count"),
+        )
+        .map_err(placement)?;
+        // A later float must not silently overlap an earlier new-BFC normal.
+        check_contact(before_facts, before, next.placed_float, 2)?;
+        for record in &tail {
+            let normal = record.source_index();
+            check_contact(
+                input.children[normal - 2],
+                record.vertical(),
+                next.placed_float,
+                normal,
+            )?;
+        }
+        preceding.push(next.placed_float);
+        floats.push(FloatClusterFloatPlacement::from_kernel(source, next));
     }
     Ok(ClearanceFloatClusterOwner {
         sources,
-        before: first.before,
-        before_content: first.before_content,
-        before_padding: first.before_padding,
+        before,
+        before_content,
+        before_padding,
         receipt: ClearanceFloatClusterReceipt {
             nodes,
             floats: count,
@@ -565,7 +584,7 @@ fn cluster_work(nodes: usize, floats: usize, tail: usize) -> Option<usize> {
     // larger single-float tail. No existing charges are removed or refunded.
     let base = sequence_work(nodes, nodes.checked_sub(4)?)?;
     let earlier = floats.checked_sub(1)?;
-    // Each later float j scans j prior floats for clear/validation/top, and at
+    // Each float j scans j prior floats for clear/validation/top, and at
     // most j+1 narrowing/next-edge bands: sum 32*j*(j+1), j=1..K-1.
     let bands = floats
         .checked_mul(earlier)?
@@ -574,8 +593,9 @@ fn cluster_work(nodes: usize, floats: usize, tail: usize) -> Option<usize> {
         .checked_mul(32)?;
     base.checked_add(earlier.checked_mul(1062)?)?
         .checked_add(bands)?
-        // All-float normal clear and contact scans, including B1 contact.
-        .checked_add(floats.checked_mul(tail.checked_add(1)?)?.checked_mul(128)?)?
+        // All-float normal clear and contact scans in both source directions,
+        // including B1 contact.
+        .checked_add(floats.checked_mul(tail.checked_add(1)?)?.checked_mul(256)?)?
         // Consecutive role admission, float clear setup and record transfers.
         .checked_add(floats.checked_mul(32)?)
 }

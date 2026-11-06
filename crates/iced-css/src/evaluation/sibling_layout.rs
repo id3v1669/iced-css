@@ -1026,8 +1026,14 @@ fn build_geometry<'p, 'h, 'd, 's, 'b, 'r>(
             count
         }
     };
-    let float_end = float_count.checked_add(3).ok_or(E::Sources)?;
-    let is_float = |source: usize| (3..float_end).contains(&source);
+    let is_float = |source: usize| match profile {
+        LayoutProfile::Single => source == 3,
+        LayoutProfile::Cluster(_) => {
+            source >= 3
+                && joined_display(projection, facts.display(), source)
+                    .is_ok_and(|display| display.flow == Flow::Floating)
+        }
+    };
     let child_count = node_count - 2;
     let requested_scratch = checked_bytes::<ChildFacts<'_>>(child_count).ok_or(E::ScratchBytes)?;
     if requested_scratch > limits.scratch_bytes.get() {
@@ -1372,11 +1378,13 @@ fn build_geometry<'p, 'h, 'd, 's, 'b, 'r>(
         // `auto` establishes a new block formatting context. The shared conversion labels
         // normals by position, so the Sequence facade, which alone admits such normals,
         // sets their context here.
-        if is_float(source) {
-            child.context = ChildContext::FloatBfc;
+        child.context = if is_float(source) {
+            ChildContext::FloatBfc
         } else if row.overflow.value != BoxOverflow::Visible {
-            child.context = ChildContext::OtherNewBfc;
-        }
+            ChildContext::OtherNewBfc
+        } else {
+            ChildContext::OrdinaryNonBfc
+        };
         child_facts.push(child);
     }
     // MMX (CSS2.2 10.3.5 with 10.4): F's margins do not depend on its width, so the
@@ -1568,6 +1576,8 @@ fn build_geometry<'p, 'h, 'd, 's, 'b, 'r>(
         reserve_children,
     )?;
 
+    let mut float_ordinal = 0_usize;
+    let mut tail_ordinal = 0_usize;
     for source in 2..node_count {
         let row = fact_row(facts, source, "row")?;
         let child = child_facts
@@ -1577,7 +1587,7 @@ fn build_geometry<'p, 'h, 'd, 's, 'b, 'r>(
                 source,
                 property: "child-facts",
             })?;
-        let used_height = used_child_height(child, source)?;
+        let used_height = used_child_height(child, source, is_float(source))?;
         // PCT (C-1): the row is resolved again against P's used content width; a failure,
         // or a margin (PPM: or a padding) that differs from the first resolution (kept in
         // `child`), is an invariant breach.
@@ -1652,10 +1662,12 @@ fn build_geometry<'p, 'h, 'd, 's, 'b, 'r>(
                 used_width: match profile {
                     LayoutProfile::Single => float_width,
                     LayoutProfile::Cluster(_) => {
-                        *widths.get(source - 3).ok_or(E::FactInvariant {
+                        let width = *widths.get(float_ordinal).ok_or(E::FactInvariant {
                             source,
                             property: "float-width",
-                        })?
+                        })?;
+                        float_ordinal += 1;
+                        width
                     }
                 },
                 normal_width: None,
@@ -1670,13 +1682,11 @@ fn build_geometry<'p, 'h, 'd, 's, 'b, 'r>(
                     sequence.before_content(),
                 )
             } else {
-                let record = sequence
-                    .tail()
-                    .get(source - float_end)
-                    .ok_or(E::FactInvariant {
-                        source,
-                        property: "sequence-tail",
-                    })?;
+                let record = sequence.tail().get(tail_ordinal).ok_or(E::FactInvariant {
+                    source,
+                    property: "sequence-tail",
+                })?;
+                tail_ordinal += 1;
                 if record.source_index() != source {
                     return Err(E::FactInvariant {
                         source,
@@ -1831,32 +1841,30 @@ fn build_geometry<'p, 'h, 'd, 's, 'b, 'r>(
                 .into());
             }
             BoxLengthFact::Auto { .. } => {
-                let last_source = node_count - 1;
-                let last_child = children.last().ok_or(E::FactInvariant {
-                    source: last_source,
-                    property: "principal-last",
-                })?;
-                if last_child.source_index() != last_source {
-                    return Err(E::FactInvariant {
-                        source: last_source,
-                        property: "principal-source",
-                    }
-                    .into());
-                }
+                // Floats are out of flow: the source-last normal may precede them.
+                let last_child = children
+                    .iter()
+                    .rev()
+                    .find(|child| child.kind() == PrincipalChildKind::Normal)
+                    .ok_or(E::FactInvariant {
+                        source: 1,
+                        property: "principal-last",
+                    })?;
+                let last_source = last_child.source_index();
                 let last_in_flow_margin_bottom = last_child.used_margin_bottom();
-                let last = sequence.tail().last().ok_or(E::FactInvariant {
-                    source: last_source,
-                    property: "sequence-tail-last",
-                })?;
-                if last.source_index() != last_source {
-                    return Err(E::FactInvariant {
-                        source: last_source,
-                        property: "sequence-source",
+                let last_bottom = match sequence.tail().last() {
+                    Some(last) if last.source_index() == last_source => last.vertical().bottom,
+                    None if last_source == 2 => sequence.before().bottom,
+                    _ => {
+                        return Err(E::FactInvariant {
+                            source: last_source,
+                            property: "sequence-source",
+                        }
+                        .into());
                     }
-                    .into());
-                }
+                };
                 BfcHeightMode::Auto {
-                    last_in_flow_border_bottom: last.vertical().bottom,
+                    last_in_flow_border_bottom: last_bottom,
                     last_in_flow_margin_bottom,
                     float_bottom: greatest_float_bottom,
                 }
@@ -2114,10 +2122,10 @@ impl GeometryView<'_, '_> {
             }),
             Self::Single(_) => None,
             Self::Cluster(v) => {
-                let f = v.floats().get(source.checked_sub(3)?)?;
-                if f.source_index() != source {
-                    return None;
-                }
+                let floats = v.floats();
+                let f = &floats[floats
+                    .binary_search_by_key(&source, |f| f.source_index())
+                    .ok()?];
                 Some(FloatGeometry {
                     placed: f.placed_float(),
                     border: f.border(),
@@ -2173,14 +2181,10 @@ fn classify_cluster(
         .into());
     }
     let mut floats = 0usize;
-    let mut tail = false;
     for source in 0..count {
         let display = joined_display(projection, facts.display(), source).map_err(E::Captured)?;
         let floating = display.flow == Flow::Floating;
-        if floating && (source < 3 || tail) {
-            return Err(FloatClusterLayoutError::ClusterOrder { source });
-        }
-        if source == 3 && !floating {
+        if floating && source < 3 {
             return Err(FloatClusterLayoutError::ClusterOrder { source });
         }
         if !admitted_display(display, floating, source == 0) {
@@ -2191,15 +2195,11 @@ fn classify_cluster(
             ))
             .into());
         }
-        if source >= 3 {
-            if floating {
-                floats = floats.checked_add(1).ok_or(E::Sources)?;
-            } else {
-                tail = true;
-            }
+        if floating {
+            floats = floats.checked_add(1).ok_or(E::Sources)?;
         }
     }
-    if !tail {
+    if floats == 0 {
         return Err(FloatClusterLayoutError::ClusterOrder { source: count - 1 });
     }
     Ok(floats)
@@ -2762,11 +2762,15 @@ fn fact_row<'a>(
         .ok_or(SiblingLayoutError::FactInvariant { source, property })
 }
 
-fn used_child_height(child: ChildFacts<'_>, source: usize) -> Result<f32, SiblingLayoutError> {
+fn used_child_height(
+    child: ChildFacts<'_>,
+    source: usize,
+    floating: bool,
+) -> Result<f32, SiblingLayoutError> {
     match child.height {
         OwnerHeight::Explicit(height) => Ok(height),
-        OwnerHeight::NonAdjoiningZero(height) if source != 3 => Ok(height),
-        OwnerHeight::Auto if source == 3 => Ok(0.0_f32),
+        OwnerHeight::NonAdjoiningZero(height) if !floating => Ok(height),
+        OwnerHeight::Auto if floating => Ok(0.0_f32),
         _ => Err(SiblingLayoutError::FactInvariant {
             source,
             property: "height",
@@ -3411,11 +3415,11 @@ mod tests {
                 let mut child = cp_capacity_child(&source);
                 child.height = OwnerHeight::NonAdjoiningZero(zero);
                 assert_eq!(
-                    used_child_height(child, index).unwrap().to_bits(),
+                    used_child_height(child, index, false).unwrap().to_bits(),
                     zero.to_bits()
                 );
                 assert!(matches!(
-                    used_child_height(child, 3),
+                    used_child_height(child, 3, true),
                     Err(SiblingLayoutError::FactInvariant {
                         source: 3,
                         property: "height"

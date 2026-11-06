@@ -5,8 +5,8 @@ use iced_css::evaluation::{
         CapturedClearanceError, CapturedClearanceUnsupported, ClearanceOuterContentGeometry,
     },
     sibling_layout::{
-        FloatClusterLayoutError, FloatClusterLayoutLimits, SiblingLayoutError, SiblingLayoutLimits,
-        build_captured_float_cluster_layout, build_captured_sibling_layout,
+        FloatClusterLayoutError, FloatClusterLayoutLimits, PrincipalChildKind, SiblingLayoutError,
+        SiblingLayoutLimits, build_captured_float_cluster_layout, build_captured_sibling_layout,
     },
     source_display::SourceDisplay,
 };
@@ -286,16 +286,63 @@ fn g9a_second_float_auto_height_refused() {
 }
 
 #[test]
-fn g9a_float_reentry_refused() {
+fn g9b_float_after_normal_uses_that_normals_flow_position() {
+    // b1 0-10, f left at10-30, b2 normal 10-20 (auto width, source4), b3 right at20.
     let rule = format!(
-        "{} #b2 {{ float:none; }} #b3 {{ float:right; width:30px; height:10px; }} #b4 {{ height:1px; }}",
+        "{} #b2 {{ float:none; width:auto; height:10px; }} #b3 {{ float:right; width:30px; height:10px; }} #b4 {{ height:1px; }}",
         css()
     );
     sibling_fixture(7, &rule, |projection, display| {
         let facts = evaluate_sibling_box_facts(projection, display, facts_limits()).unwrap();
+        let owner =
+            build_captured_float_cluster_layout(&facts, geometry(projection), None, None, limits())
+                .unwrap();
+        let tops: Vec<_> = owner.children().iter().map(|c| c.content().top).collect();
+        assert_eq!(tops, vec![0.0, 10.0, 10.0, 20.0, 20.0]);
+        assert_eq!(owner.children()[3].content().left, 70.0);
+        assert_eq!(owner.cluster().floats()[1].source_index(), 5);
+        assert_eq!(owner.parent().height().used_height, 30.0);
+    });
+}
+
+#[test]
+fn g9b_normal_at_source_three_and_trailing_float() {
+    // Source3 is a plain auto-width normal, the source-last child a float.
+    let rule = "#o { width:100px; } #p { overflow:hidden; } #b1 { height:10px; }
+        #f { width:auto; height:5px; margin-bottom:3px; }
+        #b2 { float:left; width:40px; height:50px; }";
+    sibling_fixture(5, rule, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, facts_limits()).unwrap();
+        let owner =
+            build_captured_float_cluster_layout(&facts, geometry(projection), None, None, limits())
+                .unwrap();
+        assert_eq!(owner.children()[1].kind(), PrincipalChildKind::Normal);
+        assert_eq!(owner.children()[1].content().right, 100.0);
+        assert_eq!(owner.children()[2].content().top, 18.0);
+        assert_eq!(owner.parent().height().used_height, 68.0);
+    });
+    // The source-last normal, not the float, supplies the in-flow bottom.
+    let rule = "#o { width:100px; } #p { overflow:hidden; } #b1 { height:10px; }
+        #f { width:auto; height:5px; margin-bottom:3px; }
+        #b2 { float:left; width:40px; height:1px; }";
+    sibling_fixture(5, rule, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, facts_limits()).unwrap();
+        let owner =
+            build_captured_float_cluster_layout(&facts, geometry(projection), None, None, limits())
+                .unwrap();
+        assert_eq!(owner.parent().height().used_height, 19.0);
+    });
+}
+
+#[test]
+fn g9b_no_float_refused() {
+    let rule = "#o { width:100px; } #p { overflow:hidden; } #b1 { height:10px; }
+        #f { height:20px; } #b2 { height:1px; }";
+    sibling_fixture(5, rule, |projection, display| {
+        let facts = evaluate_sibling_box_facts(projection, display, facts_limits()).unwrap();
         assert!(matches!(
             build_captured_float_cluster_layout(&facts, geometry(projection), None, None, limits()),
-            Err(FloatClusterLayoutError::ClusterOrder { source: 5 })
+            Err(FloatClusterLayoutError::ClusterOrder { source: 4 })
         ));
     });
 }
