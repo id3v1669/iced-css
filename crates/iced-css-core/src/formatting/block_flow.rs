@@ -777,8 +777,15 @@ impl Solver<'_> {
         let available = (inner.width - table_gaps(spacing[0], &mins)).max(0.0);
         let edge = [spacing[0].max(0.0), spacing[1].max(0.0)];
         let (sum_min, sum_pref): (f32, f32) = (mins.iter().sum(), prefs.iter().sum());
-        let fixed = (self.boxes[node].fixed_table && self.boxes[node].width != Dim::Auto)
-            .then(|| self.fixed_columns(node, &rows, count, spacing[0], available, inner.width));
+        let fixed =
+            (self.boxes[node].fixed_table && self.boxes[node].width != Dim::Auto).then(|| {
+                // Percentages resolve against the table's own width, not one its columns grew.
+                let basis = match self.boxes[node].width {
+                    Dim::Px(width) => width,
+                    _ => inner.width,
+                };
+                self.fixed_columns(node, &rows, count, spacing[0], available, basis)
+            });
         let widths: Vec<f32> = fixed.unwrap_or_else(|| {
             (0..count)
                 .map(|column| {

@@ -1084,6 +1084,8 @@ fn place_absolute(
         }
         let root = &mut arena_copy[0];
         root.out_of_flow = false;
+        // 17.5.2.1: only a table whose own width is not auto lays out as fixed.
+        root.fixed_table = root.fixed_table && root.width != Dim::Auto;
         root.width = Dim::Px(width.width);
         root.min_width = Dim::Auto;
         root.max_width = Dim::Auto;

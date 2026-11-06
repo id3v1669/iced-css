@@ -1036,7 +1036,10 @@ impl BoxTree {
             let empty = value.children.iter().all(|&child| {
                 let inner = &prepared.boxes[child];
                 inner.out_of_flow
-                    || (prepared.anonymous[child] && inner.children.is_empty() && blank(child))
+                    || (prepared.anonymous[child]
+                        && inner.children.is_empty()
+                        && !prepared.runs[child].is_empty()
+                        && blank(child))
             });
             let mut table = parent_of[arena];
             while let Some(at) = table {
@@ -1224,13 +1227,7 @@ impl BoxTree {
             return steps;
         }
         self.stacking_context(0, embedded, &mut steps);
-        steps.retain(|step| {
-            let PaintStep::Box(index) = *step else {
-                return true;
-            };
-            !self.paints[index].hidden_empty
-                || prepared.slot[index].is_some_and(|slot| embedded.contains(&slot))
-        });
+
         // 18.4: outlines may be drawn above everything else.
         for (projected, paint) in self.paints.iter().enumerate() {
             let boxed = prepared.slot[projected].is_some_and(|slot| !prepared.anonymous[slot]);
@@ -1238,6 +1235,20 @@ impl BoxTree {
                 steps.push(PaintStep::Outline(projected));
             }
         }
+        steps
+    }
+
+    /// The steps that draw: a hidden empty cell keeps its place for input, and draws only
+    /// around a hosted widget.
+    fn drawn_steps(&self, embedded: &BTreeSet<usize>) -> Vec<PaintStep> {
+        let mut steps = self.paint_steps(embedded);
+        steps.retain(|step| {
+            let PaintStep::Box(index) = *step else {
+                return true;
+            };
+            !self.paints[index].hidden_empty
+                || self.prepared.slot[index].is_some_and(|slot| embedded.contains(&slot))
+        });
         steps
     }
 
@@ -3057,7 +3068,7 @@ where
         let bounds = layout.bounds();
         let origin = bounds.position();
         let embedded = self.embedded();
-        let steps = self.tree.paint_steps(&embedded);
+        let steps = self.tree.drawn_steps(&embedded);
         let top = cursor.position_in(bounds).and_then(|point| self.hit(point));
         let pressed = tree.state.downcast_ref::<Interaction>().active;
         let prepared = &self.tree.prepared;
@@ -3502,11 +3513,17 @@ mod tests {
         )
         .unwrap();
         let drawn = |embedded: &BTreeSet<usize>| {
-            tree.paint_steps(embedded)
+            tree.drawn_steps(embedded)
                 .iter()
                 .any(|step| matches!(step, PaintStep::Box(2)))
         };
         assert!(!drawn(&BTreeSet::new()));
+        // Input still finds it.
+        assert!(
+            tree.paint_steps(&BTreeSet::new())
+                .iter()
+                .any(|step| matches!(step, PaintStep::Box(2)))
+        );
         let slot = tree.prepared.slot[2].unwrap();
         assert!(drawn(&BTreeSet::from([slot])));
     }

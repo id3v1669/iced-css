@@ -2918,6 +2918,45 @@ fn fixed_tables_ignore_content_and_grow_only_for_their_columns() {
         across("#table { width:100px; } #a, #b { width:80%; }", cells(), 0),
         (0.0, 160.0)
     );
+    // Against the table's own width, so the grown table still holds them.
+    assert_eq!(
+        across("#table { width:100px; } #a, #b { width:80%; }", cells(), 3),
+        (80.0, 160.0)
+    );
+}
+
+#[test]
+fn an_absolute_auto_table_stays_automatic_and_an_empty_element_is_content() {
+    let root = node(
+        "page",
+        vec![node(
+            "t",
+            vec![node(
+                "r",
+                vec![node("a", vec![text("x", "x")]), node("b", vec![])],
+            )],
+        )],
+    );
+    let css = "#t { position:absolute; display:table; table-layout:fixed; }
+        #r { display:table-row; }
+        #a { display:table-cell; width:70px; }
+        #b { display:table-cell; width:30px; height:5px; }";
+    let geometry = BoxTree::new(root, css)
+        .unwrap()
+        .layout_text(800.0, Some(600.0), &mut |_, _| 10.0)
+        .unwrap();
+    let border = geometry[3].as_ref().unwrap().border;
+    assert_eq!(border.right - border.left, 70.0, "not a shared-out column");
+
+    let root = node(
+        "t",
+        vec![node("r", vec![node("c", vec![node("s", vec![])])])],
+    );
+    let css = "#t { display:table; empty-cells:hide; }
+        #r { display:table-row; }
+        #c { display:table-cell; }
+        #s { display:inline; }";
+    assert!(!BoxTree::new(root, css).unwrap().paints()[2].hidden_empty);
 }
 
 #[test]

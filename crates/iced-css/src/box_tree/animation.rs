@@ -592,7 +592,13 @@ impl BoxTreeAnimations {
     fn progress(&self, track: &Track) -> Option<f32> {
         let source = self.sources.get(&track.id)?;
         let linear = self.engine.sample(source, track.property).ok().flatten()?;
-        Some(track.easing.value(linear).clamp(0.0, 1.0))
+        // `clamp` keeps NaN, which a custom easing could return: that shows the start.
+        let eased = track.easing.value(linear);
+        Some(if eased.is_nan() {
+            0.0
+        } else {
+            eased.clamp(0.0, 1.0)
+        })
     }
 
     /// Moves time on, and lets go of finished animations and of any `tree`, your current
