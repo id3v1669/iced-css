@@ -380,6 +380,7 @@ struct Style {
     markers: BTreeMap<usize, TextLeaf>,
     backgrounds: BTreeMap<usize, (BackgroundImage, image::Handle)>,
     important: Vec<Vec<PropertyId>>,
+    marker_images: BTreeMap<usize, image::Handle>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -400,6 +401,8 @@ pub struct BoxTree {
     source: Arc<Source>,
     /// Longhands won by `!important`, per projected index.
     important: Vec<Vec<PropertyId>>,
+    /// Images that replace outside markers, by projected index of their item.
+    marker_images: BTreeMap<usize, image::Handle>,
     /// Temporary values of running animations, laid over every interaction styling.
     presentation: Option<Arc<Vec<animation::Presented>>>,
 }
@@ -511,6 +514,7 @@ impl BoxTree {
             markers: self.markers.clone(),
             backgrounds: self.backgrounds.clone(),
             important: self.important.clone(),
+            marker_images: self.marker_images.clone(),
         }
     }
 
@@ -525,6 +529,7 @@ impl BoxTree {
             backgrounds: style.backgrounds,
             source,
             important: style.important,
+            marker_images: style.marker_images,
             presentation: None,
         }
     }
@@ -684,6 +689,8 @@ impl BoxTree {
             vertical_aligns,
             captions_below,
             important,
+            marker_images,
+            outside_items,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
             .map_err(failed)?;
         let mut prepared = prepare_captured_tree(
@@ -988,26 +995,22 @@ impl BoxTree {
                 ))
             })
             .collect();
+        let marker_image_handles = marker_images
+            .into_iter()
+            .enumerate()
+            .filter_map(|(projected, uri)| {
+                // Only outside markers have a place of their own for an image.
+                outside_items[projected].then_some(())?;
+                Some((projected, local_image(&source.base, &uri?)?))
+            })
+            .collect();
         let background_images = backgrounds
             .into_iter()
             .enumerate()
             .filter_map(|(projected, value)| {
                 let value = value?;
                 prepared.slot[projected].filter(|slot| !prepared.anonymous[*slot])?;
-                // Only files under the base: no scheme, no absolute path, no `..`.
-                let relative = Path::new(&value.uri);
-                let inside = relative
-                    .components()
-                    .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
-                let scheme = value
-                    .uri
-                    .split('/')
-                    .next()
-                    .is_some_and(|first| first.contains(':'));
-                if !inside || scheme {
-                    return None;
-                }
-                let handle = image::Handle::from_path(source.base.join(&value.uri));
+                let handle = local_image(&source.base, &value.uri)?;
                 Some((projected, (value, handle)))
             })
             .collect();
@@ -1071,6 +1074,7 @@ impl BoxTree {
             backgrounds: background_images,
             source: Arc::clone(source),
             important,
+            marker_images: marker_image_handles,
             presentation: None,
         })
     }
@@ -1302,7 +1306,9 @@ impl BoxTree {
             if !prepared.anonymous[arena] {
                 let projected = prepared.positions[arena].0;
                 steps.push(PaintStep::Box(projected));
-                if self.markers.contains_key(&projected) {
+                if self.markers.contains_key(&projected)
+                    || self.marker_images.contains_key(&projected)
+                {
                     marks.push(projected);
                 }
             }
@@ -1474,6 +1480,7 @@ where
             paragraphs: BTreeMap::new(),
             allocations: Vec::new(),
             loaded: BTreeSet::new(),
+            loaded_markers: BTreeSet::new(),
             rest_paragraphs: BTreeMap::new(),
             marker_paragraphs: BTreeMap::new(),
             elements,
@@ -1571,6 +1578,18 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         line_through: false,
         ..first.clone()
     })
+}
+
+/// A file under the base: no scheme, no absolute path, no `..`.
+fn local_image(base: &Path, uri: &str) -> Option<image::Handle> {
+    let inside = Path::new(uri)
+        .components()
+        .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+    let scheme = uri
+        .split('/')
+        .next()
+        .is_some_and(|first| first.contains(':'));
+    (inside && !scheme).then(|| image::Handle::from_path(base.join(uri)))
 }
 
 /// What Tab asks of the focusable widgets inside a hosted element.
@@ -1776,6 +1795,9 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     allocations: Vec<image::Allocation>,
     /// The projected indices whose background image loaded.
     loaded: BTreeSet<usize>,
+    /// The projected indices whose marker image loaded; an image that did not, draws the
+    /// marker text instead (12.6.2).
+    loaded_markers: BTreeSet<usize>,
     /// Shaped outside markers and their corners, by projected index of their item.
     marker_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point)>,
 }
@@ -2113,6 +2135,7 @@ fn moved_rectangle(rect: FlowRect, origin: Point) -> Rectangle {
 /// since text brings quads of its own for backgrounds and decorations.
 fn breaks_layer(tree: &BoxTree, step: PaintStep, next: PaintStep) -> bool {
     match step {
+        PaintStep::Marker(index) if tree.marker_images.contains_key(&index) => true,
         PaintStep::Text(_) | PaintStep::Marker(_) => {
             !matches!(next, PaintStep::Text(_) | PaintStep::Marker(_))
         }
@@ -2653,6 +2676,13 @@ where
                 if let Some(allocation) = renderer.load_background(handle) {
                     self.allocations.push(allocation);
                     self.loaded.insert(*projected);
+                }
+            }
+            self.loaded_markers.clear();
+            for (projected, handle) in &self.tree.marker_images {
+                if let Some(allocation) = renderer.load_background(handle) {
+                    self.allocations.push(allocation);
+                    self.loaded_markers.insert(*projected);
                 }
             }
             self.tree.set_text_widths(|leaf| {
@@ -3333,7 +3363,38 @@ where
                             draw_outline(&self.tree, &self.geometry, renderer, origin, index);
                         }
                         PaintStep::Marker(index) => {
-                            if let Some((shaped, corner)) = self.marker_paragraphs.get(&index) {
+                            if let Some((handle, geometry)) = self
+                                .tree
+                                .marker_images
+                                .get(&index)
+                                .filter(|_| self.loaded_markers.contains(&index))
+                                .zip(self.geometry.get(index).copied().flatten())
+                            {
+                                if let Some((width, height)) = renderer.background_size(handle) {
+                                    let gap = self.tree.prepared.font_sizes[index] * 0.5;
+                                    let rtl = self.tree.prepared.slot[index].is_some_and(|slot| {
+                                        self.tree.prepared.boxes[slot].direction
+                                            == iced_css_core::formatting::block::Direction::Rtl
+                                    });
+                                    let left = if rtl {
+                                        geometry.border.right + gap
+                                    } else {
+                                        geometry.border.left - gap - width
+                                    };
+                                    renderer.draw_background(
+                                        handle,
+                                        Rectangle {
+                                            x: origin.x + left,
+                                            y: origin.y + geometry.content.top,
+                                            width,
+                                            height,
+                                        },
+                                        clip,
+                                    );
+                                }
+                            } else if let Some((shaped, corner)) =
+                                self.marker_paragraphs.get(&index)
+                            {
                                 let position = Point::new(origin.x + corner.x, origin.y + corner.y);
                                 renderer.fill_paragraph(shaped, position, Color::BLACK, clip);
                             }

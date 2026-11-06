@@ -1347,6 +1347,10 @@ pub struct TreePaint {
     pub paints: Vec<BoxPaint>,
     pub styles: Vec<TextStyle>,
     pub generated: Vec<[Option<GeneratedRun>; 2]>,
+    /// The computed `list-style-image` per row; an inside marker stays text.
+    pub marker_images: Vec<Option<String>>,
+    /// Whether the row is a list item with an outside marker, whatever its text.
+    pub outside_items: Vec<bool>,
     /// The outside list marker's text per row (12.5.1); it takes no room in the flow.
     pub markers: Vec<Option<String>>,
     /// The computed `border-spacing` per row, zero under `border-collapse: collapse`.
@@ -1728,6 +1732,8 @@ pub fn evaluate_tree_paint<'r>(
     let mut background_parts: Vec<BackgroundParts> = Vec::with_capacity(projection.len());
     let mut vertical_aligns: Vec<Option<&'static str>> = Vec::with_capacity(projection.len());
     let mut important: Vec<Vec<PropertyId>> = Vec::with_capacity(projection.len());
+    let mut marker_images: Vec<Option<String>> = Vec::with_capacity(projection.len());
+    let mut outside_items: Vec<bool> = Vec::with_capacity(projection.len());
     let mut captions_below: Vec<bool> = Vec::with_capacity(projection.len());
     let mut collapses: Vec<bool> = Vec::with_capacity(projection.len());
     let mut raw_spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
@@ -2160,6 +2166,13 @@ pub fn evaluate_tree_paint<'r>(
         collapses.push(collapse);
         spacings.push(if collapse { [0.0, 0.0] } else { raw_spacing });
         // Generated content: text in the element, inheriting from it.
+        marker_images.push(match defaulted("list-style-image")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Uri(value)) => Some(value.clone()),
+            DefaultedValueRef::ParentComputed => {
+                parent_index.and_then(|parent| marker_images[parent].clone())
+            }
+            _ => None,
+        });
         let marker_type = match defaulted("list-style-type")? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
                 Some(keyword.as_str().to_owned())
@@ -2192,6 +2205,12 @@ pub fn evaluate_tree_paint<'r>(
             _ => false,
         };
         marker_inside.push(inside);
+        outside_items.push(
+            !inside
+                && display
+                    .resolution(original)
+                    .is_some_and(|value| value.display == Display::ListItem),
+        );
         let (marker, outside) = if inside {
             (marker, None)
         } else {
@@ -2472,5 +2491,7 @@ pub fn evaluate_tree_paint<'r>(
         vertical_aligns,
         captions_below,
         important,
+        marker_images,
+        outside_items,
     })
 }

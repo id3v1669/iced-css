@@ -780,3 +780,37 @@ fn tab_reaches_hosted_text_inputs_in_box_order() {
     let messages: Vec<u8> = ui.into_messages().collect();
     assert_eq!(messages, vec![1, 9, 2, 1]);
 }
+
+#[cfg(feature = "image")]
+#[test]
+fn list_style_images_replace_outside_markers_and_fall_back_to_text() {
+    let path = std::env::temp_dir().join(format!("iced-css-markers-{}", std::process::id()));
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("dot.png"), checker_png(16)).unwrap();
+    let root = node(
+        "page",
+        vec![
+            node("one", vec![text("a", "image")]),
+            node("two", vec![text("b", "no type")]),
+            node("three", vec![text("c", "missing")]),
+        ],
+    );
+    let tree = BoxTree::with_base(
+        root,
+        "#page { background-color:white; color:black; padding:30px; }
+         #one, #two, #three { display:list-item; }
+         #one { list-style-image:url(dot.png); }
+         #two { list-style-type:none; list-style-image:url(dot.png); }
+         #three { list-style-image:url(gone.png); }",
+        &path,
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(path.join("markers.png"))
+            .unwrap()
+    );
+}
