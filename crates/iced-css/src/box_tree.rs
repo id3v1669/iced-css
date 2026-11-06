@@ -1253,6 +1253,7 @@ where
             scroll_limits: Vec::new(),
             clips: Vec::new(),
             paragraphs: BTreeMap::new(),
+            allocations: Vec::new(),
             rest_paragraphs: BTreeMap::new(),
             marker_paragraphs: BTreeMap::new(),
             elements,
@@ -1391,6 +1392,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
     /// The text past a shorter float, its corner and its leaf, by arena slot.
     rest_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, TextLeaf)>,
+    /// Holds the background images while they draw.
+    allocations: Vec<image::Allocation>,
     /// Shaped outside markers and their corners, by projected index of their item.
     marker_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point)>,
 }
@@ -1679,7 +1682,10 @@ fn border_bands(border: FlowRect, padding: FlowRect) -> [Rectangle; 4] {
 /// `image` feature, so without this crate's `image` or `image-without-codecs` feature they
 /// draw nothing.
 pub trait BackgroundRenderer {
-    /// The image's size in pixels, once known.
+    /// Decodes the image if it has not been, blocking. iced frees an image once nothing
+    /// holds its allocation, so the caller keeps this as long as it draws the image.
+    fn load_background(&self, handle: &image::Handle) -> Option<image::Allocation>;
+    /// The image's size in pixels, once loaded.
     fn background_size(&self, handle: &image::Handle) -> Option<(f32, f32)>;
     /// Draws the image in `bounds`, clipped to `clip`.
     fn draw_background(&mut self, handle: &image::Handle, bounds: Rectangle, clip: Rectangle);
@@ -1687,6 +1693,9 @@ pub trait BackgroundRenderer {
 
 #[cfg(feature = "image-without-codecs")]
 impl<Renderer: image::Renderer<Handle = image::Handle>> BackgroundRenderer for Renderer {
+    fn load_background(&self, handle: &image::Handle) -> Option<image::Allocation> {
+        self.load_image(handle).ok()
+    }
     fn background_size(&self, handle: &image::Handle) -> Option<(f32, f32)> {
         self.measure_image(handle)
             .map(|size| (size.width as f32, size.height as f32))
@@ -1698,6 +1707,9 @@ impl<Renderer: image::Renderer<Handle = image::Handle>> BackgroundRenderer for R
 
 #[cfg(not(feature = "image-without-codecs"))]
 impl<Renderer> BackgroundRenderer for Renderer {
+    fn load_background(&self, _handle: &image::Handle) -> Option<image::Allocation> {
+        None
+    }
     fn background_size(&self, _handle: &image::Handle) -> Option<(f32, f32)> {
         None
     }
@@ -2072,6 +2084,12 @@ where
         if !self.measured {
             self.measured = true;
             self.slots = self.ids.iter().map(|id| self.tree.leaf_slot(id)).collect();
+            self.allocations = self
+                .tree
+                .backgrounds
+                .values()
+                .filter_map(|(_, handle)| renderer.load_background(handle))
+                .collect();
             self.tree.set_text_widths(|leaf| {
                 let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
                 (narrowest_width(renderer, leaf), longest)

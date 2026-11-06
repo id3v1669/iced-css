@@ -4,7 +4,7 @@ use iced::{ContentFit, Length, Rotation};
 
 #[cfg(feature = "image-without-codecs")]
 /// Stock image resource plus authored hints; shared bytes are not charged.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImageSource {
     handle: iced::widget::image::Handle,
     hints: ImageHints,
@@ -119,7 +119,7 @@ fn rgba_status(width: u32, height: u32, bytes: usize) -> RgbaBufferStatus {
 }
 #[cfg(feature = "svg")]
 /// Stock SVG resource plus authored hints; shared Arc backing is not charged.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SvgSource {
     handle: iced::widget::svg::Handle,
     hints: SvgHints,
