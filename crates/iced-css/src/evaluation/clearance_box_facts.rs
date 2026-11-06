@@ -766,10 +766,16 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
         // CF-34 captures graph-owned operands only. Reporting failure is retained
         // by the observer; all ordinary pseudo/remaining-row checks still run.
         observer.observe(original, &winners, &row, ids);
-        for (target, pseudo) in [
-            (BoxFactTarget::Before, PseudoElement::Before),
-            (BoxFactTarget::After, PseudoElement::After),
-        ] {
+        // Whole-tree layout generates this content itself, so nothing is refused here.
+        let pseudo_targets: &[(BoxFactTarget, PseudoElement)] = if absolute_offsets {
+            &[]
+        } else {
+            &[
+                (BoxFactTarget::Before, PseudoElement::Before),
+                (BoxFactTarget::After, PseudoElement::After),
+            ]
+        };
+        for &(target, pseudo) in pseudo_targets {
             let mut winners = PropertyWinners::new();
             cascade_positioned_rules(
                 &mut winners,

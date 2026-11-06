@@ -14,8 +14,9 @@ use crate::{
         display_rules::{BundleLimits, DisplayRuleBundle, GraphBinding, GraphOrigin},
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
-            BoxPaint, PreparedTree, TextLineHeight, TextStyle, TreeLayoutError,
-            evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
+            BoxPaint, GeneratedRun, PreparedTree, RunSource, TextLineHeight, TextStyle,
+            TreeLayoutError, TreePaint, evaluate_tree_paint, prepare_captured_tree,
+            prepare_tree_source_projection,
         },
     },
     host::source_publication::{InitialSourceHost, PublicationLimits},
@@ -237,6 +238,10 @@ pub struct TextRun {
     pub family: Option<String>,
     pub underline: bool,
     pub line_through: bool,
+    /// 11.2: hidden text still takes up its room.
+    pub visible: bool,
+    /// The source node this run belongs to, for hit testing.
+    pub owner: usize,
 }
 
 /// The inline content of one block: its runs, after white space and text-transform.
@@ -333,8 +338,21 @@ type InteractionKey = (Option<usize>, Option<usize>);
 struct Source {
     construction: Construction,
     css: String,
-    /// Restyled trees, at most two per node. Each interaction state cascades once.
-    variants: Mutex<BTreeMap<InteractionKey, BoxTree>>,
+    /// Restyles already cascaded. Pointerless, so nothing here keeps the source alive.
+    variants: Mutex<BTreeMap<InteractionKey, Style>>,
+}
+
+/// Interaction states the cache holds before starting over: each is a whole style.
+const VARIANT_LIMIT: usize = 64;
+
+/// Everything that varies with the cascade.
+#[derive(Debug, Clone)]
+struct Style {
+    prepared: PreparedTree,
+    paints: Vec<BoxPaint>,
+    texts: Vec<Option<TextLeaf>>,
+    ids: Vec<Option<String>>,
+    originals: Vec<usize>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -376,24 +394,61 @@ impl BoxTree {
     }
 
     /// This tree restyled for an interaction state, cascading it the first time. A
-    /// refused restyle keeps the base styling: hovering must not take the view away.
+    /// refused restyle keeps this styling: hovering must not take the view away.
     fn variant(&self, key: InteractionKey) -> Self {
-        if let Some(found) = self
+        let cached = self
             .source
             .variants
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&key)
-        {
-            return found.clone();
+            .cloned();
+        if let Some(style) = cached {
+            return Self::from_style(style, Arc::clone(&self.source));
         }
         let built = Self::styled(&self.source, key).unwrap_or_else(|_| self.clone());
-        self.source
+        let mut variants = self
+            .source
             .variants
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(key, built.clone());
+            .unwrap_or_else(PoisonError::into_inner);
+        if variants.len() >= VARIANT_LIMIT {
+            variants.clear();
+        }
+        variants.insert(key, built.style());
+        drop(variants);
         built
+    }
+
+    fn style(&self) -> Style {
+        Style {
+            prepared: self.prepared.clone(),
+            paints: self.paints.clone(),
+            texts: self.texts.clone(),
+            ids: self.ids.clone(),
+            originals: self.originals.clone(),
+        }
+    }
+
+    fn from_style(style: Style, source: Arc<Source>) -> Self {
+        Self {
+            prepared: style.prepared,
+            paints: style.paints,
+            texts: style.texts,
+            ids: style.ids,
+            originals: style.originals,
+            source,
+        }
+    }
+
+    /// The leaf box with this CSS id, in this styling. Display none has none.
+    fn leaf_slot(&self, id: &str) -> Option<usize> {
+        self.ids.iter().enumerate().find_map(|(arena, value)| {
+            (value.as_deref() == Some(id)
+                && !self.prepared.anonymous[arena]
+                && self.prepared.boxes[arena].children.is_empty())
+            .then_some(arena)
+        })
     }
 
     fn styled(source: &Arc<Source>, key: InteractionKey) -> Result<Self, BoxTreeError> {
@@ -402,11 +457,12 @@ impl BoxTree {
         let count = construction.nodes().len();
         // The selector source extends hover and active to ancestors (5.11.3).
         let mut states = vec![ConstructionState::default(); count];
-        if let Some(node) = key.0 {
-            states[node].hovered = true;
+        // A key from before a rebuild may name a node this tree does not have.
+        if let Some(state) = key.0.and_then(|node| states.get_mut(node)) {
+            state.hovered = true;
         }
-        if let Some(node) = key.1 {
-            states[node].active = true;
+        if let Some(state) = key.1.and_then(|node| states.get_mut(node)) {
+            state.active = true;
         }
         let mut host = InitialSourceHost::new(
             NonZeroU64::new(COUNT as u64).expect("positive"),
@@ -499,26 +555,60 @@ impl BoxTree {
             },
         )
         .map_err(failed)?;
-        let prepared = prepare_captured_tree(&projection, &display, facts(), Some(16.0), |_| None)
-            .map_err(failed)?;
-        let (mut paints, styles) =
-            evaluate_tree_paint(&projection, &display, facts(), &prepared.font_sizes)
+        // Font sizes come from the rows; generated content needs them and shapes the tree.
+        let sized =
+            prepare_captured_tree(&projection, &display, facts(), Some(16.0), |_| None, &[])
                 .map_err(failed)?;
+        let TreePaint {
+            mut paints,
+            styles,
+            generated,
+        } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
+            .map_err(failed)?;
+        let prepared = prepare_captured_tree(
+            &projection,
+            &display,
+            facts(),
+            Some(16.0),
+            |_| None,
+            &generated,
+        )
+        .map_err(failed)?;
         let nodes = snapshot.construction().nodes();
         let raw_paints = paints.clone();
+        let generated_of = |run: RunSource| -> Option<&GeneratedRun> {
+            match run {
+                RunSource::Node(_) => None,
+                RunSource::Before(owner) => generated[owner][0].as_ref(),
+                RunSource::After(owner) => generated[owner][1].as_ref(),
+            }
+        };
         let build_leaf = |arena: usize| -> Option<TextLeaf> {
             let runs = &prepared.runs[arena];
             let first = *runs.first()?;
+            let style_of = |run: RunSource| -> &TextStyle {
+                match (run, generated_of(run)) {
+                    (_, Some(made)) => &made.style,
+                    (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at), None) => {
+                        &styles[at]
+                    }
+                }
+            };
             let mut texts: Vec<(String, &'static str)> = runs
                 .iter()
                 .map(|&run| {
-                    let content = projection
-                        .original_index(run)
-                        .and_then(|original| nodes[original].text())
-                        .unwrap_or_default();
+                    let content = match (run, generated_of(run)) {
+                        (_, Some(made)) => made.text.as_str(),
+                        (RunSource::Node(at), None) => projection
+                            .original_index(at)
+                            .and_then(|original| nodes[original].text())
+                            .unwrap_or_default(),
+                        _ => "",
+                    };
+                    let style = style_of(run);
                     (
-                        transformed(content, styles[run].text_transform),
-                        styles[run].white_space,
+                        transformed(content, style.text_transform),
+                        style.white_space,
                     )
                 })
                 .collect();
@@ -527,31 +617,53 @@ impl BoxTree {
                 .iter()
                 .zip(texts)
                 .map(|(&run, (text, _))| {
-                    let style: &TextStyle = &styles[run];
-                    // An inline background paints behind its own and its children's text.
-                    let mut owner = Some(run);
-                    let mut background = None;
-                    while let Some(at) = owner {
-                        background = raw_paints[at].background;
-                        if background.is_some() {
-                            break;
+                    let style = style_of(run);
+                    let (size, color, background, visible) = match (run, generated_of(run)) {
+                        (_, Some(made)) => (made.size, made.color, made.background, made.visible),
+                        (
+                            RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at),
+                            None,
+                        ) => {
+                            // An inline background paints behind its own and its children's
+                            // text.
+                            let mut owner = Some(at);
+                            let mut background = None;
+                            while let Some(here) = owner {
+                                background = raw_paints[here].background;
+                                if background.is_some() {
+                                    break;
+                                }
+                                owner = prepared.inline_parent[here];
+                            }
+                            (
+                                prepared.font_sizes[at],
+                                raw_paints[at].color,
+                                background,
+                                raw_paints[at].visible,
+                            )
                         }
-                        owner = prepared.inline_parent[at];
-                    }
+                    };
                     TextRun {
                         text,
-                        size: prepared.font_sizes[run],
-                        color: raw_paints[run].color,
+                        size,
+                        color,
                         background,
                         weight: style.weight,
                         italic: style.italic,
                         family: style.family.clone(),
                         underline: style.underline,
                         line_through: style.line_through,
+                        visible,
+                        owner: {
+                            let (RunSource::Node(at)
+                            | RunSource::Before(at)
+                            | RunSource::After(at)) = run;
+                            projection.original_index(at).unwrap_or_default()
+                        },
                     }
                 })
                 .collect();
-            let lead = &styles[first];
+            let lead = style_of(first);
             Some(TextLeaf {
                 runs,
                 align: lead.align,
@@ -561,12 +673,15 @@ impl BoxTree {
         };
         let texts: Vec<Option<TextLeaf>> = (0..prepared.boxes.len()).map(build_leaf).collect();
         // A block's own paint already drew its box: a block text leaf's run has no
-        // highlight. An anonymous block has no paint of its own at all (9.2.1.1).
+        // highlight. An inline element has no box paint at all (9.2.1.1). An anonymous
+        // block made for an element's generated content leaves that element's paint alone.
         let mut texts = texts;
         for (arena, &(projected, _)) in prepared.positions.iter().enumerate() {
             if prepared.anonymous[arena] {
-                paints[projected].background = None;
-                paints[projected].border = [None; 4];
+                if prepared.slot[projected] == Some(arena) {
+                    paints[projected].background = None;
+                    paints[projected].border = [None; 4];
+                }
             } else if let Some(leaf) = &mut texts[arena] {
                 for run in &mut leaf.runs {
                     run.background = None;
@@ -653,14 +768,14 @@ impl BoxTree {
         )
     }
 
-    /// Lays out with `measure(arena, width)` giving each leaf's height, or `None`.
+    /// Lays out by arena slot, with `measure(arena, width)` giving each leaf's height.
     fn layout_arena(
         &self,
         width: f32,
         height: Option<f32>,
         measure: &mut dyn FnMut(usize, f32) -> Option<f32>,
-    ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
-        self.prepared.layout_measured(
+    ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
+        self.prepared.layout_slots(
             FlowViewport {
                 left: 0.0,
                 top: 0.0,
@@ -718,7 +833,7 @@ impl BoxTree {
             .into_iter()
             .filter_map(|step| match step {
                 PaintStep::Box(index) => Some(index),
-                PaintStep::Text(_) => None,
+                PaintStep::Text(_) | PaintStep::Outline(_) => None,
             })
             .collect()
     }
@@ -729,13 +844,47 @@ impl BoxTree {
         if prepared.boxes.is_empty() {
             return steps;
         }
-        let mut positioned = BTreeSet::new();
-        self.paint_context(0, embedded, &mut positioned, &mut steps);
-        // Arena order is tree order, so the lowest pending index is always next.
-        while let Some(next) = positioned.pop_first() {
-            self.paint_context(next, embedded, &mut positioned, &mut steps);
+        self.stacking_context(0, embedded, &mut steps);
+        // 18.4: outlines may be drawn above everything else.
+        for (projected, paint) in self.paints.iter().enumerate() {
+            let boxed = prepared.slot[projected].is_some_and(|slot| !prepared.anonymous[slot]);
+            if paint.visible && paint.outline.is_some() && boxed {
+                steps.push(PaintStep::Outline(projected));
+            }
         }
         steps
+    }
+
+    /// E.2: the root's box, negative z-index children, its flow and floats, then z-index
+    /// auto and 0 in tree order, then positive. Auto boxes form no context of their own:
+    /// their positioned descendants join this one.
+    fn stacking_context(
+        &self,
+        root: usize,
+        embedded: &BTreeSet<usize>,
+        steps: &mut Vec<PaintStep>,
+    ) {
+        let prepared = &self.prepared;
+        let mut positioned = BTreeSet::new();
+        let mut own = Vec::new();
+        self.paint_context(root, embedded, &mut positioned, &mut own);
+        let mut layers = Vec::new();
+        while let Some(arena) = positioned.pop_first() {
+            let mut inner = Vec::new();
+            let z_index = self.paints[prepared.positions[arena].0].z_index;
+            match z_index {
+                Some(_) => self.stacking_context(arena, embedded, &mut inner),
+                None => self.paint_context(arena, embedded, &mut positioned, &mut inner),
+            }
+            layers.push((z_index.unwrap_or(0), arena, inner));
+        }
+        layers.sort_by_key(|layer| (layer.0, layer.1));
+        let (below, above): (Vec<_>, Vec<_>) = layers.into_iter().partition(|layer| layer.0 < 0);
+        let mut own = own.into_iter();
+        steps.extend(own.next());
+        steps.extend(below.into_iter().flat_map(|layer| layer.2));
+        steps.extend(own);
+        steps.extend(above.into_iter().flat_map(|layer| layer.2));
     }
 
     /// One 9.9 layer: this box and its in-flow blocks, then its floats, each as a unit,
@@ -752,7 +901,9 @@ impl BoxTree {
         let mut texts = Vec::new();
         let mut stack = vec![root];
         while let Some(arena) = stack.pop() {
-            steps.push(PaintStep::Box(prepared.positions[arena].0));
+            if !prepared.anonymous[arena] {
+                steps.push(PaintStep::Box(prepared.positions[arena].0));
+            }
             if self.texts[arena].is_some() || embedded.contains(&arena) {
                 texts.push(arena);
             }
@@ -850,8 +1001,9 @@ pub struct BoxTreeView<'a, Message, Theme, Renderer> {
 
 impl<'a, Message, Theme, Renderer> BoxTreeView<'a, Message, Theme, Renderer> {
     /// Places a native widget in the leaf box with this CSS id. The box sizes as CSS
-    /// says; a box with auto height takes the widget's height at the used width. An id
-    /// matching no leaf box is ignored.
+    /// says; a box with auto height takes the widget's height at the used width, except
+    /// that a Fill-height widget fills a definite box and adds nothing to an auto one.
+    /// The widget shows only while such a box exists, so a rule can hide or reveal it.
     #[must_use]
     pub fn widget(
         mut self,
@@ -880,39 +1032,20 @@ where
 {
     fn from(view: BoxTreeView<'a, Message, Theme, Renderer>) -> Self {
         let tree = view.tree;
-        let (mut elements, mut slots) = (Vec::new(), Vec::new());
-        for (id, element) in view.widgets {
-            let found = tree.ids.iter().enumerate().find(|(arena, value)| {
-                value.as_deref() == Some(id.as_str())
-                    && tree.prepared.boxes[*arena].children.is_empty()
-            });
-            if let Some((arena, _)) = found {
-                slots.push(arena);
-                elements.push(element);
-            }
-        }
-        let presses = view
-            .presses
-            .into_iter()
-            .filter_map(|(id, message)| {
-                let arena = tree
-                    .ids
-                    .iter()
-                    .position(|value| value.as_deref() == Some(id.as_str()))?;
-                Some((arena, message))
-            })
-            .collect();
+        let (ids, elements): (Vec<_>, Vec<_>) = view.widgets.into_iter().unzip();
         Element::new(BoxTreeWidget {
             base: tree.clone(),
             tree,
             key: (None, None),
             measured: false,
             geometry: Vec::new(),
+            slot_geometry: Vec::new(),
             clips: Vec::new(),
             paragraphs: BTreeMap::new(),
             elements,
-            slots,
-            presses,
+            ids,
+            slots: Vec::new(),
+            presses: view.presses,
         })
     }
 }
@@ -921,8 +1054,10 @@ where
 enum PaintStep {
     /// A box's background and border, by projected index.
     Box(usize),
-    /// A text leaf, by arena slot.
+    /// A text leaf or hosted widget, by arena slot.
     Text(usize),
+    /// A box's outline, by projected index.
+    Outline(usize),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -938,11 +1073,15 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     key: InteractionKey,
     measured: bool,
     geometry: Vec<Option<FlowGeometry>>,
+    /// The same layout by arena slot, including anonymous blocks.
+    slot_geometry: Vec<FlowGeometry>,
     clips: Vec<Option<FlowRect>>,
     elements: Vec<Element<'a, Message, Theme, Renderer>>,
-    /// The arena slot of each element.
-    slots: Vec<usize>,
-    presses: Vec<(usize, Message)>,
+    /// The CSS id naming each element's box.
+    ids: Vec<String>,
+    /// Each element's arena slot in the current styling, while it has a box.
+    slots: Vec<Option<usize>>,
+    presses: Vec<(String, Message)>,
     /// Shaped text, its top-left corner relative to the layout, and its color, by arena.
     paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
 }
@@ -1011,6 +1150,9 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
                 .font(font_of(base, run))
                 .underline(run.underline)
                 .strikethrough(run.line_through);
+            if !run.visible {
+                return span.color(Color::TRANSPARENT);
+            }
             if let Some(c) = run.color {
                 span = span.color(Color::from_rgb(c[0], c[1], c[2]));
             }
@@ -1090,6 +1232,41 @@ fn border_bands(border: FlowRect, padding: FlowRect) -> [Rectangle; 4] {
     ]
 }
 
+/// One box's outline, four bands just outside its border edge (18.4).
+fn draw_outline<Renderer: renderer::Renderer>(
+    tree: &BoxTree,
+    geometry: &[Option<FlowGeometry>],
+    renderer: &mut Renderer,
+    origin: Point,
+    index: usize,
+) {
+    let (Some(Some(geometry)), Some((width, color))) =
+        (geometry.get(index), tree.paints[index].outline)
+    else {
+        return;
+    };
+    let inner = geometry.border;
+    let outer = FlowRect {
+        left: inner.left - width,
+        right: inner.right + width,
+        top: inner.top - width,
+        bottom: inner.bottom + width,
+    };
+    for band in border_bands(outer, inner) {
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle {
+                    x: band.x + origin.x,
+                    y: band.y + origin.y,
+                    ..band
+                },
+                ..Quad::default()
+            },
+            Color::from_rgb(color[0], color[1], color[2]),
+        );
+    }
+}
+
 /// One box's background and border bands, offset to the layout origin.
 fn draw_box<Renderer: renderer::Renderer>(
     tree: &BoxTree,
@@ -1117,6 +1294,9 @@ fn draw_box<Renderer: renderer::Renderer>(
         }
     };
     let paint = tree.paints[index];
+    if !paint.visible {
+        return;
+    }
     let border = geometry.border;
     if let Some(color) = paint.background {
         // 14.2: the background extends under the border.
@@ -1140,10 +1320,28 @@ where
 {
     /// The topmost box under a point relative to the layout, as a source node.
     fn hit(&self, point: Point) -> Option<usize> {
-        for step in self.tree.paint_order().into_iter().rev() {
+        for step in self.tree.paint_steps(&self.embedded()).into_iter().rev() {
+            // Inline text answers for the run under the point; blank line space for nothing.
+            if let PaintStep::Text(arena) = step
+                && self.tree.prepared.anonymous[arena]
+                && let Some((shaped, corner, _)) = self.paragraphs.get(&arena)
+                && let Some(leaf) = self.tree.texts[arena].as_ref()
+                && let Some(run) = shaped
+                    .hit_span(Point::new(point.x - corner.x, point.y - corner.y))
+                    .and_then(|span| leaf.runs.get(span))
+                && run.visible
+            {
+                return Some(run.owner);
+            }
+            let PaintStep::Box(step) = step else {
+                continue;
+            };
             let Some(Some(geometry)) = self.geometry.get(step) else {
                 continue;
             };
+            if !self.tree.paints[step].visible {
+                continue;
+            }
             let arena = self.tree.prepared.slot[step];
             let clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
             let inside = |rect: FlowRect| {
@@ -1166,9 +1364,12 @@ where
         let nodes = self.tree.source.construction.nodes();
         let mut at = hit;
         while let Some(node) = at {
-            let projected = self.tree.originals.iter().position(|value| *value == node);
-            let arena = projected.and_then(|projected| self.tree.prepared.slot[projected]);
-            if let Some(found) = self.presses.iter().find(|(owner, _)| Some(*owner) == arena) {
+            let id = nodes[node].metadata().css_id();
+            if let Some(found) = self
+                .presses
+                .iter()
+                .find(|(owner, _)| Some(owner.as_str()) == id)
+            {
                 return Some(found.1.clone());
             }
             at = nodes[node].parent();
@@ -1176,8 +1377,34 @@ where
         None
     }
 
+    /// What a hosted widget sees of the cursor: it only gets it while its own box is
+    /// the topmost at the point, so overlays and clips stop input reaching it.
+    fn child_cursor(
+        &self,
+        index: usize,
+        cursor: mouse::Cursor,
+        bounds: Rectangle,
+    ) -> mouse::Cursor {
+        let Some(arena) = self.slots.get(index).copied().flatten() else {
+            return mouse::Cursor::Unavailable;
+        };
+        let projected = self.tree.prepared.positions[arena].0;
+        let owner = self.tree.originals.get(projected).copied();
+        match cursor.position_in(bounds).and_then(|point| self.hit(point)) {
+            found if found.is_some() && found == owner => cursor,
+            _ => mouse::Cursor::Unavailable,
+        }
+    }
+
+    fn visible_slot(&self, index: usize) -> Option<usize> {
+        let arena = self.slots.get(index).copied().flatten()?;
+        self.tree.paints[self.tree.prepared.positions[arena].0]
+            .visible
+            .then_some(arena)
+    }
+
     fn embedded(&self) -> BTreeSet<usize> {
-        self.slots.iter().copied().collect()
+        self.slots.iter().copied().flatten().collect()
     }
 }
 
@@ -1218,6 +1445,7 @@ where
     ) -> layout::Node {
         let available = limits.max();
         let interaction = *tree.state.downcast_ref::<Interaction>();
+        // A rebuilt view keeps this state; `styled` ignores a node this tree lacks.
         let key = (interaction.hovered, interaction.active);
         if key != self.key {
             self.key = key;
@@ -1226,11 +1454,15 @@ where
         }
         if !self.measured {
             self.measured = true;
+            self.slots = self.ids.iter().map(|id| self.tree.leaf_slot(id)).collect();
             self.tree.set_text_widths(|leaf| {
                 let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
                 (narrowest_width(renderer, leaf), longest)
             });
             for (index, element) in self.elements.iter_mut().enumerate() {
+                let Some(arena) = self.slots[index] else {
+                    continue;
+                };
                 let unbounded =
                     layout::Limits::new(Size::ZERO, Size::new(f32::INFINITY, f32::INFINITY));
                 let natural = element
@@ -1240,7 +1472,7 @@ where
                     .width;
                 // A Fill-width widget reports no natural width of its own.
                 let natural = if natural.is_finite() { natural } else { 0.0 };
-                self.tree.prepared.boxes[self.slots[index]].content = Some(FlowContent {
+                self.tree.prepared.boxes[arena].content = Some(FlowContent {
                     height: 0.0,
                     preferred_width: natural,
                     preferred_min_width: natural,
@@ -1250,12 +1482,16 @@ where
         // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
         let (elements, slots, children) = (&mut self.elements, &self.slots, &mut tree.children);
         let current = &self.tree;
-        self.geometry = current
+        self.slot_geometry = current
             .layout_arena(
                 available.width,
                 Some(available.height),
                 &mut |arena, width| {
-                    if let Some(index) = slots.iter().position(|slot| *slot == arena) {
+                    if let Some(index) = slots.iter().position(|slot| *slot == Some(arena)) {
+                        // A Fill-height widget takes what the box has, and asks for nothing.
+                        if elements[index].as_widget().size().height.is_fill() {
+                            return Some(0.0);
+                        }
                         let limits =
                             layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
                         return Some(
@@ -1272,14 +1508,14 @@ where
                 },
             )
             .unwrap_or_default();
+        self.geometry = self.tree.prepared.by_projected(&self.slot_geometry);
         self.clips = self.tree.clips(&self.geometry);
         self.paragraphs.clear();
         for (arena, leaf) in self.tree.texts.iter().enumerate() {
             let Some(leaf) = leaf.as_ref().filter(|leaf| !leaf.is_empty()) else {
                 continue;
             };
-            let projected = self.tree.prepared.positions[arena].0;
-            let Some(Some(geometry)) = self.geometry.get(projected) else {
+            let Some(geometry) = self.slot_geometry.get(arena) else {
                 continue;
             };
             let place = geometry.leaf_band.unwrap_or(geometry.content);
@@ -1294,17 +1530,18 @@ where
         }
         let mut nodes = Vec::with_capacity(self.elements.len());
         for (index, element) in self.elements.iter_mut().enumerate() {
-            let projected = self.tree.prepared.positions[self.slots[index]].0;
-            let place = self
-                .geometry
-                .get(projected)
-                .copied()
-                .flatten()
+            let place = self.slots[index]
+                .and_then(|arena| self.slot_geometry.get(arena))
                 .map(|geometry| geometry.leaf_band.unwrap_or(geometry.content));
             let node = match place {
                 Some(place) => {
                     let width = (place.right - place.left).max(0.0);
-                    let limits = layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
+                    let height = if element.as_widget().size().height.is_fill() {
+                        (place.bottom - place.top).max(0.0)
+                    } else {
+                        f32::INFINITY
+                    };
+                    let limits = layout::Limits::new(Size::ZERO, Size::new(width, height));
                     element
                         .as_widget_mut()
                         .layout(&mut tree.children[index], renderer, &limits)
@@ -1350,17 +1587,28 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        for ((element, child), child_layout) in self
+        let cursors: Vec<_> = (0..self.elements.len())
+            .map(|index| self.child_cursor(index, cursor, layout.bounds()))
+            .collect();
+        let shown: Vec<_> = (0..self.elements.len())
+            .map(|index| self.visible_slot(index).is_some())
+            .collect();
+        for (index, ((element, child), child_layout)) in self
             .elements
             .iter_mut()
             .zip(&mut tree.children)
             .zip(layout.children())
+            .enumerate()
         {
+            // A widget without a visible box takes no input.
+            if !shown[index] {
+                continue;
+            }
             element.as_widget_mut().update(
                 child,
                 event,
                 child_layout,
-                cursor,
+                cursors[index],
                 renderer,
                 clipboard,
                 shell,
@@ -1390,8 +1638,9 @@ where
         }
         if next != *state {
             *state = next;
-            // Only states that a rule distinguishes need a new layout.
-            if self.base.variant((next.hovered, next.active)) != self.tree {
+            // Only states that a rule distinguishes need a new layout. Compare styles
+            // before measuring: the current tree carries measured widths.
+            if self.base.variant((next.hovered, next.active)) != self.base.variant(self.key) {
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -1411,11 +1660,13 @@ where
             .iter()
             .zip(&tree.children)
             .zip(layout.children())
-            .map(|((element, child), child_layout)| {
+            .enumerate()
+            .filter(|(index, _)| self.visible_slot(*index).is_some())
+            .map(|(index, ((element, child), child_layout))| {
                 element.as_widget().mouse_interaction(
                     child,
                     child_layout,
-                    cursor,
+                    self.child_cursor(index, cursor, layout.bounds()),
                     viewport,
                     renderer,
                 )
@@ -1448,7 +1699,7 @@ where
         let prepared = &self.tree.prepared;
         let clip_of = |step: &PaintStep| -> Rectangle {
             let arena = match *step {
-                PaintStep::Box(index) => prepared.slot[index],
+                PaintStep::Box(index) | PaintStep::Outline(index) => prepared.slot[index],
                 PaintStep::Text(arena) => Some(arena),
             };
             let clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
@@ -1472,7 +1723,7 @@ where
             while end < steps.len()
                 && clip_of(&steps[end]) == clip
                 && !(matches!(steps[end - 1], PaintStep::Text(_))
-                    && matches!(steps[end], PaintStep::Box(_)))
+                    && !matches!(steps[end], PaintStep::Text(_)))
             {
                 end += 1;
             }
@@ -1482,13 +1733,18 @@ where
                         PaintStep::Box(index) => {
                             draw_box(&self.tree, &self.geometry, renderer, origin, index);
                         }
+                        PaintStep::Outline(index) => {
+                            draw_outline(&self.tree, &self.geometry, renderer, origin, index);
+                        }
                         PaintStep::Text(arena) => {
                             if let Some((shaped, corner, color)) = self.paragraphs.get(&arena) {
                                 let position = Point::new(origin.x + corner.x, origin.y + corner.y);
                                 renderer.fill_paragraph(shaped, position, *color, clip);
                             }
-                            if let Some(index) = self.slots.iter().position(|slot| *slot == arena)
+                            if let Some(index) =
+                                self.slots.iter().position(|slot| *slot == Some(arena))
                                 && let Some(child_layout) = layout.children().nth(index)
+                                && self.visible_slot(index).is_some()
                             {
                                 self.elements[index].as_widget().draw(
                                     &tree.children[index],
@@ -1496,7 +1752,7 @@ where
                                     theme,
                                     style,
                                     child_layout,
-                                    cursor,
+                                    self.child_cursor(index, cursor, bounds),
                                     viewport,
                                 );
                             }
@@ -1591,6 +1847,19 @@ mod tests {
         for index in tree.paint_order() {
             draw_box(&tree, &geometry, &mut renderer, Point::new(5.0, 7.0), index);
         }
+        let outlined = BoxTree::new(
+            node("a", vec![]),
+            "#a { height:10px; width:10px; outline:2px solid #00ff00; }",
+        )
+        .unwrap();
+        let box_geometry = outlined.layout(100.0, None).unwrap();
+        let mut outline = Recording::default();
+        draw_outline(&outlined, &box_geometry, &mut outline, Point::ORIGIN, 0);
+        assert_eq!(
+            outline.0[0].0,
+            Rectangle::new(Point::new(-2.0, -2.0), Size::new(14.0, 2.0))
+        );
+        assert_eq!(outline.0.len(), 4);
         assert_eq!(
             renderer.0,
             vec![

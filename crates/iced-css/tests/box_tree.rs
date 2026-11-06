@@ -480,7 +480,14 @@ mod interactive {
             .widget("missing", space(1.0))
             .widget("page", space(1.0))
             .into();
-        assert!(Rig::new(view).node.children().is_empty());
+        // They stay registered, at no size: a restyle may give them a box.
+        let rig = Rig::new(view);
+        assert!(
+            rig.node
+                .children()
+                .iter()
+                .all(|child| child.size() == Size::ZERO)
+        );
     }
 
     #[test]
@@ -616,6 +623,129 @@ mod interactive {
     }
 
     #[test]
+    fn hidden_boxes_and_their_widgets_take_no_press() {
+        let root = node("page", vec![node("gone", vec![])]);
+        let tree = BoxTree::new(root, "#gone { visibility:hidden; height:10px; }").unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .on_press("page", 1)
+            .on_press("gone", 2)
+            .into();
+        let mut rig = Rig::new(view);
+        let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+        assert_eq!(rig.send(press, Point::new(5.0, 5.0)), vec![1]);
+    }
+
+    #[test]
+    fn a_stale_hover_from_a_bigger_tree_does_not_panic() {
+        let big = BoxTree::new(
+            node(
+                "page",
+                vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+            ),
+            "#a, #b, #c { height:10px; }",
+        )
+        .unwrap();
+        let view: View<'_> = big.interactive().into();
+        let mut rig = Rig::new(view);
+        let at = Point::new(5.0, 25.0);
+        rig.send(mouse::Event::CursorMoved { position: at }, at);
+        // A rebuilt view keeps widget state, so the old node index comes back.
+        let small = BoxTree::new(node("page", vec![]), "").unwrap();
+        let mut next: View<'_> = small.interactive().into();
+        rig.tree.diff(&next);
+        let node = next.as_widget_mut().layout(&mut rig.tree, &(), &limits());
+        assert_eq!(node.size(), Size::new(100.0, 200.0));
+    }
+
+    #[test]
+    fn hover_rule_that_removes_or_reveals_a_box_moves_widgets_safely() {
+        let root = node(
+            "page",
+            vec![
+                node("trigger", vec![]),
+                node("gone", vec![]),
+                node("menu", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#trigger { height:10px; }
+             #menu { display:none; }
+             #trigger:hover ~ #menu { display:block; }
+             #page:hover #gone { display:none; }
+             #page:hover #menu { display:block; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("gone", space(5.0))
+            .widget("menu", space(7.0))
+            .into();
+        let mut rig = Rig::new(view);
+        assert_eq!(rig.node.children()[0].size().height, 5.0);
+        assert_eq!(rig.node.children()[1].size().height, 0.0);
+        let on = Point::new(5.0, 5.0);
+        rig.send(mouse::Event::CursorMoved { position: on }, on);
+        assert_eq!(rig.node.children()[0].size().height, 0.0);
+        assert_eq!(rig.node.children()[1].size().height, 7.0);
+        assert_eq!(rig.node.children()[1].bounds().y, 10.0);
+    }
+
+    #[test]
+    fn a_covered_widget_gets_no_cursor() {
+        let root = node("page", vec![node("slot", vec![]), node("cover", vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#slot { width:50px; height:50px; }
+             #cover { position:absolute; left:0; top:0; width:25px; height:50px; }",
+        )
+        .unwrap();
+        let button = iced::widget::button(space(50.0))
+            .width(50.0)
+            .height(50.0)
+            .on_press(1_u8);
+        let view: View<'_> = tree.interactive().widget("slot", button).into();
+        let mut rig = Rig::new(view);
+        let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+        let release = mouse::Event::ButtonReleased(mouse::Button::Left);
+        let covered = Point::new(10.0, 10.0);
+        rig.send(press, covered);
+        assert!(rig.send(release, covered).is_empty());
+        let open = Point::new(40.0, 10.0);
+        rig.send(press, open);
+        assert_eq!(rig.send(release, open), vec![1]);
+    }
+
+    #[test]
+    fn fill_height_widgets_fill_definite_boxes_and_add_nothing_to_auto_ones() {
+        let root = node(
+            "page",
+            vec![
+                node("fixed", vec![]),
+                node("auto", vec![]),
+                node("after", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(root, "#fixed { height:30px; } #after { height:1px; }").unwrap();
+        let fill = || {
+            iced::widget::space()
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill)
+        };
+        let view: View<'_> = tree
+            .interactive()
+            .widget("fixed", fill())
+            .widget("auto", fill())
+            .widget("after", space(1.0))
+            .into();
+        let rig = Rig::new(view);
+        assert_eq!(rig.node.children()[0].size().height, 30.0);
+        assert_eq!(rig.node.children()[1].size().height, 0.0);
+        assert_eq!(rig.node.children()[2].bounds().y, 30.0);
+    }
+
+    #[test]
     fn draw_with_clips_widgets_and_text_runs_without_panicking() {
         let root = node(
             "page",
@@ -643,4 +773,209 @@ mod interactive {
             &Rectangle::new(Point::ORIGIN, Size::new(100.0, 200.0)),
         );
     }
+}
+
+#[test]
+fn z_index_orders_stacking_contexts_and_negative_goes_under_flow() {
+    let root = node(
+        "page",
+        vec![
+            node("flow", vec![]),
+            node("low", vec![]),
+            node("high", vec![node("nested", vec![])]),
+            node("auto", vec![node("escape", vec![])]),
+            node("zero", vec![]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#low { position:absolute; z-index:-1; }
+         #high { position:absolute; z-index:5; }
+         #nested { position:absolute; z-index:-100; }
+         #auto { position:relative; }
+         #escape { position:absolute; z-index:3; }
+         #zero { position:absolute; z-index:0; }",
+    )
+    .unwrap();
+    // Preorder: page0 flow1 low2 high3 nested4 auto5 escape6 zero7.
+    // nested stays inside high's context despite its z-index; escape joins the root's.
+    assert_eq!(tree.paint_order(), vec![0, 2, 1, 5, 7, 6, 3, 4]);
+    assert_eq!(tree.paints()[2].z_index, Some(-1));
+    assert_eq!(tree.paints()[5].z_index, None);
+}
+
+#[test]
+fn visibility_inherits_and_can_be_overridden() {
+    let root = node(
+        "page",
+        vec![node(
+            "gone",
+            vec![node("back", vec![]), node("still", vec![])],
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#gone { visibility:hidden; height:10px; } #back { visibility:visible; }",
+    )
+    .unwrap();
+    let paints = tree.paints();
+    assert!(paints[0].visible);
+    assert!(!paints[1].visible);
+    assert!(paints[2].visible);
+    assert!(!paints[3].visible);
+    // It still takes its room.
+    assert_eq!(
+        tree.layout(100.0, None).unwrap()[1].unwrap().border.bottom,
+        10.0
+    );
+}
+
+#[test]
+fn outline_width_style_and_color() {
+    let root = node(
+        "page",
+        vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#a { outline:2px solid #ff0000; }
+         #b { outline-style:dotted; color:#00ff00; }
+         #c { outline-width:4px; }",
+    )
+    .unwrap();
+    let paints = tree.paints();
+    assert_eq!(paints[1].outline, Some((2.0, [1.0, 0.0, 0.0])));
+    // medium is 3px; the initial invert falls back to `color`.
+    assert_eq!(paints[2].outline, Some((3.0, [0.0, 1.0, 0.0])));
+    assert_eq!(paints[3].outline, None);
+    // Outlines take no room.
+    assert_eq!(
+        tree.layout(100.0, None).unwrap()[1].unwrap().border.left,
+        0.0
+    );
+}
+
+#[test]
+fn before_and_after_join_the_inline_run_in_order() {
+    let root = node(
+        "page",
+        vec![
+            text("one", "middle"),
+            node("span", vec![text("two", "core")]),
+            node("empty", vec![]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#one:before { content:\"[\"; color:#ff0000; }
+         #one:after { content:\"]\"; font-weight:bold; font-size:24px; }
+         #span { display:inline; }
+         #span:before { content:open-quote; }
+         #span:after { content:close-quote attr(id); }
+         #empty:before { content:\"made\"; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves.len(), 2);
+    let leaf = leaves[0].1;
+    assert_eq!(leaf.text(), "[middle]\u{201c}core\u{201d}span");
+    assert_eq!(leaf.runs[0].color, Some([1.0, 0.0, 0.0]));
+    assert_eq!(leaf.runs[2].weight, 700);
+    assert_eq!(leaf.runs[2].size, 24.0);
+    assert_eq!(leaves[1].1.text(), "made");
+}
+
+#[test]
+fn block_pseudo_gets_its_own_block_and_clearfix_contains_floats() {
+    let root = node(
+        "page",
+        vec![
+            node("wrap", vec![node("side", vec![])]),
+            node("after", vec![]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#wrap:after { content:\"\"; display:block; clear:both; }
+         #side { float:left; width:10px; height:30px; }
+         #after { height:1px; }",
+    )
+    .unwrap();
+    let g = tree.layout_text(100.0, None, &mut |_, _| 0.0).unwrap();
+    assert_eq!(g[1].unwrap().border.bottom, 30.0);
+    assert_eq!(g[3].unwrap().border.top, 30.0);
+}
+
+#[test]
+fn block_text_leaf_keeps_generated_runs_inside_and_its_own_paint() {
+    let root = node("page", vec![text("copy", "body"), node("box", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#copy { display:block; } #copy:before { content:\">\"; } #copy:after { content:\"<\"; }
+         #box { background-color:#00ff00; border:1px solid #ff0000; }
+         #box:before { content:\"inside\"; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves[0].1.text(), ">body<");
+    // Both generated runs stay inside the text block, in the leaf itself.
+    assert_eq!(leaves[0].0, 1);
+    assert_eq!(leaves.len(), 2);
+    assert_eq!(leaves[1].1.text(), "inside");
+    // The anonymous block made for generated content leaves its owner's paint.
+    assert_eq!(tree.paints()[2].background, Some([0.0, 1.0, 0.0]));
+    assert_eq!(tree.paints()[2].border[0], Some([1.0, 0.0, 0.0]));
+    // The text block has a box; the anonymous block inside #box has none.
+    assert_eq!(tree.paint_order(), vec![0, 1, 2]);
+}
+
+#[test]
+fn list_items_get_markers_by_type_and_ordinal() {
+    let root = node(
+        "page",
+        vec![
+            node("a", vec![text("ta", "one")]),
+            node("b", vec![text("tb", "two")]),
+            node("c", vec![text("tc", "three")]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#a, #b, #c { display:list-item; }
+         #a { list-style-type:decimal; }
+         #b { list-style-type:lower-roman; }
+         #c { list-style-type:none; }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    assert_eq!(texts, vec!["1.\u{a0}one", "ii.\u{a0}two", "three"],);
+    let root = node("page", vec![node("a", vec![text("ta", "one")])]);
+    let tree = BoxTree::new(root, "#a { display:list-item; }").unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "\u{2022}\u{a0}one");
+}
+
+#[test]
+fn display_none_pseudo_generates_nothing() {
+    let root = node("page", vec![node("a", vec![])]);
+    let tree = BoxTree::new(root, "#a:before { content:\"x\"; display:none; }").unwrap();
+    assert!(tree.text_leaves().is_empty());
+}
+
+#[test]
+fn absolute_after_a_text_run_keeps_its_static_position_below_it() {
+    let root = node("page", vec![text("copy", "words"), node("abs", vec![])]);
+    let tree = BoxTree::new(root, "#abs { position:absolute; width:5px; height:5px; }").unwrap();
+    let g = tree.layout_text(100.0, None, &mut |_, _| 20.0).unwrap();
+    assert_eq!(g[2].unwrap().border.top, 20.0);
+}
+
+#[test]
+fn inline_runs_remember_their_owner_for_hit_tests() {
+    let root = node("page", vec![text("a", "A"), text("b", "B")]);
+    let tree = BoxTree::new(root, "#a:before { content:\"x\"; }").unwrap();
+    let leaf = tree.text_leaves()[0].1.clone();
+    assert_eq!(leaf.text(), "xAB");
+    // Source nodes are postorder: a0 b1 page2.
+    let owners: Vec<_> = leaf.runs.iter().map(|run| run.owner).collect();
+    assert_eq!(owners, vec![0, 0, 1]);
 }

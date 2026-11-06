@@ -397,6 +397,22 @@ impl Integer {
     pub fn is_zero(&self) -> bool {
         self.magnitude.is_zero()
     }
+    /// The value saturated to `i32`, for orderings such as stacking.
+    pub fn saturating_i32(&self) -> i32 {
+        let magnitude = self
+            .magnitude
+            .0
+            .iter()
+            .rev()
+            .fold(0_i64, |total, limb| {
+                total
+                    .saturating_mul(BASE as i64)
+                    .saturating_add(i64::from(*limb))
+            })
+            .min(i64::from(i32::MAX));
+        let signed = if self.negative { -magnitude } else { magnitude };
+        i32::try_from(signed).unwrap_or(if self.negative { i32::MIN } else { i32::MAX })
+    }
     /// The value clamped to 0..=255 (CSS2.2 4.3.6 rgb() integer clipping).
     pub fn clamped_byte(&self) -> u8 {
         if self.negative {

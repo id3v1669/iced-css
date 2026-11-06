@@ -32,10 +32,12 @@ use iced_css_core::{
             Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
             layout_block_flow_measured, preferred_content_widths,
         },
+        clearance::ClearSide,
         display::{Display, Float, Position},
         floats::FloatSide,
     },
     identity::SourceRef,
+    selectors::PseudoElement,
     source::{Metadata, SourceNode},
     values::{
         ConversionError, LengthTarget, NumericLimits, RelativeUnit,
@@ -46,7 +48,7 @@ use iced_css_core::{
         },
         font_size::{FontSizeError, FontSizeTable},
         font_weight::{FontWeight, compute_font_weight},
-        property::{FontFamily, SpecifiedValue},
+        property::{ContentItem, FontFamily, SpecifiedValue},
         registry::PropertyId,
         text_align::{ComputedTextAlign, compute_text_align},
     },
@@ -225,6 +227,83 @@ pub fn prepare_tree_source_projection<'h>(
     })
 }
 
+/// Where one text run of an inline block comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunSource {
+    /// A captured text node, by projected index.
+    Node(usize),
+    /// The `::before` content (with any list marker) of a projected element.
+    Before(usize),
+    /// The `::after` content of a projected element.
+    After(usize),
+}
+
+/// One `::before` or `::after`, as text in its element. Box properties other than
+/// `display` and `clear` do not apply to it here, and `counter()` items produce nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratedRun {
+    pub text: String,
+    pub size: f32,
+    pub color: Option<[f32; 3]>,
+    pub background: Option<[f32; 3]>,
+    pub visible: bool,
+    pub style: TextStyle,
+    /// `display` other than inline: the run gets a block of its own.
+    pub block: bool,
+    pub clear: ClearSide,
+}
+
+/// The appended structure being built: arena slots and their per-slot records.
+#[derive(Default)]
+struct Build {
+    boxes: Vec<FlowBox>,
+    positions: Vec<(usize, Position)>,
+    anonymous: Vec<bool>,
+    clipped: Vec<bool>,
+    runs: Vec<Vec<RunSource>>,
+    /// The anonymous block still accepting inline siblings, per slot.
+    open: Vec<Option<usize>>,
+}
+
+impl Build {
+    fn anonymous_box(&mut self, target: usize, owner: usize, clear: ClearSide) -> usize {
+        let arena = self.boxes.len();
+        self.boxes.push(FlowBox {
+            direction: self.boxes[target].direction,
+            clear,
+            ..FlowBox::default()
+        });
+        self.positions.push((owner, Position::Static));
+        self.anonymous.push(true);
+        self.clipped.push(false);
+        self.runs.push(Vec::new());
+        self.open.push(None);
+        self.boxes[target].children.push(arena);
+        arena
+    }
+
+    fn inline_group(&mut self, target: usize, owner: usize) -> usize {
+        if let Some(group) = self.open[target] {
+            return group;
+        }
+        let group = self.anonymous_box(target, owner, ClearSide::None);
+        self.open[target] = Some(group);
+        group
+    }
+
+    /// Adds generated text to an element's content: in the current run, or its own block.
+    fn generated(&mut self, target: usize, owner: usize, run: RunSource, value: &GeneratedRun) {
+        if value.block {
+            self.open[target] = None;
+            let arena = self.anonymous_box(target, owner, value.clear);
+            self.runs[arena].push(run);
+        } else {
+            let group = self.inline_group(target, owner);
+            self.runs[group].push(run);
+        }
+    }
+}
+
 /// Width-independent box tree, ready to lay out at any viewport.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedTree {
@@ -239,7 +318,7 @@ pub struct PreparedTree {
     /// Whether the arena slot is an anonymous block around inline content, per slot.
     pub anonymous: Vec<bool>,
     /// Projected indices of the text runs each arena slot holds, in source order.
-    pub runs: Vec<Vec<usize>>,
+    pub runs: Vec<Vec<RunSource>>,
     /// The enclosing inline element of each projected index, if any.
     pub inline_parent: Vec<Option<usize>>,
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
@@ -262,7 +341,7 @@ pub fn layout_captured_tree(
     limits: FlowLimits,
     content: impl FnMut(usize) -> Option<FlowContent>,
 ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
-    prepare_captured_tree(projection, display, facts, font_medium, content)?
+    prepare_captured_tree(projection, display, facts, font_medium, content, &[])?
         .layout(viewport, limits)
 }
 
@@ -276,6 +355,8 @@ pub fn prepare_captured_tree(
     facts: ClearanceBoxFactsLimits,
     font_medium: Option<f32>,
     mut content: impl FnMut(usize) -> Option<FlowContent>,
+    // Per projected index, `::before` and `::after`. May be empty.
+    generated: &[[Option<GeneratedRun>; 2]],
 ) -> Result<PreparedTree, TreeLayoutError> {
     use TreeLayoutError as E;
     let count = projection.len();
@@ -291,24 +372,49 @@ pub fn prepare_captured_tree(
 
     // One arena slot per rendered box; descendants of display none never get one.
     let mut slot: Vec<Option<usize>> = vec![None; count];
-    let mut boxes: Vec<FlowBox> = Vec::new();
+    let mut build = Build::default();
+    let pseudo = |projected: usize, side: usize| {
+        generated
+            .get(projected)
+            .and_then(|pair| pair[side].as_ref())
+    };
     let mut offsets: Vec<(usize, [Dim; 4])> = Vec::new();
-    let mut positions: Vec<(usize, Position)> = Vec::new();
     let font_sizes: Vec<f32> = rows
         .iter()
         .map(|row| row.font_size.map_or(16.0, |size| size.pixels))
         .collect();
-    let mut anonymous: Vec<bool> = Vec::new();
-    let mut clipped: Vec<bool> = Vec::new();
-    let mut runs: Vec<Vec<usize>> = Vec::new();
     // The arena slot children of each projected row attach to; a block parent for itself
     // and, for an inline element, the block container it flattens into.
     let mut container: Vec<Option<usize>> = vec![None; count];
     let mut inline_element = vec![false; count];
     let mut inline_parent: Vec<Option<usize>> = vec![None; count];
-    // The anonymous block still accepting inline siblings, per arena slot.
-    let mut open: Vec<Option<usize>> = Vec::new();
-    for index in 0..count {
+    // Whether the projected row is a block text leaf, whose generated runs join its own.
+    let mut text_block = vec![false; count];
+    // Open elements, innermost last: an element's `::after` follows all its content.
+    let mut ancestors: Vec<usize> = Vec::new();
+    for index in 0..=count {
+        let source_parent = (index < count)
+            .then(|| {
+                projection.snapshot.construction().nodes()[projection.original[index]].parent()
+            })
+            .flatten()
+            .map(|parent| projection.projected[parent]);
+        while let Some(&top) = ancestors.last() {
+            if index < count && Some(top) == source_parent {
+                break;
+            }
+            ancestors.pop();
+            if let (Some(value), Some(target)) = (pseudo(top, 1), container[top]) {
+                if text_block[top] {
+                    build.runs[target].push(RunSource::After(top));
+                } else {
+                    build.generated(target, top, RunSource::After(top), value);
+                }
+            }
+        }
+        if index == count {
+            break;
+        }
         let original = projection.original[index];
         let resolution =
             display
@@ -334,31 +440,19 @@ pub fn prepare_captured_tree(
         if resolution.display == Display::Inline
             && let Some(target) = parent_slot
         {
-            let group = match open[target] {
-                Some(group) => group,
-                None => {
-                    let group = boxes.len();
-                    boxes.push(FlowBox {
-                        direction: boxes[target].direction,
-                        ..FlowBox::default()
-                    });
-                    positions.push((index, Position::Static));
-                    anonymous.push(true);
-                    clipped.push(false);
-                    runs.push(Vec::new());
-                    open.push(None);
-                    boxes[target].children.push(group);
-                    open[target] = Some(group);
-                    group
-                }
-            };
+            let group = build.inline_group(target, index);
             slot[index] = Some(group);
             container[index] = Some(target);
             inline_element[index] = true;
             inline_parent[index] = parent.filter(|&outer| inline_element[outer]);
-            if is_text {
-                runs[group].push(index);
+            if let Some(value) = pseudo(index, 0) {
+                build.generated(target, index, RunSource::Before(index), value);
             }
+            if is_text {
+                let group = build.inline_group(target, index);
+                build.runs[group].push(RunSource::Node(index));
+            }
+            ancestors.push(index);
             continue;
         }
         if parent.is_some() && !matches!(resolution.display, Display::Block | Display::ListItem) {
@@ -391,10 +485,10 @@ pub fn prepare_captured_tree(
             value.establishes_bfc = true;
         }
         // Absent offsets are all auto: every positioned box is a containing block.
-        positions.push((index, resolution.position));
+        build.positions.push((index, resolution.position));
         if let Some(offset) = row.offset {
             offsets.push((
-                boxes.len(),
+                build.boxes.len(),
                 offset
                     .map(|fact| dim(fact, numeric))
                     .into_iter()
@@ -410,36 +504,60 @@ pub fn prepare_captured_tree(
         if projection.nodes[index].children.is_empty() && !is_text {
             value.content = content(original);
         }
-        let arena = boxes.len();
+        let arena = build.boxes.len();
         slot[index] = Some(arena);
         container[index] = Some(arena);
-        anonymous.push(false);
-        clipped.push(parent.is_some() && rows[index].overflow.value != BoxOverflow::Visible);
-        runs.push(if is_text { vec![index] } else { Vec::new() });
-        open.push(None);
-        let out_of_line = value.float.is_some() || value.out_of_flow;
-        boxes.push(value);
+        build.anonymous.push(false);
+        build
+            .clipped
+            .push(parent.is_some() && rows[index].overflow.value != BoxOverflow::Visible);
+        build.runs.push(Vec::new());
+        build.open.push(None);
+        let is_float = value.float.is_some();
+        let in_flow = !is_float && !value.out_of_flow;
+        build.boxes.push(value);
         if let Some(target) = parent_slot {
-            match open[target] {
-                Some(group) if out_of_line => {
+            match build.open[target] {
+                Some(group) if is_float => {
                     // A float belongs at its line's top, and the run avoids it: placing
                     // it before the whole run is exact for a float on the first line.
-                    let at = boxes[target]
+                    let at = build.boxes[target]
                         .children
                         .iter()
                         .position(|child| *child == group)
-                        .unwrap_or(boxes[target].children.len());
-                    boxes[target].children.insert(at, arena);
+                        .unwrap_or(build.boxes[target].children.len());
+                    build.boxes[target].children.insert(at, arena);
                 }
                 _ => {
-                    if !out_of_line {
-                        open[target] = None;
+                    if in_flow {
+                        build.open[target] = None;
                     }
-                    boxes[target].children.push(arena);
+                    build.boxes[target].children.push(arena);
                 }
             }
         }
+        // A text leaf holds its runs directly, so it stays a leaf.
+        text_block[index] = is_text;
+        if let Some(value) = pseudo(index, 0) {
+            if is_text {
+                build.runs[arena].push(RunSource::Before(index));
+            } else {
+                build.generated(arena, index, RunSource::Before(index), value);
+            }
+        }
+        if is_text {
+            build.runs[arena].push(RunSource::Node(index));
+        }
+        ancestors.push(index);
     }
+    let Build {
+        boxes,
+        positions,
+        anonymous,
+        clipped,
+        runs,
+        open: _,
+    } = build;
     Ok(PreparedTree {
         boxes,
         offsets,
@@ -466,6 +584,15 @@ impl PreparedTree {
         self.layout_measured(viewport, limits, &mut |_, _| None)
     }
 
+    /// The geometry of each arena slot's box mapped to projected indices.
+    #[must_use]
+    pub fn by_projected(&self, arena: &[FlowGeometry]) -> Vec<Option<FlowGeometry>> {
+        self.slot
+            .iter()
+            .map(|value| value.and_then(|slot| arena.get(slot).copied()))
+            .collect()
+    }
+
     /// Lays the tree out, measuring leaves through `text_height(arena, width)`.
     ///
     /// # Errors
@@ -476,6 +603,19 @@ impl PreparedTree {
         limits: FlowLimits,
         text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
     ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
+        Ok(self.by_projected(&self.layout_slots(viewport, limits, text_height)?))
+    }
+
+    /// Lays the tree out, by arena slot. Anonymous blocks have no projected index.
+    ///
+    /// # Errors
+    /// Returns flow and absolute placement errors.
+    pub fn layout_slots(
+        &self,
+        viewport: FlowViewport,
+        limits: FlowLimits,
+        text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
         use TreeLayoutError as E;
         let Self {
             boxes,
@@ -488,8 +628,9 @@ impl PreparedTree {
             inline_parent: _,
             clipped: _,
         } = self;
+        let _ = slot;
         if boxes.is_empty() {
-            return Ok(vec![None; slot.len()]);
+            return Ok(Vec::new());
         }
         let mut geometry =
             layout_block_flow_measured(boxes, viewport, limits, text_height).map_err(E::Flow)?;
@@ -527,10 +668,7 @@ impl PreparedTree {
                 Position::Static => {}
             }
         }
-        Ok(slot
-            .iter()
-            .map(|value| value.map(|arena| geometry[arena]))
-            .collect())
+        Ok(geometry)
     }
 }
 
@@ -845,6 +983,12 @@ fn flow_box(row: &ClearanceBoxFact, numeric: NumericLimits) -> Result<FlowBox, C
 /// Cascaded paint colors of one box. `None` means transparent or not representable.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BoxPaint {
+    /// 11.2: a hidden box lays out but paints nothing and takes no input.
+    pub visible: bool,
+    /// The computed `z-index`; `None` is auto. It only matters on positioned boxes.
+    pub z_index: Option<i32>,
+    /// Width and color of the outline; `None` draws none.
+    pub outline: Option<(f32, [f32; 3])>,
     /// The computed `color`, for this box's text; `None` is transparent.
     pub color: Option<[f32; 3]>,
     /// Red, green, blue in 0 to 1.
@@ -876,6 +1020,69 @@ fn rgb(color: &Color, numeric: NumericLimits) -> Option<[f32; 3]> {
 }
 
 static BLACK: Color = Color::Srgb([0, 0, 0]);
+
+/// Everything `evaluate_tree_paint` computes per projected row.
+pub struct TreePaint {
+    pub paints: Vec<BoxPaint>,
+    pub styles: Vec<TextStyle>,
+    pub generated: Vec<[Option<GeneratedRun>; 2]>,
+}
+
+/// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
+fn list_marker(kind: &str, ordinal: usize) -> Option<String> {
+    let number = ordinal.to_string();
+    let alpha = |base: u8| {
+        let mut value = ordinal;
+        let mut out = Vec::new();
+        while value > 0 {
+            value -= 1;
+            out.push(base + (value % 26) as u8);
+            value /= 26;
+        }
+        out.reverse();
+        String::from_utf8_lossy(&out).into_owned()
+    };
+    let roman = |value: usize| {
+        const TABLE: [(usize, &str); 13] = [
+            (1000, "m"),
+            (900, "cm"),
+            (500, "d"),
+            (400, "cd"),
+            (100, "c"),
+            (90, "xc"),
+            (50, "l"),
+            (40, "xl"),
+            (10, "x"),
+            (9, "ix"),
+            (5, "v"),
+            (4, "iv"),
+            (1, "i"),
+        ];
+        let mut rest = value;
+        let mut out = String::new();
+        for (amount, text) in TABLE {
+            while rest >= amount {
+                out.push_str(text);
+                rest -= amount;
+            }
+        }
+        out
+    };
+    let label = match kind {
+        "none" => return None,
+        "disc" => return Some("\u{2022}\u{a0}".to_owned()),
+        "circle" => return Some("\u{25e6}\u{a0}".to_owned()),
+        "square" => return Some("\u{25aa}\u{a0}".to_owned()),
+        "decimal-leading-zero" => format!("{ordinal:02}"),
+        "lower-alpha" | "lower-latin" => alpha(b'a'),
+        "upper-alpha" | "upper-latin" => alpha(b'A'),
+        "lower-roman" => roman(ordinal),
+        "upper-roman" => roman(ordinal).to_uppercase(),
+        // Greek, Armenian and Georgian fall back to decimal here.
+        _ => number,
+    };
+    Some(format!("{label}.\u{a0}"))
+}
 
 /// A computed line height, keeping the number form that inherits as a number (10.8.1).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -952,7 +1159,7 @@ pub fn evaluate_tree_paint<'r>(
     display: &SourceDisplay<'_, '_, 'r>,
     limits: ClearanceBoxFactsLimits,
     font_sizes: &[f32],
-) -> Result<(Vec<BoxPaint>, Vec<TextStyle>), TreeLayoutError> {
+) -> Result<TreePaint, TreeLayoutError> {
     use TreeLayoutError as E;
     let id = |name: &'static str| PropertyId::lookup(name).ok_or(E::Paint { property: name });
     let foreground = id("color")?;
@@ -974,6 +1181,14 @@ pub fn evaluate_tree_paint<'r>(
     let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
     let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
     let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
+    let mut visibility: Vec<bool> = Vec::with_capacity(projection.len());
+    let mut z_indices: Vec<Option<i32>> = Vec::with_capacity(projection.len());
+    let outline_color = id("outline-color")?;
+    let mut generated: Vec<[Option<GeneratedRun>; 2]> = Vec::with_capacity(projection.len());
+    let mut marker_types: Vec<Option<String>> = Vec::with_capacity(projection.len());
+    // Each list parent's running item count.
+    let mut items = vec![0_usize; projection.len()];
+    let nodes = snapshot.construction().nodes();
     for (index, &font_size) in font_sizes.iter().enumerate() {
         let original = projection.original[index];
         let mut winners = PropertyWinners::new();
@@ -1022,6 +1237,46 @@ pub fn evaluate_tree_paint<'r>(
                 .defaulted(property, parent_index.is_some())
                 .map_err(|_| E::Paint { property: name })
         };
+        let visible = match defaulted("visibility")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "visible"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_none_or(|parent| visibility[parent])
+            }
+            _ => true,
+        };
+        let z_index = match defaulted("z-index")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Integer(value)) => {
+                Some(value.saturating_i32())
+            }
+            DefaultedValueRef::ParentComputed => parent_index.and_then(|parent| z_indices[parent]),
+            _ => None,
+        };
+        let outline_width = match defaulted("outline-style")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(style))
+                if !matches!(style.as_str(), "none" | "hidden") =>
+            {
+                match defaulted("outline-width")? {
+                    DefaultedValueRef::Compute(SpecifiedValue::Keyword(width)) => {
+                        Some(match width.as_str() {
+                            "thin" => 1.0,
+                            "thick" => 5.0,
+                            _ => 3.0,
+                        })
+                    }
+                    DefaultedValueRef::Compute(SpecifiedValue::Length(LengthTarget::Absolute(
+                        length,
+                    ))) => length
+                        .to_nonnegative_f32(limits.numeric)
+                        .ok()
+                        .map(|c| c.value),
+                    _ => Some(3.0),
+                }
+            }
+            _ => None,
+        }
+        .filter(|width| *width > 0.0);
         let parent_weight = parent_index.map_or(FontWeight::NORMAL, |parent| weights[parent]);
         let weight = match defaulted("font-weight")? {
             DefaultedValueRef::Compute(value) => compute_font_weight(value, parent_weight)
@@ -1120,6 +1375,23 @@ pub fn evaluate_tree_paint<'r>(
         ];
         colors.push(row);
         let paint = |slot: usize| rgb(row[slot].value(), limits.numeric);
+        // An outline's initial `invert` has no value without the backdrop: it uses `color`.
+        let outline = outline_width.map(|width| {
+            let color = compute_color(
+                &winners,
+                outline_color,
+                ColorComputationContext {
+                    parent: None,
+                    current_color: Some(current),
+                    user_agent_color: Some(&BLACK),
+                },
+            )
+            .ok()
+            .and_then(|color| rgb(color.value(), limits.numeric))
+            .or_else(|| paint(0))
+            .unwrap_or([0.0; 3]);
+            (width, color)
+        });
         paints.push(BoxPaint {
             // A system color has no palette here: text stays visible, in black.
             color: match row[0].value() {
@@ -1128,7 +1400,210 @@ pub fn evaluate_tree_paint<'r>(
             },
             background: paint(1),
             border: [paint(2), paint(3), paint(4), paint(5)],
+            visible,
+            z_index,
+            outline,
         });
+        visibility.push(visible);
+        z_indices.push(z_index);
+        // Generated content: text in the element, inheriting from it.
+        let marker_type = match defaulted("list-style-type")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                Some(keyword.as_str().to_owned())
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.and_then(|parent| marker_types[parent].clone())
+            }
+            _ => None,
+        };
+        let marker = if display
+            .resolution(original)
+            .is_some_and(|value| value.display == Display::ListItem)
+        {
+            let ordinal = parent_index.map_or(1, |parent| {
+                items[parent] += 1;
+                items[parent]
+            });
+            list_marker(marker_type.as_deref().unwrap_or("disc"), ordinal)
+        } else {
+            None
+        };
+        marker_types.push(marker_type);
+        let mut pair = [None, None];
+        for (side, pseudo) in [PseudoElement::Before, PseudoElement::After]
+            .into_iter()
+            .enumerate()
+        {
+            let mut winners = PropertyWinners::new();
+            cascade_positioned_rules(
+                &mut winners,
+                bundle.offers().iter().copied(),
+                RuleTarget {
+                    source: &source,
+                    node: original,
+                    pseudo: Some(pseudo),
+                },
+                bundle.sheets(),
+                limits.per_target,
+            )
+            .map_err(|error| {
+                E::Facts(ClearanceBoxFactsError::Cascade {
+                    original,
+                    target: if side == 0 {
+                        BoxFactTarget::Before
+                    } else {
+                        BoxFactTarget::After
+                    },
+                    error,
+                })
+            })?;
+            let cascaded = |name: &'static str| {
+                let property = id(name)?;
+                winners
+                    .defaulted(property, true)
+                    .map_err(|_| E::Paint { property: name })
+            };
+            let mut content = None;
+            if let DefaultedValueRef::Compute(SpecifiedValue::Content(list)) = cascaded("content")?
+            {
+                let mut text = String::new();
+                for item in list {
+                    match item {
+                        ContentItem::Text(value) => text.push_str(value),
+                        ContentItem::Attribute(name) => {
+                            if let Some(value) = nodes[original].metadata().attribute(name) {
+                                text.push_str(value);
+                            }
+                        }
+                        ContentItem::Quote(keyword) => match keyword.as_str() {
+                            "open-quote" => text.push('\u{201c}'),
+                            "close-quote" => text.push('\u{201d}'),
+                            _ => {}
+                        },
+                        ContentItem::Uri(_) | ContentItem::Counter { .. } => {}
+                    }
+                }
+                content = Some(text);
+            }
+            let hide_display = matches!(
+                cascaded("display")?,
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
+                    if keyword.as_str() == "none"
+            );
+            if hide_display {
+                content = None;
+            }
+            let block = matches!(
+                cascaded("display")?,
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
+                    if keyword.as_str() != "inline"
+            );
+            let clear = match cascaded("clear")? {
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                    match keyword.as_str() {
+                        "left" => ClearSide::Left,
+                        "right" => ClearSide::Right,
+                        "both" => ClearSide::Both,
+                        _ => ClearSide::None,
+                    }
+                }
+                _ => ClearSide::None,
+            };
+            let marker_text = if side == 0 { marker.clone() } else { None };
+            if content.is_none() && marker_text.is_none() {
+                continue;
+            }
+            let text = format!(
+                "{}{}",
+                marker_text.unwrap_or_default(),
+                content.unwrap_or_default()
+            );
+            let owner = styles[index].clone();
+            let size = match cascaded("font-size")? {
+                DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => match target {
+                    LengthTarget::Absolute(length) => length
+                        .to_nonnegative_f32(limits.numeric)
+                        .map_or(font_size, |c| c.value),
+                    LengthTarget::Relative(number, RelativeUnit::Em) => number
+                        .scaled_finite_f32(font_size, limits.numeric)
+                        .map_or(font_size, |c| c.value),
+                    LengthTarget::Relative(number, RelativeUnit::Ex) => number
+                        .scaled_finite_f32(font_size * 0.5, limits.numeric)
+                        .map_or(font_size, |c| c.value),
+                    LengthTarget::Percentage(number) => number
+                        .percentage_finite_f32(font_size, limits.numeric)
+                        .map_or(font_size, |c| c.value),
+                    LengthTarget::Auto => font_size,
+                },
+                _ => font_size,
+            };
+            let weight = match cascaded("font-weight")? {
+                DefaultedValueRef::Compute(value) => {
+                    compute_font_weight(value, weight).map_or(owner.weight, FontWeight::number)
+                }
+                _ => owner.weight,
+            };
+            let italic = match cascaded("font-style")? {
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                    keyword.as_str() != "normal"
+                }
+                _ => owner.italic,
+            };
+            let (mut underline, mut line_through) = (owner.underline, owner.line_through);
+            if let DefaultedValueRef::Compute(SpecifiedValue::TextDecoration(own)) =
+                cascaded("text-decoration")?
+            {
+                underline |= own.underline();
+                line_through |= own.line_through();
+            }
+            let pseudo_color = compute_color(
+                &winners,
+                foreground,
+                ColorComputationContext {
+                    parent: Some(current),
+                    current_color: None,
+                    user_agent_color: Some(&BLACK),
+                },
+            )
+            .map_err(|error| E::Color {
+                projected: index,
+                error,
+            })?;
+            let pseudo_background = compute_color(
+                &winners,
+                background,
+                ColorComputationContext {
+                    parent: Some(row[1]),
+                    current_color: Some(pseudo_color),
+                    user_agent_color: Some(&BLACK),
+                },
+            )
+            .map_err(|error| E::Color {
+                projected: index,
+                error,
+            })?;
+            pair[side] = Some(GeneratedRun {
+                text,
+                size,
+                color: rgb(pseudo_color.value(), limits.numeric),
+                background: rgb(pseudo_background.value(), limits.numeric),
+                visible,
+                style: TextStyle {
+                    weight,
+                    italic,
+                    underline,
+                    line_through,
+                    ..owner
+                },
+                block,
+                clear,
+            });
+        }
+        generated.push(pair);
     }
-    Ok((paints, styles))
+    Ok(TreePaint {
+        paints,
+        styles,
+        generated,
+    })
 }
