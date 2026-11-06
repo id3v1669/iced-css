@@ -712,17 +712,15 @@ impl Solver<'_> {
         Some(width.max(columns.iter().sum::<f32>() + gaps))
     }
 
-    /// 17.5.2.1: widths from column elements, then from the first row's cells; the remaining
-    /// columns share what is left, and with none remaining the extra goes evenly.
-    fn fixed_columns(
+    /// 17.5.2.1: the widths column elements and the first row's cells set, per column.
+    fn fixed_widths(
         &self,
         node: usize,
         rows: &[usize],
         count: usize,
         spacing: f32,
-        available: f32,
         basis: f32,
-    ) -> Vec<f32> {
+    ) -> Vec<Option<f32>> {
         let (placed, _) = self.table_grid(rows);
         let mut known: Vec<Option<f32>> = vec![None; count];
         for (slot, dim) in known.iter_mut().zip(&self.boxes[node].column_widths) {
@@ -748,6 +746,21 @@ impl Solver<'_> {
                 width.get_or_insert(each);
             }
         }
+        known
+    }
+
+    /// 17.5.2.1: the widths that are set; the remaining columns share what is left, and with
+    /// none remaining the extra goes evenly.
+    fn fixed_columns(
+        &self,
+        node: usize,
+        rows: &[usize],
+        count: usize,
+        spacing: f32,
+        available: f32,
+        basis: f32,
+    ) -> Vec<f32> {
+        let known = self.fixed_widths(node, rows, count, spacing, basis);
         let taken: f32 = known.iter().flatten().sum();
         let open = known.iter().filter(|width| width.is_none()).count();
         let rest = (available - taken).max(0.0);
@@ -782,14 +795,17 @@ impl Solver<'_> {
                 // Percentages resolve against the table's own width, not one its columns grew.
                 // A percent table's own is gone by now, but columns past it grew the table to
                 // exactly their sum, which is linear in that width: solve for it.
-                let columns = |solver: &Self, basis: f32| {
-                    solver.fixed_columns(node, &rows, count, spacing[0], available, basis)
+                let known = |solver: &Self, basis: f32| {
+                    solver
+                        .fixed_widths(node, &rows, count, spacing[0], basis)
+                        .into_iter()
+                        .flatten()
+                        .sum::<f32>()
                 };
                 let basis = match self.boxes[node].width {
                     Dim::Px(width) => width,
                     _ => {
-                        let sum = |basis: f32| columns(self, basis).iter().sum::<f32>();
-                        let (fixed, whole) = (sum(0.0), sum(inner.width));
+                        let (fixed, whole) = (known(self, 0.0), known(self, inner.width));
                         if whole > available && whole > fixed {
                             inner.width * (available - fixed) / (whole - fixed)
                         } else {
@@ -797,7 +813,7 @@ impl Solver<'_> {
                         }
                     }
                 };
-                columns(self, basis)
+                self.fixed_columns(node, &rows, count, spacing[0], available, basis)
             });
         let widths: Vec<f32> = fixed.unwrap_or_else(|| {
             (0..count)

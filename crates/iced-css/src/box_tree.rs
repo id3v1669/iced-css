@@ -1070,8 +1070,11 @@ impl BoxTree {
                         }) == Some(&at)
                     })
             };
+            // An inline-block with its own text has its own first line.
             let line_leads = parent_of[arena]
-                .filter(|parent| prepared.boxes[*parent].inline_row.is_some())
+                .filter(|parent| {
+                    prepared.anonymous[arena] && prepared.boxes[*parent].inline_row.is_some()
+                })
                 .is_none_or(leads);
             if !leads(arena) || !line_leads {
                 continue;
@@ -2232,6 +2235,10 @@ fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
 ) -> f32 {
+    // Text that will not break is as narrow as it is long.
+    if !leaf.wraps {
+        return paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
+    }
     let mut widest = 0.0_f32;
     // A word can run across runs: `<b>a</b>b`, or the sizes of small capitals.
     let mut word: Vec<TextRun> = Vec::new();
@@ -2685,6 +2692,25 @@ where
             }
         }
         hosts
+    }
+
+    /// Whether `node`'s hosted widget has the focus now. `otherwise` answers for a node that
+    /// hosts nothing focusable.
+    fn host_holds_focus(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        node: Option<usize>,
+        otherwise: bool,
+    ) -> bool {
+        let hosts = self.focus_hosts(tree, layout, renderer);
+        let Some(&(index, _)) = hosts.iter().find(|host| Some(host.1) == node) else {
+            return !otherwise;
+        };
+        let mut found = HostFocus::IsFocused(false);
+        self.operate_host(tree, layout, renderer, index, &mut found);
+        matches!(found, HostFocus::IsFocused(true))
     }
 
     /// A box's `tabindex`; a press message implies 0.
@@ -3168,12 +3194,7 @@ where
                     keyboard::Key::Named(keyboard::key::Named::Escape)
                 );
                 let held = tree.state.downcast_ref::<Interaction>().focused;
-                if escaped
-                    && self
-                        .focus_hosts(tree, layout, renderer)
-                        .iter()
-                        .any(|host| Some(host.1) == held)
-                {
+                if escaped && !self.host_holds_focus(tree, layout, renderer, held, false) {
                     tree.state.downcast_mut::<Interaction>().focused = None;
                     shell.invalidate_layout();
                     shell.request_redraw();
@@ -3217,11 +3238,7 @@ where
                     if focused.is_some() =>
                 {
                     // Keys in a focused widget are its own, whatever boxes hold it.
-                    let in_host = self
-                        .focus_hosts(tree, layout, renderer)
-                        .iter()
-                        .any(|host| Some(host.1) == focused);
-                    if in_host {
+                    if self.host_holds_focus(tree, layout, renderer, focused, true) {
                         return;
                     }
                     if let Some(message) = self.press_message(focused) {
@@ -3598,7 +3615,10 @@ where
                                 .tree
                                 .marker_images
                                 .get(&index)
-                                .filter(|_| self.loaded_markers.contains(&index))
+                                .filter(|_| {
+                                    self.loaded_markers.contains(&index)
+                                        && self.tree.paints[index].visible
+                                })
                                 .zip(self.geometry.get(index).copied().flatten())
                             {
                                 if let Some((width, height)) = renderer.background_size(handle) {

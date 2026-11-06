@@ -76,7 +76,7 @@ animated `color` moves with it.
 
 Not read at all: `letter-spacing`, `word-spacing`, and URL cursors (their
 keyword fallback is used). `text-indent` is approximated by leading spaces, positive lengths only
-(no percentages or hanging indents), and a word too wide beside it moves to the next line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
+(no percentages or hanging indents), a word too wide beside it moves to the next line, one wider than the block wraps into blank lines, and none applies when an inline-block opens the line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
 sizing decorations by part; generated content and markers take it only from their element.
 
 ## Status

@@ -2932,7 +2932,9 @@ fn fixed_tables_ignore_content_and_grow_only_for_their_columns() {
         let css = "#page { width:200px; }
              #table { display:table; table-layout:fixed; width:50%; }
              #r1 { display:table-row; }
-             #a, #b { display:table-cell; height:5px; width:80%; }";
+             #a, #b { display:table-cell; height:5px; }
+             #a { width:60%; }
+             #b { width:100%; }";
         let geometry = BoxTree::new(root, css)
             .unwrap()
             .layout(800.0, None)
@@ -2940,8 +2942,13 @@ fn fixed_tables_ignore_content_and_grow_only_for_their_columns() {
         let border = geometry[at].as_ref().unwrap().border;
         (border.left, border.right)
     };
+    // 60% and 100% of the table's own 100px.
     assert_eq!(grown(1), (0.0, 160.0));
-    assert_eq!(grown(4), (80.0, 160.0));
+    let near = |(left, right): (f32, f32), (l, r): (f32, f32)| {
+        (left - l).abs() < 0.01 && (right - r).abs() < 0.01
+    };
+    assert!(near(grown(3), (0.0, 60.0)), "{:?}", grown(3));
+    assert!(near(grown(4), (60.0, 160.0)), "{:?}", grown(4));
     // Against the table's own width, so the grown table still holds them.
     assert_eq!(
         across("#table { width:100px; } #a, #b { width:80%; }", cells(), 3),

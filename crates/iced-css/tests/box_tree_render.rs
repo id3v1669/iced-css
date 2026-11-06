@@ -787,32 +787,40 @@ fn list_style_images_replace_outside_markers_and_fall_back_to_text() {
     let path = std::env::temp_dir().join(format!("iced-css-markers-{}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     std::fs::write(path.join("dot.png"), checker_png(16)).unwrap();
-    let root = node(
-        "page",
-        vec![
-            node("one", vec![text("a", "image")]),
-            node("two", vec![text("b", "no type")]),
-            node("three", vec![text("c", "missing")]),
-        ],
-    );
-    let tree = BoxTree::with_base(
-        root,
-        "#page { background-color:white; color:black; padding:30px; }
-         #one, #two, #three { display:list-item; }
-         #one { list-style-image:url(dot.png); }
-         #two { list-style-type:none; list-style-image:url(dot.png); }
-         #three { list-style-image:url(gone.png); }",
-        &path,
-    )
-    .unwrap();
-    let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
-    assert!(
+    let matches = |css: &str, name: &str| {
+        let root = node("page", vec![node("one", vec![text("a", "item")])]);
+        let sheet = format!(
+            "#page {{ background-color:white; color:black; padding:30px; }}
+             #one {{ display:list-item; {css} }}"
+        );
+        let tree = BoxTree::with_base(root, &sheet, &path).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(path.join("markers.png"))
+            .matches_image(path.join(name))
             .unwrap()
-    );
+    };
+    // The plain bullet first, which a missing image falls back to.
+    assert!(matches("", "bullet.png"));
+    assert!(matches("list-style-image:url(gone.png);", "bullet.png"));
+    assert!(!matches("list-style-image:url(dot.png);", "bullet.png"));
+    // The image draws without a marker type, and not at all when hidden.
+    assert!(matches("list-style-image:url(dot.png);", "image.png"));
+    assert!(matches(
+        "list-style-type:none; list-style-image:url(dot.png);",
+        "image.png"
+    ));
+    assert!(matches("list-style-type:none;", "none.png"));
+    assert!(!matches(
+        "list-style-type:none; list-style-image:url(dot.png);",
+        "none.png"
+    ));
+    assert!(matches("visibility:hidden;", "hidden.png"));
+    assert!(matches(
+        "visibility:hidden; list-style-image:url(dot.png);",
+        "hidden.png"
+    ));
 }
 
 #[test]
@@ -903,4 +911,55 @@ fn inline_boxes_draw_their_sides_across_lines() {
             .matches_image(std::env::temp_dir().join(name))
             .unwrap()
     );
+}
+
+#[test]
+fn enter_still_presses_a_box_whose_hosted_input_lacks_focus() {
+    use iced::keyboard::key::Named;
+    let root = node("page", vec![node("one", vec![])]);
+    let tree = BoxTree::new(root, "#one { height:30px; width:200px; }").unwrap();
+    let view: Element<'_, u8> = tree
+        .interactive()
+        .widget(
+            "one",
+            iced::widget::text_input("", "").on_input(|_| 1).width(50),
+        )
+        .on_press("one", 9)
+        .into();
+    let mut ui = iced_test::simulator(view);
+    // Past the 50px input, inside the box.
+    ui.point_at(Point::new(150.0, 10.0));
+    let _ = ui.simulate(iced_test::simulator::click());
+    let _ = ui.tap_key(Named::Enter);
+    let messages: Vec<u8> = ui.into_messages().collect();
+    assert_eq!(messages, vec![9, 9]);
+}
+
+#[test]
+fn unbroken_text_keeps_its_column_whole() {
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "t",
+            vec![node(
+                "r",
+                vec![node("c", vec![text("w", "aaa bbb")]), node("d", vec![])],
+            )],
+        );
+        let sheet = format!(
+            "#t {{ display:table; {css} color:black; }}
+             #r {{ display:table-row; }}
+             #c {{ display:table-cell; white-space:nowrap; }}
+             #d {{ display:table-cell; width:50px; height:30px; background-color:#d9534f; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("nowrap-column-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(draw("width:1px;", &name));
 }
