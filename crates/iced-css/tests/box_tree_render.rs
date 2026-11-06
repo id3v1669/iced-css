@@ -1095,6 +1095,8 @@ fn pressed_at(css: &str, x: f32) -> Vec<u8> {
 fn inline_sides_answer_for_their_own_box() {
     // The inner box's padding is its own.
     assert_eq!(pressed_at("#inner { padding:0 48px; }", 10.0), vec![2]);
+    // An outer box's padding is its own too, though the first text inside is the inner box's.
+    assert_eq!(pressed_at("#outer { padding:0 48px; }", 10.0), vec![1]);
     // Its margin belongs to the box around it.
     assert_eq!(pressed_at("#inner { margin:0 48px; }", 10.0), vec![1]);
     // A hidden box around takes no presses, so the margin answers for nothing here.
