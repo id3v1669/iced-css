@@ -676,3 +676,29 @@ fn clear_on_an_uncle_sees_a_float_from_a_closed_empty_parent() {
     );
     assert_eq!(g[4].border.top, 30.0);
 }
+
+#[test]
+fn leaf_height_follows_the_used_width_it_is_measured_at() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        FlowBox {
+            width: Dim::Percent(50.0),
+            ..FlowBox::default()
+        },
+        FlowBox {
+            float: Some(FloatSide::Left),
+            width: Dim::Px(25.0),
+            ..FlowBox::default()
+        },
+    ];
+    boxes[0].children = vec![1, 2];
+    let mut seen = Vec::new();
+    let g = layout_block_flow_measured(&boxes, viewport(), limits(), &mut |node, width| {
+        seen.push((node, width));
+        (node != 0).then_some(1000.0 / width)
+    })
+    .unwrap();
+    assert_eq!(seen, vec![(1, 50.0), (2, 25.0)]);
+    assert_eq!(g[1].border.bottom, 20.0);
+    assert_eq!(g[2].border.bottom, 60.0);
+}

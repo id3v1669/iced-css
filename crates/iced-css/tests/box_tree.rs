@@ -22,6 +22,21 @@ fn node(id: &str, children: Vec<Element>) -> Element {
         .unwrap()
         .erase()
 }
+fn text(id: &str, content: &'static str) -> Element {
+    let bound = NonZeroUsize::new(1000).unwrap();
+    adapters::text(content, capture_limits())
+        .unwrap()
+        .style_id(
+            id,
+            AttributeLimits {
+                entries: bound,
+                retained_bytes: bound,
+                work: bound,
+            },
+        )
+        .unwrap()
+        .erase()
+}
 fn page() -> Element {
     node(
         "page",
@@ -138,4 +153,61 @@ fn out_of_range_percentages_clip() {
     )
     .unwrap();
     assert_eq!(tree.paints()[3].background, Some([1.0, 0.0, 1.0]));
+}
+
+#[test]
+fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
+    let root = node(
+        "page",
+        vec![text("copy", "one two three four"), node("after", vec![])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { padding:0 10px; }
+         #copy { font-size:20px; color:#ff0000; margin:7px; padding:9px; }
+         #after { height:1px; }",
+    )
+    .unwrap();
+    assert_eq!(tree.paints()[1].color, Some([1.0, 0.0, 0.0]));
+    let mut seen = Vec::new();
+    // A fake shaper: one 20px line per 40px of width used, at the requested size.
+    let g = tree
+        .layout_text(100.0, None, &mut |text, size, width| {
+            seen.push((text.to_owned(), size, width));
+            size * (360.0 / width).ceil()
+        })
+        .unwrap();
+    assert_eq!(seen, vec![("one two three four".to_owned(), 20.0, 80.0)]);
+    assert_eq!(g[1].unwrap().content.bottom, 100.0);
+    assert_eq!(g[2].unwrap().border.top, 100.0);
+}
+
+#[test]
+fn block_text_keeps_its_box_properties() {
+    let root = node("page", vec![text("copy", "words")]);
+    let tree = BoxTree::new(
+        root,
+        "#copy { display:block; margin-top:7px; padding:9px; width:50px; }",
+    )
+    .unwrap();
+    let g = tree
+        .layout_text(100.0, None, &mut |_, _, width| {
+            assert_eq!(width, 50.0);
+            20.0
+        })
+        .unwrap();
+    assert_eq!(g[1].unwrap().content.top, 16.0);
+    assert_eq!(g[1].unwrap().border.bottom, 45.0);
+}
+
+#[test]
+fn adjacent_inline_text_is_refused_until_line_layout_exists() {
+    let root = node("page", vec![text("first", "a"), text("second", "b")]);
+    let error = BoxTree::new(root, "").unwrap_err();
+    assert!(error.to_string().contains("display"));
+    let root = node(
+        "page",
+        vec![text("first", "a"), node("gap", vec![]), text("second", "b")],
+    );
+    assert!(BoxTree::new(root, "").is_ok());
 }

@@ -1,6 +1,7 @@
 //! A stylesheet-driven iced widget for captured box trees: real cascade, general block
-//! flow, background and border paint. It draws boxes only: the captured payload (text,
-//! controls) and inline layout are not connected yet, and input is not routed.
+//! flow, background and border paint, and captured text leaves wrapped at their used
+//! width. Each text leaf is one block of left-aligned text with iced's default font and
+//! line height. Inline layout, other captured payloads and input are not connected.
 use crate::{
     animation::engine::ProgressLimits,
     capture::{CaptureLimits, CapturedElement},
@@ -18,9 +19,10 @@ use crate::{
 use iced::advanced::{
     Layout, Widget, layout,
     renderer::{self, Quad},
+    text::{self, Paragraph as _},
     widget::Tree,
 };
-use iced::{Color, Element, Length, Rectangle, Size, mouse};
+use iced::{Color, Element, Length, Pixels, Point, Rectangle, Size, mouse};
 use iced_css_core::{
     cascade::{
         rule::{RuleBatchLimits, RuleCascadeLimits, RuleContext},
@@ -28,7 +30,7 @@ use iced_css_core::{
         ua_display::{UaDisplayCatalog, UaDisplayLimits},
     },
     formatting::{
-        block_flow::{FlowGeometry, FlowLimits, FlowRect, FlowViewport},
+        block_flow::{FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport},
         display::Position,
     },
     identity::SourceChangeLimits,
@@ -220,6 +222,8 @@ pub fn capture_limits() -> CaptureLimits {
 pub struct BoxTree {
     prepared: PreparedTree,
     paints: Vec<BoxPaint>,
+    /// Captured text per arena slot; set only on leaves.
+    texts: Vec<Option<String>>,
 }
 
 impl BoxTree {
@@ -327,7 +331,22 @@ impl BoxTree {
         let prepared = prepare_captured_tree(&projection, &display, facts(), Some(16.0), |_| None)
             .map_err(failed)?;
         let paints = evaluate_tree_paint(&projection, &display, facts()).map_err(failed)?;
-        Ok(Self { prepared, paints })
+        let nodes = snapshot.construction().nodes();
+        let texts = prepared
+            .positions
+            .iter()
+            .map(|&(projected, _)| {
+                projection
+                    .original_index(projected)
+                    .and_then(|original| nodes[original].text())
+                    .map(str::to_owned)
+            })
+            .collect();
+        Ok(Self {
+            prepared,
+            paints,
+            texts,
+        })
     }
 
     /// Geometry and paint by projected (preorder) index; `None` is display none.
@@ -351,6 +370,48 @@ impl BoxTree {
                 depth: nz(2_000),
             },
         )
+    }
+
+    /// Lays out with `measure(text, font_size, width)` giving each text leaf's height.
+    ///
+    /// # Errors
+    /// Returns a layout failure at this size.
+    pub fn layout_text(
+        &self,
+        width: f32,
+        height: Option<f32>,
+        measure: &mut dyn FnMut(&str, f32, f32) -> f32,
+    ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
+        self.prepared.layout_measured(
+            FlowViewport {
+                left: 0.0,
+                top: 0.0,
+                width,
+                height,
+            },
+            FlowLimits {
+                boxes: big(),
+                depth: nz(2_000),
+            },
+            &mut |arena, used| {
+                let text = self.texts[arena].as_deref()?;
+                Some(measure(text, self.prepared.font_sizes[arena], used))
+            },
+        )
+    }
+
+    /// Supplies each text leaf's (narrowest, longest) width for shrink-to-fit.
+    pub fn set_text_widths(&mut self, mut widths: impl FnMut(&str, f32) -> (f32, f32)) {
+        for (arena, text) in self.texts.iter().enumerate() {
+            if let Some(text) = text {
+                let (minimum, preferred) = widths(text, self.prepared.font_sizes[arena]);
+                self.prepared.boxes[arena].content = Some(FlowContent {
+                    height: 0.0,
+                    preferred_width: preferred,
+                    preferred_min_width: minimum,
+                });
+            }
+        }
     }
 
     /// Paint by projected index.
@@ -381,14 +442,17 @@ impl BoxTree {
             .collect()
     }
 
-    /// Wraps the tree as an iced element that fills the width it is given.
+    /// Wraps the tree as an iced element that fills the size it is given.
     pub fn view<'a, Message: 'a, Theme: 'a, Renderer>(self) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: renderer::Renderer + 'a,
+        Renderer: text::Renderer + 'a,
+        Renderer::Font: 'a,
     {
-        Element::new(BoxTreeWidget {
+        Element::new(BoxTreeWidget::<Renderer> {
             tree: self,
+            measured: false,
             geometry: Vec::new(),
+            paragraphs: Vec::new(),
         })
     }
 }
@@ -428,9 +492,77 @@ fn paint_context(
     }
 }
 
-struct BoxTreeWidget {
+struct BoxTreeWidget<Renderer: text::Renderer> {
     tree: BoxTree,
+    measured: bool,
     geometry: Vec<Option<FlowGeometry>>,
+    /// The projected index, the shaped text and its color, one per text leaf.
+    paragraphs: Vec<(usize, Renderer::Paragraph, Color)>,
+}
+
+fn paragraph<Renderer: text::Renderer>(
+    renderer: &Renderer,
+    content: &str,
+    size: f32,
+    width: f32,
+) -> Renderer::Paragraph {
+    Renderer::Paragraph::with_text(text::Text {
+        content,
+        bounds: Size::new(width, f32::INFINITY),
+        size: Pixels(size),
+        line_height: text::LineHeight::default(),
+        font: renderer.default_font(),
+        align_x: text::Alignment::Default,
+        align_y: iced::alignment::Vertical::Top,
+        shaping: text::Shaping::Advanced,
+        wrapping: text::Wrapping::Word,
+    })
+}
+
+/// Backgrounds and border bands in paint order, offset to the layout origin.
+fn draw_boxes<Renderer: renderer::Renderer>(
+    tree: &BoxTree,
+    geometry: &[Option<FlowGeometry>],
+    renderer: &mut Renderer,
+    origin: Point,
+) {
+    let at = |rect: Rectangle| Rectangle {
+        x: rect.x + origin.x,
+        y: rect.y + origin.y,
+        ..rect
+    };
+    let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
+        if bounds.width > 0.0 && bounds.height > 0.0 {
+            renderer.fill_quad(
+                Quad {
+                    bounds: at(bounds),
+                    ..Quad::default()
+                },
+                Color::from_rgb(color[0], color[1], color[2]),
+            );
+        }
+    };
+    for index in tree.paint_order() {
+        let Some(Some(geometry)) = geometry.get(index) else {
+            continue;
+        };
+        let paint = tree.paints[index];
+        let border = geometry.border;
+        if let Some(color) = paint.background {
+            // 14.2: the background extends under the border.
+            quad(
+                renderer,
+                rectangle(border.left, border.right, border.top, border.bottom),
+                color,
+            );
+        }
+        let bands = border_bands(border, geometry.padding);
+        for (band, color) in bands.into_iter().zip(paint.border) {
+            if let Some(color) = color {
+                quad(renderer, band, color);
+            }
+        }
+    }
 }
 
 fn rectangle(left: f32, right: f32, top: f32, bottom: f32) -> Rectangle {
@@ -452,9 +584,9 @@ fn border_bands(border: FlowRect, padding: FlowRect) -> [Rectangle; 4] {
     ]
 }
 
-impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for BoxTreeWidget
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for BoxTreeWidget<Renderer>
 where
-    Renderer: renderer::Renderer,
+    Renderer: text::Renderer,
 {
     fn size(&self) -> Size<Length> {
         Size {
@@ -466,15 +598,62 @@ where
     fn layout(
         &mut self,
         _tree: &mut Tree,
-        _renderer: &Renderer,
+        renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
         let available = limits.max();
-        // A refused layout draws nothing; `BoxTree::layout` reports the cause.
+        if !self.measured {
+            self.measured = true;
+            self.tree.set_text_widths(|content, size| {
+                let longest = paragraph(renderer, content, size, f32::INFINITY)
+                    .min_bounds()
+                    .width;
+                let narrowest = content
+                    .split_whitespace()
+                    .map(|word| {
+                        paragraph(renderer, word, size, f32::INFINITY)
+                            .min_bounds()
+                            .width
+                    })
+                    .fold(0.0_f32, f32::max);
+                (narrowest, longest)
+            });
+        }
+        // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
         self.geometry = self
             .tree
-            .layout(available.width, Some(available.height))
+            .layout_text(
+                available.width,
+                Some(available.height),
+                &mut |content, size, width| {
+                    paragraph(renderer, content, size, width)
+                        .min_bounds()
+                        .height
+                },
+            )
             .unwrap_or_default();
+        self.paragraphs.clear();
+        for (arena, content) in self.tree.texts.iter().enumerate() {
+            let Some(content) = content else { continue };
+            let projected = self.tree.prepared.positions[arena].0;
+            let Some(Some(geometry)) = self.geometry.get(projected) else {
+                continue;
+            };
+            let box_width = geometry.content.right - geometry.content.left;
+            let color = self.tree.paints[projected]
+                .color
+                .map_or(Color::BLACK, |c| Color::from_rgb(c[0], c[1], c[2]));
+            self.paragraphs.push((
+                projected,
+                paragraph(
+                    renderer,
+                    content,
+                    self.tree.prepared.font_sizes[arena],
+                    box_width,
+                ),
+                color,
+            ));
+        }
         layout::Node::new(available)
     }
 
@@ -490,42 +669,15 @@ where
     ) {
         let bounds = layout.bounds();
         let origin = bounds.position();
-        let at = |rect: Rectangle| Rectangle {
-            x: rect.x + origin.x,
-            y: rect.y + origin.y,
-            ..rect
-        };
-        let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
-            if bounds.width > 0.0 && bounds.height > 0.0 {
-                renderer.fill_quad(
-                    Quad {
-                        bounds: at(bounds),
-                        ..Quad::default()
-                    },
-                    Color::from_rgb(color[0], color[1], color[2]),
-                );
-            }
-        };
         renderer.with_layer(bounds, |renderer| {
-            for index in self.tree.paint_order() {
-                let Some(Some(geometry)) = self.geometry.get(index) else {
-                    continue;
-                };
-                let paint = self.tree.paints[index];
-                let border = geometry.border;
-                if let Some(color) = paint.background {
-                    // 14.2: the background extends under the border.
-                    quad(
-                        renderer,
-                        rectangle(border.left, border.right, border.top, border.bottom),
-                        color,
+            draw_boxes(&self.tree, &self.geometry, renderer, origin);
+            for (projected, shaped, color) in &self.paragraphs {
+                if let Some(Some(geometry)) = self.geometry.get(*projected) {
+                    let position = Point::new(
+                        origin.x + geometry.content.left,
+                        origin.y + geometry.content.top,
                     );
-                }
-                let bands = border_bands(border, geometry.padding);
-                for (band, color) in bands.into_iter().zip(paint.border) {
-                    if let Some(color) = color {
-                        quad(renderer, band, color);
-                    }
+                    renderer.fill_paragraph(shaped, position, *color, bounds);
                 }
             }
         });
@@ -536,8 +688,7 @@ where
 mod tests {
     use super::*;
     use crate::capture::adapters;
-    use iced::advanced::Renderer as _;
-    use iced::{Background, Point, Theme, Transformation};
+    use iced::{Background, Theme, Transformation};
     use iced_css_core::source::AttributeLimits;
 
     #[derive(Default)]
@@ -592,30 +743,9 @@ mod tests {
              #b { width:20px; height:10px; border-top:2px solid #0000ff; }",
         )
         .unwrap();
-        let mut widget = BoxTreeWidget {
-            tree,
-            geometry: Vec::new(),
-        };
+        let geometry = tree.layout(100.0, Some(80.0)).unwrap();
         let mut renderer = Recording::default();
-        let mut state = Tree::empty();
-        let node = Widget::<(), Theme, Recording>::layout(
-            &mut widget,
-            &mut state,
-            &renderer,
-            &layout::Limits::new(Size::ZERO, Size::new(100.0, 80.0)),
-        );
-        let moved = node.move_to(Point::new(5.0, 7.0));
-        Widget::<(), Theme, Recording>::draw(
-            &widget,
-            &state,
-            &mut renderer,
-            &Theme::Light,
-            &renderer::Style::default(),
-            Layout::new(&moved),
-            mouse::Cursor::Unavailable,
-            &Rectangle::new(Point::ORIGIN, Size::new(100.0, 80.0)),
-        );
-        renderer.reset(Rectangle::default());
+        draw_boxes(&tree, &geometry, &mut renderer, Point::new(5.0, 7.0));
         assert_eq!(
             renderer.0,
             vec![

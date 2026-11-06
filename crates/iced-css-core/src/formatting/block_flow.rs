@@ -247,6 +247,8 @@ impl Flow {
 struct Solver<'a> {
     boxes: &'a [FlowBox],
     geometry: Vec<FlowGeometry>,
+    /// A leaf's content height at its used width, overriding the static measurement.
+    text_height: &'a mut dyn FnMut(usize, f32) -> Option<f32>,
 }
 
 /// Lays out the tree rooted at index 0 as one block formatting context root.
@@ -259,6 +261,21 @@ pub fn layout_block_flow(
     viewport: FlowViewport,
     limits: FlowLimits,
 ) -> Result<Vec<FlowGeometry>, FlowError> {
+    layout_block_flow_measured(boxes, viewport, limits, &mut |_, _| None)
+}
+
+/// Lays out as [`layout_block_flow`], asking `text_height(node, width)` for each leaf's
+/// content height at its used width: wrapped text depends on the width it receives.
+/// `None` keeps the leaf's static [`FlowContent`] height.
+///
+/// # Errors
+/// As [`layout_block_flow`].
+pub fn layout_block_flow_measured(
+    boxes: &[FlowBox],
+    viewport: FlowViewport,
+    limits: FlowLimits,
+    text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
+) -> Result<Vec<FlowGeometry>, FlowError> {
     if boxes.is_empty() || boxes.len() > limits.boxes.get() {
         return Err(FlowError::Boxes);
     }
@@ -269,6 +286,7 @@ pub fn layout_block_flow(
     let mut solver = Solver {
         boxes,
         geometry: vec![FlowGeometry::default(); boxes.len()],
+        text_height,
     };
     let containing = Containing {
         left: viewport.left,
@@ -287,6 +305,7 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
     Solver {
         boxes,
         geometry: Vec::new(),
+        text_height: &mut |_, _| None,
     }
     .measure(node)
 }
@@ -353,6 +372,14 @@ fn rect(left: f32, right: f32, top: f32, bottom: f32) -> FlowRect {
 }
 
 impl Solver<'_> {
+    fn leaf_height(&mut self, node: usize, width: f32) -> Option<f32> {
+        let value = &self.boxes[node];
+        if !value.children.is_empty() {
+            return None;
+        }
+        (self.text_height)(node, width).or(value.content.map(|content| content.height))
+    }
+
     fn paddings(&self, node: usize, basis: f32) -> [f32; 4] {
         self.boxes[node].padding.map(|dim| dim.zero_auto(basis))
     }
@@ -572,7 +599,6 @@ impl Solver<'_> {
         let border = value.border;
         let mt = value.margin[0].zero_auto(basis);
         let mb = value.margin[2].zero_auto(basis);
-        let content = value.content.filter(|_| value.children.is_empty());
         flow.clearance_through = false;
         let clearance = self.apply_clear(node, flow, mt)?;
         let mut settled = clearance.is_some();
@@ -602,9 +628,10 @@ impl Solver<'_> {
             top: settled.then_some(flow.y),
             direction: value.direction,
         };
-        if let Some(leaf) = content.filter(|leaf| leaf.height != 0.0) {
+        let leaf_height = self.leaf_height(node, width);
+        if let Some(height) = leaf_height.filter(|height| *height != 0.0) {
             self.settle(flow)?;
-            flow.y += leaf.height;
+            flow.y += height;
         }
         self.lay_children(node, flow, inner)?;
         let still_open = flow.unsettled.contains(&node);
@@ -678,7 +705,7 @@ impl Solver<'_> {
             && !separated
             && zero_or_auto
             && minimum == 0.0
-            && content.is_none()
+            && leaf_height.is_none()
             && content_bottom == content_top;
         self.publish(
             node,
@@ -754,8 +781,8 @@ impl Solver<'_> {
             direction: value.direction,
         };
         let mut flow = Flow::new(content_top);
-        if let Some(leaf) = value.content.filter(|_| value.children.is_empty()) {
-            flow.y += leaf.height;
+        if let Some(height) = self.leaf_height(node, width.0) {
+            flow.y += height;
         }
         self.lay_children(node, &mut flow, inner)?;
         // 10.6.7: the bottom margin edge of the last in-flow child and every float.

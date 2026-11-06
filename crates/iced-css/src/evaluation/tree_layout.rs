@@ -27,7 +27,7 @@ use iced_css_core::{
         block::{AutoLength, Direction},
         block_flow::{
             Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
-            layout_block_flow, preferred_content_widths,
+            layout_block_flow_measured, preferred_content_widths,
         },
         display::{Display, Float, Position},
         floats::FloatSide,
@@ -228,6 +228,8 @@ pub struct PreparedTree {
     pub positions: Vec<(usize, Position)>,
     /// Arena slot of each projected index; `None` is display none.
     pub slot: Vec<Option<usize>>,
+    /// Computed font size in pixels, per arena slot.
+    pub font_sizes: Vec<f32>,
 }
 
 /// Evaluates every row and runs block flow. `content` measures a source leaf by its
@@ -277,6 +279,8 @@ pub fn prepare_captured_tree(
     let mut boxes: Vec<FlowBox> = Vec::new();
     let mut offsets: Vec<(usize, [Dim; 4])> = Vec::new();
     let mut positions: Vec<(usize, Position)> = Vec::new();
+    let mut font_sizes: Vec<f32> = Vec::new();
+    let mut inline_text: Vec<bool> = Vec::new();
     for index in 0..count {
         let original = projection.original[index];
         let resolution =
@@ -298,7 +302,20 @@ pub fn prepare_captured_tree(
             },
             None => None,
         };
-        if !matches!(resolution.display, Display::Block | Display::ListItem) {
+        // 9.2.1.1: an inline text run between blocks sits in an anonymous block box, which
+        // takes none of the inline box's own box properties. Adjacent inline siblings
+        // would share a line, and there is no line layout here yet: those are refused.
+        let source_node = &projection.snapshot.construction().nodes()[original];
+        let anonymous = resolution.display == Display::Inline
+            && source_node.text().is_some()
+            && projection.nodes[index].children.is_empty()
+            && parent_slot.is_some_and(|parent| {
+                boxes[parent]
+                    .children
+                    .last()
+                    .is_none_or(|previous| !inline_text[*previous])
+            });
+        if !anonymous && !matches!(resolution.display, Display::Block | Display::ListItem) {
             return Err(E::Unsupported {
                 projected: index,
                 property: "display",
@@ -310,6 +327,10 @@ pub fn prepare_captured_tree(
             projected: index,
             error,
         })?;
+        if anonymous {
+            value = FlowBox::default();
+        }
+        inline_text.push(anonymous);
         value.direction = display
             .bidi_style(original)
             .map_or(Direction::Ltr, |style| match style.direction() {
@@ -329,6 +350,7 @@ pub fn prepare_captured_tree(
         }
         // Absent offsets are all auto: every positioned box is a containing block.
         positions.push((index, resolution.position));
+        font_sizes.push(row.font_size.map_or(16.0, |size| size.pixels));
         if let Some(offset) = row.offset {
             offsets.push((
                 boxes.len(),
@@ -360,6 +382,7 @@ pub fn prepare_captured_tree(
         offsets,
         positions,
         slot,
+        font_sizes,
     })
 }
 
@@ -373,17 +396,32 @@ impl PreparedTree {
         viewport: FlowViewport,
         limits: FlowLimits,
     ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
+        self.layout_measured(viewport, limits, &mut |_, _| None)
+    }
+
+    /// Lays the tree out, measuring leaves through `text_height(arena, width)`.
+    ///
+    /// # Errors
+    /// Returns flow and absolute placement errors.
+    pub fn layout_measured(
+        &self,
+        viewport: FlowViewport,
+        limits: FlowLimits,
+        text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
         use TreeLayoutError as E;
         let Self {
             boxes,
             offsets,
             positions,
             slot,
+            font_sizes: _,
         } = self;
         if boxes.is_empty() {
             return Ok(vec![None; slot.len()]);
         }
-        let mut geometry = layout_block_flow(boxes, viewport, limits).map_err(E::Flow)?;
+        let mut geometry =
+            layout_block_flow_measured(boxes, viewport, limits, text_height).map_err(E::Flow)?;
         // Arena order is preorder, so every box's ancestors have settled before it. A
         // relative offset moves a subtree after flow; floats and later flow do not react.
         let auto = [Dim::Auto; 4];
@@ -411,6 +449,7 @@ impl PreparedTree {
                         offset,
                         viewport,
                         limits,
+                        text_height,
                     )
                     .map_err(|error| error.at(index))?;
                 }
@@ -493,6 +532,7 @@ fn place_absolute(
     offset: [Dim; 4],
     viewport: FlowViewport,
     limits: FlowLimits,
+    text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
 ) -> Result<(), AbsoluteFailure> {
     let value = &boxes[arena];
     let (block, direction) =
@@ -540,7 +580,7 @@ fn place_absolute(
     // height and again with the used height so percentages see a definite basis.
     let nodes = subtree(boxes, arena);
     let local = |node: usize| nodes.iter().position(|candidate| *candidate == node);
-    let solve = |height: Dim| -> Result<Vec<FlowGeometry>, FlowError> {
+    let mut solve = |height: Dim| -> Result<Vec<FlowGeometry>, FlowError> {
         let mut arena_copy: Vec<FlowBox> = nodes.iter().map(|&node| boxes[node].clone()).collect();
         for item in &mut arena_copy {
             item.children = item.children.iter().filter_map(|&c| local(c)).collect();
@@ -556,7 +596,7 @@ fn place_absolute(
         root.margin = [Dim::Px(0.0); 4];
         // The percentages' basis is the containing block, not this synthetic viewport.
         root.padding = padding.map(Dim::Px);
-        layout_block_flow(
+        layout_block_flow_measured(
             &arena_copy,
             FlowViewport {
                 left: 0.0,
@@ -565,6 +605,7 @@ fn place_absolute(
                 height: Some(cb_height),
             },
             limits,
+            &mut |local_node, used| text_height(nodes[local_node], used),
         )
     };
     let specified = match value.height {
@@ -721,6 +762,8 @@ fn flow_box(row: &ClearanceBoxFact, numeric: NumericLimits) -> Result<FlowBox, C
 /// Cascaded paint colors of one box. `None` means transparent or not representable.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BoxPaint {
+    /// The computed `color`, for this box's text.
+    pub color: Option<[f32; 3]>,
     /// Red, green, blue in 0 to 1.
     pub background: Option<[f32; 3]>,
     /// Top, right, bottom, left.
@@ -843,6 +886,7 @@ pub fn evaluate_tree_paint<'r>(
         colors.push(row);
         let paint = |slot: usize| rgb(row[slot].value(), limits.numeric);
         paints.push(BoxPaint {
+            color: paint(0),
             background: paint(1),
             border: [paint(2), paint(3), paint(4), paint(5)],
         });
