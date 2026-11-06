@@ -172,9 +172,28 @@ pub struct FlowGeometry {
     pub collapsed_through: bool,
     /// Where a leaf's content goes when floats displace it from its content box: the
     /// band clear of every float its lines overlap, starting below them if none has
-    /// room. Lines past a shorter float stay this narrow: real line boxes would widen
-    /// them, so the result is conservative and never overlaps a float.
+    /// room. Without a split callback, lines past a shorter float stay this narrow, which
+    /// is conservative and never overlaps a float.
     pub leaf_band: Option<FlowRect>,
+    /// With a split callback, where the leaf continues past those floats: its `left` and
+    /// `right` apply from the first line starting at or below its `top`.
+    pub leaf_after: Option<FlowRect>,
+}
+
+impl FlowGeometry {
+    /// Moves every published rectangle.
+    pub fn move_by(&mut self, dx: f32, dy: f32) {
+        let bands = self.leaf_band.iter_mut().chain(self.leaf_after.iter_mut());
+        for rect in [&mut self.border, &mut self.padding, &mut self.content]
+            .into_iter()
+            .chain(bands)
+        {
+            rect.left += dx;
+            rect.right += dx;
+            rect.top += dy;
+            rect.bottom += dy;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -292,6 +311,9 @@ impl Flow {
     }
 }
 
+/// The most columns one cell can span; HTML's own limit.
+const MAX_SPAN: usize = 1000;
+
 /// One cell's place in the table grid.
 #[derive(Debug, Clone, Copy)]
 struct GridCell {
@@ -309,6 +331,8 @@ struct Solver<'a> {
     last_flowed: f32,
     /// A leaf's content height at its used width, overriding the static measurement.
     text_height: &'a mut dyn FnMut(usize, f32) -> Option<f32>,
+    /// See [`layout_block_flow_split`].
+    text_split: &'a mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
 }
 
 /// Lays out the tree rooted at index 0 as one block formatting context root.
@@ -336,6 +360,23 @@ pub fn layout_block_flow_measured(
     limits: FlowLimits,
     text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
 ) -> Result<Vec<FlowGeometry>, FlowError> {
+    layout_block_flow_split(boxes, viewport, limits, text_height, &mut |_, _, _, _| None)
+}
+
+/// Lays out as [`layout_block_flow_measured`], asking `text_split(node, narrow, until,
+/// wide)` for a leaf's total height when its first lines are `narrow` wide up to `until`
+/// below its top, and the rest `wide`, as text past a shorter float. `None` keeps it
+/// narrow throughout. One widening per leaf is modeled.
+///
+/// # Errors
+/// As [`layout_block_flow`].
+pub fn layout_block_flow_split(
+    boxes: &[FlowBox],
+    viewport: FlowViewport,
+    limits: FlowLimits,
+    text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
+) -> Result<Vec<FlowGeometry>, FlowError> {
     if boxes.is_empty() || boxes.len() > limits.boxes.get() {
         return Err(FlowError::Boxes);
     }
@@ -348,6 +389,7 @@ pub fn layout_block_flow_measured(
         geometry: vec![FlowGeometry::default(); boxes.len()],
         last_flowed: 0.0,
         text_height,
+        text_split,
     };
     let containing = Containing {
         left: viewport.left,
@@ -368,6 +410,7 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
         geometry: Vec::new(),
         last_flowed: 0.0,
         text_height: &mut |_, _| None,
+        text_split: &mut |_, _, _, _| None,
     }
     .measure(node)
 }
@@ -463,7 +506,7 @@ impl Solver<'_> {
         }
         if let Some(TableRole::Table { spacing }) = value.table {
             let (rows, captions) = self.table_parts(node);
-            let (mins, prefs) = self.table_columns(&rows);
+            let (mins, prefs) = self.table_columns(&rows, spacing[0]);
             let gaps = spacing[0] * (mins.len() + 1) as f32;
             let mut minimum = mins.iter().sum::<f32>() + gaps;
             let mut preferred = prefs.iter().sum::<f32>() + gaps;
@@ -516,6 +559,27 @@ impl Solver<'_> {
         (head, captions)
     }
 
+    /// The index past the last row in the same row group as `rows[row_index]`. Rows directly
+    /// in the table form a group with their neighbours (17.2.1's anonymous group).
+    fn group_end(&self, rows: &[usize], row_index: usize) -> usize {
+        let group_of = |row: usize| {
+            self.boxes.iter().position(|candidate| {
+                candidate.children.contains(&row)
+                    && matches!(
+                        candidate.table,
+                        Some(
+                            TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup
+                        )
+                    )
+            })
+        };
+        let own = group_of(rows[row_index]);
+        rows[row_index..]
+            .iter()
+            .position(|row| group_of(*row) != own)
+            .map_or(rows.len(), |offset| row_index + offset)
+    }
+
     /// 17.5: cells claim grid slots row by row, skipping slots a rowspan from above holds.
     fn table_grid(&self, rows: &[usize]) -> (Vec<GridCell>, usize) {
         let mut held: Vec<usize> = Vec::new();
@@ -528,9 +592,11 @@ impl Solver<'_> {
                     column += 1;
                 }
                 let value = &self.boxes[cell];
-                let col_span = value.col_span.max(1);
-                // A rowspan stops at the last row (17.5).
-                let row_span = value.row_span.max(1).min(rows.len() - row_index);
+                let col_span = value.col_span.clamp(1, MAX_SPAN);
+                // A rowspan stops at the end of its row group, or a span past any sane table
+                // at the limit of what can be represented.
+                let group_end = self.group_end(rows, row_index);
+                let row_span = value.row_span.clamp(1, group_end - row_index);
                 if held.len() < column + col_span {
                     held.resize(column + col_span, 0);
                 }
@@ -556,7 +622,7 @@ impl Solver<'_> {
 
     /// Each column's narrowest and preferred width (17.5.2.2): single-column cells first,
     /// then each spanning cell's shortfall shared evenly over its columns.
-    fn table_columns(&self, rows: &[usize]) -> (Vec<f32>, Vec<f32>) {
+    fn table_columns(&self, rows: &[usize], spacing: f32) -> (Vec<f32>, Vec<f32>) {
         let (placed, columns) = self.table_grid(rows);
         let (mut mins, mut prefs) = (vec![0.0_f32; columns], vec![0.0_f32; columns]);
         for item in placed.iter().filter(|item| item.col_span == 1) {
@@ -569,7 +635,7 @@ impl Solver<'_> {
         for item in spanning {
             let range = item.column..item.column + item.col_span;
             // The gaps inside the span count toward the cell's room.
-            let gaps = self.table_spacing_of(rows) * (item.col_span - 1) as f32;
+            let gaps = spacing * (item.col_span - 1) as f32;
             let (minimum, preferred) = self.outer_measure(item.cell);
             for (widths, wanted) in [(&mut mins, minimum), (&mut prefs, preferred)] {
                 let shortfall = wanted - gaps - widths[range.clone()].iter().sum::<f32>();
@@ -586,28 +652,6 @@ impl Solver<'_> {
         (mins, prefs)
     }
 
-    /// The horizontal spacing of the table a row list belongs to, found through a row.
-    fn table_spacing_of(&self, rows: &[usize]) -> f32 {
-        let Some(&first) = rows.first() else {
-            return 0.0;
-        };
-        self.boxes
-            .iter()
-            .find_map(|candidate| match candidate.table {
-                Some(TableRole::Table { spacing })
-                    if candidate.children.contains(&first)
-                        || candidate
-                            .children
-                            .iter()
-                            .any(|child| self.boxes[*child].children.contains(&first)) =>
-                {
-                    Some(spacing[0])
-                }
-                _ => None,
-            })
-            .unwrap_or(0.0)
-    }
-
     /// Lays out rows and captions in `inner`; returns the content bottom.
     fn layout_table(
         &mut self,
@@ -617,7 +661,7 @@ impl Solver<'_> {
         content_top: f32,
     ) -> Result<f32, FlowError> {
         let (rows, captions) = self.table_parts(node);
-        let (mins, prefs) = self.table_columns(&rows);
+        let (mins, prefs) = self.table_columns(&rows, spacing[0]);
         let count = mins.len();
         let available = (inner.width - spacing[0] * (count + 1) as f32).max(0.0);
         let (sum_min, sum_pref): (f32, f32) = (mins.iter().sum(), prefs.iter().sum());
@@ -744,6 +788,10 @@ impl Solver<'_> {
                 geometry.content.top += offset;
                 geometry.content.bottom = geometry.content.top + cell_natural;
                 if let Some(band) = &mut geometry.leaf_band {
+                    band.top += offset;
+                    band.bottom += offset;
+                }
+                if let Some(band) = &mut geometry.leaf_after {
                     band.top += offset;
                     band.bottom += offset;
                 }
@@ -1047,6 +1095,7 @@ impl Solver<'_> {
             direction: value.direction,
         };
         let mut leaf_band = None;
+        let mut leaf_after = None;
         // 9.5: lines shorten beside earlier floats; with no room they move below.
         let measured = self.leaf_height(node, width);
         if measured.is_some_and(|height| height != 0.0) {
@@ -1056,7 +1105,7 @@ impl Solver<'_> {
         let leaf_height = if flow.floats.is_empty() || measured.is_none_or(|height| height == 0.0) {
             measured
         } else {
-            let (band, height) = self.place_leaf(
+            let (band, height, after) = self.place_leaf(
                 node,
                 flow,
                 content_left,
@@ -1064,6 +1113,7 @@ impl Solver<'_> {
                 measured.unwrap_or_default(),
             )?;
             leaf_band = band;
+            leaf_after = after;
             Some(height)
         };
         if let Some(height) = leaf_height.filter(|height| *height != 0.0) {
@@ -1155,6 +1205,7 @@ impl Solver<'_> {
             clearance,
         );
         self.geometry[node].leaf_band = leaf_band;
+        self.geometry[node].leaf_after = leaf_after;
         Ok(())
     }
 
@@ -1168,7 +1219,7 @@ impl Solver<'_> {
         left: f32,
         width: f32,
         measured: f32,
-    ) -> Result<(Option<FlowRect>, f32), FlowError> {
+    ) -> Result<(Option<FlowRect>, f32, Option<FlowRect>), FlowError> {
         let float_error = |error| FlowError::Float { node, error };
         let right = left + width;
         let least = self.boxes[node]
@@ -1204,7 +1255,35 @@ impl Solver<'_> {
             bound = bound.saturating_sub(1);
             if at_used == height || bound == 0 {
                 let band = displaced.then(|| rect(near, far.max(near), y, y));
-                return Ok((band, y - probe + at_used));
+                // Past the lowest narrowing float that ends inside the text, it can widen.
+                let end = y + at_used;
+                let until = flow
+                    .floats
+                    .iter()
+                    .filter(|float| float.top < end && float.bottom > y && float.bottom < end)
+                    .map(|float| float.bottom)
+                    .fold(f32::INFINITY, f32::min);
+                if until.is_finite() && displaced {
+                    let (mut wide_near, mut wide_far) = (left, right);
+                    for float in flow
+                        .floats
+                        .iter()
+                        .filter(|float| float.top < end && float.bottom > until)
+                    {
+                        match float.side {
+                            FloatSide::Left => wide_near = wide_near.max(float.right),
+                            FloatSide::Right => wide_far = wide_far.min(float.left),
+                        }
+                    }
+                    if wide_far - wide_near > used
+                        && let Some(total) =
+                            (self.text_split)(node, used, until - y, wide_far - wide_near)
+                    {
+                        let after = rect(wide_near, wide_far, until, until);
+                        return Ok((band, y - probe + total, Some(after)));
+                    }
+                }
+                return Ok((band, y - probe + at_used, None));
             }
             height = at_used;
         }
@@ -1243,6 +1322,7 @@ impl Solver<'_> {
             clearance,
             collapsed_through: false,
             leaf_band: None,
+            leaf_after: None,
         };
     }
 
@@ -1312,22 +1392,7 @@ impl Solver<'_> {
 
     fn translate(&mut self, node: usize, dx: f32, dy: f32) {
         let geometry = &mut self.geometry[node];
-        for edges in [
-            &mut geometry.border,
-            &mut geometry.padding,
-            &mut geometry.content,
-        ] {
-            edges.left += dx;
-            edges.right += dx;
-            edges.top += dy;
-            edges.bottom += dy;
-        }
-        if let Some(band) = &mut geometry.leaf_band {
-            band.left += dx;
-            band.right += dx;
-            band.top += dy;
-            band.bottom += dy;
-        }
+        geometry.move_by(dx, dy);
         for &child in &self.boxes[node].children {
             if self.boxes[child].out_of_flow {
                 let moved = &mut self.geometry[child].border;

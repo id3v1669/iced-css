@@ -874,12 +874,14 @@ impl BoxTree {
         )
     }
 
-    /// Lays out by arena slot, with `measure(arena, width)` giving each leaf's height.
+    /// Lays out by arena slot, with `measure(arena, width)` giving each leaf's height and
+    /// `split` its height when it widens past a float.
     fn layout_arena(
         &self,
         width: f32,
         height: Option<f32>,
         measure: &mut dyn FnMut(usize, f32) -> Option<f32>,
+        split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
     ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
         self.prepared.layout_slots(
             FlowViewport {
@@ -898,6 +900,7 @@ impl BoxTree {
                 }
                 measure(arena, used.ceil())
             },
+            &mut |arena, narrow, until, wide| split(arena, narrow.ceil(), until, wide.ceil()),
         )
     }
 
@@ -1161,6 +1164,7 @@ where
             scroll_limits: Vec::new(),
             clips: Vec::new(),
             paragraphs: BTreeMap::new(),
+            rest_paragraphs: BTreeMap::new(),
             marker_paragraphs: BTreeMap::new(),
             elements,
             ids,
@@ -1269,15 +1273,7 @@ fn apply_scrolling(
         let mut moved = Vec::new();
         scrolling_descendants(prepared, arena, |child, _| moved.push(child));
         for child in moved {
-            let target = &mut geometry[child];
-            let band = target.leaf_band.as_mut();
-            for rect in [&mut target.border, &mut target.padding, &mut target.content]
-                .into_iter()
-                .chain(band)
-            {
-                rect.top -= offset;
-                rect.bottom -= offset;
-            }
+            geometry[child].move_by(0.0, -offset);
         }
     }
     limits
@@ -1303,6 +1299,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     presses: Vec<(String, Message)>,
     /// Shaped text, its top-left corner relative to the layout, and its color, by arena.
     paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
+    /// The text past a shorter float, its corner and its leaf, by arena slot.
+    rest_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, TextLeaf)>,
     /// Shaped outside markers and their corners, by projected index of their item.
     marker_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point)>,
 }
@@ -1451,6 +1449,77 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
             }
         }
     }
+}
+
+/// Splits a leaf where its lines at `narrow` first start at or below `until`, for text
+/// that widens past a float. Returns the two parts and the first part's height. A forced
+/// line break gives more than one buffer line, whose offsets do not add up: no split.
+fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    narrow: f32,
+    until: f32,
+) -> Option<(TextLeaf, TextLeaf, f32)> {
+    let whole = leaf.text();
+    if whole.contains('\n') {
+        return None;
+    }
+    let shaped = paragraph::<Renderer>(renderer, leaf, narrow);
+    let height = shaped.min_bounds().height;
+    let offset_at = |y: f32| {
+        shaped
+            .hit_test(Point::new(0.0, y))
+            .map(|text::Hit::CharOffset(offset)| offset)
+    };
+    // The line holding the point just above `until` still runs beside the float.
+    let start = offset_at((until - 0.5).max(0.0))?;
+    let mut y = until.max(0.0);
+    let cut = loop {
+        if y >= height {
+            return None;
+        }
+        let here = offset_at(y)?;
+        if here != start {
+            break here;
+        }
+        y += 1.0;
+    };
+    if cut == 0 || cut >= whole.len() || !whole.is_char_boundary(cut) {
+        return None;
+    }
+    let (mut first, mut second) = (Vec::new(), Vec::new());
+    let mut seen = 0;
+    for run in &leaf.runs {
+        let end = seen + run.text.len();
+        if end <= cut {
+            first.push(run.clone());
+        } else if seen >= cut {
+            second.push(run.clone());
+        } else {
+            let at = cut - seen;
+            first.push(TextRun {
+                text: run.text[..at].to_owned(),
+                ..run.clone()
+            });
+            second.push(TextRun {
+                text: run.text[at..].to_owned(),
+                ..run.clone()
+            });
+        }
+        seen = end;
+    }
+    let first = TextLeaf {
+        runs: first,
+        ..leaf.clone()
+    };
+    let second = TextLeaf {
+        runs: second,
+        ..leaf.clone()
+    };
+    let first_height = paragraph::<Renderer>(renderer, &first, narrow)
+        .min_bounds()
+        .height;
+    Some((first, second, first_height))
 }
 
 /// The narrowest width a leaf can wrap to: its widest single word.
@@ -1605,16 +1674,22 @@ where
             {
                 // The shaper snaps a point outside its text to the nearest run, so the
                 // run's own rectangles decide.
-                let local = Point::new(point.x - corner.x, point.y - corner.y);
-                if let Some(span) = shaped.hit_span(local)
-                    && let Some(run) = leaf.runs.get(span)
-                    && run.visible
-                    && shaped
-                        .span_bounds(span)
-                        .iter()
-                        .any(|rect| rect.contains(local))
-                {
-                    return Some(run.owner);
+                let rest = self
+                    .rest_paragraphs
+                    .get(&arena)
+                    .map(|(shaped, corner, leaf)| (shaped, *corner, leaf));
+                for (shaped, corner, leaf) in std::iter::once((shaped, *corner, leaf)).chain(rest) {
+                    let local = Point::new(point.x - corner.x, point.y - corner.y);
+                    if let Some(span) = shaped.hit_span(local)
+                        && let Some(run) = leaf.runs.get(span)
+                        && run.visible
+                        && shaped
+                            .span_bounds(span)
+                            .iter()
+                            .any(|rect| rect.contains(local))
+                    {
+                        return Some(run.owner);
+                    }
                 }
             }
             let PaintStep::Box(step) = step else {
@@ -1793,6 +1868,12 @@ where
                         .as_ref()
                         .map(|leaf| paragraph(renderer, leaf, width).min_bounds().height)
                 },
+                &mut |arena, narrow, until, wide| {
+                    let leaf = current.texts[arena].as_ref()?;
+                    let (_, second, first_height) = split_leaf(renderer, leaf, narrow, until)?;
+                    let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
+                    Some(first_height + rest.min_bounds().height)
+                },
             )
             .unwrap_or_default();
         let originals = &self.tree.originals;
@@ -1810,6 +1891,7 @@ where
         self.geometry = self.tree.prepared.by_projected(&self.slot_geometry);
         self.clips = self.tree.clips(&self.geometry);
         self.paragraphs.clear();
+        self.rest_paragraphs.clear();
         for (arena, leaf) in self.tree.texts.iter().enumerate() {
             let Some(leaf) = leaf.as_ref().filter(|leaf| !leaf.is_empty()) else {
                 continue;
@@ -1822,6 +1904,38 @@ where
             }
             let place = geometry.leaf_band.unwrap_or(geometry.content);
             let width = (place.right - place.left).ceil();
+            let block_corner = |block: f32, place: FlowRect, width: f32, top: f32| {
+                Point::new(
+                    match leaf.align {
+                        "center" => place.left + (width - block) / 2.0,
+                        "right" => place.left + width - block,
+                        _ => place.left,
+                    },
+                    top,
+                )
+            };
+            // Past a shorter float the rest of the text takes the wider band.
+            let parts = geometry.leaf_after.and_then(|after| {
+                split_leaf(renderer, leaf, width, after.top - place.top).map(|parts| (after, parts))
+            });
+            if let Some((after, (first, second, first_height))) = parts {
+                let wide = (after.right - after.left).ceil();
+                let shaped_first: Renderer::Paragraph = paragraph(renderer, &first, width);
+                let shaped_rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
+                let corner_first =
+                    block_corner(shaped_first.min_bounds().width, place, width, place.top);
+                let corner_rest = block_corner(
+                    shaped_rest.min_bounds().width,
+                    after,
+                    wide,
+                    place.top + first_height,
+                );
+                self.paragraphs
+                    .insert(arena, (shaped_first, corner_first, Color::BLACK));
+                self.rest_paragraphs
+                    .insert(arena, (shaped_rest, corner_rest, second));
+                continue;
+            }
             // A paragraph aligns its lines within its widest line and draws from that
             // block's corner: place the block in the content box.
             let block = paragraph::<Renderer>(renderer, leaf, width)
@@ -2146,6 +2260,11 @@ where
                                     draw_run_decorations(leaf, shaped, renderer, corner);
                                 }
                                 renderer.fill_paragraph(shaped, corner, *color, clip);
+                            }
+                            if let Some((shaped, corner, leaf)) = self.rest_paragraphs.get(&arena) {
+                                let corner = Point::new(origin.x + corner.x, origin.y + corner.y);
+                                draw_run_decorations(leaf, shaped, renderer, corner);
+                                renderer.fill_paragraph(shaped, corner, Color::BLACK, clip);
                             }
                             if let Some(index) =
                                 self.slots.iter().position(|slot| *slot == Some(arena))

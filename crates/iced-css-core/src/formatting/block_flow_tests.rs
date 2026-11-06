@@ -1386,3 +1386,104 @@ fn a_rowspan_past_the_last_row_stops_there() {
     assert_eq!(g[3].border.bottom, 4.0);
     assert_eq!(g[1].border.bottom, 4.0);
 }
+
+#[test]
+fn text_widens_past_a_shorter_float_when_it_can_split() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        float(FloatSide::Left, 40.0, 20.0),
+        text_leaf(5.0),
+    ];
+    boxes[0].children = vec![1, 2];
+    let mut asked = Vec::new();
+    let g = layout_block_flow_split(
+        &boxes,
+        viewport(),
+        limits(),
+        &mut |node, width| (node == 2).then_some(if width < 100.0 { 60.0 } else { 40.0 }),
+        &mut |node, narrow, until, wide| {
+            asked.push((node, narrow, until, wide));
+            Some(50.0)
+        },
+    )
+    .unwrap();
+    assert_eq!(asked, vec![(2, 60.0, 20.0, 100.0)]);
+    assert_eq!(g[2].border.bottom, 50.0);
+    assert_eq!(g[2].leaf_band.unwrap().left, 40.0);
+    let after = g[2].leaf_after.unwrap();
+    assert_eq!((after.left, after.right, after.top), (0.0, 100.0, 20.0));
+    // A refused split stays narrow, and text that fits beside the float never asks.
+    let g = layout_block_flow_split(
+        &boxes,
+        viewport(),
+        limits(),
+        &mut |node, _| (node == 2).then_some(60.0),
+        &mut |_, _, _, _| None,
+    )
+    .unwrap();
+    assert_eq!(g[2].leaf_after, None);
+    assert_eq!(g[2].border.bottom, 60.0);
+    let mut asked = 0;
+    let g = layout_block_flow_split(
+        &boxes,
+        viewport(),
+        limits(),
+        &mut |node, _| (node == 2).then_some(10.0),
+        &mut |_, _, _, _| {
+            asked += 1;
+            Some(1.0)
+        },
+    )
+    .unwrap();
+    assert_eq!(asked, 0);
+    assert_eq!(g[2].border.bottom, 10.0);
+}
+
+#[test]
+fn a_rowspan_stops_at_its_row_group() {
+    let group = |role| FlowBox {
+        table: Some(role),
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Auto),
+            group(TableRole::HeaderGroup),
+            row(),
+            spanned(1, 2, Dim::Px(10.0), 1.0),
+            group(TableRole::BodyGroup),
+            row(),
+            cell(Dim::Px(10.0), 1.0),
+            cell(Dim::Px(10.0), 1.0),
+        ],
+        &[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (1, 5),
+            (5, 6),
+            (6, 7),
+            (6, 8),
+        ],
+    );
+    // The body row's cells start in the first column, with no phantom third one.
+    assert_eq!(g[7].border.left, 0.0);
+    assert_eq!(g[8].border.left, 10.0);
+    assert_eq!(g[1].border.right, 20.0);
+}
+
+#[test]
+fn absurd_spans_are_clamped() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Auto),
+            row(),
+            spanned(usize::MAX, usize::MAX, Dim::Px(10.0), 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3)],
+    );
+    assert_eq!(g[1].border.bottom, 1.0);
+}

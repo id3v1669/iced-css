@@ -30,7 +30,7 @@ use iced_css_core::{
         block::{AutoLength, Direction},
         block_flow::{
             Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
-            RowAlign, TableRole, layout_block_flow_measured, preferred_content_widths,
+            RowAlign, TableRole, layout_block_flow_split, preferred_content_widths,
         },
         clearance::ClearSide,
         display::{Display, Float, Position},
@@ -609,16 +609,19 @@ pub fn prepare_captured_tree(
             value.table = Some(role);
             if matches!(role, TableRole::Cell) {
                 // 17.5: spans come from the document, here as source attributes.
-                let span = |name: &str| {
-                    source_node
-                        .metadata()
-                        .attribute(name)
-                        .and_then(|text| text.trim().parse::<usize>().ok())
-                        .filter(|span| *span > 0 && *span <= 1000)
-                        .unwrap_or(1)
+                // Unparsable is 1; rowspan 0 means to the group end, as in HTML; too much
+                // is clamped by the layout.
+                let span = |name: &str, zero: usize| match source_node
+                    .metadata()
+                    .attribute(name)
+                    .and_then(|text| text.trim().parse::<usize>().ok())
+                {
+                    Some(0) => zero,
+                    Some(span) => span,
+                    None => 1,
                 };
-                value.col_span = span("colspan");
-                value.row_span = span("rowspan");
+                value.col_span = span("colspan", 1);
+                value.row_span = span("rowspan", usize::MAX);
             }
             // These parts' direct children must be table parts: generated text would need
             // an anonymous cell (17.2.1).
@@ -757,7 +760,12 @@ impl PreparedTree {
         limits: FlowLimits,
         text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
     ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
-        Ok(self.by_projected(&self.layout_slots(viewport, limits, text_height)?))
+        Ok(self.by_projected(&self.layout_slots(
+            viewport,
+            limits,
+            text_height,
+            &mut |_, _, _, _| None,
+        )?))
     }
 
     /// Lays the tree out, by arena slot. Anonymous blocks have no projected index.
@@ -769,6 +777,7 @@ impl PreparedTree {
         viewport: FlowViewport,
         limits: FlowLimits,
         text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
+        text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
     ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
         use TreeLayoutError as E;
         let Self {
@@ -788,7 +797,8 @@ impl PreparedTree {
             return Ok(Vec::new());
         }
         let mut geometry =
-            layout_block_flow_measured(boxes, viewport, limits, text_height).map_err(E::Flow)?;
+            layout_block_flow_split(boxes, viewport, limits, text_height, text_split)
+                .map_err(E::Flow)?;
         // Arena order is preorder, so every box's ancestors have settled before it. A
         // relative offset moves a subtree after flow; floats and later flow do not react.
         let auto = [Dim::Auto; 4];
@@ -817,6 +827,7 @@ impl PreparedTree {
                         viewport,
                         limits,
                         text_height,
+                        text_split,
                     )
                     .map_err(|error| error.at(index))?;
                 }
@@ -897,6 +908,7 @@ fn place_absolute(
     viewport: FlowViewport,
     limits: FlowLimits,
     text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
 ) -> Result<(), AbsoluteFailure> {
     let value = &boxes[arena];
     let (block, direction) =
@@ -960,7 +972,7 @@ fn place_absolute(
         root.margin = [Dim::Px(0.0); 4];
         // The percentages' basis is the containing block, not this synthetic viewport.
         root.padding = padding.map(Dim::Px);
-        layout_block_flow_measured(
+        layout_block_flow_split(
             &arena_copy,
             FlowViewport {
                 left: 0.0,
@@ -970,6 +982,9 @@ fn place_absolute(
             },
             limits,
             &mut |local_node, used| text_height(nodes[local_node], used),
+            &mut |local_node, narrow, until, wide| {
+                text_split(nodes[local_node], narrow, until, wide)
+            },
         )
     };
     let specified = match value.height {
@@ -1003,18 +1018,7 @@ fn place_absolute(
     let dy = block.top + height.top + height.margin_top;
     for (index, &node) in nodes.iter().enumerate() {
         let mut placed = second[index];
-        for rect in [&mut placed.border, &mut placed.padding, &mut placed.content] {
-            rect.left += dx;
-            rect.right += dx;
-            rect.top += dy;
-            rect.bottom += dy;
-        }
-        if let Some(rect) = &mut placed.leaf_band {
-            rect.left += dx;
-            rect.right += dx;
-            rect.top += dy;
-            rect.bottom += dy;
-        }
+        placed.move_by(dx, dy);
         if index == 0 {
             placed.margin = [
                 height.margin_top,
@@ -1098,19 +1102,7 @@ fn relative_shift(direction: Direction, offset: [Dim; 4], basis: (f32, Option<f3
 }
 
 fn shift(boxes: &[FlowBox], geometry: &mut [FlowGeometry], node: usize, dx: f32, dy: f32) {
-    let target = &mut geometry[node];
-    for rect in [&mut target.border, &mut target.padding, &mut target.content] {
-        rect.left += dx;
-        rect.right += dx;
-        rect.top += dy;
-        rect.bottom += dy;
-    }
-    if let Some(rect) = &mut target.leaf_band {
-        rect.left += dx;
-        rect.right += dx;
-        rect.top += dy;
-        rect.bottom += dy;
-    }
+    geometry[node].move_by(dx, dy);
     for &child in &boxes[node].children {
         shift(boxes, geometry, child, dx, dy);
     }

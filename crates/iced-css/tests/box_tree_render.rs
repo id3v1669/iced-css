@@ -165,6 +165,61 @@ fn inline_blocks_lay_out_as_a_navigation_row() {
 }
 
 #[test]
+fn text_widens_past_a_shorter_float_on_the_real_renderer() {
+    let long = "This paragraph is long enough to run beside the short float for a few lines, \
+        and then, once it has passed the float's bottom edge, the following lines should use \
+        the whole width of the page again instead of staying in the narrow band they started \
+        in, which is what real line boxes do. The words keep going so that a good number of \
+        lines land below the float and the difference is plain to see at a glance.";
+    let root = node(
+        "page",
+        vec![
+            node("side", vec![]),
+            text("copy", long),
+            node("after", vec![]),
+        ],
+    );
+    let css = "#page { width:420px; padding:8px; }
+        #side { float:left; width:120px; height:60px; margin-right:8px; background-color:#ffcc80; }
+        #after { height:8px; background-color:#90caf9; }";
+    let view: Element<'_, u8> = BoxTree::new(root, css)
+        .unwrap()
+        .interactive()
+        .on_press("copy", 1)
+        .into();
+    let mut ui = iced_test::simulator(view);
+    let snapshot = ui.snapshot(&Theme::Light).unwrap();
+    let path = std::env::temp_dir().join("iced-css-box-tree-widen");
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(snapshot.matches_image(path.join("widen.png")).unwrap());
+    let view = || -> Element<'_, u8> {
+        BoxTree::new(
+            node(
+                "page",
+                vec![
+                    node("side", vec![]),
+                    text("copy", long),
+                    node("after", vec![]),
+                ],
+            ),
+            css,
+        )
+        .unwrap()
+        .interactive()
+        .on_press("copy", 1)
+        .on_press("side", 2)
+        .into()
+    };
+    // Left of where the float's edge was, the widened lines reach the text.
+    assert_eq!(click(view(), Point::new(20.0, 100.0)), vec![1]);
+    // The last line sits below all of them, so the second part really starts lower down.
+    assert_eq!(click(view(), Point::new(20.0, 183.0)), vec![1]);
+    // The line that overlaps the float's bottom stays narrow: no text runs over the float.
+    assert_eq!(click(view(), Point::new(20.0, 60.0)), vec![2]);
+}
+
+#[test]
 fn misplaced_table_parts_are_refused_not_guessed() {
     for (css, tree) in [
         (
