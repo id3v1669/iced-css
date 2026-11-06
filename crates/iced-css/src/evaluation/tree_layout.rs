@@ -230,6 +230,8 @@ pub struct PreparedTree {
     pub slot: Vec<Option<usize>>,
     /// Computed font size in pixels, per arena slot.
     pub font_sizes: Vec<f32>,
+    /// Whether the arena slot is an anonymous block around inline text, per slot.
+    pub anonymous: Vec<bool>,
 }
 
 /// Evaluates every row and runs block flow. `content` measures a source leaf by its
@@ -383,6 +385,7 @@ pub fn prepare_captured_tree(
         positions,
         slot,
         font_sizes,
+        anonymous: inline_text,
     })
 }
 
@@ -416,6 +419,7 @@ impl PreparedTree {
             positions,
             slot,
             font_sizes: _,
+            anonymous: _,
         } = self;
         if boxes.is_empty() {
             return Ok(vec![None; slot.len()]);
@@ -645,6 +649,12 @@ fn place_absolute(
             rect.top += dy;
             rect.bottom += dy;
         }
+        if let Some(rect) = &mut placed.leaf_band {
+            rect.left += dx;
+            rect.right += dx;
+            rect.top += dy;
+            rect.bottom += dy;
+        }
         if index == 0 {
             placed.margin = [
                 height.margin_top,
@@ -698,6 +708,12 @@ fn relative_shift(direction: Direction, offset: [Dim; 4], basis: (f32, Option<f3
 fn shift(boxes: &[FlowBox], geometry: &mut [FlowGeometry], node: usize, dx: f32, dy: f32) {
     let target = &mut geometry[node];
     for rect in [&mut target.border, &mut target.padding, &mut target.content] {
+        rect.left += dx;
+        rect.right += dx;
+        rect.top += dy;
+        rect.bottom += dy;
+    }
+    if let Some(rect) = &mut target.leaf_band {
         rect.left += dx;
         rect.right += dx;
         rect.top += dy;
@@ -762,7 +778,7 @@ fn flow_box(row: &ClearanceBoxFact, numeric: NumericLimits) -> Result<FlowBox, C
 /// Cascaded paint colors of one box. `None` means transparent or not representable.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BoxPaint {
-    /// The computed `color`, for this box's text.
+    /// The computed `color`, for this box's text; `None` is transparent.
     pub color: Option<[f32; 3]>,
     /// Red, green, blue in 0 to 1.
     pub background: Option<[f32; 3]>,
@@ -886,7 +902,11 @@ pub fn evaluate_tree_paint<'r>(
         colors.push(row);
         let paint = |slot: usize| rgb(row[slot].value(), limits.numeric);
         paints.push(BoxPaint {
-            color: paint(0),
+            // A system color has no palette here: text stays visible, in black.
+            color: match row[0].value() {
+                Color::System(_) | Color::Invert => Some([0.0; 3]),
+                _ => paint(0),
+            },
             background: paint(1),
             border: [paint(2), paint(3), paint(4), paint(5)],
         });

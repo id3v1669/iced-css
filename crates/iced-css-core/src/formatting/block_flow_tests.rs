@@ -702,3 +702,83 @@ fn leaf_height_follows_the_used_width_it_is_measured_at() {
     assert_eq!(g[1].border.bottom, 20.0);
     assert_eq!(g[2].border.bottom, 60.0);
 }
+
+fn text_leaf(min: f32) -> FlowBox {
+    FlowBox {
+        content: Some(FlowContent {
+            height: 20.0,
+            preferred_width: 200.0,
+            preferred_min_width: min,
+        }),
+        ..FlowBox::default()
+    }
+}
+
+#[test]
+fn text_beside_a_float_narrows_and_is_remeasured_at_the_band() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        float(FloatSide::Left, 30.0, 25.0),
+        text_leaf(10.0),
+    ];
+    boxes[0].children = vec![1, 2];
+    let g = layout_block_flow_measured(&boxes, viewport(), limits(), &mut |node, width| {
+        (node == 2).then_some(1400.0 / width)
+    })
+    .unwrap();
+    // The box stays full width (9.5); only its content moves.
+    assert_eq!((g[2].border.left, g[2].border.right), (0.0, 100.0));
+    assert_eq!(
+        g[2].leaf_band,
+        Some(FlowRect {
+            left: 30.0,
+            right: 100.0,
+            top: 0.0,
+            bottom: 0.0
+        })
+    );
+    assert_eq!(g[2].border.bottom, 20.0);
+}
+
+#[test]
+fn text_with_no_room_beside_floats_starts_below_them() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        float(FloatSide::Left, 95.0, 25.0),
+        text_leaf(10.0),
+    ];
+    boxes[0].children = vec![1, 2];
+    let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
+    let band = g[2].leaf_band.unwrap();
+    assert_eq!((band.left, band.top), (0.0, 25.0));
+    // The gap above the first line counts toward the box.
+    assert_eq!(g[2].border.bottom, 45.0);
+}
+
+#[test]
+fn text_clear_of_floats_is_not_displaced() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        h(30.0),
+        float(FloatSide::Right, 50.0, 5.0),
+        text_leaf(10.0),
+    ];
+    boxes[0].children = vec![1, 2, 3];
+    boxes[3].margin[0] = Dim::Px(10.0);
+    let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
+    assert_eq!(g[3].leaf_band, None);
+}
+
+#[test]
+fn text_avoids_a_float_deferred_in_its_own_open_parent() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        FlowBox::default(),
+        float(FloatSide::Left, 30.0, 25.0),
+        text_leaf(10.0),
+    ];
+    boxes[0].children = vec![1];
+    boxes[1].children = vec![2, 3];
+    let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
+    assert_eq!(g[3].leaf_band.unwrap().left, 30.0);
+}

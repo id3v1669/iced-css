@@ -51,7 +51,10 @@ use iced_css_core::{
     },
     values::{NumericLimits, color::ColorLimits},
 };
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::{NonZeroU64, NonZeroUsize},
+};
 
 /// What building a box tree can refuse. Each cause keeps its own message.
 #[derive(Debug)]
@@ -330,7 +333,14 @@ impl BoxTree {
         .map_err(failed)?;
         let prepared = prepare_captured_tree(&projection, &display, facts(), Some(16.0), |_| None)
             .map_err(failed)?;
-        let paints = evaluate_tree_paint(&projection, &display, facts()).map_err(failed)?;
+        let mut paints = evaluate_tree_paint(&projection, &display, facts()).map_err(failed)?;
+        // An anonymous block around inline text has none of the inline box's own paint.
+        for (arena, &(projected, _)) in prepared.positions.iter().enumerate() {
+            if prepared.anonymous[arena] {
+                paints[projected].background = None;
+                paints[projected].border = [None; 4];
+            }
+        }
         let nodes = snapshot.construction().nodes();
         let texts = prepared
             .positions
@@ -395,7 +405,13 @@ impl BoxTree {
             },
             &mut |arena, used| {
                 let text = self.texts[arena].as_deref()?;
-                Some(measure(text, self.prepared.font_sizes[arena], used))
+                // White space alone generates no line box (16.6.1).
+                if text.trim().is_empty() {
+                    return Some(0.0);
+                }
+                // Paint re-derives this width after f32 translation, so both round up
+                // to the same whole pixel: a line that fit when measured still fits.
+                Some(measure(text, self.prepared.font_sizes[arena], used.ceil()))
             },
         )
     }
@@ -420,26 +436,66 @@ impl BoxTree {
         &self.paints
     }
 
-    /// Projected indices in 9.9 paint order: flow blocks, then floats, then positioned
-    /// boxes, each with the descendants that belong to them.
+    /// Projected box indices in 9.9 paint order: flow blocks, then floats, then
+    /// positioned boxes in tree order, each with the descendants that belong to them.
     #[must_use]
     pub fn paint_order(&self) -> Vec<usize> {
-        let prepared = &self.prepared;
-        let mut order = Vec::with_capacity(prepared.boxes.len());
-        let mut positioned = Vec::new();
-        if !prepared.boxes.is_empty() {
-            paint_context(prepared, 0, &mut positioned, &mut order);
-        }
-        // A positioned box found while painting one is appended and handled in turn.
-        let mut next = 0;
-        while next < positioned.len() {
-            paint_context(prepared, positioned[next], &mut positioned, &mut order);
-            next += 1;
-        }
-        order
+        self.paint_steps()
             .into_iter()
-            .map(|arena| prepared.positions[arena].0)
+            .filter_map(|step| match step {
+                PaintStep::Box(index) => Some(index),
+                PaintStep::Text(_) => None,
+            })
             .collect()
+    }
+
+    fn paint_steps(&self) -> Vec<PaintStep> {
+        let prepared = &self.prepared;
+        let mut steps = Vec::with_capacity(prepared.boxes.len());
+        if prepared.boxes.is_empty() {
+            return steps;
+        }
+        let mut positioned = BTreeSet::new();
+        self.paint_context(0, &mut positioned, &mut steps);
+        // Arena order is tree order, so the lowest pending index is always next.
+        while let Some(next) = positioned.pop_first() {
+            self.paint_context(next, &mut positioned, &mut steps);
+        }
+        steps
+    }
+
+    /// One 9.9 layer: this box and its in-flow blocks, then its floats, each as a unit,
+    /// then the in-flow text. Positioned descendants go to the caller's pending set.
+    fn paint_context(
+        &self,
+        root: usize,
+        positioned: &mut BTreeSet<usize>,
+        steps: &mut Vec<PaintStep>,
+    ) {
+        let prepared = &self.prepared;
+        let mut floats = Vec::new();
+        let mut texts = Vec::new();
+        let mut stack = vec![root];
+        while let Some(arena) = stack.pop() {
+            steps.push(PaintStep::Box(prepared.positions[arena].0));
+            if self.texts[arena].is_some() {
+                texts.push(arena);
+            }
+            for &child in prepared.boxes[arena].children.iter().rev() {
+                if prepared.positions[child].1 != Position::Static {
+                    positioned.insert(child);
+                } else if prepared.boxes[child].float.is_some() {
+                    floats.push(child);
+                } else {
+                    stack.push(child);
+                }
+            }
+        }
+        floats.sort_unstable();
+        for float in floats {
+            self.paint_context(float, positioned, steps);
+        }
+        steps.extend(texts.into_iter().map(PaintStep::Text));
     }
 
     /// Wraps the tree as an iced element that fills the size it is given.
@@ -452,52 +508,25 @@ impl BoxTree {
             tree: self,
             measured: false,
             geometry: Vec::new(),
-            paragraphs: Vec::new(),
+            paragraphs: BTreeMap::new(),
         })
     }
 }
 
-/// One 9.9 layer: this box and its in-flow blocks, then its floats, each as a unit.
-/// Positioned descendants go to the caller's list.
-fn paint_context(
-    prepared: &PreparedTree,
-    root: usize,
-    positioned: &mut Vec<usize>,
-    order: &mut Vec<usize>,
-) {
-    let mut floats = Vec::new();
-    let mut stack = vec![root];
-    while let Some(arena) = stack.pop() {
-        order.push(arena);
-        for &child in prepared.boxes[arena].children.iter().rev() {
-            if prepared.positions[child].1 != Position::Static {
-                continue;
-            }
-            if prepared.boxes[child].float.is_some() {
-                continue;
-            }
-            stack.push(child);
-        }
-        // Children in source order, whatever the stack order above.
-        for &child in &prepared.boxes[arena].children {
-            if prepared.positions[child].1 != Position::Static {
-                positioned.push(child);
-            } else if prepared.boxes[child].float.is_some() {
-                floats.push(child);
-            }
-        }
-    }
-    for float in floats {
-        paint_context(prepared, float, positioned, order);
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaintStep {
+    /// A box's background and border, by projected index.
+    Box(usize),
+    /// A text leaf, by arena slot.
+    Text(usize),
 }
 
 struct BoxTreeWidget<Renderer: text::Renderer> {
     tree: BoxTree,
     measured: bool,
     geometry: Vec<Option<FlowGeometry>>,
-    /// The projected index, the shaped text and its color, one per text leaf.
-    paragraphs: Vec<(usize, Renderer::Paragraph, Color)>,
+    /// Shaped text, its top-left corner relative to the layout, and its color, by arena.
+    paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
 }
 
 fn paragraph<Renderer: text::Renderer>(
@@ -519,52 +548,6 @@ fn paragraph<Renderer: text::Renderer>(
     })
 }
 
-/// Backgrounds and border bands in paint order, offset to the layout origin.
-fn draw_boxes<Renderer: renderer::Renderer>(
-    tree: &BoxTree,
-    geometry: &[Option<FlowGeometry>],
-    renderer: &mut Renderer,
-    origin: Point,
-) {
-    let at = |rect: Rectangle| Rectangle {
-        x: rect.x + origin.x,
-        y: rect.y + origin.y,
-        ..rect
-    };
-    let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
-        if bounds.width > 0.0 && bounds.height > 0.0 {
-            renderer.fill_quad(
-                Quad {
-                    bounds: at(bounds),
-                    ..Quad::default()
-                },
-                Color::from_rgb(color[0], color[1], color[2]),
-            );
-        }
-    };
-    for index in tree.paint_order() {
-        let Some(Some(geometry)) = geometry.get(index) else {
-            continue;
-        };
-        let paint = tree.paints[index];
-        let border = geometry.border;
-        if let Some(color) = paint.background {
-            // 14.2: the background extends under the border.
-            quad(
-                renderer,
-                rectangle(border.left, border.right, border.top, border.bottom),
-                color,
-            );
-        }
-        let bands = border_bands(border, geometry.padding);
-        for (band, color) in bands.into_iter().zip(paint.border) {
-            if let Some(color) = color {
-                quad(renderer, band, color);
-            }
-        }
-    }
-}
-
 fn rectangle(left: f32, right: f32, top: f32, bottom: f32) -> Rectangle {
     Rectangle {
         x: left,
@@ -582,6 +565,50 @@ fn border_bands(border: FlowRect, padding: FlowRect) -> [Rectangle; 4] {
         rectangle(border.left, border.right, padding.bottom, border.bottom),
         rectangle(border.left, padding.left, padding.top, padding.bottom),
     ]
+}
+
+/// One box's background and border bands, offset to the layout origin.
+fn draw_box<Renderer: renderer::Renderer>(
+    tree: &BoxTree,
+    geometry: &[Option<FlowGeometry>],
+    renderer: &mut Renderer,
+    origin: Point,
+    index: usize,
+) {
+    let Some(Some(geometry)) = geometry.get(index) else {
+        return;
+    };
+    let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
+        if bounds.width > 0.0 && bounds.height > 0.0 {
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle {
+                        x: bounds.x + origin.x,
+                        y: bounds.y + origin.y,
+                        ..bounds
+                    },
+                    ..Quad::default()
+                },
+                Color::from_rgb(color[0], color[1], color[2]),
+            );
+        }
+    };
+    let paint = tree.paints[index];
+    let border = geometry.border;
+    if let Some(color) = paint.background {
+        // 14.2: the background extends under the border.
+        quad(
+            renderer,
+            rectangle(border.left, border.right, border.top, border.bottom),
+            color,
+        );
+    }
+    let bands = border_bands(border, geometry.padding);
+    for (band, color) in bands.into_iter().zip(paint.border) {
+        if let Some(color) = color {
+            quad(renderer, band, color);
+        }
+    }
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for BoxTreeWidget<Renderer>
@@ -634,25 +661,30 @@ where
             .unwrap_or_default();
         self.paragraphs.clear();
         for (arena, content) in self.tree.texts.iter().enumerate() {
-            let Some(content) = content else { continue };
+            let Some(content) = content.as_deref().filter(|text| !text.trim().is_empty()) else {
+                continue;
+            };
             let projected = self.tree.prepared.positions[arena].0;
             let Some(Some(geometry)) = self.geometry.get(projected) else {
                 continue;
             };
-            let box_width = geometry.content.right - geometry.content.left;
-            let color = self.tree.paints[projected]
-                .color
-                .map_or(Color::BLACK, |c| Color::from_rgb(c[0], c[1], c[2]));
-            self.paragraphs.push((
-                projected,
-                paragraph(
-                    renderer,
-                    content,
-                    self.tree.prepared.font_sizes[arena],
-                    box_width,
+            let Some(color) = self.tree.paints[projected].color else {
+                continue;
+            };
+            let place = geometry.leaf_band.unwrap_or(geometry.content);
+            self.paragraphs.insert(
+                arena,
+                (
+                    paragraph(
+                        renderer,
+                        content,
+                        self.tree.prepared.font_sizes[arena],
+                        (place.right - place.left).ceil(),
+                    ),
+                    Point::new(place.left, place.top),
+                    Color::from_rgb(color[0], color[1], color[2]),
                 ),
-                color,
-            ));
+            );
         }
         layout::Node::new(available)
     }
@@ -669,18 +701,36 @@ where
     ) {
         let bounds = layout.bounds();
         let origin = bounds.position();
-        renderer.with_layer(bounds, |renderer| {
-            draw_boxes(&self.tree, &self.geometry, renderer, origin);
-            for (projected, shaped, color) in &self.paragraphs {
-                if let Some(Some(geometry)) = self.geometry.get(*projected) {
-                    let position = Point::new(
-                        origin.x + geometry.content.left,
-                        origin.y + geometry.content.top,
-                    );
-                    renderer.fill_paragraph(shaped, position, *color, bounds);
+        // A layer draws its text over its quads, so anything painted after text needs
+        // a layer of its own.
+        let steps = self.tree.paint_steps();
+        let mut start = 0;
+        while start < steps.len() {
+            let text_at = steps[start..]
+                .iter()
+                .position(|step| matches!(step, PaintStep::Text(_)))
+                .map_or(steps.len(), |offset| start + offset);
+            let box_end = steps[text_at..]
+                .iter()
+                .position(|step| matches!(step, PaintStep::Box(_)))
+                .map_or(steps.len(), |offset| text_at + offset);
+            renderer.with_layer(bounds, |renderer| {
+                for step in &steps[start..box_end] {
+                    match *step {
+                        PaintStep::Box(index) => {
+                            draw_box(&self.tree, &self.geometry, renderer, origin, index);
+                        }
+                        PaintStep::Text(arena) => {
+                            if let Some((shaped, corner, color)) = self.paragraphs.get(&arena) {
+                                let position = Point::new(origin.x + corner.x, origin.y + corner.y);
+                                renderer.fill_paragraph(shaped, position, *color, bounds);
+                            }
+                        }
+                    }
                 }
-            }
-        });
+            });
+            start = box_end;
+        }
     }
 }
 
@@ -745,7 +795,9 @@ mod tests {
         .unwrap();
         let geometry = tree.layout(100.0, Some(80.0)).unwrap();
         let mut renderer = Recording::default();
-        draw_boxes(&tree, &geometry, &mut renderer, Point::new(5.0, 7.0));
+        for index in tree.paint_order() {
+            draw_box(&tree, &geometry, &mut renderer, Point::new(5.0, 7.0), index);
+        }
         assert_eq!(
             renderer.0,
             vec![

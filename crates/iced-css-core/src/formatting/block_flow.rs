@@ -127,6 +127,10 @@ pub struct FlowGeometry {
     pub clearance: Option<f32>,
     /// Adjoining top and bottom margins (8.3.1).
     pub collapsed_through: bool,
+    /// Where a leaf's content goes when floats displace it from its content box: the
+    /// band beside them at its first line. Lines past a shorter float stay this narrow:
+    /// real line boxes would widen them, so the result is conservative, never overlapping.
+    pub leaf_band: Option<FlowRect>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -628,7 +632,25 @@ impl Solver<'_> {
             top: settled.then_some(flow.y),
             direction: value.direction,
         };
-        let leaf_height = self.leaf_height(node, width);
+        let mut leaf_band = None;
+        // 9.5: lines shorten beside earlier floats; with no room they move below.
+        let measured = self.leaf_height(node, width);
+        if measured.is_some_and(|height| height != 0.0) {
+            // Content fixes open parents' tops, which places floats deferred on them.
+            self.settle(flow)?;
+        }
+        let leaf_height = if flow.floats.is_empty() || measured.is_none_or(|height| height == 0.0) {
+            measured
+        } else {
+            let probe = flow.position();
+            self.settle_leaf(node, flow, content_left, width, probe, &mut leaf_band)?;
+            match leaf_band {
+                Some(band) => self
+                    .leaf_height(node, band.right - band.left)
+                    .map(|height| height + band.top - probe),
+                None => measured,
+            }
+        };
         if let Some(height) = leaf_height.filter(|height| *height != 0.0) {
             self.settle(flow)?;
             flow.y += height;
@@ -717,7 +739,44 @@ impl Solver<'_> {
             [mt, mr, mb, ml],
             clearance,
         );
+        self.geometry[node].leaf_band = leaf_band;
         Ok(())
+    }
+
+    /// Finds the band a displaced leaf starts in. `None` when it is not displaced.
+    fn settle_leaf(
+        &mut self,
+        node: usize,
+        flow: &Flow,
+        left: f32,
+        width: f32,
+        probe: f32,
+        band: &mut Option<FlowRect>,
+    ) -> Result<(), FlowError> {
+        let float_error = |error| FlowError::Float { node, error };
+        let containing = Band {
+            left,
+            right: left + width,
+        };
+        let least = self.boxes[node]
+            .content
+            .map_or(0.0, |content| content.preferred_min_width);
+        let mut y = probe;
+        loop {
+            let open = exclusion_band(&flow.floats, containing, y).map_err(float_error)?;
+            let narrowed = open.left != left || open.right != left + width;
+            let fits = open.width() > 0.0 && open.width() >= least;
+            if fits || !narrowed {
+                if narrowed || y != probe {
+                    *band = Some(rect(open.left, open.right, y, y));
+                }
+                return Ok(());
+            }
+            match next_band_edge(&flow.floats, y).map_err(float_error)? {
+                Some(edge) => y = edge,
+                None => return Ok(()),
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -752,6 +811,7 @@ impl Solver<'_> {
             margin,
             clearance,
             collapsed_through: false,
+            leaf_band: None,
         };
     }
 
@@ -819,6 +879,12 @@ impl Solver<'_> {
             edges.right += dx;
             edges.top += dy;
             edges.bottom += dy;
+        }
+        if let Some(band) = &mut geometry.leaf_band {
+            band.left += dx;
+            band.right += dx;
+            band.top += dy;
+            band.bottom += dy;
         }
         for &child in &self.boxes[node].children {
             if self.boxes[child].out_of_flow {

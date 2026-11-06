@@ -37,6 +37,9 @@ fn text(id: &str, content: &'static str) -> Element {
         .unwrap()
         .erase()
 }
+fn text2(id: &str) -> Element {
+    text(id, "words")
+}
 fn page() -> Element {
     node(
         "page",
@@ -210,4 +213,65 @@ fn adjacent_inline_text_is_refused_until_line_layout_exists() {
         vec![text("first", "a"), node("gap", vec![]), text("second", "b")],
     );
     assert!(BoxTree::new(root, "").is_ok());
+}
+
+#[test]
+fn positioned_boxes_paint_in_tree_order_with_their_descendants() {
+    let tree = BoxTree::new(
+        node(
+            "page",
+            vec![
+                node("first", vec![node("inner", vec![])]),
+                node("second", vec![]),
+            ],
+        ),
+        "#first, #inner, #second { position:absolute; }",
+    )
+    .unwrap();
+    assert_eq!(tree.paint_order(), vec![0, 1, 2, 3]);
+    let tree = BoxTree::new(
+        node(
+            "page",
+            vec![
+                node("wrap", vec![node("inner", vec![])]),
+                node("second", vec![]),
+            ],
+        ),
+        "#inner, #second { position:absolute; }",
+    )
+    .unwrap();
+    assert_eq!(tree.paint_order(), vec![0, 1, 2, 3]);
+}
+
+#[test]
+fn text_measures_at_a_whole_pixel_and_empty_text_takes_no_line() {
+    let root = node("page", vec![text("empty", "  "), text2("copy")]);
+    let tree = BoxTree::new(root, "#copy { width:33.3px; display:block; }").unwrap();
+    let mut widths = Vec::new();
+    let g = tree
+        .layout_text(100.0, None, &mut |content, _, width| {
+            widths.push((content.to_owned(), width));
+            10.0
+        })
+        .unwrap();
+    assert_eq!(widths, vec![("words".to_owned(), 34.0)]);
+    assert_eq!(g[1].unwrap().border.bottom, 0.0);
+    assert_eq!(g[2].unwrap().border.bottom, 10.0);
+}
+
+#[test]
+fn inline_text_box_paint_is_dropped_but_its_color_stays() {
+    let root = node("page", vec![text("copy", "words")]);
+    let tree = BoxTree::new(
+        root,
+        "#copy { background-color:#ff0000; color:#00ff00; border:1px solid; }",
+    )
+    .unwrap();
+    assert_eq!(tree.paints()[1].background, None);
+    assert_eq!(tree.paints()[1].border[0], None);
+    assert_eq!(tree.paints()[1].color, Some([0.0, 1.0, 0.0]));
+    // CSS 2.2 `color` does not accept transparent: the declaration is dropped.
+    let root = node("page", vec![text("copy", "words")]);
+    let tree = BoxTree::new(root, "#copy { color:transparent; }").unwrap();
+    assert_eq!(tree.paints()[1].color, Some([0.0, 0.0, 0.0]));
 }
