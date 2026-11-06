@@ -374,7 +374,7 @@ fn widget_lays_out_and_draws_inline_runs_on_a_real_renderer_trait() {
     let mut element = BoxTree::new(root, "#box { height:5px; background-color:#112233; }")
         .unwrap()
         .view::<(), iced::Theme, ()>();
-    let mut tree = iced::advanced::widget::Tree::empty();
+    let mut tree = iced::advanced::widget::Tree::new(&element);
     let limits =
         iced::advanced::layout::Limits::new(iced::Size::ZERO, iced::Size::new(100.0, 80.0));
     let laid = element.as_widget_mut().layout(&mut tree, &(), &limits);
@@ -399,4 +399,248 @@ fn block_text_paints_its_background_as_a_box_not_a_highlight() {
     assert_eq!(leaves[0].1.runs[0].background, None);
     // U+00A0 is not collapsible white space.
     assert_eq!(leaves[0].1.text(), "a\u{a0}b");
+}
+
+mod interactive {
+    use super::*;
+    use iced::advanced::{Layout, Shell, clipboard, layout::Limits, widget::Tree};
+    use iced::{Event, Point, Rectangle, Size, Theme, mouse};
+
+    type View<'a> = iced::Element<'a, u8, Theme, ()>;
+
+    fn space(height: f32) -> iced::widget::Space {
+        iced::widget::space()
+            .width(iced::Length::Fill)
+            .height(height)
+    }
+    struct Rig<'a> {
+        element: View<'a>,
+        tree: Tree,
+        node: iced::advanced::layout::Node,
+        captured: bool,
+    }
+    fn limits() -> Limits {
+        Limits::new(Size::ZERO, Size::new(100.0, 200.0))
+    }
+    impl<'a> Rig<'a> {
+        fn new(mut element: View<'a>) -> Self {
+            let mut tree = Tree::new(&element);
+            let node = element.as_widget_mut().layout(&mut tree, &(), &limits());
+            Self {
+                element,
+                tree,
+                node,
+                captured: false,
+            }
+        }
+        fn send(&mut self, event: mouse::Event, at: Point) -> Vec<u8> {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            self.element.as_widget_mut().update(
+                &mut self.tree,
+                &Event::Mouse(event),
+                Layout::new(&self.node),
+                mouse::Cursor::Available(at),
+                &(),
+                &mut clipboard::Null,
+                &mut shell,
+                &Rectangle::new(Point::ORIGIN, Size::new(100.0, 200.0)),
+            );
+            self.captured = shell.is_event_captured();
+            let relayout = shell.is_layout_invalid();
+            drop(shell);
+            if relayout {
+                self.node = self
+                    .element
+                    .as_widget_mut()
+                    .layout(&mut self.tree, &(), &limits());
+            }
+            messages
+        }
+        fn slot(&self) -> Rectangle {
+            self.node.children()[0].bounds()
+        }
+    }
+
+    #[test]
+    fn a_native_widget_sizes_and_sits_in_its_box() {
+        let root = node("page", vec![node("top", vec![]), node("slot", vec![])]);
+        let tree = BoxTree::new(root, "#top { height:10px; } #slot { padding:3px; }").unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(25.0)).into();
+        let rig = Rig::new(view);
+        assert_eq!(
+            rig.slot(),
+            Rectangle::new(Point::new(3.0, 13.0), Size::new(94.0, 25.0))
+        );
+        // Unknown ids and non-leaf ids are ignored, not errors.
+        let root = node("page", vec![node("top", vec![])]);
+        let tree = BoxTree::new(root, "").unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("missing", space(1.0))
+            .widget("page", space(1.0))
+            .into();
+        assert!(Rig::new(view).node.children().is_empty());
+    }
+
+    #[test]
+    fn hover_and_active_rules_restyle_and_relayout() {
+        let root = node("page", vec![node("top", vec![]), node("slot", vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#top { height:10px; }
+             #top:hover { height:30px; }
+             #top:active { height:50px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(1.0)).into();
+        let mut rig = Rig::new(view);
+        assert_eq!(rig.slot().y, 10.0);
+        let on = Point::new(5.0, 5.0);
+        rig.send(mouse::Event::CursorMoved { position: on }, on);
+        assert_eq!(rig.slot().y, 30.0);
+        rig.send(mouse::Event::ButtonPressed(mouse::Button::Left), on);
+        assert_eq!(rig.slot().y, 50.0);
+        rig.send(mouse::Event::ButtonReleased(mouse::Button::Left), on);
+        assert_eq!(rig.slot().y, 30.0);
+        let off = Point::new(5.0, 150.0);
+        rig.send(mouse::Event::CursorMoved { position: off }, off);
+        assert_eq!(rig.slot().y, 10.0);
+    }
+
+    #[test]
+    fn hover_matches_ancestors_of_the_hovered_box() {
+        let root = node(
+            "page",
+            vec![
+                node("outer", vec![node("inner", vec![])]),
+                node("slot", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#inner { height:10px; } #outer:hover { padding-bottom:7px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(1.0)).into();
+        let mut rig = Rig::new(view);
+        let on = Point::new(5.0, 5.0);
+        rig.send(mouse::Event::CursorMoved { position: on }, on);
+        assert_eq!(rig.slot().y, 17.0);
+    }
+
+    #[test]
+    fn press_publishes_for_the_nearest_box_and_hit_tests_clip_and_paint_order() {
+        let root = node(
+            "page",
+            vec![
+                node("clip", vec![node("over", vec![])]),
+                node("cover", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#clip { overflow:hidden; height:10px; }
+             #over { height:50px; }
+             #cover { position:absolute; left:50px; top:0; width:50px; height:100px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .on_press("page", 1)
+            .on_press("over", 2)
+            .on_press("cover", 3)
+            .into();
+        let mut rig = Rig::new(view);
+        let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+        assert_eq!(rig.send(press, Point::new(5.0, 5.0)), vec![2]);
+        // `over` overflows #clip below 10, so the press falls through to no box.
+        assert_eq!(rig.send(press, Point::new(5.0, 30.0)), Vec::<u8>::new());
+        // The positioned box paints on top, so it takes the hit.
+        assert_eq!(rig.send(press, Point::new(60.0, 5.0)), vec![3]);
+    }
+
+    #[test]
+    fn press_bubbles_to_the_nearest_handler_and_captures_the_event() {
+        let root = node("page", vec![node("outer", vec![node("inner", vec![])])]);
+        let tree = BoxTree::new(root, "#inner { height:10px; }").unwrap();
+        let view: View<'_> = tree.interactive().on_press("page", 9).into();
+        let mut rig = Rig::new(view);
+        let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+        assert_eq!(rig.send(press, Point::new(5.0, 5.0)), vec![9]);
+        assert!(rig.captured);
+        let nowhere = Point::new(5.0, 150.0);
+        assert!(rig.send(press, nowhere).is_empty());
+        assert!(!rig.captured);
+    }
+
+    #[test]
+    fn nested_clips_intersect_and_positioned_boxes_escape_as_css_says() {
+        let root = node(
+            "page",
+            vec![node(
+                "outer",
+                vec![node(
+                    "mid",
+                    vec![
+                        node("deep", vec![]),
+                        node("fixed", vec![]),
+                        node("abs", vec![]),
+                    ],
+                )],
+            )],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#outer { overflow:hidden; height:20px; }
+             #mid { overflow:hidden; height:40px; }
+             #deep { height:80px; }
+             #fixed { position:fixed; left:0; top:100px; width:10px; height:10px; }
+             #abs { position:absolute; left:20px; top:120px; width:10px; height:10px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .on_press("deep", 1)
+            .on_press("fixed", 2)
+            .on_press("abs", 3)
+            .into();
+        let mut rig = Rig::new(view);
+        let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+        assert_eq!(rig.send(press, Point::new(5.0, 10.0)), vec![1]);
+        // #mid would show down to 40, but #outer's clip applies through it.
+        assert!(rig.send(press, Point::new(5.0, 30.0)).is_empty());
+        // No ancestor is positioned, so both positioned boxes escape every clip.
+        assert_eq!(rig.send(press, Point::new(5.0, 105.0)), vec![2]);
+        assert_eq!(rig.send(press, Point::new(25.0, 125.0)), vec![3]);
+    }
+
+    #[test]
+    fn draw_with_clips_widgets_and_text_runs_without_panicking() {
+        let root = node(
+            "page",
+            vec![
+                text("copy", "words"),
+                node("clip", vec![node("slot", vec![])]),
+                node("float", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#clip { overflow:hidden; height:5px; background-color:#ff0000; }
+             #float { float:left; width:5px; height:5px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(20.0)).into();
+        let rig = Rig::new(view);
+        rig.element.as_widget().draw(
+            &rig.tree,
+            &mut (),
+            &Theme::Light,
+            &iced::advanced::renderer::Style::default(),
+            Layout::new(&rig.node),
+            mouse::Cursor::Unavailable,
+            &Rectangle::new(Point::ORIGIN, Size::new(100.0, 200.0)),
+        );
+    }
 }

@@ -30,7 +30,7 @@ impl std::fmt::Display for CaptureError {
 }
 impl std::error::Error for CaptureError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Kind {
     #[cfg(feature = "image-without-codecs")]
     Image(ImageSource),
@@ -97,7 +97,7 @@ enum Role {
 }
 
 /// A source construction record, independent of native state and formatting boxes.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstructionNode {
     kind: Kind,
     parent: Option<usize>,
@@ -248,7 +248,7 @@ impl ConstructionNode {
 }
 
 /// Owned flat postorder recipe. No live source identities have been allocated.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Construction {
     nodes: Vec<ConstructionNode>,
     owned_bytes: usize,

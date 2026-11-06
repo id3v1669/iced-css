@@ -19,6 +19,9 @@ const CSS: &str = "
     #content { overflow:hidden; padding:12px; background-color:#ffffff;
                border:2px solid #adcbe3; }
     #card    { height:96px; margin-bottom:12px; background-color:#e7eff6; }
+    #card:hover  { background-color:#cfe0ee; }
+    #card:active { background-color:#adcbe3; height:104px; }
+    #action  { width:200px; margin-bottom:12px; }
     #wide    { height:48px; width:60%; margin:0 auto; background-color:#63ace5; }
     #title   { display:block; font-size:24px; color:#ffffff; padding:16px; }
     #copy    { display:block; color:#2a4d69; margin-bottom:12px; }
@@ -73,6 +76,7 @@ fn tree() -> BoxTree {
                          and the boxes below move with its height. The sidebar is a \
                          float, and this panel is a new formatting context beside it.",
                     ),
+                    node("action", vec![]),
                     node("card", vec![]),
                     node("wide", vec![]),
                 ],
@@ -93,12 +97,50 @@ fn the_example_stylesheet_is_accepted() {
     assert!(geometry.iter().all(Option::is_some));
 }
 
-fn view(tree: &BoxTree) -> Element<'_, ()> {
-    tree.clone().view()
+#[derive(Debug, Clone, Copy)]
+enum Message {
+    Button,
+    Card,
+}
+
+struct App {
+    tree: BoxTree,
+    button: u32,
+    card: u32,
+}
+
+fn update(app: &mut App, message: Message) {
+    match message {
+        Message::Button => app.button += 1,
+        Message::Card => app.card += 1,
+    }
+}
+
+fn view(app: &App) -> Element<'_, Message> {
+    let label = format!("Button: {}  Card: {}", app.button, app.card);
+    app.tree
+        .clone()
+        .interactive()
+        .widget(
+            "action",
+            iced::widget::button(iced::widget::text(label))
+                .on_press(Message::Button)
+                .width(iced::Length::Fill),
+        )
+        .on_press("card", Message::Card)
+        .into()
 }
 
 fn main() -> iced::Result {
-    iced::application(tree, |_: &mut BoxTree, (): ()| {}, view)
-        .title("iced-css box tree")
-        .run()
+    iced::application(
+        || App {
+            tree: tree(),
+            button: 0,
+            card: 0,
+        },
+        update,
+        view,
+    )
+    .title("iced-css box tree")
+    .run()
 }

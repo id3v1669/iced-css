@@ -242,6 +242,9 @@ pub struct PreparedTree {
     pub runs: Vec<Vec<usize>>,
     /// The enclosing inline element of each projected index, if any.
     pub inline_parent: Vec<Option<usize>>,
+    /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
+    /// `overflow` applies to the viewport, so it never clips here.
+    pub clipped: Vec<bool>,
 }
 
 /// Evaluates every row and runs block flow. `content` measures a source leaf by its
@@ -296,6 +299,7 @@ pub fn prepare_captured_tree(
         .map(|row| row.font_size.map_or(16.0, |size| size.pixels))
         .collect();
     let mut anonymous: Vec<bool> = Vec::new();
+    let mut clipped: Vec<bool> = Vec::new();
     let mut runs: Vec<Vec<usize>> = Vec::new();
     // The arena slot children of each projected row attach to; a block parent for itself
     // and, for an inline element, the block container it flattens into.
@@ -340,6 +344,7 @@ pub fn prepare_captured_tree(
                     });
                     positions.push((index, Position::Static));
                     anonymous.push(true);
+                    clipped.push(false);
                     runs.push(Vec::new());
                     open.push(None);
                     boxes[target].children.push(group);
@@ -409,6 +414,7 @@ pub fn prepare_captured_tree(
         slot[index] = Some(arena);
         container[index] = Some(arena);
         anonymous.push(false);
+        clipped.push(parent.is_some() && rows[index].overflow.value != BoxOverflow::Visible);
         runs.push(if is_text { vec![index] } else { Vec::new() });
         open.push(None);
         let out_of_line = value.float.is_some() || value.out_of_flow;
@@ -443,6 +449,7 @@ pub fn prepare_captured_tree(
         anonymous,
         runs,
         inline_parent,
+        clipped,
     })
 }
 
@@ -479,6 +486,7 @@ impl PreparedTree {
             anonymous: _,
             runs: _,
             inline_parent: _,
+            clipped: _,
         } = self;
         if boxes.is_empty() {
             return Ok(vec![None; slot.len()]);
