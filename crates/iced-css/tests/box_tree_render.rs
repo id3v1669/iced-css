@@ -1166,3 +1166,68 @@ fn small_letters_keep_the_full_line_height_on_screen() {
     assert!(draw("HI", &name));
     assert!(draw("hi", &name));
 }
+
+#[test]
+fn escape_in_a_hosted_input_drops_focus_styling_with_its_focus() {
+    use iced::keyboard::key::Named;
+    let root = node("page", vec![node("one", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { background-color:white; padding:20px; }
+         #one { height:30px; width:200px; }
+         #one:focus { outline:4px solid #ff0000; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree
+        .interactive()
+        .widget("one", iced::widget::text_input("", "").on_input(|_| 1))
+        .into();
+    let mut ui = simulator(view);
+    let picture = std::env::temp_dir().join(format!("escape-{}.png", std::process::id()));
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    let _ = ui.tap_key(Named::Tab);
+    assert!(
+        !ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    let _ = ui.tap_key(Named::Escape);
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+}
+
+#[test]
+fn enter_in_a_hosted_input_presses_no_box_around_it() {
+    use iced::keyboard::key::Named;
+    let run = |enter: bool| {
+        let root = node("page", vec![node("outer", vec![node("inner", vec![])])]);
+        let tree = BoxTree::new(
+            root,
+            "#outer { padding:5px; } #inner { height:30px; width:200px; }",
+        )
+        .unwrap();
+        let view: Element<'_, u8> = tree
+            .interactive()
+            .widget("inner", iced::widget::text_input("", "").on_input(|_| 1))
+            .on_press("outer", 9)
+            .into();
+        let mut ui = simulator(view);
+        ui.point_at(Point::new(50.0, 15.0));
+        let _ = ui.simulate(iced_test::simulator::click());
+        if enter {
+            let _ = ui.tap_key(Named::Enter);
+        }
+        ui.into_messages().collect::<Vec<u8>>()
+    };
+    assert_eq!(run(true), run(false));
+}

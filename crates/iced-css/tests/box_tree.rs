@@ -2632,7 +2632,7 @@ mod animation {
         };
         let css = |color: &str| {
             format!(
-                "#first, #span {{ display:inline; }} #span {{ background-color:{color}; outline:1px solid {color}; }}"
+                "#first, #span {{ display:inline; }} #span {{ background-color:{color}; outline:1px solid {color}; border:1px solid {color}; }}"
             )
         };
         let from = BoxTree::new(source(), &css("#000000")).unwrap();
@@ -2643,7 +2643,7 @@ mod animation {
                 &from,
                 &to,
                 "span",
-                &["background-color", "outline-color"],
+                &["background-color", "outline-color", "border-color"],
                 second(),
                 Instant::now(),
             )
