@@ -745,6 +745,103 @@ mod interactive {
         assert_eq!(rig.node.children()[2].bounds().y, 30.0);
     }
 
+    fn wheel(lines: f32) -> mouse::Event {
+        mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Pixels { x: 0.0, y: lines },
+        }
+    }
+
+    #[test]
+    fn wheel_scrolls_the_nearest_scroller_within_its_limit() {
+        let root = node(
+            "page",
+            vec![
+                node(
+                    "list",
+                    vec![
+                        node("tall", vec![]),
+                        node("slot", vec![]),
+                        node("fixed", vec![]),
+                    ],
+                ),
+                node("next", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#list { overflow:auto; height:50px; }
+             #tall { height:100px; }
+             #fixed { position:absolute; top:5px; left:0; height:5px; width:5px; }
+             #next { height:10px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(10.0))
+            .on_press("next", 8)
+            .into();
+        let mut rig = Rig::new(view);
+        let inside = Point::new(5.0, 10.0);
+        assert_eq!(rig.slot().y, 100.0);
+        rig.send(wheel(-30.0), inside);
+        assert_eq!(rig.slot().y, 70.0);
+        // The content ends 60 below the box's bottom edge; scrolling stops there.
+        rig.send(wheel(-1000.0), inside);
+        assert_eq!(rig.slot().y, 40.0);
+        rig.send(wheel(25.0), inside);
+        assert_eq!(rig.slot().y, 65.0);
+        // Outside the scroller the wheel does nothing.
+        rig.send(wheel(-5.0), Point::new(5.0, 55.0));
+        assert_eq!(rig.slot().y, 65.0);
+        // Scrolled content under the box's edge is clipped: a press falls through.
+        assert_eq!(
+            rig.send(
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                Point::new(5.0, 55.0)
+            ),
+            vec![8]
+        );
+    }
+
+    #[test]
+    fn hidden_overflow_does_not_scroll_and_inner_scroller_takes_the_wheel_first() {
+        let root = node(
+            "page",
+            vec![node(
+                "outer",
+                vec![
+                    node("inner", vec![node("slot", vec![])]),
+                    node("rest", vec![]),
+                ],
+            )],
+        );
+        let css = "#outer { overflow:scroll; height:50px; }
+             #inner { overflow:auto; height:40px; }
+             #slot { height:60px; }
+             #rest { height:100px; }";
+        let tree = BoxTree::new(root, css).unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(60.0)).into();
+        let mut rig = Rig::new(view);
+        let inside = Point::new(5.0, 5.0);
+        rig.send(wheel(-15.0), inside);
+        assert_eq!(rig.slot().y, -15.0);
+        // The inner box is spent after 20; the next wheel moves the outer one.
+        rig.send(wheel(-1000.0), inside);
+        assert_eq!(rig.slot().y, -20.0);
+        rig.send(wheel(-1000.0), inside);
+        assert_eq!(rig.slot().y, -110.0);
+        let root = node("page", vec![node("clip", vec![node("slot", vec![])])]);
+        let tree = BoxTree::new(
+            root,
+            "#clip { overflow:hidden; height:5px; } #slot { height:60px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(60.0)).into();
+        let mut rig = Rig::new(view);
+        rig.send(wheel(-10.0), Point::new(5.0, 2.0));
+        assert_eq!(rig.slot().y, 0.0);
+    }
+
     #[test]
     fn draw_with_clips_widgets_and_text_runs_without_panicking() {
         let root = node(
@@ -757,7 +854,7 @@ mod interactive {
         );
         let tree = BoxTree::new(
             root,
-            "#clip { overflow:hidden; height:5px; background-color:#ff0000; }
+            "#clip { overflow:auto; height:5px; background-color:#ff0000; }
              #float { float:left; width:5px; height:5px; }",
         )
         .unwrap();

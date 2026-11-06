@@ -4,8 +4,9 @@
 //! underline, strikethrough and background. One line height and alignment apply per
 //! paragraph. Inline boxes draw no border or padding. Native iced widgets can be placed
 //! in leaf boxes by CSS id, where they receive input; boxes can publish a message on press;
-//! `:hover` and `:active` restyle the tree. `overflow` other than visible clips, without
-//! scrolling. Captured payloads themselves are not drawn.
+//! `:hover` and `:active` restyle the tree. `overflow` other than visible clips, and
+//! `auto` and `scroll` boxes scroll vertically with the wheel; there is no horizontal
+//! scrolling or draggable bar. Captured payloads themselves are not drawn.
 use crate::{
     animation::engine::ProgressLimits,
     capture::{CaptureLimits, CapturedElement, Construction, source::ConstructionState},
@@ -1040,6 +1041,7 @@ where
             measured: false,
             geometry: Vec::new(),
             slot_geometry: Vec::new(),
+            scroll_limits: Vec::new(),
             clips: Vec::new(),
             paragraphs: BTreeMap::new(),
             elements,
@@ -1060,10 +1062,86 @@ enum PaintStep {
     Outline(usize),
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 struct Interaction {
     hovered: Option<usize>,
     active: Option<usize>,
+    /// Vertical scroll offsets by source node. They outlive restyles and view rebuilds.
+    scrolled: BTreeMap<usize, f32>,
+}
+
+/// The pixels one wheel line scrolls.
+const WHEEL_LINE: f32 = 40.0;
+
+/// Calls `visit` on every box that scrolls with `root`: its descendants, except absolute
+/// boxes whose containing block is outside it (they stay put, 11.1.1) and fixed boxes.
+fn scrolling_descendants(prepared: &PreparedTree, root: usize, mut visit: impl FnMut(usize)) {
+    let mut stack: Vec<(usize, bool)> = prepared.boxes[root]
+        .children
+        .iter()
+        .map(|child| (*child, prepared.positions[root].1 != Position::Static))
+        .collect();
+    while let Some((arena, holder_inside)) = stack.pop() {
+        let position = prepared.positions[arena].1;
+        if position == Position::Fixed || (position == Position::Absolute && !holder_inside) {
+            continue;
+        }
+        visit(arena);
+        let inside = holder_inside || position != Position::Static;
+        stack.extend(
+            prepared.boxes[arena]
+                .children
+                .iter()
+                .map(|child| (*child, inside)),
+        );
+    }
+}
+
+/// How far each scrolling box can scroll, after moving its contents by its offset.
+/// Parents come first in arena order, so nested scrollers measure moved contents.
+fn apply_scrolling(
+    prepared: &PreparedTree,
+    geometry: &mut [FlowGeometry],
+    scrolled: impl Fn(usize) -> f32,
+    viewport_bottom: f32,
+) -> Vec<f32> {
+    let mut limits = vec![0.0_f32; prepared.boxes.len()];
+    for arena in 0..geometry.len() {
+        if !prepared.scrolls[arena] {
+            continue;
+        }
+        let padding = geometry[arena].padding;
+        // The root scrolls the viewport: it is as tall as its content otherwise.
+        let bottom = if arena == 0 {
+            padding.bottom.min(viewport_bottom)
+        } else {
+            padding.bottom
+        };
+        let mut reach = bottom;
+        scrolling_descendants(prepared, arena, |child| {
+            reach = reach.max(geometry[child].border.bottom);
+        });
+        let limit = (reach - bottom).max(0.0);
+        limits[arena] = limit;
+        let offset = scrolled(arena).clamp(0.0, limit);
+        if offset == 0.0 {
+            continue;
+        }
+        let mut moved = Vec::new();
+        scrolling_descendants(prepared, arena, |child| moved.push(child));
+        for child in moved {
+            let target = &mut geometry[child];
+            let band = target.leaf_band.as_mut();
+            for rect in [&mut target.border, &mut target.padding, &mut target.content]
+                .into_iter()
+                .chain(band)
+            {
+                rect.top -= offset;
+                rect.bottom -= offset;
+            }
+        }
+    }
+    limits
 }
 
 struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::Font>> {
@@ -1075,6 +1153,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     geometry: Vec<Option<FlowGeometry>>,
     /// The same layout by arena slot, including anonymous blocks.
     slot_geometry: Vec<FlowGeometry>,
+    /// How far each arena slot can scroll.
+    scroll_limits: Vec<f32>,
     clips: Vec<Option<FlowRect>>,
     elements: Vec<Element<'a, Message, Theme, Renderer>>,
     /// The CSS id naming each element's box.
@@ -1444,7 +1524,7 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let available = limits.max();
-        let interaction = *tree.state.downcast_ref::<Interaction>();
+        let interaction = tree.state.downcast_ref::<Interaction>().clone();
         // A rebuilt view keeps this state; `styled` ignores a node this tree lacks.
         let key = (interaction.hovered, interaction.active);
         if key != self.key {
@@ -1508,6 +1588,18 @@ where
                 },
             )
             .unwrap_or_default();
+        let originals = &self.tree.originals;
+        let positions = &self.tree.prepared.positions;
+        self.scroll_limits = apply_scrolling(
+            &self.tree.prepared,
+            &mut self.slot_geometry,
+            |arena| {
+                let node = originals.get(positions[arena].0).copied();
+                node.and_then(|node| interaction.scrolled.get(&node).copied())
+                    .unwrap_or(0.0)
+            },
+            available.height,
+        );
         self.geometry = self.tree.prepared.by_projected(&self.slot_geometry);
         self.clips = self.tree.clips(&self.geometry);
         self.paragraphs.clear();
@@ -1621,7 +1713,45 @@ where
         let bounds = layout.bounds();
         let hit = cursor.position_in(bounds).and_then(|point| self.hit(point));
         let state = tree.state.downcast_mut::<Interaction>();
-        let mut next = *state;
+        if let mouse::Event::WheelScrolled { delta } = mouse_event {
+            if shell.is_event_captured() {
+                return;
+            }
+            let amount = match delta {
+                mouse::ScrollDelta::Lines { y, .. } => -y * WHEEL_LINE,
+                mouse::ScrollDelta::Pixels { y, .. } => -y,
+            };
+            // The nearest box that can still move this way takes the wheel.
+            let nodes = self.tree.source.construction.nodes();
+            let mut at = hit;
+            while let Some(node) = at {
+                let arena = self
+                    .tree
+                    .originals
+                    .iter()
+                    .position(|value| *value == node)
+                    .and_then(|projected| self.tree.prepared.slot[projected]);
+                if let Some(limit) = arena.and_then(|arena| self.scroll_limits.get(arena)) {
+                    let current = state
+                        .scrolled
+                        .get(&node)
+                        .copied()
+                        .unwrap_or(0.0)
+                        .clamp(0.0, *limit);
+                    let wanted = (current + amount).clamp(0.0, *limit);
+                    if wanted != current {
+                        state.scrolled.insert(node, wanted);
+                        shell.capture_event();
+                        shell.invalidate_layout();
+                        shell.request_redraw();
+                        return;
+                    }
+                }
+                at = nodes[node].parent();
+            }
+            return;
+        }
+        let mut next = state.clone();
         next.hovered = hit;
         match mouse_event {
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
@@ -1637,10 +1767,11 @@ where
             _ => {}
         }
         if next != *state {
+            let key = (next.hovered, next.active);
             *state = next;
             // Only states that a rule distinguishes need a new layout. Compare styles
             // before measuring: the current tree carries measured widths.
-            if self.base.variant((next.hovered, next.active)) != self.base.variant(self.key) {
+            if self.base.variant(key) != self.base.variant(self.key) {
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -1762,6 +1893,40 @@ where
             });
             start = end;
         }
+        // A plain position indicator at each scrolled box's right padding edge.
+        renderer.with_layer(bounds, |renderer| {
+            let scrolled = &tree.state.downcast_ref::<Interaction>().scrolled;
+            for (arena, limit) in self.scroll_limits.iter().enumerate() {
+                let Some(geometry) = self.slot_geometry.get(arena).filter(|_| *limit > 0.0) else {
+                    continue;
+                };
+                let projected = prepared.positions[arena].0;
+                let area = geometry.padding;
+                let shown = (area.bottom.min(bounds.height) - area.top).max(1.0);
+                let thumb = (shown * shown / (shown + limit)).max(8.0);
+                let offset = self
+                    .tree
+                    .originals
+                    .get(projected)
+                    .and_then(|node| scrolled.get(node))
+                    .copied()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, *limit);
+                let travel = (shown - thumb).max(0.0);
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle {
+                            x: origin.x + area.right - 4.0,
+                            y: origin.y + area.top + travel * offset / limit,
+                            width: 4.0,
+                            height: thumb,
+                        },
+                        ..Quad::default()
+                    },
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                );
+            }
+        });
     }
 
     fn overlay<'b>(

@@ -260,6 +260,7 @@ struct Build {
     positions: Vec<(usize, Position)>,
     anonymous: Vec<bool>,
     clipped: Vec<bool>,
+    scrolls: Vec<bool>,
     runs: Vec<Vec<RunSource>>,
     /// The anonymous block still accepting inline siblings, per slot.
     open: Vec<Option<usize>>,
@@ -276,6 +277,7 @@ impl Build {
         self.positions.push((owner, Position::Static));
         self.anonymous.push(true);
         self.clipped.push(false);
+        self.scrolls.push(false);
         self.runs.push(Vec::new());
         self.open.push(None);
         self.boxes[target].children.push(arena);
@@ -324,6 +326,8 @@ pub struct PreparedTree {
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
+    /// Whether `overflow` is `auto` or `scroll`, so the box scrolls vertically (11.1.1).
+    pub scrolls: Vec<bool>,
 }
 
 /// Evaluates every row and runs block flow. `content` measures a source leaf by its
@@ -511,6 +515,10 @@ pub fn prepare_captured_tree(
         build
             .clipped
             .push(parent.is_some() && rows[index].overflow.value != BoxOverflow::Visible);
+        build.scrolls.push(matches!(
+            rows[index].overflow.value,
+            BoxOverflow::Auto | BoxOverflow::Scroll
+        ));
         build.runs.push(Vec::new());
         build.open.push(None);
         let is_float = value.float.is_some();
@@ -555,6 +563,7 @@ pub fn prepare_captured_tree(
         positions,
         anonymous,
         clipped,
+        scrolls,
         runs,
         open: _,
     } = build;
@@ -568,6 +577,7 @@ pub fn prepare_captured_tree(
         runs,
         inline_parent,
         clipped,
+        scrolls,
     })
 }
 
@@ -627,6 +637,7 @@ impl PreparedTree {
             runs: _,
             inline_parent: _,
             clipped: _,
+            scrolls: _,
         } = self;
         let _ = slot;
         if boxes.is_empty() {
