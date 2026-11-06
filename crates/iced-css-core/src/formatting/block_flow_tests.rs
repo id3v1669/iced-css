@@ -871,6 +871,7 @@ fn table_columns_rows_and_spacing() {
     assert_eq!((g[4].border.left, g[4].border.right), (19.0, 39.0));
     // Row heights 8 and 4, with three 3px gaps; cells fill their row.
     assert_eq!((g[3].border.top, g[3].border.bottom), (3.0, 11.0));
+    assert_eq!(g[3].padding.bottom, 11.0);
     assert_eq!(g[3].content.bottom, 8.0);
     assert_eq!((g[6].border.top, g[6].border.bottom), (14.0, 18.0));
     assert_eq!(g[1].border.bottom, 21.0);
@@ -1000,4 +1001,193 @@ fn rtl_tables_run_columns_from_the_right_and_float_shrink_measures_them() {
         &[(0, 1), (1, 2), (2, 3), (3, 4), (3, 5)],
     );
     assert_eq!(g[1].border.right, 33.0);
+}
+
+fn inline_block(width: f32, height: f32) -> FlowBox {
+    FlowBox {
+        establishes_bfc: true,
+        width: Dim::Px(width),
+        height: Dim::Px(height),
+        ..FlowBox::default()
+    }
+}
+fn row_of(align: RowAlign) -> FlowBox {
+    FlowBox {
+        inline_row: Some(align),
+        ..FlowBox::default()
+    }
+}
+
+#[test]
+fn inline_blocks_fill_lines_wrap_and_align_bottoms() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            h(5.0),
+            row_of(RowAlign::Left),
+            inline_block(40.0, 10.0),
+            inline_block(40.0, 20.0),
+            inline_block(40.0, 7.0),
+            h(1.0),
+        ],
+        &[(0, 1), (0, 2), (2, 3), (2, 4), (2, 5), (0, 6)],
+    );
+    assert_eq!((g[3].border.left, g[3].border.top), (0.0, 15.0));
+    assert_eq!((g[4].border.left, g[4].border.top), (40.0, 5.0));
+    assert_eq!((g[5].border.left, g[5].border.top), (0.0, 25.0));
+    assert_eq!((g[2].border.top, g[2].border.bottom), (5.0, 32.0));
+    assert_eq!(g[6].border.top, 32.0);
+}
+
+#[test]
+fn inline_block_lines_center_right_and_keep_margins_and_shrink() {
+    let mut first = inline_block(20.0, 10.0);
+    first.margin[3] = Dim::Px(5.0);
+    first.margin[1] = Dim::Px(5.0);
+    first.margin[0] = Dim::Px(2.0);
+    let g = tree(
+        vec![FlowBox::default(), row_of(RowAlign::Center), first],
+        &[(0, 1), (1, 2)],
+    );
+    assert_eq!((g[2].border.left, g[2].border.top), (40.0, 2.0));
+    assert_eq!(g[1].border.bottom, 12.0);
+    let shrink = FlowBox {
+        establishes_bfc: true,
+        content: Some(FlowContent {
+            height: 3.0,
+            preferred_width: 30.0,
+            preferred_min_width: 10.0,
+        }),
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![FlowBox::default(), row_of(RowAlign::Right), shrink],
+        &[(0, 1), (1, 2)],
+    );
+    assert_eq!((g[2].border.left, g[2].border.right), (70.0, 100.0));
+    assert_eq!(g[2].border.bottom, 3.0);
+    // An overlong box keeps its own line, at the start.
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            row_of(RowAlign::Left),
+            inline_block(500.0, 1.0),
+            inline_block(5.0, 1.0),
+        ],
+        &[(0, 1), (1, 2), (1, 3)],
+    );
+    assert_eq!(g[2].border.left, 0.0);
+    assert_eq!((g[3].border.left, g[3].border.top), (0.0, 1.0));
+}
+
+#[test]
+fn a_table_is_never_narrower_than_its_columns_and_auto_margins_center_it() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Px(10.0)),
+            row(),
+            cell(Dim::Px(80.0), 1.0),
+            cell(Dim::Px(80.0), 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4)],
+    );
+    assert_eq!(g[1].border.right, 160.0);
+    let mut centered = table_of([0.0, 0.0], Dim::Auto);
+    centered.margin[1] = Dim::Auto;
+    centered.margin[3] = Dim::Auto;
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            centered,
+            row(),
+            cell(Dim::Px(40.0), 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3)],
+    );
+    assert_eq!((g[1].border.left, g[1].border.right), (30.0, 70.0));
+    // The root takes the same path, and shrinks.
+    let mut root = table_of([0.0, 0.0], Dim::Auto);
+    root.children = vec![1];
+    let mut row_box = row();
+    row_box.children = vec![2];
+    let g = layout_block_flow(
+        &[root, row_box, cell(Dim::Px(50.0), 1.0)],
+        viewport(),
+        limits(),
+    )
+    .unwrap();
+    assert_eq!(g[0].border.right, 50.0);
+}
+
+#[test]
+fn table_and_cell_heights_are_minimums_and_cells_align_content() {
+    let tall = |align| FlowBox {
+        cell_align: align,
+        children: vec![],
+        ..cell(Dim::Px(10.0), 10.0)
+    };
+    let mut boxes = vec![
+        FlowBox::default(),
+        table_of([0.0, 0.0], Dim::Auto),
+        row(),
+        tall(RowAlign::Left),
+        tall(RowAlign::Center),
+        tall(RowAlign::Right),
+        cell(Dim::Px(10.0), 40.0),
+        h(10.0),
+        h(10.0),
+    ];
+    boxes[0].children = vec![1];
+    boxes[1].children = vec![2];
+    boxes[2].children = vec![3, 4, 5, 6];
+    boxes[4].children = vec![7];
+    boxes[5].children = vec![8];
+    let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
+    assert_eq!(g[3].content.top, 0.0);
+    assert_eq!((g[4].content.top, g[4].border.bottom), (15.0, 40.0));
+    assert_eq!(g[7].border.top, 15.0);
+    assert_eq!(g[5].content.top, 30.0);
+    assert_eq!(g[8].border.top, 30.0);
+    // Content taller than a specified height wins.
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Auto),
+            row(),
+            FlowBox {
+                children: vec![],
+                ..cell(Dim::Px(10.0), 5.0)
+            },
+            h(30.0),
+            h(1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (3, 4), (0, 5)],
+    );
+    assert_eq!(g[3].border.bottom, 30.0);
+    assert_eq!(g[5].border.top, 30.0);
+}
+
+#[test]
+fn a_caption_can_sit_below_the_grid() {
+    let caption = FlowBox {
+        table: Some(TableRole::Caption),
+        establishes_bfc: true,
+        caption_below: true,
+        height: Dim::Px(7.0),
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Px(50.0)),
+            caption,
+            row(),
+            cell(Dim::Auto, 3.0),
+        ],
+        &[(0, 1), (1, 2), (1, 3), (3, 4)],
+    );
+    assert_eq!(g[4].border.top, 0.0);
+    assert_eq!(g[2].border.top, 3.0);
+    assert_eq!(g[1].border.bottom, 10.0);
 }

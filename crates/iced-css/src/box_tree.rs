@@ -36,7 +36,9 @@ use iced_css_core::{
         ua_display::{UaDisplayCatalog, UaDisplayLimits},
     },
     formatting::{
-        block_flow::{FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, TableRole},
+        block_flow::{
+            FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
+        },
         display::Position,
     },
     identity::SourceChangeLimits,
@@ -581,6 +583,8 @@ impl BoxTree {
             generated,
             markers,
             spacings,
+            vertical_aligns,
+            captions_below,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
             .map_err(failed)?;
         let mut prepared = prepare_captured_tree(
@@ -593,8 +597,22 @@ impl BoxTree {
         )
         .map_err(failed)?;
         for (arena, value) in prepared.boxes.iter_mut().enumerate() {
+            let owner = prepared.positions[arena].0;
             if let Some(TableRole::Table { spacing }) = &mut value.table {
-                *spacing = spacings[prepared.positions[arena].0];
+                *spacing = spacings[owner];
+            }
+            value.cell_align = match vertical_aligns[owner] {
+                Some("middle") => RowAlign::Center,
+                Some("bottom") => RowAlign::Right,
+                _ => RowAlign::Left,
+            };
+            value.caption_below = captions_below[owner];
+            if value.inline_row.is_some() {
+                value.inline_row = Some(match styles[owner].align {
+                    "center" => RowAlign::Center,
+                    "right" => RowAlign::Right,
+                    _ => RowAlign::Left,
+                });
             }
         }
         let nodes = snapshot.construction().nodes();
@@ -1159,26 +1177,31 @@ struct Interaction {
 /// The pixels one wheel line scrolls.
 const WHEEL_LINE: f32 = 40.0;
 
-/// Calls `visit` on every box that scrolls with `root`: its descendants, except absolute
-/// boxes whose containing block is outside it (they stay put, 11.1.1) and fixed boxes.
-fn scrolling_descendants(prepared: &PreparedTree, root: usize, mut visit: impl FnMut(usize)) {
-    let mut stack: Vec<(usize, bool)> = prepared.boxes[root]
+/// Calls `visit(box, reaches)` on every box that scrolls with `root`: its descendants,
+/// except absolute boxes whose containing block is outside it (they stay put, 11.1.1) and
+/// fixed boxes. The root's own containing block is the viewport, so everything but a
+/// fixed box moves with it. `reaches` is false under a nearer clip: those boxes move but
+/// do not extend the scrollable area.
+fn scrolling_descendants(prepared: &PreparedTree, root: usize, mut visit: impl FnMut(usize, bool)) {
+    let holder = root == 0 || prepared.positions[root].1 != Position::Static;
+    let mut stack: Vec<(usize, bool, bool)> = prepared.boxes[root]
         .children
         .iter()
-        .map(|child| (*child, prepared.positions[root].1 != Position::Static))
+        .map(|child| (*child, holder, true))
         .collect();
-    while let Some((arena, holder_inside)) = stack.pop() {
+    while let Some((arena, holder_inside, reaches)) = stack.pop() {
         let position = prepared.positions[arena].1;
         if position == Position::Fixed || (position == Position::Absolute && !holder_inside) {
             continue;
         }
-        visit(arena);
+        visit(arena, reaches);
         let inside = holder_inside || position != Position::Static;
+        let further = reaches && !prepared.clipped[arena];
         stack.extend(
             prepared.boxes[arena]
                 .children
                 .iter()
-                .map(|child| (*child, inside)),
+                .map(|child| (*child, inside, further)),
         );
     }
 }
@@ -1197,24 +1220,38 @@ fn apply_scrolling(
             continue;
         }
         let padding = geometry[arena].padding;
-        // The root scrolls the viewport: it is as tall as its content otherwise.
+        // The root scrolls the viewport, however tall the root itself is.
         let bottom = if arena == 0 {
-            padding.bottom.min(viewport_bottom)
+            viewport_bottom
         } else {
             padding.bottom
         };
         let mut reach = bottom;
-        scrolling_descendants(prepared, arena, |child| {
-            reach = reach.max(geometry[child].border.bottom);
+        scrolling_descendants(prepared, arena, |child, reaches| {
+            if reaches {
+                reach = reach.max(geometry[child].border.bottom);
+            }
         });
-        let limit = (reach - bottom).max(0.0);
+        // 11.1.1: the scrollable area includes the box's own end padding; at the root,
+        // the box's whole bottom edge.
+        let trailing = if arena == 0 {
+            reach = reach.max(geometry[0].border.bottom);
+            0.0
+        } else {
+            padding.bottom - geometry[arena].content.bottom
+        };
+        let limit = if reach > bottom {
+            reach + trailing - bottom
+        } else {
+            0.0
+        };
         limits[arena] = limit;
         let offset = scrolled(arena).clamp(0.0, limit);
         if offset == 0.0 {
             continue;
         }
         let mut moved = Vec::new();
-        scrolling_descendants(prepared, arena, |child| moved.push(child));
+        scrolling_descendants(prepared, arena, |child, _| moved.push(child));
         for child in moved {
             let target = &mut geometry[child];
             let band = target.leaf_band.as_mut();
@@ -1383,17 +1420,18 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
             if let Some(background) = run.background {
                 quad(renderer, area, background);
             }
-            let line = |at: f32| Rectangle {
+            // Line boxes may be taller than the text: measure from their centre, by size.
+            let line = |offset: f32| Rectangle {
                 x: area.x,
-                y: area.y + area.height * at,
+                y: area.y + area.height / 2.0 + offset,
                 width: area.width,
                 height: thickness,
             };
             if run.underline {
-                quad(renderer, line(0.85), color);
+                quad(renderer, line(run.size * 0.4), color);
             }
             if run.line_through {
-                quad(renderer, line(0.55), color);
+                quad(renderer, line(0.0), color);
             }
         }
     }
@@ -2123,7 +2161,12 @@ where
                 };
                 let projected = prepared.positions[arena].0;
                 let area = geometry.padding;
-                let shown = (area.bottom.min(bounds.height) - area.top).max(1.0);
+                let end = if arena == 0 {
+                    bounds.height
+                } else {
+                    area.bottom
+                };
+                let shown = (end - area.top).max(1.0);
                 let thumb = (shown * shown / (shown + limit)).max(8.0);
                 let offset = self
                     .tree
@@ -2134,18 +2177,35 @@ where
                     .unwrap_or(0.0)
                     .clamp(0.0, *limit);
                 let travel = (shown - thumb).max(0.0);
-                renderer.fill_quad(
-                    Quad {
-                        bounds: Rectangle {
-                            x: origin.x + area.right - 4.0,
-                            y: origin.y + area.top + travel * offset / limit,
-                            width: 4.0,
-                            height: thumb,
+                let bar = Rectangle {
+                    x: origin.x + area.right - 4.0,
+                    y: origin.y + area.top + travel * offset / limit,
+                    width: 4.0,
+                    height: thumb,
+                };
+                // An ancestor's clip hides the bar along with the box.
+                let visible = self
+                    .clips
+                    .get(arena)
+                    .copied()
+                    .flatten()
+                    .map_or(Some(bar), |clip| {
+                        bar.intersection(&Rectangle {
+                            x: clip.left + origin.x,
+                            y: clip.top + origin.y,
+                            width: (clip.right - clip.left).max(0.0),
+                            height: (clip.bottom - clip.top).max(0.0),
+                        })
+                    });
+                if let Some(bounds) = visible {
+                    renderer.fill_quad(
+                        Quad {
+                            bounds,
+                            ..Quad::default()
                         },
-                        ..Quad::default()
-                    },
-                    Color::from_rgba(0.0, 0.0, 0.0, 0.4),
-                );
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    );
+                }
             }
         });
     }

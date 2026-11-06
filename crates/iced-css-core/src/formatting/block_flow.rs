@@ -52,6 +52,15 @@ impl Dim {
     }
 }
 
+/// Alignment along an axis: start, middle, end. For a line of inline-blocks (16.2) and a
+/// cell's content in its row (17.5.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowAlign {
+    Left,
+    Center,
+    Right,
+}
+
 /// A box's part in a table (17.2). Column spans and rowspans are not modeled, `border-collapse`
 /// is treated as separate borders with no spacing, and extra specified table height is
 /// not distributed to rows.
@@ -77,6 +86,14 @@ pub struct FlowBox {
     pub float: Option<FloatSide>,
     pub clear: ClearSide,
     pub table: Option<TableRole>,
+    /// Where a cell's content sits in a taller row (17.5.3). A baseline is treated as top.
+    pub cell_align: RowAlign,
+    /// A caption placed below the table (`caption-side: bottom`).
+    pub caption_below: bool,
+    /// An anonymous block whose children are inline-blocks, placed in wrapping lines
+    /// with this alignment. Each line aligns its boxes' bottom margin edges: the baseline
+    /// of an empty inline-block, and an approximation for one holding text.
+    pub inline_row: Option<RowAlign>,
     /// Absolutely positioned: takes no part in flow; the result holds only its static
     /// position, in `border.left` and `border.top`, for the caller's 10.3.7/10.6.4 pass.
     pub out_of_flow: bool,
@@ -104,6 +121,9 @@ impl Default for FlowBox {
             float: None,
             clear: ClearSide::None,
             table: None,
+            cell_align: RowAlign::Left,
+            caption_below: false,
+            inline_row: None,
             out_of_flow: false,
             establishes_bfc: false,
             width: Dim::Auto,
@@ -537,7 +557,10 @@ impl Solver<'_> {
             Ok::<f32, FlowError>(bottom)
         };
         // 17.4: a caption is a block above the table's grid, as wide as the table.
-        for caption in captions {
+        let (below, above): (Vec<usize>, Vec<usize>) = captions
+            .into_iter()
+            .partition(|caption| self.boxes[*caption].caption_below);
+        for caption in above {
             let height = cell_box(self, caption, inner.width, inner.width)?;
             self.translate(caption, inner.left, y);
             y += height;
@@ -548,6 +571,7 @@ impl Solver<'_> {
             let mut height = self.boxes[row].height.vertical(None).unwrap_or(0.0);
             let cells = self.boxes[row].children.clone();
             let mut x = 0.0;
+            let mut natural = Vec::with_capacity(cells.len());
             for (column, &cell) in cells.iter().enumerate() {
                 x += spacing[0];
                 let width = widths[column];
@@ -558,14 +582,32 @@ impl Solver<'_> {
                 };
                 self.translate(cell, left, y);
                 height = height.max(bottom);
+                natural.push(bottom);
                 x += width;
             }
             // 17.5.3: every cell fills its row; its content stays at the top.
-            for &cell in &cells {
+            for (&cell, cell_natural) in cells.iter().zip(natural) {
                 let geometry = &mut self.geometry[cell];
                 let extra = y + height - geometry.border.bottom;
                 geometry.border.bottom += extra;
                 geometry.padding.bottom += extra;
+                let offset = match self.boxes[cell].cell_align {
+                    RowAlign::Left => 0.0,
+                    RowAlign::Center => (height - cell_natural) / 2.0,
+                    RowAlign::Right => height - cell_natural,
+                };
+                if offset != 0.0 {
+                    let geometry = &mut self.geometry[cell];
+                    geometry.content.top += offset;
+                    geometry.content.bottom += offset;
+                    if let Some(band) = &mut geometry.leaf_band {
+                        band.top += offset;
+                        band.bottom += offset;
+                    }
+                    for child in self.boxes[cell].children.clone() {
+                        self.translate(child, 0.0, offset);
+                    }
+                }
             }
             let area = rect(inner.left, inner.left + inner.width, y, y + height);
             self.geometry[row] = FlowGeometry {
@@ -575,6 +617,11 @@ impl Solver<'_> {
                 ..FlowGeometry::default()
             };
             y += height + spacing[1];
+        }
+        for caption in below {
+            let height = cell_box(self, caption, inner.width, inner.width)?;
+            self.translate(caption, inner.left, y);
+            y += height;
         }
         for &child in &self.boxes[node].children.clone() {
             if matches!(
@@ -644,14 +691,37 @@ impl Solver<'_> {
         Ok(())
     }
 
-    /// Returns the used (width, margin left, margin right).
+    /// Returns the used (width, margin left, margin right). 17.5.2.2: a table is never
+    /// narrower than its columns' minimum, and an auto one only as wide as they prefer.
     fn block_width(&self, node: usize, cb: Containing) -> Result<(f32, f32, f32), FlowError> {
         let value = &self.boxes[node];
         let padding = self.paddings(node, cb.width);
+        let first = self.block_width_at(node, cb, value.width.horizontal(cb.width), padding)?;
+        if !matches!(value.table, Some(TableRole::Table { .. })) {
+            return Ok(first);
+        }
+        let (minimum, preferred) = self.measure(node);
+        let wanted = if value.width == Dim::Auto {
+            first.0.min(preferred)
+        } else {
+            first.0
+        };
+        // Margins are solved for the final width, so auto margins still center it.
+        self.block_width_at(node, cb, AutoLength::Value(wanted.max(minimum)), padding)
+    }
+
+    fn block_width_at(
+        &self,
+        node: usize,
+        cb: Containing,
+        width: AutoLength,
+        padding: [f32; 4],
+    ) -> Result<(f32, f32, f32), FlowError> {
+        let value = &self.boxes[node];
         let result = solve_block_width(BlockWidthInput {
             containing_width: cb.width,
             direction: cb.direction,
-            width: value.width.horizontal(cb.width),
+            width,
             margin_left: value.margin[3].horizontal(cb.width),
             margin_right: value.margin[1].horizontal(cb.width),
             border_left: value.border[3],
@@ -675,7 +745,15 @@ impl Solver<'_> {
         cb: Containing,
     ) -> Result<(), FlowError> {
         for &child in &self.boxes[node].children.clone() {
-            if self.boxes[child].out_of_flow {
+            if let Some(align) = self.boxes[child].inline_row {
+                let top = flow.position();
+                self.layout_inline_row(child, align, flow, cb)?;
+                let geometry = &mut self.geometry[child];
+                geometry.border.top = top;
+                geometry.padding.top = top;
+                geometry.content.top = top;
+                flow.block_limit = flow.block_limit.max(top);
+            } else if self.boxes[child].out_of_flow {
                 if flow.unsettled.is_empty() {
                     self.record_static(child, flow.position(), cb);
                 } else {
@@ -1060,6 +1138,12 @@ impl Solver<'_> {
             .iter()
             .fold(flow.position(), |bottom, float| bottom.max(float.bottom));
         let used = match height {
+            // 17.5.3: on a table or cell a height is a minimum.
+            Some(specified)
+                if matches!(value.table, Some(TableRole::Table { .. } | TableRole::Cell)) =>
+            {
+                clamp(specified, minimum, maximum).max(flowed - content_top)
+            }
             Some(specified) => clamp(specified, minimum, maximum),
             None => clamp((flowed - content_top).max(0.0), minimum, maximum),
         };
@@ -1121,15 +1205,14 @@ impl Solver<'_> {
         self.place_float_box(node, flow, cb, top)
     }
 
-    fn place_float_box(
+    /// Lays out a shrink-to-fit box (a float or inline-block, 10.3.5, 10.3.9) at the
+    /// origin. Returns its used margins, left, right, top, bottom, and border-box bottom.
+    fn shrink_box(
         &mut self,
         node: usize,
-        flow: &mut Flow,
         cb: Containing,
-        flow_top: f32,
-    ) -> Result<(), FlowError> {
+    ) -> Result<(f32, f32, f32, f32, f32), FlowError> {
         let value = &self.boxes[node];
-        let side = value.float.ok_or(FlowError::Tree { node })?;
         let basis = cb.width;
         let padding = self.paddings(node, basis);
         let (preferred_min_width, preferred_width) = self.measure(node);
@@ -1152,11 +1235,10 @@ impl Solver<'_> {
             },
         })
         .map_err(|error| FlowError::Shrink { node, error })?;
-        let (ml, mr) = (used.margin_left, used.margin_right);
         let mt = value.margin[0].zero_auto(basis);
         let mb = value.margin[2].zero_auto(basis);
-        // A float's contents are laid out at a provisional origin, then moved.
-        let border_box_bottom = self.finish_bfc_box(
+        // The contents are laid out at a provisional origin, then moved.
+        let bottom = self.finish_bfc_box(
             node,
             Containing {
                 left: 0.0,
@@ -1168,6 +1250,91 @@ impl Solver<'_> {
             0.0,
             padding,
         )?;
+        Ok((used.margin_left, used.margin_right, mt, mb, bottom))
+    }
+
+    /// Lines of inline-blocks (9.4.2): they fill a line, then wrap, and an overlong box
+    /// keeps a line to itself.
+    fn layout_inline_row(
+        &mut self,
+        node: usize,
+        align: RowAlign,
+        flow: &mut Flow,
+        cb: Containing,
+    ) -> Result<(), FlowError> {
+        self.settle(flow)?;
+        struct Item {
+            node: usize,
+            width: f32,
+            ml: f32,
+            mt: f32,
+            height: f32,
+            margin: [f32; 4],
+        }
+        let mut items = Vec::new();
+        for &child in &self.boxes[node].children.clone() {
+            if self.boxes[child].float.is_some() || self.boxes[child].out_of_flow {
+                continue;
+            }
+            let (ml, mr, mt, mb, bottom) = self.shrink_box(child, cb)?;
+            let border_width = self.geometry[child].border.right;
+            items.push(Item {
+                node: child,
+                width: ml + border_width + mr,
+                ml,
+                mt,
+                height: mt + bottom + mb,
+                margin: [mt, mr, mb, ml],
+            });
+        }
+        let mut y = flow.y;
+        let mut start = 0;
+        while start < items.len() {
+            let mut end = start + 1;
+            let mut used = items[start].width;
+            while end < items.len() && used + items[end].width <= cb.width {
+                used += items[end].width;
+                end += 1;
+            }
+            let line = items[start..end]
+                .iter()
+                .fold(0.0_f32, |tallest, item| tallest.max(item.height));
+            let mut x = cb.left
+                + match align {
+                    RowAlign::Left => 0.0,
+                    RowAlign::Center => (cb.width - used) / 2.0,
+                    RowAlign::Right => cb.width - used,
+                };
+            for item in &items[start..end] {
+                self.translate(item.node, x + item.ml, y + line - item.height + item.mt);
+                self.geometry[item.node].margin = item.margin;
+                x += item.width;
+            }
+            y += line;
+            start = end;
+        }
+        flow.y = y;
+        // The anonymous block itself holds the whole run.
+        let area = rect(cb.left, cb.left + cb.width, flow.y, flow.y);
+        self.geometry[node] = FlowGeometry {
+            border: area,
+            padding: area,
+            content: area,
+            ..FlowGeometry::default()
+        };
+        Ok(())
+    }
+
+    fn place_float_box(
+        &mut self,
+        node: usize,
+        flow: &mut Flow,
+        cb: Containing,
+        flow_top: f32,
+    ) -> Result<(), FlowError> {
+        let side = self.boxes[node].float.ok_or(FlowError::Tree { node })?;
+        let value = &self.boxes[node];
+        let (ml, mr, mt, mb, border_box_bottom) = self.shrink_box(node, cb)?;
         let border_width = self.geometry[node].border.right;
         let mut hypothetical = flow_top.max(flow.block_limit);
         if let Some(bottom) = flow.lowest(value.clear, node)? {
@@ -1207,14 +1374,6 @@ impl Solver<'_> {
         flow.clearance_through = false;
         let value = &self.boxes[node];
         let (solved, ml, mr) = self.block_width(node, cb)?;
-        // 17.5.2.2: an auto-width table is only as wide as its contents ask for.
-        let solved =
-            if matches!(value.table, Some(TableRole::Table { .. })) && value.width == Dim::Auto {
-                let (_, preferred) = self.measure(node);
-                solved.min(preferred)
-            } else {
-                solved
-            };
         let basis = cb.width;
         let padding = self.paddings(node, basis);
         let border = value.border;
@@ -1232,7 +1391,8 @@ impl Solver<'_> {
         let specified_left = value.margin[3].zero_auto(basis);
         let frame = specified_left + box_frame + value.margin[1].zero_auto(basis);
         let least = value.min_width.zero_auto(basis);
-        let auto_width = value.width == Dim::Auto;
+        // A table's width is already settled; it moves down rather than narrow.
+        let auto_width = value.width == Dim::Auto && value.table.is_none();
         let containing = Band {
             left: cb.left,
             right: cb.left + cb.width,

@@ -111,7 +111,7 @@ fn paint_order_is_flow_then_float_then_positioned() {
 
 #[test]
 fn unsupported_display_is_reported() {
-    let error = BoxTree::new(page(), "#note { display:inline-block; }").unwrap_err();
+    let error = BoxTree::new(page(), "#note { display:table-row; }").unwrap_err();
     assert!(error.to_string().contains("display"));
 }
 
@@ -892,6 +892,61 @@ mod interactive {
     }
 
     #[test]
+    fn scroll_reach_stops_at_inner_clips_and_counts_end_padding() {
+        let root = node(
+            "page",
+            vec![node(
+                "outer",
+                vec![
+                    node("slot", vec![]),
+                    node("inner", vec![node("huge", vec![])]),
+                ],
+            )],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#outer { overflow:auto; height:50px; padding-bottom:5px; }
+             #slot { height:10px; }
+             #inner { overflow:hidden; height:60px; }
+             #huge { height:1000px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(10.0)).into();
+        let mut rig = Rig::new(view);
+        rig.send(wheel(-5000.0), Point::new(5.0, 45.0));
+        // Content ends at 70, past a 55 padding bottom, plus 5 of end padding: limit 20.
+        assert_eq!(rig.slot().y, -20.0);
+    }
+
+    #[test]
+    fn a_static_root_scrolls_absolute_children_with_the_page() {
+        let root = node("page", vec![node("slot", vec![]), node("far", vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#page { overflow:auto; }
+             #slot { height:10px; }
+             #far { position:absolute; top:500px; left:0; width:5px; height:5px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(10.0))
+            .on_press("far", 4)
+            .into();
+        let mut rig = Rig::new(view);
+        // The viewport is 200 tall: the page can reach the box at 500 by scrolling 305.
+        rig.send(wheel(-10000.0), Point::new(5.0, 5.0));
+        assert_eq!(rig.slot().y, -305.0);
+        assert_eq!(
+            rig.send(
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                Point::new(2.0, 197.0)
+            ),
+            vec![4]
+        );
+    }
+
+    #[test]
     fn draw_with_clips_widgets_and_text_runs_without_panicking() {
         let root = node(
             "page",
@@ -1173,4 +1228,52 @@ fn inline_runs_remember_their_owner_for_hit_tests() {
     // Source nodes are postorder: a0 b1 page2.
     let owners: Vec<_> = leaf.runs.iter().map(|run| run.owner).collect();
     assert_eq!(owners, vec![0, 0, 1]);
+}
+
+#[test]
+fn generated_content_on_table_parts_is_refused_and_cells_take_it() {
+    let table = || node("t", vec![node("r", vec![node("c", vec![])])]);
+    let base = "#t { display:table; } #r { display:table-row; } #c { display:table-cell; }";
+    let on = |selector: &str| format!("{base} {selector}:before {{ content:\"x\"; }}");
+    assert!(
+        BoxTree::new(table(), &on("#t"))
+            .unwrap_err()
+            .to_string()
+            .contains("content")
+    );
+    assert!(
+        BoxTree::new(table(), &on("#r"))
+            .unwrap_err()
+            .to_string()
+            .contains("content")
+    );
+    let tree = BoxTree::new(table(), &on("#c")).unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "x");
+}
+
+#[test]
+fn vertical_align_and_caption_side_reach_the_table() {
+    let root = node(
+        "t",
+        vec![
+            node("cap", vec![]),
+            node(
+                "r",
+                vec![node("tall", vec![]), node("mid", vec![node("in", vec![])])],
+            ),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#t { display:table; width:100px; }
+         #cap { display:table-caption; caption-side:bottom; height:5px; }
+         #r { display:table-row; }
+         #tall { display:table-cell; height:40px; }
+         #mid { display:table-cell; vertical-align:middle; }
+         #in { height:10px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[5].unwrap().border.top, 15.0);
+    assert_eq!(g[1].unwrap().border.top, 40.0);
 }

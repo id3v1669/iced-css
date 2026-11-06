@@ -127,6 +127,44 @@ fn renders_a_table_from_a_stylesheet() {
 }
 
 #[test]
+fn inline_blocks_lay_out_as_a_navigation_row() {
+    let item = |id: &str, label: &'static str| node(id, vec![text(&format!("{id}t"), label)]);
+    let root = node(
+        "nav",
+        vec![
+            item("home", "Home"),
+            item("docs", "Documentation"),
+            item("about", "About"),
+        ],
+    );
+    let css = "#nav { text-align:center; background-color:#263238; padding:8px; }
+        #home, #docs, #about { display:inline-block; padding:6px 12px; margin:0 4px;
+                               background-color:#455a64; color:#ffffff; }
+        #docs:hover { background-color:#607d8b; }";
+    let view: Element<'_, u8> = BoxTree::new(root, css)
+        .unwrap()
+        .interactive()
+        .on_press("about", 1)
+        .into();
+    let mut ui = iced_test::simulator(view);
+    let snapshot = ui.snapshot(&Theme::Light).unwrap();
+    let path = std::env::temp_dir().join("iced-css-box-tree-nav");
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(snapshot.matches_image(path.join("nav.png")).unwrap());
+    // Text and inline-blocks in one run are refused, not misdrawn.
+    let mixed = node("page", vec![text("t", "words"), node("b", vec![])]);
+    assert!(BoxTree::new(mixed, "#b { display:inline-block; }").is_err());
+    let mixed = node("page", vec![node("b", vec![]), text("t", "words")]);
+    assert!(BoxTree::new(mixed, "#b { display:inline-block; }").is_err());
+    let spaced = node(
+        "page",
+        vec![node("b", vec![]), text("t", "   "), node("c", vec![])],
+    );
+    assert!(BoxTree::new(spaced, "#b, #c { display:inline-block; }").is_ok());
+}
+
+#[test]
 fn misplaced_table_parts_are_refused_not_guessed() {
     for (css, tree) in [
         (

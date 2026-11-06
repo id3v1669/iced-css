@@ -30,7 +30,7 @@ use iced_css_core::{
         block::{AutoLength, Direction},
         block_flow::{
             Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
-            TableRole, layout_block_flow_measured, preferred_content_widths,
+            RowAlign, TableRole, layout_block_flow_measured, preferred_content_widths,
         },
         clearance::ClearSide,
         display::{Display, Float, Position},
@@ -319,6 +319,8 @@ pub struct PreparedTree {
     pub font_sizes: Vec<f32>,
     /// Whether the arena slot is an anonymous block around inline content, per slot.
     pub anonymous: Vec<bool>,
+    /// The slots that hold lines of inline-blocks, which paint and hit as their children.
+    pub inline_rows: Vec<usize>,
     /// Projected indices of the text runs each arena slot holds, in source order.
     pub runs: Vec<Vec<RunSource>>,
     /// The enclosing inline element of each projected index, if any.
@@ -394,6 +396,7 @@ pub fn prepare_captured_tree(
     let mut inline_parent: Vec<Option<usize>> = vec![None; count];
     // Whether the projected row is a block text leaf, whose generated runs join its own.
     let mut text_block = vec![false; count];
+    let mut inline_rows: Vec<usize> = Vec::new();
     // Open elements, innermost last: an element's `::after` follows all its content.
     let mut ancestors: Vec<usize> = Vec::new();
     for index in 0..=count {
@@ -467,7 +470,20 @@ pub fn prepare_captured_tree(
             }
             if is_text {
                 let group = build.inline_group(target, index);
-                build.runs[group].push(RunSource::Node(index));
+                let blank = source_node
+                    .text()
+                    .is_some_and(|text| text.trim().is_empty());
+                if inline_rows.contains(&group) {
+                    // White space between inline-blocks generates nothing here.
+                    if !blank {
+                        return Err(E::Unsupported {
+                            projected: index,
+                            property: "display",
+                        });
+                    }
+                } else {
+                    build.runs[group].push(RunSource::Node(index));
+                }
             }
             ancestors.push(index);
             continue;
@@ -479,6 +495,23 @@ pub fn prepare_captured_tree(
         ) {
             continue;
         }
+        // 9.2.2: inline-blocks in a run form lines of their own. Mixing them with text in
+        // one line needs atomic inlines in a paragraph, which is refused below.
+        if resolution.display == Display::InlineBlock
+            && let Some(target) = parent_slot
+            && !build.open[target].is_some_and(|group| inline_rows.contains(&group))
+        {
+            if build.open[target].is_some_and(|group| !build.runs[group].is_empty()) {
+                return Err(E::Unsupported {
+                    projected: index,
+                    property: "display",
+                });
+            }
+            let group = build.inline_group(target, index);
+            inline_rows.push(group);
+            build.boxes[group].inline_row = Some(RowAlign::Left);
+        }
+        let in_row = resolution.display == Display::InlineBlock;
         let table_role = table_role_of(resolution.display);
         // 17.2.1 would wrap misplaced table parts in anonymous boxes. Those are not built
         // here, so a table part must sit in its proper parent, and vice versa.
@@ -508,6 +541,7 @@ pub fn prepare_captured_tree(
         if !placed
             || (parent.is_some()
                 && table_role.is_none()
+                && !in_row
                 && !matches!(resolution.display, Display::Block | Display::ListItem))
         {
             return Err(E::Unsupported {
@@ -560,6 +594,16 @@ pub fn prepare_captured_tree(
         }
         if let Some(role) = table_role {
             value.table = Some(role);
+            // These parts' direct children must be table parts: generated text would need
+            // an anonymous cell (17.2.1).
+            if !matches!(role, TableRole::Cell | TableRole::Caption)
+                && (pseudo(index, 0).is_some() || pseudo(index, 1).is_some())
+            {
+                return Err(E::Unsupported {
+                    projected: index,
+                    property: "content",
+                });
+            }
             match role {
                 TableRole::Table { .. } | TableRole::Cell | TableRole::Caption => {
                     value.establishes_bfc = true;
@@ -593,22 +637,28 @@ pub fn prepare_captured_tree(
         let in_flow = !is_float && !value.out_of_flow;
         build.boxes.push(value);
         if let Some(target) = parent_slot {
-            match build.open[target] {
-                Some(group) if is_float => {
-                    // A float belongs at its line's top, and the run avoids it: placing
-                    // it before the whole run is exact for a float on the first line.
-                    let at = build.boxes[target]
-                        .children
-                        .iter()
-                        .position(|child| *child == group)
-                        .unwrap_or(build.boxes[target].children.len());
-                    build.boxes[target].children.insert(at, arena);
-                }
-                _ => {
-                    if in_flow {
-                        build.open[target] = None;
+            if in_row && let Some(group) = build.open[target] {
+                // Inline-blocks establish a context; floats and absolutes stay as they are.
+                build.boxes[arena].establishes_bfc = true;
+                build.boxes[group].children.push(arena);
+            } else {
+                match build.open[target] {
+                    Some(group) if is_float => {
+                        // A float belongs at its line's top, and the run avoids it: placing
+                        // it before the whole run is exact for a float on the first line.
+                        let at = build.boxes[target]
+                            .children
+                            .iter()
+                            .position(|child| *child == group)
+                            .unwrap_or(build.boxes[target].children.len());
+                        build.boxes[target].children.insert(at, arena);
                     }
-                    build.boxes[target].children.push(arena);
+                    _ => {
+                        if in_flow {
+                            build.open[target] = None;
+                        }
+                        build.boxes[target].children.push(arena);
+                    }
                 }
             }
         }
@@ -642,6 +692,7 @@ pub fn prepare_captured_tree(
         slot,
         font_sizes,
         anonymous,
+        inline_rows,
         runs,
         inline_parent,
         clipped,
@@ -702,6 +753,7 @@ impl PreparedTree {
             slot,
             font_sizes: _,
             anonymous: _,
+            inline_rows: _,
             runs: _,
             inline_parent: _,
             clipped: _,
@@ -1124,6 +1176,10 @@ pub struct TreePaint {
     pub markers: Vec<Option<String>>,
     /// The computed `border-spacing` per row, zero under `border-collapse: collapse`.
     pub spacings: Vec<[f32; 2]>,
+    /// The computed `vertical-align` keyword per row, for cells.
+    pub vertical_aligns: Vec<Option<&'static str>>,
+    /// Whether `caption-side` is `bottom`, per row.
+    pub captions_below: Vec<bool>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -1287,6 +1343,8 @@ pub fn evaluate_tree_paint<'r>(
     let mut marker_inside: Vec<bool> = Vec::with_capacity(projection.len());
     let mut markers: Vec<Option<String>> = Vec::with_capacity(projection.len());
     let mut spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
+    let mut vertical_aligns: Vec<Option<&'static str>> = Vec::with_capacity(projection.len());
+    let mut captions_below: Vec<bool> = Vec::with_capacity(projection.len());
     let mut collapses: Vec<bool> = Vec::with_capacity(projection.len());
     let mut raw_spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
     // Each list parent's running item count.
@@ -1539,6 +1597,20 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => false,
         };
+        vertical_aligns.push(match defaulted("vertical-align")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => Some(keyword.as_str()),
+            _ => None,
+        });
+        let caption_below = match defaulted("caption-side")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "bottom"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_some_and(|parent| captions_below[parent])
+            }
+            _ => false,
+        };
+        captions_below.push(caption_below);
         raw_spacings.push(raw_spacing);
         collapses.push(collapse);
         spacings.push(if collapse { [0.0, 0.0] } else { raw_spacing });
@@ -1793,5 +1865,7 @@ pub fn evaluate_tree_paint<'r>(
         generated,
         markers,
         spacings,
+        vertical_aligns,
+        captions_below,
     })
 }

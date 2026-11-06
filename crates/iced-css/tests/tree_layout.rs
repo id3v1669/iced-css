@@ -162,7 +162,7 @@ fn leaf_content_measures_by_source_node_and_shrinks_floats() {
 #[test]
 fn outside_block_flow_is_refused_by_source() {
     assert!(matches!(
-        run("#c { display:inline-block; }", |_| None),
+        run("#c { display:table-cell; }", |_| None),
         Err(TreeLayoutError::Unsupported {
             projected: C,
             property: "display"
