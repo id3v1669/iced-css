@@ -64,3 +64,66 @@ fn cost_by_size() {
         println!("{count:>6} cards {rules:>5} rules: build {built:>12.2?}  layout {laid:>12.2?}");
     }
 }
+
+#[test]
+#[ignore = "a measurement"]
+fn widget_cost_by_size() {
+    use iced::{Element, Point, mouse};
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::Duration;
+    for count in [100_usize, 500, 2000] {
+        let cards: Vec<Node> = (0..count)
+            .map(|at| {
+                let title = adapters::text("a title", capture_limits())
+                    .unwrap()
+                    .style_id(&format!("t{at}"), attrs())
+                    .unwrap()
+                    .erase();
+                node(format!("c{at}"), vec![title])
+            })
+            .collect();
+        let root = node("page".to_owned(), cards);
+        let css = "#page { padding:8px; } #c1:hover { color:#ff0000; }";
+        let tree = BoxTree::new(root, css).unwrap();
+        // The renderer's first start is not part of what is measured.
+        let view: Element<'_, u8> = tree.clone().view();
+        let mut ui = iced_test::simulator(view);
+        drop(ui.snapshot(&Theme::Light).unwrap());
+        drop(ui);
+
+        let started = Instant::now();
+        let view: Element<'_, u8> = tree.clone().view();
+        let mut ui = iced_test::simulator(view);
+        let opened = started.elapsed();
+        let started = Instant::now();
+        drop(ui.snapshot(&Theme::Light).unwrap());
+        let drawn = started.elapsed();
+        let started = Instant::now();
+        for step in 0..20 {
+            ui.point_at(Point::new(50.0, 5.0 + step as f32));
+            let _ = ui.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(50.0, 5.0 + step as f32),
+            })]);
+        }
+        let moved = started.elapsed() / 20;
+        drop(ui);
+
+        let to = tree.restyled(&["#c1 { color:#ff0000; }"]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let timing = AnimationTiming::new(Duration::from_secs(10), Duration::ZERO);
+        animations
+            .request(&tree, &to, "c1", &["color"], timing, start)
+            .unwrap();
+        let started = Instant::now();
+        animations.advance(start + Duration::from_secs(1), &to);
+        let shown = animations.presented(&to);
+        shown
+            .layout_text(800.0, Some(600.0), &mut |_, _| 20.0)
+            .unwrap();
+        let frame = started.elapsed();
+        println!(
+            "{count:>5} cards: open {opened:>10.2?}  draw {drawn:>10.2?}  move {moved:>10.2?}  presented layout {frame:>10.2?}"
+        );
+    }
+}

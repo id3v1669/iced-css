@@ -365,8 +365,73 @@ fn collapse(texts: &mut [(String, &'static str)]) {
 /// The hovered, active and focused source nodes a tree is styled for.
 type InteractionKey = (Option<usize>, Option<usize>, Option<usize>);
 
+/// Which boxes a rule can select with one interaction pseudo-class, read from the text of
+/// the sheets. It may say too much, never too little: anything it cannot read means all.
+#[derive(Debug, Default)]
+struct PseudoReach {
+    any: bool,
+    ids: BTreeSet<String>,
+    classes: BTreeSet<String>,
+}
+
+impl PseudoReach {
+    fn of(sheets: &[String], pseudo: &str) -> Self {
+        let mut reach = Self::default();
+        for sheet in sheets {
+            let text = sheet.to_lowercase();
+            // An escape can spell the pseudo-class or a name in a way this does not read.
+            if text.contains('\\') {
+                reach.any = true;
+                continue;
+            }
+            for (at, _) in text.match_indices(pseudo) {
+                let before = &text[..at];
+                let start = before
+                    .rfind(|character: char| {
+                        character.is_whitespace() || ",>+~{};/".contains(character)
+                    })
+                    .map_or(0, |found| found + 1);
+                let compound = &before[start..];
+                let name = |marker: char| {
+                    compound.find(marker).map(|found| {
+                        compound[found + 1..]
+                            .split(['.', '#', ':'])
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned()
+                    })
+                };
+                if compound.contains(['[', ']', '"', '\'', '(', ')']) {
+                    reach.any = true;
+                } else if let Some(id) = name('#') {
+                    reach.ids.insert(id);
+                } else if let Some(class) = name('.') {
+                    reach.classes.insert(class);
+                } else {
+                    reach.any = true;
+                }
+            }
+        }
+        reach
+    }
+
+    fn selects(&self, metadata: &iced_css_core::source::Metadata) -> bool {
+        self.any
+            || metadata
+                .css_id()
+                .is_some_and(|id| self.ids.contains(&id.to_lowercase()))
+            || metadata.attribute("class").is_some_and(|classes| {
+                classes
+                    .split_whitespace()
+                    .any(|class| self.classes.contains(&class.to_lowercase()))
+            })
+    }
+}
+
 #[derive(Debug)]
 struct Source {
+    /// What `:hover`, `:active` and `:focus` can select in these sheets.
+    reach: [PseudoReach; 3],
     /// Which capture this is; restyles share it, so it tells one element from a reused id.
     capture: u64,
     construction: Construction,
@@ -374,10 +439,39 @@ struct Source {
     /// What relative `url()`s resolve against.
     base: PathBuf,
     /// Restyles already cascaded. Pointerless, so nothing here keeps the source alive.
-    variants: Mutex<BTreeMap<InteractionKey, Style>>,
+    variants: Mutex<BTreeMap<InteractionKey, Arc<Style>>>,
 }
 
 static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
+
+impl Source {
+    fn reach_of(sheets: &[String]) -> [PseudoReach; 3] {
+        [":hover", ":active", ":focus"].map(|pseudo| PseudoReach::of(sheets, pseudo))
+    }
+
+    /// The same styling under fewer keys: an interaction on a box no rule can select counts
+    /// as being on the nearest ancestor one can, for the states ancestors share (5.11.3),
+    /// and otherwise as none. So hovering a box no rule cares about cascades nothing.
+    fn normal_key(&self, key: InteractionKey) -> InteractionKey {
+        let nodes = self.construction.nodes();
+        let reach = |start: Option<usize>, reach: &PseudoReach, inherits: bool| {
+            let mut at = start;
+            while let Some(here) = at {
+                let node = nodes.get(here)?;
+                if reach.selects(node.metadata()) {
+                    return Some(here);
+                }
+                at = if inherits { node.parent() } else { None };
+            }
+            None
+        };
+        (
+            reach(key.0, &self.reach[0], true),
+            reach(key.1, &self.reach[1], true),
+            reach(key.2, &self.reach[2], false),
+        )
+    }
+}
 
 /// Interaction states the cache holds before starting over: each is a whole style.
 const VARIANT_LIMIT: usize = 64;
@@ -450,10 +544,12 @@ impl BoxTree {
         base: &Path,
     ) -> Result<Self, BoxTreeError> {
         let (_, construction) = root.into_parts();
+        let sheets = vec![css.to_owned()];
         let source = Arc::new(Source {
+            reach: Source::reach_of(&sheets),
             capture: NEXT_CAPTURE.fetch_add(1, Ordering::Relaxed),
             construction,
-            sheets: vec![css.to_owned()],
+            sheets,
             base: base.to_owned(),
             variants: Mutex::new(BTreeMap::new()),
         });
@@ -468,10 +564,12 @@ impl BoxTree {
     /// # Errors
     /// Returns a stylesheet, cascade or unsupported-display failure.
     pub fn restyled(&self, sheets: &[&str]) -> Result<Self, BoxTreeError> {
+        let sheets: Vec<String> = sheets.iter().map(|sheet| (*sheet).to_owned()).collect();
         let source = Arc::new(Source {
+            reach: Source::reach_of(&sheets),
             capture: self.source.capture,
             construction: self.source.construction.clone(),
-            sheets: sheets.iter().map(|sheet| (*sheet).to_owned()).collect(),
+            sheets,
             base: self.source.base.clone(),
             variants: Mutex::new(BTreeMap::new()),
         });
@@ -488,6 +586,7 @@ impl BoxTree {
     }
 
     fn unpresented_variant(&self, key: InteractionKey) -> Self {
+        let key = self.source.normal_key(key);
         let cached = self
             .source
             .variants
@@ -496,7 +595,7 @@ impl BoxTree {
             .get(&key)
             .cloned();
         if let Some(style) = cached {
-            return Self::from_style(style, Arc::clone(&self.source));
+            return Self::from_style((*style).clone(), Arc::clone(&self.source));
         }
         let built = match Self::styled(&self.source, key) {
             Ok(built) => built,
@@ -512,9 +611,55 @@ impl BoxTree {
         if variants.len() >= VARIANT_LIMIT {
             variants.clear();
         }
-        variants.insert(key, built.style());
+        variants.insert(key, Arc::new(built.style()));
         drop(variants);
         built
+    }
+
+    /// The cascaded styling for a key, without copying it; `None` if it is refused.
+    fn cached_style(&self, key: InteractionKey) -> Option<Arc<Style>> {
+        let key = self.source.normal_key(key);
+        let cached = self
+            .source
+            .variants
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+            .cloned();
+        if cached.is_some() {
+            return cached;
+        }
+        let style = Arc::new(Self::styled(&self.source, key).ok()?.style());
+        let mut variants = self
+            .source
+            .variants
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if variants.len() >= VARIANT_LIMIT {
+            variants.clear();
+        }
+        variants.insert(key, Arc::clone(&style));
+        Some(style)
+    }
+
+    /// Whether two interaction states style this tree alike, as `variant` would show them.
+    /// Presented values lie over both the same way. It copies neither styling: pointer
+    /// moves ask this on every change of box.
+    fn same_variant(&self, first: InteractionKey, second: InteractionKey) -> bool {
+        let normal = |key| self.source.normal_key(key);
+        if normal(first) == normal(second) {
+            return true;
+        }
+        match (self.cached_style(first), self.cached_style(second)) {
+            (Some(one), Some(other)) => {
+                Arc::ptr_eq(&one, &other)
+                    || (one.prepared == other.prepared
+                        && one.paints == other.paints
+                        && one.texts == other.texts)
+            }
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     fn style(&self) -> Style {
@@ -1668,6 +1813,7 @@ where
             canvas_height: 0.0,
             canvas_width: 0.0,
             clips: Vec::new(),
+            steps: Vec::new(),
             paragraphs: BTreeMap::new(),
             allocations: Vec::new(),
             loaded: BTreeSet::new(),
@@ -1987,6 +2133,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     canvas_height: f32,
     canvas_width: f32,
     clips: Vec<Option<FlowRect>>,
+    /// Paint order at the last layout, front last; hit tests walk it on every pointer event.
+    steps: Vec<PaintStep>,
     elements: Vec<Element<'a, Message, Theme, Renderer>>,
     /// The CSS id naming each element's box.
     ids: Vec<String>,
@@ -2604,7 +2752,7 @@ where
 {
     /// The topmost box under a point relative to the layout, as a source node.
     fn hit(&self, point: Point) -> Option<usize> {
-        for step in self.tree.paint_steps(&self.embedded()).into_iter().rev() {
+        for &step in self.steps.iter().rev() {
             // Inline text answers for the run under the point; blank line space for nothing.
             if let PaintStep::Text(arena) = step
                 && self.tree.prepared.anonymous[arena]
@@ -3160,6 +3308,7 @@ where
                 (paragraph(renderer, leaf, width), corner, Color::BLACK),
             );
         }
+        self.steps = self.tree.paint_steps(&self.embedded());
         self.marker_paragraphs.clear();
         for (projected, leaf) in &self.tree.markers {
             let Some(Some(geometry)) = self.geometry.get(*projected) else {
@@ -3364,7 +3513,7 @@ where
             let moved = scrolled != state.scrolled || scrolled_x != state.scrolled_x;
             state.scrolled = scrolled;
             state.scrolled_x = scrolled_x;
-            if moved || self.base.variant(after) != self.base.variant(before) {
+            if moved || !self.base.same_variant(after, before) {
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -3466,7 +3615,7 @@ where
             *state = next;
             // Only states that a rule distinguishes need a new layout. Compare styles
             // before measuring: the current tree carries measured widths.
-            if self.base.variant(key) != self.base.variant(self.key) {
+            if !self.base.same_variant(key, self.key) {
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -4080,5 +4229,74 @@ mod tests {
             .find(|(_, leaf)| leaf.text() == "fixed")
             .unwrap();
         assert_eq!(fixed.1.runs[0].color, Some([1.0; 3]));
+    }
+
+    #[test]
+    fn only_boxes_a_rule_can_select_make_a_new_styling() {
+        let tree = |css: &str| {
+            BoxTree::new(
+                node(
+                    "page",
+                    vec![node("a", vec![node("in_a", vec![])]), node("b", vec![])],
+                ),
+                css,
+            )
+            .unwrap()
+        };
+        let by_id = |tree: &BoxTree, id: &str| {
+            tree.originals[tree
+                .ids
+                .iter()
+                .position(|value| value.as_deref() == Some(id))
+                .unwrap()]
+        };
+        let none = (None, None, None);
+        let css = "#a:hover #in_a { color:#ff0000; }";
+        let shown = tree(css);
+        let (a, in_a, b) = (
+            by_id(&shown, "a"),
+            by_id(&shown, "in_a"),
+            by_id(&shown, "b"),
+        );
+        let normal = |key| shown.source.normal_key(key);
+        assert_eq!(normal((Some(b), None, None)), none);
+        assert_eq!(normal((Some(in_a), None, None)), (Some(a), None, None));
+        assert_eq!(normal((None, Some(a), None)), none);
+        // Hover inside #a still reaches the rule.
+        let styled = shown.variant((Some(in_a), None, None));
+        let target = styled
+            .ids
+            .iter()
+            .position(|value| value.as_deref() == Some("in_a"))
+            .unwrap();
+        assert_eq!(
+            styled.paints[styled.prepared.positions[target].0].color,
+            Some([1.0, 0.0, 0.0])
+        );
+        // Focus stays on its own box.
+        let shown = tree("#a:focus { color:#ff0000; }");
+        assert_eq!(shown.source.normal_key((None, None, Some(in_a))), none);
+        assert_eq!(
+            shown.source.normal_key((None, None, Some(a))),
+            (None, None, Some(a))
+        );
+        // What cannot be read reaches everything.
+        for css in [
+            "*:hover { color:#ff0000; }",
+            ":hover { color:#ff0000; }",
+            "div:hover { color:#ff0000; }",
+            "[a=\"b c\"]:hover { color:#ff0000; }",
+            "#a { color:#ff0000; } #\\62:hover { color:#00ff00; }",
+        ] {
+            let shown = tree(css);
+            assert_eq!(
+                shown.source.normal_key((Some(b), None, None)),
+                (Some(b), None, None),
+                "{css}"
+            );
+        }
+        // No rule at all: nothing differs, and nothing cascades again.
+        let shown = tree("#a { color:#ff0000; }");
+        assert!(shown.same_variant((Some(a), Some(b), Some(a)), none));
     }
 }

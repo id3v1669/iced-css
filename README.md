@@ -79,6 +79,10 @@ keyword fallback is used). `text-indent` is approximated by leading spaces, posi
 (no percentages or hanging indents), a word too wide beside it moves to the next line, one wider than the block wraps into blank lines, and none applies when an inline-block opens the line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
 sizing decorations by part; generated content and markers take it only from their element.
 
+## Cost
+
+Measured on one machine in a release build (`tests/box_tree_scale.rs`): a cascade takes about 40 ms for 2,000 boxes and grows linearly; a layout with a fake shaper takes under 1 ms there. Rules multiply with boxes, with no selector index: 1,000 rules over 2,000 boxes take about 660 ms. The first hover of a box some `:hover` rule can select cascades the whole tree once and is then cached, up to 64 states: a class rule on every card means a stall per card on a large page.
+
 ## Status
 
 Under active development and not yet published. Conformance is not measured.
