@@ -870,3 +870,37 @@ fn narrow_columns_hold_whole_small_caps_words() {
     assert!(draw("white-space:nowrap;", &name));
     assert!(draw("", &name));
 }
+
+#[test]
+fn inline_boxes_draw_their_sides_across_lines() {
+    let root = node(
+        "page",
+        vec![
+            text("a", "before "),
+            node(
+                "chip",
+                vec![text(
+                    "b",
+                    "a chip with enough words to break onto the next line",
+                )],
+            ),
+            text("c", " after"),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background-color:white; color:black; width:300px; line-height:2; }
+         #chip { display:inline; padding:3px 8px; margin:0 8px; background-color:#adcbe3;
+                 border:2px solid #2a4d69; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    let name = format!("inline-box-{}.png", std::process::id());
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    );
+}

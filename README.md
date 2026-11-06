@@ -66,9 +66,9 @@ Approximated or missing: text beside an `inline-block` or `inline-table` sits in
 one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at
 their bottoms rather than baselines; `border-collapse` shares each edge at the widest cell border, with
 the later cell on top rather than resolving conflicts per edge; `justify` stretches lines to the widest line rather than the box, leaves a line split at a float's end unstretched, and is start-aligned in rtl;
-one line height and alignment per paragraph; inline box padding and borders; text widens past
+one line height and alignment per paragraph; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
-text properties, not other box properties. `list-style-image` replaces outside markers only, and needs the `image` feature. An rtl scroller does not scroll across. `table-layout: fixed` reads `table-column` widths but not column groups, ignores column elements past the cells, keeps a right-anchored absolute table's left edge when its columns grow it, and lets content pick collapsed-border overlaps. A row of hidden
+text properties, not other box properties. `list-style-image` replaces outside markers only, and needs the `image` feature. Inline box sides take spaces across, so widths round to about a sixth of the font size, and a percentage is 0; they are not drawn on inline text with no runs. An rtl scroller does not scroll across. `table-layout: fixed` reads `table-column` widths but not column groups, ignores column elements past the cells, keeps a right-anchored absolute table's left edge when its columns grow it, and lets content pick collapsed-border overlaps. A row of hidden
 empty cells keeps its height. `clip`ped content still extends a scroller's range. An own-text
 scrolling list item's outside marker moves with the text, unclipped. Animations do not cover `auto`, transparent borders, a length to a percentage,
 inline backgrounds, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the

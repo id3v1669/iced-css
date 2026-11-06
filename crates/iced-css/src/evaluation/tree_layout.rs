@@ -422,6 +422,15 @@ impl Build {
     }
 }
 
+/// An inline element's margin, border and padding in pixels, top right bottom left. A
+/// percentage has no line width to resolve against here: 0.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InlineBoxSides {
+    pub margin: [f32; 4],
+    pub border: [f32; 4],
+    pub padding: [f32; 4],
+}
+
 /// Width-independent box tree, ready to lay out at any viewport.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedTree {
@@ -440,6 +449,8 @@ pub struct PreparedTree {
     pub runs: Vec<Vec<RunSource>>,
     /// The enclosing inline element of each projected index, if any.
     pub inline_parent: Vec<Option<usize>>,
+    /// The box sides of each inline element, by projected index.
+    pub inline_boxes: Vec<Option<InlineBoxSides>>,
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
@@ -509,6 +520,7 @@ pub fn prepare_captured_tree(
     let mut container: Vec<Option<usize>> = vec![None; count];
     let mut inline_element = vec![false; count];
     let mut inline_parent: Vec<Option<usize>> = vec![None; count];
+    let mut inline_boxes: Vec<Option<InlineBoxSides>> = vec![None; count];
     // Whether the projected row is a block text leaf, whose generated runs join its own.
     let mut text_block = vec![false; count];
     let mut inline_rows: Vec<usize> = Vec::new();
@@ -588,6 +600,19 @@ pub fn prepare_captured_tree(
             container[index] = Some(target);
             inline_element[index] = true;
             inline_parent[index] = parent.filter(|&outer| inline_element[outer]);
+            if let Ok(sides) = flow_box(&rows[index], facts.numeric) {
+                let pixels = |dims: [Dim; 4]| {
+                    dims.map(|value| match value {
+                        Dim::Px(pixels) => pixels,
+                        _ => 0.0,
+                    })
+                };
+                inline_boxes[index] = Some(InlineBoxSides {
+                    margin: pixels(sides.margin),
+                    border: sides.border,
+                    padding: pixels(sides.padding),
+                });
+            }
             if let Some(value) = pseudo(index, 0) {
                 build.generated(&inline_rows, target, index, RunSource::Before(index), value);
             }
@@ -844,6 +869,7 @@ pub fn prepare_captured_tree(
         anonymous,
         runs,
         inline_parent,
+        inline_boxes,
         clipped,
         scrolls,
     })
@@ -910,6 +936,7 @@ impl PreparedTree {
             anonymous: _,
             runs: _,
             inline_parent: _,
+            inline_boxes: _,
             clipped: _,
             scrolls: _,
         } = self;

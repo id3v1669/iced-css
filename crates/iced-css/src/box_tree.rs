@@ -15,9 +15,9 @@ use crate::{
         display_rules::{BundleLimits, DisplayRuleBundle, GraphBinding, GraphOrigin},
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
-            BackgroundImage, BackgroundOffset, BoxPaint, GeneratedRun, PreparedTree, RunSource,
-            TextLineHeight, TextStyle, TreeLayoutError, TreePaint, evaluate_tree_paint,
-            prepare_captured_tree, prepare_tree_source_projection,
+            BackgroundImage, BackgroundOffset, BoxPaint, GeneratedRun, InlineBoxSides,
+            PreparedTree, RunSource, TextLineHeight, TextStyle, TreeLayoutError, TreePaint,
+            evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
         },
     },
     host::source_publication::{InitialSourceHost, PublicationLimits},
@@ -252,6 +252,8 @@ pub struct TextRun {
     /// The size its line height comes from, when it is drawn smaller than its computed one:
     /// the small letters of `small-caps`.
     pub line_size: Option<f32>,
+    /// The sides of the inline box it sits in, above and below the line.
+    pub inline_box: Option<InlineDecoration>,
     pub color: Option<[f32; 3]>,
     pub background: Option<[f32; 3]>,
     pub weight: u16,
@@ -865,6 +867,7 @@ impl BoxTree {
                         text,
                         size,
                         line_size: None,
+                        inline_box: None,
                         color,
                         background,
                         weight: style.weight,
@@ -914,26 +917,127 @@ impl BoxTree {
                 }
             }
         }
-        // 15.6: small capitals are simulated by scaling capital letters.
+        // 15.6: small capitals are simulated by scaling capital letters. 8.6: an inline box's
+        // sides open before its first run and close after its last, whatever lines it breaks
+        // across; spaces take the room across, as for `text-indent`.
         for (arena, runs) in prepared.runs.iter().enumerate() {
             let Some(leaf) = &mut texts[arena] else {
                 continue;
             };
-            let mut split = Vec::with_capacity(leaf.runs.len());
+            let boxed = !leaf.is_empty();
+            let mut tagged: Vec<(TextRun, usize)> = Vec::with_capacity(leaf.runs.len());
             for (run, &source) in leaf.runs.drain(..).zip(runs) {
+                let (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at)) = source;
                 let small_caps = match (source, generated_of(source)) {
                     (_, Some(made)) => made.style.small_caps,
-                    (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at), None) => {
-                        styles[at].small_caps
-                    }
+                    (_, None) => styles[at].small_caps,
                 };
                 if small_caps {
-                    split.extend(small_capitals(&run));
+                    tagged.extend(small_capitals(&run).into_iter().map(|part| (part, at)));
                 } else {
-                    split.push(run);
+                    tagged.push((run, at));
                 }
             }
-            leaf.runs = split;
+            // The inline boxes around a run, outermost first.
+            let chain = |mut at: Option<usize>| {
+                let mut found = Vec::new();
+                while let Some(here) = at {
+                    let sided = prepared.inline_boxes[here].is_some_and(|sides| {
+                        [sides.margin, sides.border, sides.padding]
+                            .iter()
+                            .flatten()
+                            .any(|side| *side != 0.0)
+                    });
+                    if sided {
+                        found.push(here);
+                    }
+                    at = prepared.inline_parent[here];
+                }
+                found.reverse();
+                found
+            };
+            let background_of = |mut at: Option<usize>| {
+                while let Some(here) = at {
+                    if let Some(color) = raw_paints[here].background {
+                        return Some(color);
+                    }
+                    at = prepared.inline_parent[here];
+                }
+                None
+            };
+            let chains: Vec<Vec<usize>> = tagged.iter().map(|(_, at)| chain(Some(*at))).collect();
+            let mut placed = Vec::with_capacity(tagged.len());
+            for (index, (mut run, _)) in tagged.into_iter().enumerate() {
+                let here = &chains[index];
+                if !boxed {
+                    placed.push(run);
+                    continue;
+                }
+                let sides = |element: usize| {
+                    prepared.inline_boxes[element].unwrap_or(InlineBoxSides {
+                        margin: [0.0; 4],
+                        border: [0.0; 4],
+                        padding: [0.0; 4],
+                    })
+                };
+                let decoration = |element: usize| {
+                    let box_sides = sides(element);
+                    let colors = raw_paints[element].border;
+                    InlineDecoration {
+                        padding: [box_sides.padding[0], box_sides.padding[2]],
+                        border: [
+                            (box_sides.border[0], colors[0]),
+                            (box_sides.border[2], colors[2]),
+                        ],
+                        edge: None,
+                    }
+                };
+                // Margin, then border and padding as one space with an exact border bar in it.
+                let side = |element: usize, across: usize, run: &TextRun| {
+                    let box_sides = sides(element);
+                    let spacer =
+                        |width: f32| (width > 0.0).then(|| indent_run(run, width)).flatten();
+                    let margin = spacer(box_sides.margin[across]).map(|spacer| TextRun {
+                        background: None,
+                        inline_box: None,
+                        ..spacer
+                    });
+                    let width = box_sides.border[across];
+                    let edge = raw_paints[element].border[across]
+                        .filter(|_| width > 0.0)
+                        .map(|color| (across == 3, width, color));
+                    let inner = spacer(width + box_sides.padding[across]).map(|spacer| TextRun {
+                        background: background_of(Some(element)),
+                        inline_box: Some(InlineDecoration {
+                            edge,
+                            ..decoration(element)
+                        }),
+                        ..spacer
+                    });
+                    [margin, inner]
+                };
+                let before = index
+                    .checked_sub(1)
+                    .map_or(&[][..], |at| chains[at].as_slice());
+                for &element in here.iter().filter(|element| !before.contains(element)) {
+                    placed.extend(side(element, 3, &run).into_iter().flatten());
+                }
+                let after = chains.get(index + 1).map_or(&[][..], Vec::as_slice);
+                let closing: Vec<TextRun> = here
+                    .iter()
+                    .rev()
+                    .filter(|element| !after.contains(element))
+                    .flat_map(|&element| {
+                        let mut parts = side(element, 1, &run);
+                        parts.reverse();
+                        parts.into_iter().flatten()
+                    })
+                    .collect();
+                run.inline_box = here.last().map(|&element| decoration(element));
+                placed.push(run);
+                placed.extend(closing);
+            }
+            leaf.runs = placed;
         }
         // 16.1: `text-indent` applies to the first line of a block container, so to the leaf
         // that holds it: spaces of a known fraction of the font size come closest.
@@ -993,6 +1097,7 @@ impl BoxTree {
                             text,
                             size: prepared.font_sizes[projected],
                             line_size: None,
+                            inline_box: None,
                             color: raw_paints[projected].color,
                             background: None,
                             weight: style.weight,
@@ -1544,6 +1649,16 @@ fn css_cursor(keyword: &str) -> Option<mouse::Interaction> {
     })
 }
 
+/// What an inline box paints beyond its text, above and below: its padding, and its top and
+/// bottom borders. They do not change the line's height (10.8.1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InlineDecoration {
+    pub padding: [f32; 2],
+    pub border: [(f32, Option<[f32; 3]>); 2],
+    /// A border at this run's start (`true`) or end, for the spaces that take its room.
+    pub edge: Option<(bool, f32, [f32; 3])>,
+}
+
 /// A run in capitals, with what was lowercase at a smaller size.
 fn small_capitals(run: &TextRun) -> Vec<TextRun> {
     let mut parts: Vec<TextRun> = Vec::new();
@@ -1948,8 +2063,62 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                 y: area.y + corner.y,
                 ..area
             };
+            let (padding, border) = run
+                .inline_box
+                .map_or(([0.0; 2], [(0.0, None); 2]), |sides| {
+                    (sides.padding, sides.border)
+                });
+            // 10.6.1: an inline box wraps the font's content area, not the taller line box.
+            let (content_top, content_height) = if run.inline_box.is_some() {
+                let height = area.height.min(run.line_size.unwrap_or(run.size) * 1.3);
+                (area.y + (area.height - height) / 2.0, height)
+            } else {
+                (area.y, area.height)
+            };
+            let top = content_top - padding[0];
+            let bottom = content_top + content_height + padding[1];
             if let Some(background) = run.background {
-                quad(renderer, area, background);
+                quad(
+                    renderer,
+                    Rectangle {
+                        y: top,
+                        height: bottom - top,
+                        ..area
+                    },
+                    background,
+                );
+            }
+            if let Some((start, width, edge)) = run.inline_box.and_then(|sides| sides.edge) {
+                quad(
+                    renderer,
+                    Rectangle {
+                        x: if start {
+                            area.x
+                        } else {
+                            area.x + area.width - width
+                        },
+                        y: top - border[0].0,
+                        width,
+                        height: bottom + border[1].0 - (top - border[0].0),
+                    },
+                    edge,
+                );
+            }
+            for (at, height, edge) in [
+                (top - border[0].0, border[0].0, border[0].1),
+                (bottom, border[1].0, border[1].1),
+            ] {
+                if let Some(edge) = edge.filter(|_| height > 0.0) {
+                    quad(
+                        renderer,
+                        Rectangle {
+                            y: at,
+                            height,
+                            ..area
+                        },
+                        edge,
+                    );
+                }
             }
             // Line boxes may be taller than the text: measure from their centre, by size.
             let line = |offset: f32| Rectangle {
