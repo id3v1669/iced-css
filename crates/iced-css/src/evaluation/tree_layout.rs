@@ -1274,6 +1274,8 @@ pub struct TreePaint {
     pub markers: Vec<Option<String>>,
     /// The computed `border-spacing` per row, zero under `border-collapse: collapse`.
     pub spacings: Vec<[f32; 2]>,
+    /// Whether `border-collapse` is `collapse`, per row.
+    pub collapses: Vec<bool>,
     /// The computed `vertical-align` keyword per row, for cells.
     pub vertical_aligns: Vec<Option<&'static str>>,
     /// Whether `caption-side` is `bottom`, per row.
@@ -2245,6 +2247,7 @@ pub fn evaluate_tree_paint<'r>(
         generated,
         markers,
         spacings,
+        collapses,
         vertical_aligns,
         captions_below,
     })

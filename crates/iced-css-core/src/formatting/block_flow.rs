@@ -61,8 +61,8 @@ pub enum RowAlign {
     Right,
 }
 
-/// A box's part in a table (17.2). `border-collapse` is treated as separate borders with
-/// no spacing, and extra specified table height is not distributed to rows.
+/// A box's part in a table (17.2). A negative `spacing` overlaps cells, which is how the
+/// caller models collapsed borders. Extra specified table height is not distributed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TableRole {
     /// Horizontal and vertical `border-spacing`.

@@ -37,7 +37,7 @@ use iced_css_core::{
     },
     formatting::{
         block_flow::{
-            FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
+            Dim, FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
         },
         display::Position,
     },
@@ -583,6 +583,7 @@ impl BoxTree {
             generated,
             markers,
             spacings,
+            collapses,
             vertical_aligns,
             captions_below,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
@@ -596,6 +597,39 @@ impl BoxTree {
             &generated,
         )
         .map_err(failed)?;
+        let mut collapse_spacing: Vec<Option<[f32; 2]>> = vec![None; prepared.boxes.len()];
+        // 17.6.2: collapsed borders share one line: neighbouring cells overlap by the widest
+        // cell border, and the table's own edge follows the outer cells'. Where borders on
+        // a shared edge differ the later cell paints on top; the width is not per edge.
+        for table in 0..prepared.boxes.len() {
+            if !matches!(prepared.boxes[table].table, Some(TableRole::Table { .. }))
+                || !collapses[prepared.positions[table].0]
+            {
+                continue;
+            }
+            let mut widest = 0.0_f32;
+            let mut stack = prepared.boxes[table].children.clone();
+            while let Some(part) = stack.pop() {
+                match prepared.boxes[part].table {
+                    Some(TableRole::Cell) => {
+                        widest = prepared.boxes[part]
+                            .border
+                            .iter()
+                            .fold(widest, |most, edge| most.max(*edge));
+                    }
+                    Some(TableRole::Table { .. }) | None => {}
+                    Some(_) => stack.extend(prepared.boxes[part].children.iter().copied()),
+                }
+            }
+            if widest > 0.0 {
+                let owner = prepared.positions[table].0;
+                let value = &mut prepared.boxes[table];
+                value.border = [0.0; 4];
+                value.padding = [Dim::Px(widest); 4];
+                paints[owner].border = [None; 4];
+                collapse_spacing[table] = Some([-widest, -widest]);
+            }
+        }
         // Each slot's enclosing box owner: anonymous blocks answer to their block container.
         let mut container_of: Vec<usize> =
             prepared.positions.iter().map(|&(owner, _)| owner).collect();
@@ -609,7 +643,7 @@ impl BoxTree {
         for (arena, value) in prepared.boxes.iter_mut().enumerate() {
             let owner = prepared.positions[arena].0;
             if let Some(TableRole::Table { spacing }) = &mut value.table {
-                *spacing = spacings[owner];
+                *spacing = collapse_spacing[arena].unwrap_or(spacings[owner]);
             }
             // An anonymous cell has initial values, not those of the box it wraps.
             value.cell_align = match vertical_aligns[owner].filter(|_| !prepared.anonymous[arena]) {

@@ -1623,3 +1623,50 @@ fn anonymous_parts_cover_nested_tables_rows_of_inline_blocks_and_blank_text() {
     let g = tree.layout(100.0, None).unwrap();
     assert_eq!(g[2].unwrap().border.top, 20.0);
 }
+
+#[test]
+fn collapsed_borders_share_a_line_and_keep_the_table_flush() {
+    let root = node(
+        "t",
+        vec![
+            node("r1", vec![node("a", vec![]), node("b", vec![])]),
+            node("r2", vec![node("c", vec![]), node("d", vec![])]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#t { display:table; border-collapse:collapse; border-spacing:9px; border:7px solid; }
+         #r1, #r2 { display:table-row; }
+         #a, #b, #c, #d { display:table-cell; width:10px; height:5px; border:2px solid; }",
+    )
+    .unwrap();
+    let g = tree.layout(200.0, None).unwrap();
+    let edge = |index: usize| g[index].unwrap().border;
+    // Cells are 14 wide by 9 tall, and overlap by their shared 2px border.
+    assert_eq!((edge(2).left, edge(2).right), (0.0, 14.0));
+    assert_eq!((edge(3).left, edge(3).right), (12.0, 26.0));
+    assert_eq!((edge(2).top, edge(5).top), (0.0, 7.0));
+    assert_eq!((edge(0).right, edge(0).bottom), (26.0, 16.0));
+    // The table's own border gives way to its outer cells'.
+    assert_eq!(tree.paints()[0].border[0], None);
+    assert_eq!(tree.paints()[2].border[0], Some([0.0, 0.0, 0.0]));
+}
+
+#[test]
+fn collapse_without_cell_borders_keeps_the_table_border_and_no_spacing() {
+    let root = node(
+        "t",
+        vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#t { display:table; border-collapse:collapse; border-spacing:9px; border:3px solid; }
+         #r { display:table-row; }
+         #a, #b { display:table-cell; width:10px; height:5px; }",
+    )
+    .unwrap();
+    let g = tree.layout(200.0, None).unwrap();
+    assert_eq!(g[2].unwrap().border.left, 3.0);
+    assert_eq!(g[3].unwrap().border.left, 13.0);
+    assert!(tree.paints()[0].border[0].is_some());
+}
