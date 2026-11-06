@@ -1000,3 +1000,35 @@ fn a_hidden_child_leaves_its_parents_paint_whole() {
     assert!(draw("", &name));
     assert!(draw("visibility:hidden;", &name));
 }
+
+#[test]
+fn a_hidden_child_leaves_a_parent_without_sides_whole() {
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "page",
+            vec![node(
+                "o",
+                vec![
+                    text("a", "a"),
+                    node("i", vec![text("b", "b")]),
+                    text("c", "c"),
+                ],
+            )],
+        );
+        let sheet = format!(
+            "#page {{ background-color:white; color:#0000ff; padding:20px; }}
+             #o {{ display:inline; background-color:#0000ff; }}
+             #i {{ display:inline; {css} }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("hidden-unsided-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(draw("visibility:hidden;", &name));
+}

@@ -2733,6 +2733,31 @@ mod animation {
     }
 
     #[test]
+    fn generated_runs_with_the_same_text_keep_their_own_ends() {
+        let source = || node("page", vec![text("line", "words")]);
+        let css = |color: &str| {
+            format!(
+                "#page {{ color:{color}; }}
+                 #page:before {{ content:\"x\"; color:#ffffff; }}
+                 #page:after {{ content:\"x\"; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("#000000")).unwrap();
+        let to = from.restyled(&[&css("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "page", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let leaves = shown.text_leaves();
+        let runs = &leaves[0].1.runs;
+        assert_eq!(runs[0].color, Some([1.0; 3]), "{runs:?}");
+        assert!(near(runs[2].color.unwrap(), [0.5; 3]), "{runs:?}");
+    }
+
+    #[test]
     fn repeats_and_hidden_ends_start_nothing_extra() {
         let from = tree("#box { width:100px; height:10px; background-color:#000000; }");
         let to = from

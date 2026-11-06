@@ -831,7 +831,7 @@ impl BoxTree {
                             | RunSource::Before(at)
                             | RunSource::After(at)) = run_source;
                             let mut owner = Some(at);
-                            let mut background = made.background;
+                            let mut background = made.background.filter(|_| made.visible);
                             while background.is_none() {
                                 let Some(here) = owner else { break };
                                 if prepared.slot[here].is_some_and(|slot| prepared.anonymous[slot])
@@ -2116,7 +2116,7 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
     };
     for (index, run) in leaf.runs.iter().enumerate() {
         // A hidden run keeps its room inside the visible boxes around it.
-        if !run.visible && run.inline_boxes.is_empty() {
+        if !run.visible && run.inline_boxes.is_empty() && run.background.is_none() {
             continue;
         }
         let color = run.color.unwrap_or([0.0; 3]);
@@ -2162,9 +2162,6 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                     }
                 }
             }
-            if !run.visible {
-                continue;
-            }
             if let Some(background) = run.background {
                 let bounds = Rectangle {
                     y: content_top,
@@ -2172,6 +2169,9 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                     ..area
                 };
                 quad(renderer, bounds, background);
+            }
+            if !run.visible {
+                continue;
             }
             if let (Some((start, width, edge)), Some(sides)) = (run.edge, run.inline_boxes.last()) {
                 let top = content_top - sides.padding[0] - sides.border[0].0;

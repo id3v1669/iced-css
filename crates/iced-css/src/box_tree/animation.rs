@@ -408,17 +408,16 @@ impl BoxTree {
             let Some(leaf) = leaf else { continue };
             for (at, run) in leaf.runs.iter().enumerate() {
                 // By content, not place: spaces for sides can differ between the two stylings.
-                let shown_before =
-                    self.texts
-                        .get(arena)
-                        .and_then(Option::as_ref)
-                        .is_some_and(|leaf| {
-                            leaf.runs.iter().any(|old| {
-                                old.owner == run.owner
-                                    && old.text == run.text
-                                    && same(old.color, run.color)
-                            })
-                        });
+                // The same occurrence: `:before` and `:after` can share owner and text.
+                let alike =
+                    |other: &&super::TextRun| other.owner == run.owner && other.text == run.text;
+                let occurrence = leaf.runs[..at].iter().filter(alike).count();
+                let shown_before = self
+                    .texts
+                    .get(arena)
+                    .and_then(Option::as_ref)
+                    .and_then(|old| old.runs.iter().filter(alike).nth(occurrence))
+                    .is_some_and(|old| same(old.color, run.color));
                 if followers.boxes.iter().any(|f| f.node == run.owner) && shown_before {
                     followers.runs.push((arena, at, run.owner));
                 }
