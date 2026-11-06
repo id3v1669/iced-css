@@ -93,6 +93,8 @@ pub struct FlowBox {
     pub cell_align: RowAlign,
     /// A caption placed below the table (`caption-side: bottom`).
     pub caption_below: bool,
+    /// `table-layout: fixed`: the first row alone sets the columns of a table with a width.
+    pub fixed_table: bool,
     /// An anonymous block whose children are inline-blocks, placed in wrapping lines
     /// with this alignment. Each line aligns its boxes' bottom margin edges: the baseline
     /// of an empty inline-block, and an approximation for one holding text.
@@ -128,6 +130,7 @@ impl Default for FlowBox {
             row_span: 1,
             cell_align: RowAlign::Left,
             caption_below: false,
+            fixed_table: false,
             inline_row: None,
             out_of_flow: false,
             establishes_bfc: false,
@@ -682,6 +685,39 @@ impl Solver<'_> {
         (mins, prefs)
     }
 
+    /// 17.5.2.1: widths from the first row's cells; the remaining columns share what is
+    /// left, and with none remaining the extra goes evenly. Content does not count.
+    fn fixed_columns(&self, rows: &[usize], count: usize, available: f32, basis: f32) -> Vec<f32> {
+        let (placed, _) = self.table_grid(rows);
+        let mut known: Vec<Option<f32>> = vec![None; count];
+        for item in placed.iter().filter(|item| item.row == 0) {
+            let value = &self.boxes[item.cell];
+            let wanted = match value.width {
+                Dim::Px(width) => width,
+                Dim::Percent(percent) => percent / 100.0 * basis,
+                Dim::Auto => continue,
+            };
+            let side = |dims: [Dim; 4]| dims[1].zero_auto(basis) + dims[3].zero_auto(basis);
+            let outer = wanted + side(value.padding) + value.border[1] + value.border[3];
+            for width in &mut known[item.column..item.column + item.col_span] {
+                *width = Some(outer / item.col_span as f32);
+            }
+        }
+        let taken: f32 = known.iter().flatten().sum();
+        let open = known.iter().filter(|width| width.is_none()).count();
+        let rest = (available - taken).max(0.0);
+        let even = if open > 0 { rest / open as f32 } else { 0.0 };
+        let extra = if open == 0 && count > 0 {
+            rest / count as f32
+        } else {
+            0.0
+        };
+        known
+            .into_iter()
+            .map(|width| width.map_or(even, |width| width + extra))
+            .collect()
+    }
+
     /// Lays out rows and captions in `inner`; returns the content bottom.
     fn layout_table(
         &mut self,
@@ -696,25 +732,29 @@ impl Solver<'_> {
         let available = (inner.width - table_gaps(spacing[0], &mins)).max(0.0);
         let edge = [spacing[0].max(0.0), spacing[1].max(0.0)];
         let (sum_min, sum_pref): (f32, f32) = (mins.iter().sum(), prefs.iter().sum());
-        let widths: Vec<f32> = (0..count)
-            .map(|column| {
-                if available >= sum_pref {
-                    // Extra room goes by preferred width, or evenly with none to go by.
-                    let share = if sum_pref > 0.0 {
-                        prefs[column] / sum_pref
+        let fixed = (self.boxes[node].fixed_table && self.boxes[node].width != Dim::Auto)
+            .then(|| self.fixed_columns(&rows, count, available, inner.width));
+        let widths: Vec<f32> = fixed.unwrap_or_else(|| {
+            (0..count)
+                .map(|column| {
+                    if available >= sum_pref {
+                        // Extra room goes by preferred width, or evenly with none to go by.
+                        let share = if sum_pref > 0.0 {
+                            prefs[column] / sum_pref
+                        } else {
+                            1.0 / count as f32
+                        };
+                        prefs[column] + (available - sum_pref) * share
+                    } else if available > sum_min {
+                        mins[column]
+                            + (prefs[column] - mins[column]) * (available - sum_min)
+                                / (sum_pref - sum_min)
                     } else {
-                        1.0 / count as f32
-                    };
-                    prefs[column] + (available - sum_pref) * share
-                } else if available > sum_min {
-                    mins[column]
-                        + (prefs[column] - mins[column]) * (available - sum_min)
-                            / (sum_pref - sum_min)
-                } else {
-                    mins[column]
-                }
-            })
-            .collect();
+                        mins[column]
+                    }
+                })
+                .collect()
+        });
         let mut y = content_top;
         let cell_box = |solver: &mut Self, cell: usize, width: f32, basis: f32| {
             let padding = solver.paddings(cell, basis);

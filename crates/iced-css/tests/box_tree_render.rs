@@ -626,3 +626,25 @@ fn justified_text_reaches_both_edges() {
             .unwrap()
     );
 }
+
+#[test]
+fn clip_rect_cuts_an_absolute_box() {
+    let root = node("page", vec![node("abs", vec![node("kid", vec![])])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { background-color:white; }
+         #abs { position:absolute; top:10px; left:20px; width:100px; height:100px;
+                background-color:#2a4d69; clip:rect(10px, 60px, auto, 20px); }
+         #kid { width:300px; height:50px; background-color:#d9534f; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    let name = format!("clip-rect-{}.png", std::process::id());
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    );
+}

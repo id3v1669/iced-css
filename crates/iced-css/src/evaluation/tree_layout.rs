@@ -1259,6 +1259,15 @@ pub struct BoxPaint {
     pub background: Option<[f32; 3]>,
     /// The background's opacity while an animation fades it; `None` is opaque.
     pub background_fade: Option<f32>,
+    /// The computed `cursor` keyword; a URL list uses its fallback.
+    pub cursor: &'static str,
+    /// `clip: rect()` offsets from the border box's top left: top, right, bottom, left, with
+    /// `None` for auto. It only matters on absolutely positioned boxes.
+    pub clip: Option<[Option<f32>; 4]>,
+    /// `empty-cells: hide`.
+    pub hide_empty: bool,
+    /// `table-layout: fixed`.
+    pub fixed_table: bool,
     /// Top, right, bottom, left.
     pub border: [Option<[f32; 3]>; 4],
 }
@@ -1673,7 +1682,7 @@ pub fn evaluate_tree_paint<'r>(
         .map_err(|error| E::Facts(ClearanceBoxFactsError::Source(error)))?;
     // Per row: color, background, then the four border colors, for `inherit`.
     let mut colors: Vec<[ComputedColor<'r>; 6]> = Vec::with_capacity(projection.len());
-    let mut paints = Vec::with_capacity(projection.len());
+    let mut paints: Vec<BoxPaint> = Vec::with_capacity(projection.len());
     let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
     let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
     let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
@@ -1924,7 +1933,33 @@ pub fn evaluate_tree_paint<'r>(
             .unwrap_or([0.0; 3]);
             (width, color)
         });
+        let cursor = match defaulted("cursor")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Cursor(value)) => value.fallback.as_str(),
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => keyword.as_str(),
+            DefaultedValueRef::ParentComputed => {
+                parent_index.map_or("auto", |parent: usize| paints[parent].cursor)
+            }
+            _ => "auto",
+        };
+        let hide_empty = match defaulted("empty-cells")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "hide"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_some_and(|parent: usize| paints[parent].hide_empty)
+            }
+            _ => false,
+        };
+        let fixed_table = matches!(
+            defaulted("table-layout")?,
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
+                if keyword.as_str() == "fixed"
+        );
         paints.push(BoxPaint {
+            cursor,
+            clip: None,
+            hide_empty,
+            fixed_table,
             // A system color has no palette here: text stays visible, in black.
             color: match row[0].value() {
                 Color::System(_) | Color::Invert => Some([0.0; 3]),
@@ -1951,6 +1986,15 @@ pub fn evaluate_tree_paint<'r>(
                 .map_or(0.0, |c| c.value),
             _ => 0.0,
         };
+        if let DefaultedValueRef::Compute(SpecifiedValue::ClipRect(sides)) = defaulted("clip")?
+            && let Some(paint) = paints.last_mut()
+        {
+            paint.clip = Some(
+                sides
+                    .each_ref()
+                    .map(|side| (!matches!(side, LengthTarget::Auto)).then(|| length(side))),
+            );
+        }
         let raw_spacing = match defaulted("border-spacing")? {
             DefaultedValueRef::Compute(SpecifiedValue::LengthPair(across, down)) => {
                 [length(across), length(down)]

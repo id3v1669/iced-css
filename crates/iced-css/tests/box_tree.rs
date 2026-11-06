@@ -1283,6 +1283,36 @@ mod interactive {
     }
 
     #[test]
+    fn css_cursor_beats_the_press_pointer_and_inherits() {
+        let root = node(
+            "page",
+            vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#page { cursor:crosshair; }
+             #a, #b, #c { height:10px; }
+             #b { cursor:auto; }
+             #c { cursor:url(x.cur), move; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().on_press("b", 1).into();
+        let rig = Rig::new(view);
+        let shown = |y: f32| {
+            rig.element.as_widget().mouse_interaction(
+                &rig.tree,
+                Layout::new(&rig.node),
+                mouse::Cursor::Available(Point::new(5.0, y)),
+                &Rectangle::new(Point::ORIGIN, iced::Size::new(800.0, 600.0)),
+                &(),
+            )
+        };
+        assert_eq!(shown(5.0), mouse::Interaction::Crosshair);
+        assert_eq!(shown(15.0), mouse::Interaction::Pointer);
+        assert_eq!(shown(25.0), mouse::Interaction::Move);
+    }
+
+    #[test]
     fn a_diagonal_wheel_moves_one_box_both_ways() {
         let root = node("page", vec![node("list", vec![node("slot", vec![])])]);
         let tree = BoxTree::new(
@@ -2600,4 +2630,102 @@ mod animation {
             [0.5; 3]
         ));
     }
+}
+
+#[test]
+fn fixed_tables_take_columns_from_the_first_row_only() {
+    let cell = |id: &str| node(id, vec![]);
+    let root = node(
+        "table",
+        vec![
+            node("r1", vec![cell("a"), cell("b"), cell("c")]),
+            node("r2", vec![cell("d"), cell("e"), cell("f")]),
+        ],
+    );
+    let css = "#table { display:table; table-layout:fixed; width:300px; }
+        #r1, #r2 { display:table-row; }
+        #a, #b, #c, #d, #e, #f { display:table-cell; height:5px; }
+        #a { width:50px; padding:0 5px; }
+        #e { width:200px; }";
+    let geometry = BoxTree::new(root, css)
+        .unwrap()
+        .layout(800.0, None)
+        .unwrap();
+    let across = |at: usize| {
+        let border = geometry[at].as_ref().unwrap().border;
+        (border.left, border.right)
+    };
+    // Row one: #a is 60 with padding; the other two share 240. #e's width counts for nothing.
+    assert_eq!(across(2), (0.0, 60.0));
+    assert_eq!(across(3), (60.0, 180.0));
+    assert_eq!(across(4), (180.0, 300.0));
+    assert_eq!(across(7), (60.0, 180.0));
+}
+
+#[test]
+fn table_layout_does_not_fix_an_auto_width_table() {
+    let root = node(
+        "table",
+        vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+    );
+    let css = "#table { display:table; table-layout:fixed; }
+        #r { display:table-row; }
+        #a { display:table-cell; width:70px; height:5px; }
+        #b { display:table-cell; width:30px; height:5px; }";
+    let geometry = BoxTree::new(root, css)
+        .unwrap()
+        .layout(800.0, None)
+        .unwrap();
+    let border = geometry[3].as_ref().unwrap().border;
+    assert!(border.right > border.left, "{border:?}");
+}
+
+#[test]
+fn empty_cells_hide_only_without_content_and_without_collapse() {
+    let root = || {
+        node(
+            "table",
+            vec![node(
+                "r",
+                vec![node("a", vec![]), node("b", vec![text("t", "x")])],
+            )],
+        )
+    };
+    let css = |collapse: &str| {
+        format!(
+            "#table {{ display:table; empty-cells:hide; border-collapse:{collapse}; }}
+             #r {{ display:table-row; }}
+             #a, #b {{ display:table-cell; background-color:#ff0000; border:1px solid #00ff00; }}"
+        )
+    };
+    let tree = BoxTree::new(root(), &css("separate")).unwrap();
+    assert_eq!(tree.paints()[2].background, None);
+    assert_eq!(tree.paints()[2].border, [None; 4]);
+    assert_eq!(tree.paints()[3].background, Some([1.0, 0.0, 0.0]));
+    let tree = BoxTree::new(root(), &css("collapse")).unwrap();
+    assert_eq!(tree.paints()[2].background, Some([1.0, 0.0, 0.0]));
+}
+
+#[test]
+fn clip_cuts_absolute_boxes_and_what_they_hold() {
+    let root = node("page", vec![node("abs", vec![node("kid", vec![])])]);
+    let tree = BoxTree::new(
+        root,
+        "#abs { position:absolute; top:10px; left:20px; width:100px; height:100px;
+                clip:rect(5px, 50px, auto, 10px); }
+         #kid { height:200px; }",
+    )
+    .unwrap();
+    assert_eq!(
+        tree.paints()[1].clip,
+        Some([Some(5.0), Some(50.0), None, Some(10.0)])
+    );
+    // A static box ignores it.
+    let root = node("page", vec![node("abs", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#abs { clip:rect(5px, 50px, auto, 10px); height:9px; }",
+    )
+    .unwrap();
+    assert_eq!(tree.paints()[1].clip.map(|sides| sides[0]), Some(Some(5.0)));
 }

@@ -744,6 +744,7 @@ impl BoxTree {
                 _ => RowAlign::Left,
             };
             value.caption_below = captions_below[owner];
+            value.fixed_table = paints[owner].fixed_table && !prepared.anonymous[arena];
             if value.inline_row.is_some() {
                 // 16.2: a line's alignment comes from its block container.
                 value.inline_row = Some(match styles[container_of[arena]].align {
@@ -946,6 +947,21 @@ impl BoxTree {
         let originals: Vec<usize> = (0..count)
             .map(|projected| projection.original_index(projected).unwrap_or_default())
             .collect();
+        // 17.6.1: `empty-cells: hide` draws no background or border on a cell with no content.
+        // It has no effect with collapsed borders.
+        for (arena, value) in prepared.boxes.iter().enumerate() {
+            let owner = prepared.positions[arena].0;
+            if value.table == Some(TableRole::Cell)
+                && !prepared.anonymous[arena]
+                && !collapses[owner]
+                && paints[owner].hide_empty
+                && value.children.is_empty()
+                && texts[arena].is_none()
+            {
+                paints[owner].background = None;
+                paints[owner].border = [None; 4];
+            }
+        }
         let ids = prepared
             .positions
             .iter()
@@ -1250,7 +1266,23 @@ impl BoxTree {
         let mut clips: Vec<Option<FlowRect>> = vec![None; count];
         for arena in 0..count {
             let position = prepared.positions[arena].1;
+            let owner = prepared.positions[arena].0;
+            // 11.1.2: `clip` cuts an absolutely positioned box and what is inside it.
+            let own = self.paints[owner]
+                .clip
+                .filter(|_| matches!(position, Position::Absolute | Position::Fixed))
+                .zip(geometry.get(owner).copied().flatten())
+                .map(|(sides, outer)| {
+                    let border = outer.border;
+                    FlowRect {
+                        top: sides[0].map_or(border.top, |side| border.top + side),
+                        right: sides[1].map_or(border.right, |side| border.left + side),
+                        bottom: sides[2].map_or(border.bottom, |side| border.top + side),
+                        left: sides[3].map_or(border.left, |side| border.left + side),
+                    }
+                });
             if position == Position::Fixed {
+                clips[arena] = own;
                 continue;
             }
             let mut holder = parents[arena];
@@ -1262,12 +1294,16 @@ impl BoxTree {
                     holder = parents[at];
                 }
             }
-            let Some(holder) = holder else { continue };
-            clips[arena] = clips[holder];
-            if prepared.clipped[holder]
-                && let Some(Some(outer)) = geometry.get(prepared.positions[holder].0)
-            {
-                clips[arena] = meet(clips[arena], outer.padding);
+            if let Some(holder) = holder {
+                clips[arena] = clips[holder];
+                if prepared.clipped[holder]
+                    && let Some(Some(outer)) = geometry.get(prepared.positions[holder].0)
+                {
+                    clips[arena] = meet(clips[arena], outer.padding);
+                }
+            }
+            if let Some(own) = own {
+                clips[arena] = meet(clips[arena], own);
             }
         }
         clips
@@ -1360,6 +1396,26 @@ struct Interaction {
     scrolled: BTreeMap<usize, f32>,
     /// Horizontal scroll offsets by source node.
     scrolled_x: BTreeMap<usize, f32>,
+}
+
+/// 18.1: the system cursor for a keyword; `None` is `auto`, which depends on the context.
+fn css_cursor(keyword: &str) -> Option<mouse::Interaction> {
+    use mouse::Interaction as Shown;
+    Some(match keyword {
+        "default" => Shown::Idle,
+        "pointer" => Shown::Pointer,
+        "crosshair" => Shown::Crosshair,
+        "move" => Shown::Move,
+        "text" => Shown::Text,
+        "wait" => Shown::Wait,
+        "help" => Shown::Help,
+        "progress" => Shown::Progress,
+        "e-resize" | "w-resize" => Shown::ResizingHorizontally,
+        "n-resize" | "s-resize" => Shown::ResizingVertically,
+        "ne-resize" | "sw-resize" => Shown::ResizingDiagonallyUp,
+        "nw-resize" | "se-resize" => Shown::ResizingDiagonallyDown,
+        _ => return None,
+    })
 }
 
 /// The pixels one wheel line scrolls.
@@ -2803,9 +2859,17 @@ where
             .unwrap_or_default();
         if inner == mouse::Interaction::default()
             && let Some(point) = cursor.position_in(layout.bounds())
-            && self.press_message(self.hit(point)).is_some()
         {
-            return mouse::Interaction::Pointer;
+            let hit = self.hit(point);
+            if let Some(chosen) = hit
+                .and_then(|node| self.tree.originals.iter().position(|value| *value == node))
+                .and_then(|projected| css_cursor(self.tree.paints[projected].cursor))
+            {
+                return chosen;
+            }
+            if self.press_message(hit).is_some() {
+                return mouse::Interaction::Pointer;
+            }
         }
         inner
     }
