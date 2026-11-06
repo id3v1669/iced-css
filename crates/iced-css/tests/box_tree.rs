@@ -1205,6 +1205,120 @@ mod interactive {
     }
 
     #[test]
+    fn tab_scrolls_across_too_and_a_fixed_target_moves_nothing() {
+        use iced::keyboard::key::Named;
+        let root = node(
+            "page",
+            vec![node(
+                "list",
+                vec![node("slot", vec![]), node("far", vec![])],
+            )],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#list { overflow:auto; height:50px; width:60px; }
+             #slot { height:5px; }
+             #far { margin-left:200px; width:10px; height:5px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(5.0))
+            .on_press("far", 2)
+            .into();
+        let mut rig = Rig::new(view);
+        key(&mut rig, Named::Tab, false);
+        // #far ends at 210; to show it in a 60px box the list scrolls by 150.
+        assert_eq!(rig.slot().x, -150.0);
+
+        let root = node(
+            "page",
+            vec![node(
+                "list",
+                vec![
+                    node("slot", vec![]),
+                    node("spacer", vec![]),
+                    node("far", vec![]),
+                ],
+            )],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#list { overflow:auto; height:50px; }
+             #slot { height:5px; }
+             #spacer { height:200px; }
+             #far { position:fixed; top:300px; height:5px; width:5px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(5.0))
+            .on_press("far", 2)
+            .into();
+        let mut rig = Rig::new(view);
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(rig.slot().y, 0.0);
+    }
+
+    #[test]
+    fn a_diagonal_wheel_moves_each_axis_on_its_own_box() {
+        let root = node(
+            "page",
+            vec![node(
+                "outer",
+                vec![node("inner", vec![node("slot", vec![])])],
+            )],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#outer { overflow:auto; height:50px; width:200px; }
+             #inner { overflow:auto; width:60px; }
+             #slot { width:100px; height:90px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(90.0)).into();
+        let mut rig = Rig::new(view);
+        rig.send(
+            mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Pixels { x: -10.0, y: -20.0 },
+            },
+            Point::new(5.0, 5.0),
+        );
+        // The inner box only goes across; the outer one takes the vertical part.
+        assert_eq!(rig.slot().x, -10.0);
+        assert_eq!(rig.slot().y, -20.0);
+    }
+
+    #[test]
+    fn an_absolute_box_escaping_a_static_clip_still_extends_the_scroller() {
+        let root = node(
+            "page",
+            vec![node(
+                "list",
+                vec![
+                    node("clip", vec![node("far", vec![])]),
+                    node("slot", vec![]),
+                ],
+            )],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#list { overflow:auto; position:relative; height:50px; width:100px; }
+             #clip { overflow:hidden; height:5px; }
+             #far { position:absolute; top:200px; height:5px; width:5px; }
+             #slot { height:5px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(5.0)).into();
+        let mut rig = Rig::new(view);
+        rig.send(wheel(-5.0), Point::new(50.0, 40.0));
+        assert!(
+            rig.slot().y < 5.0,
+            "the far box should make the list scroll"
+        );
+    }
+
+    #[test]
     fn draw_with_clips_widgets_and_text_runs_without_panicking() {
         let root = node(
             "page",

@@ -58,7 +58,7 @@ Approximated or missing: `border-collapse` shares each edge at the widest cell b
 the later cell on top rather than resolving conflicts per edge; `justify` (start-aligned);
 one line height and alignment per paragraph; inline box padding and borders; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
-text properties, not other box properties.
+text properties, not other box properties. An rtl scroller does not scroll across.
 
 ## Status
 

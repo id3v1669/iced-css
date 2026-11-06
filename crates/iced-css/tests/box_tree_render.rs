@@ -420,3 +420,41 @@ fn renders_inline_runs_lists_floats_clips_and_stacking() {
     std::fs::create_dir_all(&path).unwrap();
     assert!(snapshot.matches_image(path.join("page.png")).unwrap());
 }
+
+#[test]
+fn unbreakable_text_can_be_scrolled_to() {
+    let root = node(
+        "page",
+        vec![node(
+            "list",
+            vec![text("line", "a line that is much wider than its box")],
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background:white; }
+         #list { overflow:auto; width:60px; height:40px; white-space:nowrap; }
+         #line { color:black; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    // A first comparison records the picture, so a second one sees any movement.
+    let picture = std::env::temp_dir().join(format!("scroll-text-{}.png", std::process::id()));
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    ui.point_at(Point::new(10.0, 10.0));
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Pixels { x: -40.0, y: 0.0 },
+    })]);
+    assert!(
+        !ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+}

@@ -904,7 +904,12 @@ impl BoxTree {
                 let inside = relative
                     .components()
                     .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
-                if !inside || value.uri.contains(':') {
+                let scheme = value
+                    .uri
+                    .split('/')
+                    .next()
+                    .is_some_and(|first| first.contains(':'));
+                if !inside || scheme {
                     return None;
                 }
                 let handle = image::Handle::from_path(source.base.join(&value.uri));
@@ -1291,6 +1296,7 @@ where
             slot_geometry: Vec::new(),
             scroll_limits: Vec::new(),
             canvas_height: 0.0,
+            canvas_width: 0.0,
             clips: Vec::new(),
             paragraphs: BTreeMap::new(),
             allocations: Vec::new(),
@@ -1338,24 +1344,36 @@ const WHEEL_LINE: f32 = 40.0;
 /// do not extend the scrollable area.
 fn scrolling_descendants(prepared: &PreparedTree, root: usize, mut visit: impl FnMut(usize, bool)) {
     let holder = root == 0 || prepared.positions[root].1 != Position::Static;
-    let mut stack: Vec<(usize, bool, bool)> = prepared.boxes[root]
+    // The last flag is what an absolute box here reaches: a clip on a static box between
+    // it and its containing block does not clip it.
+    let mut stack: Vec<(usize, bool, bool, bool)> = prepared.boxes[root]
         .children
         .iter()
-        .map(|child| (*child, holder, true))
+        .map(|child| (*child, holder, true, true))
         .collect();
-    while let Some((arena, holder_inside, reaches)) = stack.pop() {
+    while let Some((arena, holder_inside, reaches, escapes)) = stack.pop() {
         let position = prepared.positions[arena].1;
         if position == Position::Fixed || (position == Position::Absolute && !holder_inside) {
             continue;
         }
+        let reaches = if position == Position::Absolute {
+            escapes
+        } else {
+            reaches
+        };
         visit(arena, reaches);
         let inside = holder_inside || position != Position::Static;
         let further = reaches && !prepared.clipped[arena];
+        let escapes = if position == Position::Static {
+            escapes
+        } else {
+            further
+        };
         stack.extend(
             prepared.boxes[arena]
                 .children
                 .iter()
-                .map(|child| (*child, inside, further)),
+                .map(|child| (*child, inside, further, escapes)),
         );
     }
 }
@@ -1368,6 +1386,7 @@ fn apply_scrolling(
     prepared: &PreparedTree,
     geometry: &mut [FlowGeometry],
     scrolled: impl Fn(usize) -> (f32, f32),
+    text_width: impl Fn(usize, f32) -> Option<f32>,
     viewport: Size,
 ) -> Vec<(f32, f32)> {
     let mut limits = vec![(0.0_f32, 0.0_f32); prepared.boxes.len()];
@@ -1385,8 +1404,14 @@ fn apply_scrolling(
         let (mut reach, mut reach_x) = (bottom, right);
         scrolling_descendants(prepared, arena, |child, reaches| {
             if reaches {
-                reach = reach.max(geometry[child].border.bottom);
-                reach_x = reach_x.max(geometry[child].border.right);
+                let box_of = &geometry[child];
+                reach = reach.max(box_of.border.bottom);
+                reach_x = reach_x.max(box_of.border.right);
+                // Text that will not break runs past its box.
+                let place = box_of.leaf_band.unwrap_or(box_of.content);
+                if let Some(width) = text_width(child, place.right - place.left) {
+                    reach_x = reach_x.max(place.left + width);
+                }
             }
         });
         // 11.1.1: the scrollable area includes the box's own end padding; at the root,
@@ -1440,6 +1465,7 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     scroll_limits: Vec<(f32, f32)>,
     /// The widget's height at the last layout.
     canvas_height: f32,
+    canvas_width: f32,
     clips: Vec<Option<FlowRect>>,
     elements: Vec<Element<'a, Message, Theme, Renderer>>,
     /// The CSS id naming each element's box.
@@ -2107,7 +2133,12 @@ where
     }
 
     /// The scroll offsets that bring `node`'s box into view, innermost scroller first.
-    fn scroll_into_view(&self, node: usize, scrolled: &mut BTreeMap<usize, f32>) {
+    fn scroll_into_view(
+        &self,
+        node: usize,
+        scrolled: &mut BTreeMap<usize, f32>,
+        scrolled_x: &mut BTreeMap<usize, f32>,
+    ) {
         let nodes = self.tree.source.construction.nodes();
         let Some(projected) = self.tree.originals.iter().position(|value| *value == node) else {
             return;
@@ -2116,8 +2147,16 @@ where
             return;
         };
         let (mut top, mut bottom) = (geometry.border.top, geometry.border.bottom);
+        let (mut left, mut right) = (geometry.border.left, geometry.border.right);
+        let positions = &self.tree.prepared.positions;
+        // A fixed box scrolls with nothing, and an absolute one only with boxes from its
+        // containing block outward.
+        let mut position = self.tree.prepared.slot[projected].map(|slot| positions[slot].1);
         let mut at = nodes[node].parent();
         while let Some(ancestor) = at {
+            if position == Some(Position::Fixed) {
+                return;
+            }
             at = nodes[ancestor].parent();
             let Some(index) = self
                 .tree
@@ -2130,40 +2169,54 @@ where
             let Some(slot) = self.tree.prepared.slot[index] else {
                 continue;
             };
-            let Some(limit) = self
-                .scroll_limits
-                .get(slot)
-                .map(|limits| limits.0)
-                .filter(|limit| *limit > 0.0)
-            else {
+            let here = positions[slot].1;
+            // A static box between an absolute one and its containing block moves nothing.
+            let skipped =
+                position == Some(Position::Absolute) && here == Position::Static && slot != 0;
+            if !skipped {
+                position = Some(here);
+            }
+            let Some(&(limit, limit_x)) = self.scroll_limits.get(slot).filter(|_| !skipped) else {
                 continue;
             };
             let Some(area) = self.slot_geometry.get(slot).map(|outer| outer.padding) else {
                 continue;
             };
-            let end = if slot == 0 {
-                self.canvas_height
+            let (end, end_x) = if slot == 0 {
+                (self.canvas_height, self.canvas_width)
             } else {
-                area.bottom
+                (area.bottom, area.right)
             };
-            let current = scrolled
-                .get(&ancestor)
-                .copied()
-                .unwrap_or(0.0)
-                .clamp(0.0, limit);
-            let delta = if top < area.top {
-                top - area.top
-            } else if bottom > end {
-                (bottom - end).min(top - area.top)
-            } else {
-                0.0
+            let bring = |offset: &mut BTreeMap<usize, f32>,
+                         limit: f32,
+                         start: f32,
+                         stop: f32,
+                         low: f32,
+                         high: f32| {
+                let current = offset
+                    .get(&ancestor)
+                    .copied()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, limit);
+                let delta = if low < start {
+                    low - start
+                } else if high > stop {
+                    (high - stop).min(low - start)
+                } else {
+                    0.0
+                };
+                let wanted = (current + delta).clamp(0.0, limit);
+                if wanted != current {
+                    offset.insert(ancestor, wanted);
+                }
+                wanted - current
             };
-            let wanted = (current + delta).clamp(0.0, limit);
-            if wanted != current {
-                scrolled.insert(ancestor, wanted);
-                top -= wanted - current;
-                bottom -= wanted - current;
-            }
+            let moved = bring(scrolled, limit, area.top, end, top, bottom);
+            top -= moved;
+            bottom -= moved;
+            let moved = bring(scrolled_x, limit_x, area.left, end_x, left, right);
+            left -= moved;
+            right -= moved;
         }
     }
 
@@ -2309,8 +2362,10 @@ where
             )
             .unwrap_or_default();
         self.canvas_height = available.height;
+        self.canvas_width = available.width;
         let originals = &self.tree.originals;
         let positions = &self.tree.prepared.positions;
+        let texts = &self.tree.texts;
         self.scroll_limits = apply_scrolling(
             &self.tree.prepared,
             &mut self.slot_geometry,
@@ -2320,6 +2375,11 @@ where
                     node.and_then(|node| map.get(&node).copied()).unwrap_or(0.0)
                 };
                 (read(&interaction.scrolled), read(&interaction.scrolled_x))
+            },
+            |arena, width| {
+                texts[arena]
+                    .as_ref()
+                    .map(|leaf| paragraph(renderer, leaf, width).min_bounds().width)
             },
             available,
         );
@@ -2543,12 +2603,13 @@ where
             state.focused = next;
             let after = (state.hovered, state.active, state.focused);
             shell.capture_event();
-            let mut scrolled = state.scrolled.clone();
+            let (mut scrolled, mut scrolled_x) = (state.scrolled.clone(), state.scrolled_x.clone());
             if let Some(node) = next {
-                self.scroll_into_view(node, &mut scrolled);
+                self.scroll_into_view(node, &mut scrolled, &mut scrolled_x);
             }
-            let moved = scrolled != state.scrolled;
+            let moved = scrolled != state.scrolled || scrolled_x != state.scrolled_x;
             state.scrolled = scrolled;
+            state.scrolled_x = scrolled_x;
             if moved || self.base.variant(after) != self.base.variant(before) {
                 shell.invalidate_layout();
                 shell.request_redraw();
@@ -2570,8 +2631,10 @@ where
                 mouse::ScrollDelta::Lines { x, y } => (-y * WHEEL_LINE, -x * WHEEL_LINE),
                 mouse::ScrollDelta::Pixels { x, y } => (-y, -x),
             };
-            // The nearest box that can still move this way takes the wheel.
+            // The nearest box that can still move takes the wheel, per axis.
             let nodes = self.tree.source.construction.nodes();
+            let (mut left, mut left_x) = (amount != 0.0, amount_x != 0.0);
+            let mut moved = false;
             let mut at = hit;
             while let Some(node) = at {
                 let arena = self
@@ -2597,16 +2660,21 @@ where
                         .clamp(0.0, limit_x);
                     let wanted = (current + amount).clamp(0.0, limit);
                     let wanted_x = (current_x + amount_x).clamp(0.0, limit_x);
-                    if wanted != current || wanted_x != current_x {
+                    if left && wanted != current {
                         state.scrolled.insert(node, wanted);
+                        (left, moved) = (false, true);
+                    }
+                    if left_x && wanted_x != current_x {
                         state.scrolled_x.insert(node, wanted_x);
-                        shell.capture_event();
-                        shell.invalidate_layout();
-                        shell.request_redraw();
-                        return;
+                        (left_x, moved) = (false, true);
                     }
                 }
                 at = nodes[node].parent();
+            }
+            if moved {
+                shell.capture_event();
+                shell.invalidate_layout();
+                shell.request_redraw();
             }
             return;
         }
@@ -2750,8 +2818,20 @@ where
                         0.0,
                         self.scroll_limits.first().map_or(0.0, |limits| limits.0),
                     );
+                let across = tree
+                    .state
+                    .downcast_ref::<Interaction>()
+                    .scrolled_x
+                    .get(&self.tree.originals[prepared.positions[0].0])
+                    .copied()
+                    .unwrap_or(0.0)
+                    .clamp(
+                        0.0,
+                        self.scroll_limits.first().map_or(0.0, |limits| limits.1),
+                    );
                 let mut placed = moved_rectangle(geometry.padding, origin);
                 placed.y -= scrolled;
+                placed.x -= across;
                 placed
             };
             renderer.with_layer(bounds, |renderer| {
@@ -2902,8 +2982,9 @@ where
                     };
                     let shown = (end - area.top).max(1.0);
                     let (thumb, along) = track(shown, limit, read(&interaction.scrolled, limit));
+                    let edge = if arena == 0 { bounds.width } else { area.right };
                     bars.push(Rectangle {
-                        x: origin.x + area.right - 4.0,
+                        x: origin.x + edge - 4.0,
                         y: origin.y + area.top + along,
                         width: 4.0,
                         height: thumb,
