@@ -66,8 +66,7 @@ the later cell on top rather than resolving conflicts per edge; `justify` stretc
 one line height and alignment per paragraph; inline box padding and borders; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
 text properties, not other box properties. An rtl scroller does not scroll across. Animations do not cover `auto`, transparent borders, a length to a percentage,
-inline backgrounds, fonts or keyword values (those apply at once), and an `!important`
-declaration is animated like any other. A descendant or border whose own color has the same two ends as the
+inline backgrounds, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.
 
 Not read at all: `letter-spacing`, `word-spacing`, `text-indent`, `font-variant`,

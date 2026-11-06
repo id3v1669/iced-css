@@ -2563,6 +2563,26 @@ mod animation {
     }
 
     #[test]
+    fn an_important_target_applies_at_once() {
+        let from = tree("#box { width:100px; height:10px; }");
+        let to = from
+            .restyled(&["#box { width:200px !important; height:20px; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(
+                &from,
+                &to,
+                "box",
+                &["width", "height"],
+                second(),
+                Instant::now(),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn repeats_and_hidden_ends_start_nothing_extra() {
         let from = tree("#box { width:100px; height:10px; background-color:#000000; }");
         let to = from

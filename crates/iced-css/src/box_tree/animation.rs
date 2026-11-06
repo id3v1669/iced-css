@@ -451,7 +451,7 @@ impl BoxTreeAnimations {
     /// request starts from the current presented value.
     ///
     /// Returns the animations started. Nothing starts for a property that did not change, is
-    /// not animatable or not yet supported here, or has no in-between (`auto`, a transparent
+    /// not animatable or not yet supported here, is won by `!important` in `to`, or has no in-between (`auto`, a transparent
     /// border, a length and a percentage): those take `to`'s value at once.
     ///
     /// # Errors
@@ -502,7 +502,8 @@ impl BoxTreeAnimations {
             if committed == target {
                 continue;
             }
-            if mix(committed, target, 0.0).is_none() {
+            // Section 13: an important target holds without a temporary override.
+            if mix(committed, target, 0.0).is_none() || to.important[after].contains(&property) {
                 dropped.push(property);
                 continue;
             }

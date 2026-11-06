@@ -1343,6 +1343,8 @@ pub struct TreePaint {
     pub vertical_aligns: Vec<Option<&'static str>>,
     /// Whether `caption-side` is `bottom`, per row.
     pub captions_below: Vec<bool>,
+    /// The longhands whose winning declaration is `!important`, per projected index.
+    pub important: Vec<Vec<PropertyId>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -1705,6 +1707,7 @@ pub fn evaluate_tree_paint<'r>(
     let mut backgrounds: Vec<Option<BackgroundImage>> = Vec::with_capacity(projection.len());
     let mut background_parts: Vec<BackgroundParts> = Vec::with_capacity(projection.len());
     let mut vertical_aligns: Vec<Option<&'static str>> = Vec::with_capacity(projection.len());
+    let mut important: Vec<Vec<PropertyId>> = Vec::with_capacity(projection.len());
     let mut captions_below: Vec<bool> = Vec::with_capacity(projection.len());
     let mut collapses: Vec<bool> = Vec::with_capacity(projection.len());
     let mut raw_spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
@@ -1779,6 +1782,17 @@ pub fn evaluate_tree_paint<'r>(
             .parent()
             .map(|parent| projection.projected[parent]);
         let inherited = parent_index.map(|parent| &styles[parent]);
+        important.push(
+            PropertyId::all()
+                .filter(|property| {
+                    winners
+                        .candidate(*property)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|winner| winner.value.important)
+                })
+                .collect(),
+        );
         let defaulted = |name: &'static str| {
             let property = id(name)?;
             winners
@@ -2399,5 +2413,6 @@ pub fn evaluate_tree_paint<'r>(
         collapses,
         vertical_aligns,
         captions_below,
+        important,
     })
 }

@@ -31,6 +31,7 @@ use iced::advanced::{
 use iced::{
     Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector, keyboard, mouse,
 };
+use iced_css_core::values::registry::PropertyId;
 use iced_css_core::{
     cascade::{
         rule::{RuleBatchLimits, RuleCascadeLimits, RuleContext},
@@ -378,6 +379,7 @@ struct Style {
     originals: Vec<usize>,
     markers: BTreeMap<usize, TextLeaf>,
     backgrounds: BTreeMap<usize, (BackgroundImage, image::Handle)>,
+    important: Vec<Vec<PropertyId>>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -396,6 +398,8 @@ pub struct BoxTree {
     /// Background images that can load, by projected index.
     backgrounds: BTreeMap<usize, (BackgroundImage, image::Handle)>,
     source: Arc<Source>,
+    /// Longhands won by `!important`, per projected index.
+    important: Vec<Vec<PropertyId>>,
     /// Temporary values of running animations, laid over every interaction styling.
     presentation: Option<Arc<Vec<animation::Presented>>>,
 }
@@ -506,6 +510,7 @@ impl BoxTree {
             originals: self.originals.clone(),
             markers: self.markers.clone(),
             backgrounds: self.backgrounds.clone(),
+            important: self.important.clone(),
         }
     }
 
@@ -519,6 +524,7 @@ impl BoxTree {
             markers: style.markers,
             backgrounds: style.backgrounds,
             source,
+            important: style.important,
             presentation: None,
         }
     }
@@ -677,6 +683,7 @@ impl BoxTree {
             collapses,
             vertical_aligns,
             captions_below,
+            important,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
             .map_err(failed)?;
         let mut prepared = prepare_captured_tree(
@@ -986,6 +993,7 @@ impl BoxTree {
             markers: marker_leaves,
             backgrounds: background_images,
             source: Arc::clone(source),
+            important,
             presentation: None,
         })
     }
