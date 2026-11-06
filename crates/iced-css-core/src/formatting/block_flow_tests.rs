@@ -782,3 +782,46 @@ fn text_avoids_a_float_deferred_in_its_own_open_parent() {
     let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
     assert_eq!(g[3].leaf_band.unwrap().left, 30.0);
 }
+
+#[test]
+fn wrapping_text_stays_clear_of_a_float_its_later_lines_reach() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        float(FloatSide::Left, 60.0, 20.0),
+        float(FloatSide::Right, 60.0, 40.0),
+        text_leaf(10.0),
+    ];
+    boxes[0].children = vec![1, 2, 3];
+    // The right float lands at 20. Text is 15 tall at full width, 30 at 40 wide.
+    let g = layout_block_flow_measured(&boxes, viewport(), limits(), &mut |node, width| {
+        (node == 3).then_some(if width > 50.0 { 15.0 } else { 30.0 })
+    })
+    .unwrap();
+    assert_eq!(g[2].border.top, 20.0);
+    let band = g[3].leaf_band.unwrap();
+    // At 0: 15 tall meets the left float, leaving 40 wide, which is 30 tall and reaches
+    // the right float, leaving no room. At 20, past the left float, 40 wide fits.
+    assert_eq!((band.left, band.right, band.top), (0.0, 40.0, 20.0));
+    assert_eq!(g[3].border.bottom, 50.0);
+}
+
+#[test]
+fn blank_text_with_clearance_counts_as_empty_for_the_margin_rule() {
+    let clearing = FlowBox {
+        clear: ClearSide::Both,
+        ..margins(0.0, 20.0, FlowBox::default())
+    };
+    let mut boxes = vec![
+        FlowBox::default(),
+        FlowBox::default(),
+        float(FloatSide::Left, 10.0, 30.0),
+        clearing,
+    ];
+    boxes[0].children = vec![1];
+    boxes[1].children = vec![2, 3];
+    let g = layout_block_flow_measured(&boxes, viewport(), limits(), &mut |node, _| {
+        (node == 3).then_some(0.0)
+    })
+    .unwrap();
+    assert_eq!(g[1].border.bottom, 50.0);
+}

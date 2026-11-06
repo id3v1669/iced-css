@@ -111,7 +111,7 @@ fn paint_order_is_flow_then_float_then_positioned() {
 
 #[test]
 fn unsupported_display_is_reported() {
-    let error = BoxTree::new(page(), "#note { display:inline; }").unwrap_err();
+    let error = BoxTree::new(page(), "#note { display:table; }").unwrap_err();
     assert!(error.to_string().contains("display"));
 }
 
@@ -175,8 +175,9 @@ fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let mut seen = Vec::new();
     // A fake shaper: one 20px line per 40px of width used, at the requested size.
     let g = tree
-        .layout_text(100.0, None, &mut |text, size, width| {
-            seen.push((text.to_owned(), size, width));
+        .layout_text(100.0, None, &mut |leaf, width| {
+            let size = leaf.runs[0].size;
+            seen.push((leaf.text(), size, width));
             size * (360.0 / width).ceil()
         })
         .unwrap();
@@ -194,25 +195,13 @@ fn block_text_keeps_its_box_properties() {
     )
     .unwrap();
     let g = tree
-        .layout_text(100.0, None, &mut |_, _, width| {
+        .layout_text(100.0, None, &mut |_, width| {
             assert_eq!(width, 50.0);
             20.0
         })
         .unwrap();
     assert_eq!(g[1].unwrap().content.top, 16.0);
     assert_eq!(g[1].unwrap().border.bottom, 45.0);
-}
-
-#[test]
-fn adjacent_inline_text_is_refused_until_line_layout_exists() {
-    let root = node("page", vec![text("first", "a"), text("second", "b")]);
-    let error = BoxTree::new(root, "").unwrap_err();
-    assert!(error.to_string().contains("display"));
-    let root = node(
-        "page",
-        vec![text("first", "a"), node("gap", vec![]), text("second", "b")],
-    );
-    assert!(BoxTree::new(root, "").is_ok());
 }
 
 #[test]
@@ -249,8 +238,8 @@ fn text_measures_at_a_whole_pixel_and_empty_text_takes_no_line() {
     let tree = BoxTree::new(root, "#copy { width:33.3px; display:block; }").unwrap();
     let mut widths = Vec::new();
     let g = tree
-        .layout_text(100.0, None, &mut |content, _, width| {
-            widths.push((content.to_owned(), width));
+        .layout_text(100.0, None, &mut |leaf, width| {
+            widths.push((leaf.text(), width));
             10.0
         })
         .unwrap();
@@ -274,4 +263,140 @@ fn inline_text_box_paint_is_dropped_but_its_color_stays() {
     let root = node("page", vec![text("copy", "words")]);
     let tree = BoxTree::new(root, "#copy { color:transparent; }").unwrap();
     assert_eq!(tree.paints()[1].color, Some([0.0, 0.0, 0.0]));
+}
+
+#[test]
+fn adjacent_inline_siblings_share_one_paragraph_of_styled_runs() {
+    let root = node(
+        "page",
+        vec![
+            text("first", "  Hello   "),
+            node("span", vec![text("second", " big  world ")]),
+            text("third", " tail "),
+            node("block", vec![]),
+            text("fourth", "after"),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#span { display:inline; background-color:#ffff00; font-weight:bold; font-style:italic;
+                 font-family:Georgia, serif; text-decoration:underline; }
+         #second { font-size:32px; color:#ff0000; }
+         #third { text-transform:uppercase; }
+         #page { text-align:center; line-height:1.5; }
+         #block { height:3px; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves.len(), 2);
+    let leaf = leaves[0].1;
+    assert_eq!(leaf.text(), "Hello big world TAIL");
+    assert_eq!(leaf.align, "center");
+    assert_eq!(
+        leaf.line_height,
+        iced_css::evaluation::tree_layout::TextLineHeight::Multiplier(1.5)
+    );
+    let big = &leaf.runs[1];
+    assert_eq!(big.size, 32.0);
+    assert_eq!(big.color, Some([1.0, 0.0, 0.0]));
+    assert_eq!(big.background, Some([1.0, 1.0, 0.0]));
+    assert_eq!(big.weight, 700);
+    assert!(big.italic && big.underline);
+    assert_eq!(big.family.as_deref(), Some("Georgia"));
+    assert_eq!(leaf.runs[0].background, None);
+    assert_eq!(leaf.runs[0].weight, 400);
+    assert_eq!(leaves[1].1.text(), "after");
+    let g = tree.layout_text(100.0, None, &mut |_, _| 20.0).unwrap();
+    // Group, inline element and its text all report the anonymous block.
+    assert_eq!(g[1].unwrap().border.bottom, 20.0);
+    assert_eq!(g[2], g[1]);
+    assert_eq!(g[3], g[1]);
+    assert_eq!(g[4], g[1]);
+    // The block after the group, at projected index 5.
+    assert_eq!(g[5].unwrap().border.top, 20.0);
+}
+
+#[test]
+fn white_space_modes_and_float_inside_a_run() {
+    let root = node(
+        "page",
+        vec![
+            text("one", "a  b\n c"),
+            node("side", vec![]),
+            text("two", " tail"),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#one { white-space:pre; } #side { float:right; width:10px; height:50px; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves.len(), 1);
+    assert_eq!(leaves[0].1.text(), "a  b\n c tail");
+    assert!(!leaves[0].1.wraps);
+    let g = tree.layout_text(100.0, None, &mut |_, _| 20.0).unwrap();
+    // The float is hoisted before the run: same top, and the run yields room.
+    assert_eq!(g[2].unwrap().border.top, 0.0);
+    assert_eq!(g[1].unwrap().leaf_band.unwrap().right, 90.0);
+}
+
+#[test]
+fn inherited_decoration_stops_at_floats() {
+    let root = node(
+        "page",
+        vec![text("copy", "x"), node("side", vec![text("in", "y")])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { text-decoration:line-through; }
+         #side { float:left; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves.len(), 2);
+    let run = |wanted: &str| {
+        leaves
+            .iter()
+            .find(|(_, leaf)| leaf.text() == wanted)
+            .unwrap()
+            .1
+            .runs[0]
+            .line_through
+    };
+    assert!(run("x"));
+    assert!(!run("y"));
+}
+
+#[test]
+fn widget_lays_out_and_draws_inline_runs_on_a_real_renderer_trait() {
+    let root = node("page", vec![text("copy", "words"), node("box", vec![])]);
+    let mut element = BoxTree::new(root, "#box { height:5px; background-color:#112233; }")
+        .unwrap()
+        .view::<(), iced::Theme, ()>();
+    let mut tree = iced::advanced::widget::Tree::empty();
+    let limits =
+        iced::advanced::layout::Limits::new(iced::Size::ZERO, iced::Size::new(100.0, 80.0));
+    let laid = element.as_widget_mut().layout(&mut tree, &(), &limits);
+    assert_eq!(laid.size(), iced::Size::new(100.0, 80.0));
+    element.as_widget().draw(
+        &tree,
+        &mut (),
+        &iced::Theme::Light,
+        &iced::advanced::renderer::Style::default(),
+        iced::advanced::Layout::new(&laid),
+        iced::mouse::Cursor::Unavailable,
+        &iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(100.0, 80.0)),
+    );
+}
+
+#[test]
+fn block_text_paints_its_background_as_a_box_not_a_highlight() {
+    let root = node("page", vec![text("copy", "a\u{a0}b")]);
+    let tree = BoxTree::new(root, "#copy { display:block; background-color:#ff0000; }").unwrap();
+    assert_eq!(tree.paints()[1].background, Some([1.0, 0.0, 0.0]));
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves[0].1.runs[0].background, None);
+    // U+00A0 is not collapsible white space.
+    assert_eq!(leaves[0].1.text(), "a\u{a0}b");
 }

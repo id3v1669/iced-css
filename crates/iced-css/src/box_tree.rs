@@ -1,7 +1,9 @@
 //! A stylesheet-driven iced widget for captured box trees: real cascade, general block
-//! flow, background and border paint, and captured text leaves wrapped at their used
-//! width. Each text leaf is one block of left-aligned text with iced's default font and
-//! line height. Inline layout, other captured payloads and input are not connected.
+//! flow, background and border paint, and inline text: consecutive inline siblings share
+//! one wrapped paragraph of styled runs. Runs carry size, color, weight, style, family,
+//! underline, strikethrough and background. One line height and alignment apply per
+//! paragraph. Inline boxes draw no border or padding. Other payloads and input are not
+//! connected yet.
 use crate::{
     animation::engine::ProgressLimits,
     capture::{CaptureLimits, CapturedElement},
@@ -10,8 +12,8 @@ use crate::{
         display_rules::{BundleLimits, DisplayRuleBundle, GraphBinding, GraphOrigin},
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
-            BoxPaint, PreparedTree, TreeLayoutError, evaluate_tree_paint, prepare_captured_tree,
-            prepare_tree_source_projection,
+            BoxPaint, PreparedTree, TextLineHeight, TextStyle, TreeLayoutError,
+            evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
         },
     },
     host::source_publication::{InitialSourceHost, PublicationLimits},
@@ -220,13 +222,114 @@ pub fn capture_limits() -> CaptureLimits {
     }
 }
 
+/// One styled run of inline text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextRun {
+    pub text: String,
+    pub size: f32,
+    pub color: Option<[f32; 3]>,
+    pub background: Option<[f32; 3]>,
+    pub weight: u16,
+    pub italic: bool,
+    pub family: Option<String>,
+    pub underline: bool,
+    pub line_through: bool,
+}
+
+/// The inline content of one block: its runs, after white space and text-transform.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextLeaf {
+    pub runs: Vec<TextRun>,
+    pub align: &'static str,
+    pub wraps: bool,
+    pub line_height: TextLineHeight,
+}
+
+impl TextLeaf {
+    /// The runs' text, joined.
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.runs.iter().map(|run| run.text.as_str()).collect()
+    }
+    fn is_empty(&self) -> bool {
+        self.runs.iter().all(|run| run.text.is_empty())
+    }
+}
+
+fn transformed(text: &str, transform: &str) -> String {
+    match transform {
+        "uppercase" => text.to_uppercase(),
+        "lowercase" => text.to_lowercase(),
+        "capitalize" => {
+            let mut out = String::with_capacity(text.len());
+            let mut boundary = true;
+            for character in text.chars() {
+                if boundary {
+                    out.extend(character.to_uppercase());
+                } else {
+                    out.push(character);
+                }
+                boundary = !character.is_alphanumeric();
+            }
+            out
+        }
+        _ => text.to_owned(),
+    }
+}
+
+/// 4.1.3: only these collapse; U+00A0 and U+3000 are ordinary characters.
+fn is_css_space(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\r' | '\x0C')
+}
+
+/// 16.6.1: collapse white space across the runs of one block, by each run's own mode.
+fn collapse(texts: &mut [(String, &'static str)]) {
+    let mut after_space = true;
+    let mut last_collapsing = None;
+    for (index, (text, mode)) in texts.iter_mut().enumerate() {
+        if matches!(*mode, "pre" | "pre-wrap") {
+            after_space = text.ends_with(is_css_space);
+            last_collapsing = None;
+            continue;
+        }
+        let keep_newlines = *mode == "pre-line";
+        let mut out = String::with_capacity(text.len());
+        for character in text.chars() {
+            if keep_newlines && character == '\n' {
+                while out.ends_with(' ') {
+                    out.pop();
+                }
+                out.push('\n');
+                after_space = true;
+            } else if is_css_space(character) {
+                if !after_space {
+                    out.push(' ');
+                }
+                after_space = true;
+            } else {
+                out.push(character);
+                after_space = false;
+            }
+        }
+        *text = out;
+        if !text.is_empty() {
+            last_collapsing = Some(index);
+        }
+    }
+    if let Some(index) = last_collapsing
+        && texts[index].0.ends_with(' ')
+    {
+        texts[index].0.pop();
+    }
+}
+
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoxTree {
     prepared: PreparedTree,
     paints: Vec<BoxPaint>,
-    /// Captured text per arena slot; set only on leaves.
-    texts: Vec<Option<String>>,
+    /// Inline content per arena slot.
+    texts: Vec<Option<TextLeaf>>,
 }
 
 impl BoxTree {
@@ -333,25 +436,78 @@ impl BoxTree {
         .map_err(failed)?;
         let prepared = prepare_captured_tree(&projection, &display, facts(), Some(16.0), |_| None)
             .map_err(failed)?;
-        let mut paints = evaluate_tree_paint(&projection, &display, facts()).map_err(failed)?;
-        // An anonymous block around inline text has none of the inline box's own paint.
+        let (mut paints, styles) =
+            evaluate_tree_paint(&projection, &display, facts(), &prepared.font_sizes)
+                .map_err(failed)?;
+        let nodes = snapshot.construction().nodes();
+        let raw_paints = paints.clone();
+        let build_leaf = |arena: usize| -> Option<TextLeaf> {
+            let runs = &prepared.runs[arena];
+            let first = *runs.first()?;
+            let mut texts: Vec<(String, &'static str)> = runs
+                .iter()
+                .map(|&run| {
+                    let content = projection
+                        .original_index(run)
+                        .and_then(|original| nodes[original].text())
+                        .unwrap_or_default();
+                    (
+                        transformed(content, styles[run].text_transform),
+                        styles[run].white_space,
+                    )
+                })
+                .collect();
+            collapse(&mut texts);
+            let runs = runs
+                .iter()
+                .zip(texts)
+                .map(|(&run, (text, _))| {
+                    let style: &TextStyle = &styles[run];
+                    // An inline background paints behind its own and its children's text.
+                    let mut owner = Some(run);
+                    let mut background = None;
+                    while let Some(at) = owner {
+                        background = raw_paints[at].background;
+                        if background.is_some() {
+                            break;
+                        }
+                        owner = prepared.inline_parent[at];
+                    }
+                    TextRun {
+                        text,
+                        size: prepared.font_sizes[run],
+                        color: raw_paints[run].color,
+                        background,
+                        weight: style.weight,
+                        italic: style.italic,
+                        family: style.family.clone(),
+                        underline: style.underline,
+                        line_through: style.line_through,
+                    }
+                })
+                .collect();
+            let lead = &styles[first];
+            Some(TextLeaf {
+                runs,
+                align: lead.align,
+                wraps: !matches!(lead.white_space, "pre" | "nowrap"),
+                line_height: lead.line_height,
+            })
+        };
+        let texts: Vec<Option<TextLeaf>> = (0..prepared.boxes.len()).map(build_leaf).collect();
+        // A block's own paint already drew its box: a block text leaf's run has no
+        // highlight. An anonymous block has no paint of its own at all (9.2.1.1).
+        let mut texts = texts;
         for (arena, &(projected, _)) in prepared.positions.iter().enumerate() {
             if prepared.anonymous[arena] {
                 paints[projected].background = None;
                 paints[projected].border = [None; 4];
+            } else if let Some(leaf) = &mut texts[arena] {
+                for run in &mut leaf.runs {
+                    run.background = None;
+                }
             }
         }
-        let nodes = snapshot.construction().nodes();
-        let texts = prepared
-            .positions
-            .iter()
-            .map(|&(projected, _)| {
-                projection
-                    .original_index(projected)
-                    .and_then(|original| nodes[original].text())
-                    .map(str::to_owned)
-            })
-            .collect();
         Ok(Self {
             prepared,
             paints,
@@ -382,7 +538,7 @@ impl BoxTree {
         )
     }
 
-    /// Lays out with `measure(text, font_size, width)` giving each text leaf's height.
+    /// Lays out with `measure(leaf, width)` giving each text block's height.
     ///
     /// # Errors
     /// Returns a layout failure at this size.
@@ -390,7 +546,7 @@ impl BoxTree {
         &self,
         width: f32,
         height: Option<f32>,
-        measure: &mut dyn FnMut(&str, f32, f32) -> f32,
+        measure: &mut dyn FnMut(&TextLeaf, f32) -> f32,
     ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
         self.prepared.layout_measured(
             FlowViewport {
@@ -404,23 +560,23 @@ impl BoxTree {
                 depth: nz(2_000),
             },
             &mut |arena, used| {
-                let text = self.texts[arena].as_deref()?;
+                let leaf = self.texts[arena].as_ref()?;
                 // White space alone generates no line box (16.6.1).
-                if text.trim().is_empty() {
+                if leaf.is_empty() {
                     return Some(0.0);
                 }
                 // Paint re-derives this width after f32 translation, so both round up
                 // to the same whole pixel: a line that fit when measured still fits.
-                Some(measure(text, self.prepared.font_sizes[arena], used.ceil()))
+                Some(measure(leaf, used.ceil()))
             },
         )
     }
 
     /// Supplies each text leaf's (narrowest, longest) width for shrink-to-fit.
-    pub fn set_text_widths(&mut self, mut widths: impl FnMut(&str, f32) -> (f32, f32)) {
-        for (arena, text) in self.texts.iter().enumerate() {
-            if let Some(text) = text {
-                let (minimum, preferred) = widths(text, self.prepared.font_sizes[arena]);
+    pub fn set_text_widths(&mut self, mut widths: impl FnMut(&TextLeaf) -> (f32, f32)) {
+        for (arena, leaf) in self.texts.iter().enumerate() {
+            if let Some(leaf) = leaf {
+                let (minimum, preferred) = widths(leaf);
                 self.prepared.boxes[arena].content = Some(FlowContent {
                     height: 0.0,
                     preferred_width: preferred,
@@ -428,6 +584,16 @@ impl BoxTree {
                 });
             }
         }
+    }
+
+    /// The inline content of each box, by projected index of its first run.
+    #[must_use]
+    pub fn text_leaves(&self) -> Vec<(usize, &TextLeaf)> {
+        self.texts
+            .iter()
+            .enumerate()
+            .filter_map(|(arena, leaf)| Some((self.prepared.positions[arena].0, leaf.as_ref()?)))
+            .collect()
     }
 
     /// Paint by projected index.
@@ -501,8 +667,7 @@ impl BoxTree {
     /// Wraps the tree as an iced element that fills the size it is given.
     pub fn view<'a, Message: 'a, Theme: 'a, Renderer>(self) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: text::Renderer + 'a,
-        Renderer::Font: 'a,
+        Renderer: text::Renderer<Font = iced::Font> + 'a,
     {
         Element::new(BoxTreeWidget::<Renderer> {
             tree: self,
@@ -521,7 +686,7 @@ enum PaintStep {
     Text(usize),
 }
 
-struct BoxTreeWidget<Renderer: text::Renderer> {
+struct BoxTreeWidget<Renderer: text::Renderer<Font = iced::Font>> {
     tree: BoxTree,
     measured: bool,
     geometry: Vec<Option<FlowGeometry>>,
@@ -529,23 +694,128 @@ struct BoxTreeWidget<Renderer: text::Renderer> {
     paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
 }
 
-fn paragraph<Renderer: text::Renderer>(
+/// Family names live for the program: iced fonts hold a `&'static str`, and a stylesheet
+/// names few distinct families.
+fn interned(name: &str) -> &'static str {
+    static NAMES: std::sync::Mutex<BTreeMap<String, &'static str>> =
+        std::sync::Mutex::new(BTreeMap::new());
+    let mut names = NAMES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(found) = names.get(name) {
+        return found;
+    }
+    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.insert(name.to_owned(), leaked);
+    leaked
+}
+
+fn font_of(base: iced::Font, run: &TextRun) -> iced::Font {
+    use iced::font::{Family, Style, Weight};
+    let family = match run.family.as_deref() {
+        None => base.family,
+        Some("serif") => Family::Serif,
+        Some("sans-serif") => Family::SansSerif,
+        Some("cursive") => Family::Cursive,
+        Some("fantasy") => Family::Fantasy,
+        Some("monospace") => Family::Monospace,
+        Some(name) => Family::Name(interned(name)),
+    };
+    iced::Font {
+        family,
+        weight: match run.weight {
+            0..=149 => Weight::Thin,
+            150..=249 => Weight::ExtraLight,
+            250..=349 => Weight::Light,
+            350..=449 => Weight::Normal,
+            450..=549 => Weight::Medium,
+            550..=649 => Weight::Semibold,
+            650..=749 => Weight::Bold,
+            750..=849 => Weight::ExtraBold,
+            _ => Weight::Black,
+        },
+        style: if run.italic {
+            Style::Italic
+        } else {
+            Style::Normal
+        },
+        ..base
+    }
+}
+
+fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
-    content: &str,
-    size: f32,
+    leaf: &TextLeaf,
     width: f32,
 ) -> Renderer::Paragraph {
-    Renderer::Paragraph::with_text(text::Text {
-        content,
+    let base = renderer.default_font();
+    let spans: Vec<text::Span<'_, (), iced::Font>> = leaf
+        .runs
+        .iter()
+        .map(|run| {
+            let mut span = text::Span::new(run.text.as_str())
+                .size(Pixels(run.size))
+                .font(font_of(base, run))
+                .underline(run.underline)
+                .strikethrough(run.line_through);
+            if let Some(c) = run.color {
+                span = span.color(Color::from_rgb(c[0], c[1], c[2]));
+            }
+            if let Some(c) = run.background {
+                span = span.background(Color::from_rgb(c[0], c[1], c[2]));
+            }
+            span
+        })
+        .collect();
+    let size = leaf.runs.first().map_or(16.0, |run| run.size);
+    Renderer::Paragraph::with_spans(text::Text {
+        content: spans.as_slice(),
         bounds: Size::new(width, f32::INFINITY),
         size: Pixels(size),
-        line_height: text::LineHeight::default(),
-        font: renderer.default_font(),
-        align_x: text::Alignment::Default,
+        line_height: match leaf.line_height {
+            TextLineHeight::Normal => text::LineHeight::default(),
+            TextLineHeight::Multiplier(factor) => text::LineHeight::Relative(factor),
+            TextLineHeight::Px(px) => text::LineHeight::Absolute(Pixels(px)),
+        },
+        font: base,
+        align_x: match leaf.align {
+            "center" => text::Alignment::Center,
+            "right" => text::Alignment::Right,
+            _ => text::Alignment::Left,
+        },
         align_y: iced::alignment::Vertical::Top,
         shaping: text::Shaping::Advanced,
-        wrapping: text::Wrapping::Word,
+        wrapping: if leaf.wraps {
+            text::Wrapping::Word
+        } else {
+            text::Wrapping::None
+        },
     })
+}
+
+/// The narrowest width a leaf can wrap to: its widest single word.
+fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+) -> f32 {
+    let mut widest = 0.0_f32;
+    for run in &leaf.runs {
+        for word in run.text.split_whitespace() {
+            let single = TextLeaf {
+                runs: vec![TextRun {
+                    text: word.to_owned(),
+                    ..run.clone()
+                }],
+                ..leaf.clone()
+            };
+            widest = widest.max(
+                paragraph(renderer, &single, f32::INFINITY)
+                    .min_bounds()
+                    .width,
+            );
+        }
+    }
+    widest
 }
 
 fn rectangle(left: f32, right: f32, top: f32, bottom: f32) -> Rectangle {
@@ -613,7 +883,7 @@ fn draw_box<Renderer: renderer::Renderer>(
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for BoxTreeWidget<Renderer>
 where
-    Renderer: text::Renderer,
+    Renderer: text::Renderer<Font = iced::Font>,
 {
     fn size(&self) -> Size<Length> {
         Size {
@@ -631,19 +901,9 @@ where
         let available = limits.max();
         if !self.measured {
             self.measured = true;
-            self.tree.set_text_widths(|content, size| {
-                let longest = paragraph(renderer, content, size, f32::INFINITY)
-                    .min_bounds()
-                    .width;
-                let narrowest = content
-                    .split_whitespace()
-                    .map(|word| {
-                        paragraph(renderer, word, size, f32::INFINITY)
-                            .min_bounds()
-                            .width
-                    })
-                    .fold(0.0_f32, f32::max);
-                (narrowest, longest)
+            self.tree.set_text_widths(|leaf| {
+                let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
+                (narrowest_width(renderer, leaf), longest)
             });
         }
         // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
@@ -652,37 +912,25 @@ where
             .layout_text(
                 available.width,
                 Some(available.height),
-                &mut |content, size, width| {
-                    paragraph(renderer, content, size, width)
-                        .min_bounds()
-                        .height
-                },
+                &mut |leaf, width| paragraph(renderer, leaf, width).min_bounds().height,
             )
             .unwrap_or_default();
         self.paragraphs.clear();
-        for (arena, content) in self.tree.texts.iter().enumerate() {
-            let Some(content) = content.as_deref().filter(|text| !text.trim().is_empty()) else {
+        for (arena, leaf) in self.tree.texts.iter().enumerate() {
+            let Some(leaf) = leaf.as_ref().filter(|leaf| !leaf.is_empty()) else {
                 continue;
             };
             let projected = self.tree.prepared.positions[arena].0;
             let Some(Some(geometry)) = self.geometry.get(projected) else {
                 continue;
             };
-            let Some(color) = self.tree.paints[projected].color else {
-                continue;
-            };
             let place = geometry.leaf_band.unwrap_or(geometry.content);
             self.paragraphs.insert(
                 arena,
                 (
-                    paragraph(
-                        renderer,
-                        content,
-                        self.tree.prepared.font_sizes[arena],
-                        (place.right - place.left).ceil(),
-                    ),
+                    paragraph(renderer, leaf, (place.right - place.left).ceil()),
                     Point::new(place.left, place.top),
-                    Color::from_rgb(color[0], color[1], color[2]),
+                    Color::BLACK,
                 ),
             );
         }

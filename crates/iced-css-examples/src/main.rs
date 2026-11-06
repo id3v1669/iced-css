@@ -88,7 +88,7 @@ fn tree() -> BoxTree {
 fn the_example_stylesheet_is_accepted() {
     let tree = tree();
     let geometry = tree
-        .layout_text(800.0, Some(600.0), &mut |_, _, _| 20.0)
+        .layout_text(800.0, Some(600.0), &mut |_, _| 20.0)
         .unwrap();
     assert!(geometry.iter().all(Option::is_some));
 }

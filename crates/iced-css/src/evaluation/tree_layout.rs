@@ -1,8 +1,10 @@
 //! Whole-tree block layout from the real cascade: projects any captured source tree
 //! to preorder, evaluates computed box facts for every row and runs the general block
 //! flow, then 9.4.3 relative offsets and 10.3.7/10.6.4 absolute placement in preorder.
-//! Display none removes a subtree. Inline-level boxes are refused by source, not
-//! approximated. Leaf content comes from the caller.
+//! Display none removes a subtree. Consecutive inline-level siblings share one anonymous
+//! block (9.2.1.1) holding their text runs in source order; inline elements are flattened
+//! into it. Floats among them are placed before the anonymous block. Table and
+//! inline-block displays are refused by source. Other leaf content comes from the caller.
 use super::{
     clearance_box_facts::{
         BoxFactMode, BoxFactTarget, BoxLengthFact, BoxMaxFact, BoxOverflow, ClearanceBoxFact,
@@ -18,6 +20,7 @@ use crate::{
 };
 use iced_css_core::{
     cascade::{
+        DefaultedValueRef,
         rule::{RuleTarget, cascade_positioned_rules},
         winner_table::PropertyWinners,
     },
@@ -35,14 +38,17 @@ use iced_css_core::{
     identity::SourceRef,
     source::{Metadata, SourceNode},
     values::{
-        ConversionError, NumericLimits,
+        ConversionError, LengthTarget, NumericLimits, RelativeUnit,
         bidi::ComputedDirection,
         color::Color,
         computed_color::{
             ColorComputationContext, ColorComputationError, ComputedColor, compute_color,
         },
         font_size::{FontSizeError, FontSizeTable},
+        font_weight::{FontWeight, compute_font_weight},
+        property::{FontFamily, SpecifiedValue},
         registry::PropertyId,
+        text_align::{ComputedTextAlign, compute_text_align},
     },
 };
 use std::num::NonZeroUsize;
@@ -228,10 +234,14 @@ pub struct PreparedTree {
     pub positions: Vec<(usize, Position)>,
     /// Arena slot of each projected index; `None` is display none.
     pub slot: Vec<Option<usize>>,
-    /// Computed font size in pixels, per arena slot.
+    /// Computed font size in pixels, per projected index.
     pub font_sizes: Vec<f32>,
-    /// Whether the arena slot is an anonymous block around inline text, per slot.
+    /// Whether the arena slot is an anonymous block around inline content, per slot.
     pub anonymous: Vec<bool>,
+    /// Projected indices of the text runs each arena slot holds, in source order.
+    pub runs: Vec<Vec<usize>>,
+    /// The enclosing inline element of each projected index, if any.
+    pub inline_parent: Vec<Option<usize>>,
 }
 
 /// Evaluates every row and runs block flow. `content` measures a source leaf by its
@@ -281,8 +291,19 @@ pub fn prepare_captured_tree(
     let mut boxes: Vec<FlowBox> = Vec::new();
     let mut offsets: Vec<(usize, [Dim; 4])> = Vec::new();
     let mut positions: Vec<(usize, Position)> = Vec::new();
-    let mut font_sizes: Vec<f32> = Vec::new();
-    let mut inline_text: Vec<bool> = Vec::new();
+    let font_sizes: Vec<f32> = rows
+        .iter()
+        .map(|row| row.font_size.map_or(16.0, |size| size.pixels))
+        .collect();
+    let mut anonymous: Vec<bool> = Vec::new();
+    let mut runs: Vec<Vec<usize>> = Vec::new();
+    // The arena slot children of each projected row attach to; a block parent for itself
+    // and, for an inline element, the block container it flattens into.
+    let mut container: Vec<Option<usize>> = vec![None; count];
+    let mut inline_element = vec![false; count];
+    let mut inline_parent: Vec<Option<usize>> = vec![None; count];
+    // The anonymous block still accepting inline siblings, per arena slot.
+    let mut open: Vec<Option<usize>> = Vec::new();
     for index in 0..count {
         let original = projection.original[index];
         let resolution =
@@ -298,26 +319,44 @@ pub fn prepare_captured_tree(
             .parent()
             .map(|parent| projection.projected[parent]);
         let parent_slot = match parent {
-            Some(parent) => match slot[parent] {
+            Some(parent) => match container[parent] {
                 Some(value) => Some(value),
                 None => continue,
             },
             None => None,
         };
-        // 9.2.1.1: an inline text run between blocks sits in an anonymous block box, which
-        // takes none of the inline box's own box properties. Adjacent inline siblings
-        // would share a line, and there is no line layout here yet: those are refused.
         let source_node = &projection.snapshot.construction().nodes()[original];
-        let anonymous = resolution.display == Display::Inline
-            && source_node.text().is_some()
-            && projection.nodes[index].children.is_empty()
-            && parent_slot.is_some_and(|parent| {
-                boxes[parent]
-                    .children
-                    .last()
-                    .is_none_or(|previous| !inline_text[*previous])
-            });
-        if !anonymous && !matches!(resolution.display, Display::Block | Display::ListItem) {
+        let is_text = source_node.text().is_some() && projection.nodes[index].children.is_empty();
+        if resolution.display == Display::Inline
+            && let Some(target) = parent_slot
+        {
+            let group = match open[target] {
+                Some(group) => group,
+                None => {
+                    let group = boxes.len();
+                    boxes.push(FlowBox {
+                        direction: boxes[target].direction,
+                        ..FlowBox::default()
+                    });
+                    positions.push((index, Position::Static));
+                    anonymous.push(true);
+                    runs.push(Vec::new());
+                    open.push(None);
+                    boxes[target].children.push(group);
+                    open[target] = Some(group);
+                    group
+                }
+            };
+            slot[index] = Some(group);
+            container[index] = Some(target);
+            inline_element[index] = true;
+            inline_parent[index] = parent.filter(|&outer| inline_element[outer]);
+            if is_text {
+                runs[group].push(index);
+            }
+            continue;
+        }
+        if parent.is_some() && !matches!(resolution.display, Display::Block | Display::ListItem) {
             return Err(E::Unsupported {
                 projected: index,
                 property: "display",
@@ -329,10 +368,6 @@ pub fn prepare_captured_tree(
             projected: index,
             error,
         })?;
-        if anonymous {
-            value = FlowBox::default();
-        }
-        inline_text.push(anonymous);
         value.direction = display
             .bidi_style(original)
             .map_or(Direction::Ltr, |style| match style.direction() {
@@ -352,7 +387,6 @@ pub fn prepare_captured_tree(
         }
         // Absent offsets are all auto: every positioned box is a containing block.
         positions.push((index, resolution.position));
-        font_sizes.push(row.font_size.map_or(16.0, |size| size.pixels));
         if let Some(offset) = row.offset {
             offsets.push((
                 boxes.len(),
@@ -368,15 +402,36 @@ pub fn prepare_captured_tree(
                     .unwrap_or([Dim::Auto; 4]),
             ));
         }
-        let leaf = projection.nodes[index].children.is_empty();
-        if leaf {
+        if projection.nodes[index].children.is_empty() && !is_text {
             value.content = content(original);
         }
         let arena = boxes.len();
         slot[index] = Some(arena);
+        container[index] = Some(arena);
+        anonymous.push(false);
+        runs.push(if is_text { vec![index] } else { Vec::new() });
+        open.push(None);
+        let out_of_line = value.float.is_some() || value.out_of_flow;
         boxes.push(value);
-        if let Some(parent) = parent_slot {
-            boxes[parent].children.push(arena);
+        if let Some(target) = parent_slot {
+            match open[target] {
+                Some(group) if out_of_line => {
+                    // A float belongs at its line's top, and the run avoids it: placing
+                    // it before the whole run is exact for a float on the first line.
+                    let at = boxes[target]
+                        .children
+                        .iter()
+                        .position(|child| *child == group)
+                        .unwrap_or(boxes[target].children.len());
+                    boxes[target].children.insert(at, arena);
+                }
+                _ => {
+                    if !out_of_line {
+                        open[target] = None;
+                    }
+                    boxes[target].children.push(arena);
+                }
+            }
         }
     }
     Ok(PreparedTree {
@@ -385,7 +440,9 @@ pub fn prepare_captured_tree(
         positions,
         slot,
         font_sizes,
-        anonymous: inline_text,
+        anonymous,
+        runs,
+        inline_parent,
     })
 }
 
@@ -420,6 +477,8 @@ impl PreparedTree {
             slot,
             font_sizes: _,
             anonymous: _,
+            runs: _,
+            inline_parent: _,
         } = self;
         if boxes.is_empty() {
             return Ok(vec![None; slot.len()]);
@@ -810,6 +869,71 @@ fn rgb(color: &Color, numeric: NumericLimits) -> Option<[f32; 3]> {
 
 static BLACK: Color = Color::Srgb([0, 0, 0]);
 
+/// A computed line height, keeping the number form that inherits as a number (10.8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum TextLineHeight {
+    #[default]
+    Normal,
+    Multiplier(f32),
+    Px(f32),
+}
+
+/// Computed text properties of one row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextStyle {
+    /// 100 to 900.
+    pub weight: u16,
+    pub italic: bool,
+    pub line_height: TextLineHeight,
+    /// The first listed family; a generic is its keyword.
+    pub family: Option<String>,
+    pub underline: bool,
+    pub line_through: bool,
+    /// `left`, `center` or `right`, after the initial value's direction.
+    pub align: &'static str,
+    pub white_space: &'static str,
+    pub text_transform: &'static str,
+}
+
+fn line_height_of(
+    value: &SpecifiedValue,
+    font_size: f32,
+    numeric: NumericLimits,
+) -> TextLineHeight {
+    let px = |converted: Result<f32, ConversionError>| {
+        converted.map_or(TextLineHeight::Normal, TextLineHeight::Px)
+    };
+    match value {
+        SpecifiedValue::Number(number) => number
+            .scaled_finite_f32(1.0, numeric)
+            .map_or(TextLineHeight::Normal, |converted| {
+                TextLineHeight::Multiplier(converted.value)
+            }),
+        SpecifiedValue::Length(LengthTarget::Absolute(length)) => {
+            px(length.to_nonnegative_f32(numeric).map(|c| c.value))
+        }
+        SpecifiedValue::Length(LengthTarget::Percentage(number)) => px(number
+            .percentage_finite_f32(font_size, numeric)
+            .map(|c| c.value)),
+        SpecifiedValue::Length(LengthTarget::Relative(number, unit)) => {
+            let basis = match unit {
+                RelativeUnit::Em => font_size,
+                RelativeUnit::Ex => font_size * 0.5,
+            };
+            px(number.scaled_finite_f32(basis, numeric).map(|c| c.value))
+        }
+        _ => TextLineHeight::Normal,
+    }
+}
+
+fn family_of(list: &[FontFamily]) -> Option<String> {
+    list.first().map(|first| match first {
+        FontFamily::Quoted(name) => name.clone(),
+        FontFamily::Identifiers(words) => words.join(" "),
+        FontFamily::Generic(keyword) => keyword.as_str().to_owned(),
+    })
+}
+
 /// Cascades background and border colors for each projected row; `color` is computed
 /// along the way, since it is both inherited and the initial border color.
 ///
@@ -819,7 +943,8 @@ pub fn evaluate_tree_paint<'r>(
     projection: &TreeSourceProjection<'_>,
     display: &SourceDisplay<'_, '_, 'r>,
     limits: ClearanceBoxFactsLimits,
-) -> Result<Vec<BoxPaint>, TreeLayoutError> {
+    font_sizes: &[f32],
+) -> Result<(Vec<BoxPaint>, Vec<TextStyle>), TreeLayoutError> {
     use TreeLayoutError as E;
     let id = |name: &'static str| PropertyId::lookup(name).ok_or(E::Paint { property: name });
     let foreground = id("color")?;
@@ -838,7 +963,10 @@ pub fn evaluate_tree_paint<'r>(
     // Per row: color, background, then the four border colors, for `inherit`.
     let mut colors: Vec<[ComputedColor<'r>; 6]> = Vec::with_capacity(projection.len());
     let mut paints = Vec::with_capacity(projection.len());
-    for index in 0..projection.len() {
+    let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
+    let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
+    let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
+    for (index, &font_size) in font_sizes.iter().enumerate() {
         let original = projection.original[index];
         let mut winners = PropertyWinners::new();
         cascade_positioned_rules(
@@ -876,6 +1004,89 @@ pub fn evaluate_tree_paint<'r>(
             projected: index,
             error,
         })?;
+        let parent_index = snapshot.construction().nodes()[original]
+            .parent()
+            .map(|parent| projection.projected[parent]);
+        let inherited = parent_index.map(|parent| &styles[parent]);
+        let defaulted = |name: &'static str| {
+            let property = id(name)?;
+            winners
+                .defaulted(property, parent_index.is_some())
+                .map_err(|_| E::Paint { property: name })
+        };
+        let parent_weight = parent_index.map_or(FontWeight::NORMAL, |parent| weights[parent]);
+        let weight = match defaulted("font-weight")? {
+            DefaultedValueRef::Compute(value) => compute_font_weight(value, parent_weight)
+                .map_err(|_| E::Paint {
+                    property: "font-weight",
+                })?,
+            DefaultedValueRef::ParentComputed => parent_weight,
+            DefaultedValueRef::Initial(_) => FontWeight::NORMAL,
+        };
+        let italic = match defaulted("font-style")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() != "normal"
+            }
+            DefaultedValueRef::ParentComputed => inherited.is_some_and(|style| style.italic),
+            _ => false,
+        };
+        let line_height = match defaulted("line-height")? {
+            DefaultedValueRef::Compute(value) => line_height_of(value, font_size, limits.numeric),
+            DefaultedValueRef::ParentComputed => {
+                inherited.map_or(TextLineHeight::Normal, |style| style.line_height)
+            }
+            DefaultedValueRef::Initial(_) => TextLineHeight::Normal,
+        };
+        let family = match defaulted("font-family")? {
+            DefaultedValueRef::Compute(SpecifiedValue::FontFamily(list)) => family_of(list),
+            DefaultedValueRef::ParentComputed => inherited.and_then(|style| style.family.clone()),
+            _ => None,
+        };
+        let resolution = display.resolution(original);
+        // 16.3.1: decorations propagate down, except into floats and absolute boxes.
+        let detached = resolution.is_some_and(|value| {
+            value.float != Float::None
+                || matches!(value.position, Position::Absolute | Position::Fixed)
+        });
+        let carried = inherited.filter(|_| !detached);
+        let (mut underline, mut line_through) = carried.map_or((false, false), |style| {
+            (style.underline, style.line_through)
+        });
+        if let DefaultedValueRef::Compute(SpecifiedValue::TextDecoration(own)) =
+            defaulted("text-decoration")?
+        {
+            underline |= own.underline();
+            line_through |= own.line_through();
+        }
+        let parent_align = parent_index.map(|parent| aligns[parent]);
+        let align = compute_text_align(&winners, parent_align).map_err(|_| E::Paint {
+            property: "text-align",
+        })?;
+        weights.push(weight);
+        aligns.push(align);
+        let rtl = display
+            .bidi_style(original)
+            .is_some_and(|style| style.direction() == ComputedDirection::RightToLeft);
+        let keywords = display.text_keywords(original);
+        styles.push(TextStyle {
+            weight: weight.number(),
+            italic,
+            line_height,
+            family,
+            underline,
+            line_through,
+            align: match align {
+                ComputedTextAlign::Right => "right",
+                ComputedTextAlign::Center => "center",
+                ComputedTextAlign::DirectionalInitial if rtl => "right",
+                // A renderer paragraph cannot justify: justified text stays start-aligned.
+                ComputedTextAlign::Justify if rtl => "right",
+                _ => "left",
+            },
+            white_space: keywords.map_or("normal", |value| value.white_space().keyword().as_str()),
+            text_transform: keywords
+                .map_or("none", |value| value.text_transform().keyword().as_str()),
+        });
         let side = |property: PropertyId, slot: usize| {
             compute_color(
                 &winners,
@@ -911,5 +1122,5 @@ pub fn evaluate_tree_paint<'r>(
             border: [paint(2), paint(3), paint(4), paint(5)],
         });
     }
-    Ok(paints)
+    Ok((paints, styles))
 }

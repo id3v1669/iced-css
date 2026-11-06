@@ -128,8 +128,9 @@ pub struct FlowGeometry {
     /// Adjoining top and bottom margins (8.3.1).
     pub collapsed_through: bool,
     /// Where a leaf's content goes when floats displace it from its content box: the
-    /// band beside them at its first line. Lines past a shorter float stay this narrow:
-    /// real line boxes would widen them, so the result is conservative, never overlapping.
+    /// band clear of every float its lines overlap, starting below them if none has
+    /// room. Lines past a shorter float stay this narrow: real line boxes would widen
+    /// them, so the result is conservative and never overlaps a float.
     pub leaf_band: Option<FlowRect>,
 }
 
@@ -642,14 +643,15 @@ impl Solver<'_> {
         let leaf_height = if flow.floats.is_empty() || measured.is_none_or(|height| height == 0.0) {
             measured
         } else {
-            let probe = flow.position();
-            self.settle_leaf(node, flow, content_left, width, probe, &mut leaf_band)?;
-            match leaf_band {
-                Some(band) => self
-                    .leaf_height(node, band.right - band.left)
-                    .map(|height| height + band.top - probe),
-                None => measured,
-            }
+            let (band, height) = self.place_leaf(
+                node,
+                flow,
+                content_left,
+                width,
+                measured.unwrap_or_default(),
+            )?;
+            leaf_band = band;
+            Some(height)
         };
         if let Some(height) = leaf_height.filter(|height| *height != 0.0) {
             self.settle(flow)?;
@@ -727,7 +729,7 @@ impl Solver<'_> {
             && !separated
             && zero_or_auto
             && minimum == 0.0
-            && leaf_height.is_none()
+            && leaf_height.is_none_or(|height| height == 0.0)
             && content_bottom == content_top;
         self.publish(
             node,
@@ -743,39 +745,55 @@ impl Solver<'_> {
         Ok(())
     }
 
-    /// Finds the band a displaced leaf starts in. `None` when it is not displaced.
-    fn settle_leaf(
+    /// Places a leaf clear of floats. Narrowing makes text taller, which can reach
+    /// another float, so this repeats until the span and the band agree. Returns the
+    /// band when displaced, and the height including any gap above the first line.
+    fn place_leaf(
         &mut self,
         node: usize,
         flow: &Flow,
         left: f32,
         width: f32,
-        probe: f32,
-        band: &mut Option<FlowRect>,
-    ) -> Result<(), FlowError> {
+        measured: f32,
+    ) -> Result<(Option<FlowRect>, f32), FlowError> {
         let float_error = |error| FlowError::Float { node, error };
-        let containing = Band {
-            left,
-            right: left + width,
-        };
+        let right = left + width;
         let least = self.boxes[node]
             .content
             .map_or(0.0, |content| content.preferred_min_width);
+        let probe = flow.position();
         let mut y = probe;
+        let mut height = measured;
+        let mut bound = (flow.floats.len() + 1) * (flow.floats.len() + 1);
         loop {
-            let open = exclusion_band(&flow.floats, containing, y).map_err(float_error)?;
-            let narrowed = open.left != left || open.right != left + width;
-            let fits = open.width() > 0.0 && open.width() >= least;
-            if fits || !narrowed {
-                if narrowed || y != probe {
-                    *band = Some(rect(open.left, open.right, y, y));
+            let (mut near, mut far) = (left, right);
+            for float in flow
+                .floats
+                .iter()
+                .filter(|float| float.top < y + height && float.bottom > y)
+            {
+                match float.side {
+                    FloatSide::Left => near = near.max(float.right),
+                    FloatSide::Right => far = far.min(float.left),
                 }
-                return Ok(());
             }
-            match next_band_edge(&flow.floats, y).map_err(float_error)? {
-                Some(edge) => y = edge,
-                None => return Ok(()),
+            let used = far - near;
+            let next = next_band_edge(&flow.floats, y).map_err(float_error)?;
+            if (used <= 0.0 || used < least)
+                && let Some(edge) = next
+            {
+                y = edge;
+                height = self.leaf_height(node, width).unwrap_or(measured);
+                continue;
             }
+            let displaced = near != left || far != right || y != probe;
+            let at_used = self.leaf_height(node, used.max(0.0)).unwrap_or(measured);
+            bound = bound.saturating_sub(1);
+            if at_used == height || bound == 0 {
+                let band = displaced.then(|| rect(near, far.max(near), y, y));
+                return Ok((band, y - probe + at_used));
+            }
+            height = at_used;
         }
     }
 
