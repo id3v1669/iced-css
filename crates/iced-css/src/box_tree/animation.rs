@@ -330,6 +330,16 @@ impl BoxTree {
                 .filter(|run| run.owner == owner)
             {
                 swap(&mut run.color);
+                // An inline box's sides without a color of their own use this one.
+                for sides in &mut run.inline_boxes {
+                    swap(&mut sides.border[0].1);
+                    swap(&mut sides.border[1].1);
+                }
+                if let Some((_, _, edge)) = &mut run.edge
+                    && *edge == target
+                {
+                    *edge = now;
+                }
             }
         }
     }
@@ -371,13 +381,18 @@ impl BoxTree {
         for (arena, leaf) in to.texts.iter().enumerate() {
             let Some(leaf) = leaf else { continue };
             for (at, run) in leaf.runs.iter().enumerate() {
+                // By content, not place: spaces for sides can differ between the two stylings.
                 let old = self
                     .texts
                     .get(arena)
                     .and_then(Option::as_ref)
-                    .and_then(|leaf| leaf.runs.get(at));
+                    .and_then(|leaf| {
+                        leaf.runs
+                            .iter()
+                            .find(|old| old.owner == run.owner && old.text == run.text)
+                    });
                 if followers.boxes.iter().any(|f| f.node == run.owner)
-                    && old.is_some_and(|old| old.owner == run.owner && same(old.color, run.color))
+                    && old.is_some_and(|old| same(old.color, run.color))
                 {
                     followers.runs.push((arena, at, run.owner));
                 }

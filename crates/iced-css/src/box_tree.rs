@@ -252,8 +252,10 @@ pub struct TextRun {
     /// The size its line height comes from, when it is drawn smaller than its computed one:
     /// the small letters of `small-caps`.
     pub line_size: Option<f32>,
-    /// The sides of the inline box it sits in, above and below the line.
-    pub inline_box: Option<InlineDecoration>,
+    /// The inline boxes it sits in, outermost first, as painted above and below the line.
+    pub inline_boxes: Vec<InlineDecoration>,
+    /// A side border in this run's room: at its start (`true`) or end, its width and color.
+    pub edge: Option<(bool, f32, [f32; 3])>,
     pub color: Option<[f32; 3]>,
     pub background: Option<[f32; 3]>,
     pub weight: u16,
@@ -867,7 +869,8 @@ impl BoxTree {
                         text,
                         size,
                         line_size: None,
-                        inline_box: None,
+                        inline_boxes: Vec::new(),
+                        edge: None,
                         color,
                         background,
                         weight: style.weight,
@@ -920,6 +923,34 @@ impl BoxTree {
         // 15.6: small capitals are simulated by scaling capital letters. 8.6: an inline box's
         // sides open before its first run and close after its last, whatever lines it breaks
         // across; spaces take the room across, as for `text-indent`.
+        // The inline boxes around a projected index, outermost first.
+        let inline_chain = |mut at: Option<usize>| {
+            let mut found = Vec::new();
+            while let Some(here) = at {
+                let sided = prepared.inline_boxes[here].is_some_and(|sides| {
+                    [sides.margin, sides.border, sides.padding]
+                        .iter()
+                        .flatten()
+                        .any(|side| *side != 0.0)
+                });
+                if sided {
+                    found.push(here);
+                }
+                at = prepared.inline_parent[here];
+            }
+            found.reverse();
+            found
+        };
+        let mut last_leaf: BTreeMap<usize, usize> = BTreeMap::new();
+        for (arena, runs) in prepared.runs.iter().enumerate() {
+            for &source in runs {
+                let (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at)) = source;
+                for element in inline_chain(Some(at)) {
+                    last_leaf.insert(element, arena);
+                }
+            }
+        }
+        let mut opened = BTreeSet::new();
         for (arena, runs) in prepared.runs.iter().enumerate() {
             let Some(leaf) = &mut texts[arena] else {
                 continue;
@@ -938,34 +969,10 @@ impl BoxTree {
                     tagged.push((run, at));
                 }
             }
-            // The inline boxes around a run, outermost first.
-            let chain = |mut at: Option<usize>| {
-                let mut found = Vec::new();
-                while let Some(here) = at {
-                    let sided = prepared.inline_boxes[here].is_some_and(|sides| {
-                        [sides.margin, sides.border, sides.padding]
-                            .iter()
-                            .flatten()
-                            .any(|side| *side != 0.0)
-                    });
-                    if sided {
-                        found.push(here);
-                    }
-                    at = prepared.inline_parent[here];
-                }
-                found.reverse();
-                found
-            };
-            let background_of = |mut at: Option<usize>| {
-                while let Some(here) = at {
-                    if let Some(color) = raw_paints[here].background {
-                        return Some(color);
-                    }
-                    at = prepared.inline_parent[here];
-                }
-                None
-            };
-            let chains: Vec<Vec<usize>> = tagged.iter().map(|(_, at)| chain(Some(*at))).collect();
+            let chains: Vec<Vec<usize>> = tagged
+                .iter()
+                .map(|(_, at)| inline_chain(Some(*at)))
+                .collect();
             let mut placed = Vec::with_capacity(tagged.len());
             for (index, (mut run, _)) in tagged.into_iter().enumerate() {
                 let here = &chains[index];
@@ -973,67 +980,88 @@ impl BoxTree {
                     placed.push(run);
                     continue;
                 }
-                let sides = |element: usize| {
+                let sides_of = |element: usize| {
                     prepared.inline_boxes[element].unwrap_or(InlineBoxSides {
                         margin: [0.0; 4],
                         border: [0.0; 4],
                         padding: [0.0; 4],
                     })
                 };
-                let decoration = |element: usize| {
-                    let box_sides = sides(element);
-                    let colors = raw_paints[element].border;
-                    InlineDecoration {
-                        padding: [box_sides.padding[0], box_sides.padding[2]],
-                        border: [
-                            (box_sides.border[0], colors[0]),
-                            (box_sides.border[2], colors[2]),
-                        ],
-                        edge: None,
-                    }
+                // 11.2: a hidden box paints nothing but keeps its room.
+                let decorations = |elements: &[usize]| -> Vec<InlineDecoration> {
+                    elements
+                        .iter()
+                        .filter(|element| raw_paints[**element].visible)
+                        .map(|&element| {
+                            let sides = sides_of(element);
+                            let colors = raw_paints[element].border;
+                            InlineDecoration {
+                                padding: [sides.padding[0], sides.padding[2]],
+                                border: [
+                                    (sides.border[0], colors[0]),
+                                    (sides.border[2], colors[2]),
+                                ],
+                                background: raw_paints[element].background,
+                            }
+                        })
+                        .collect()
                 };
-                // Margin, then border and padding as one space with an exact border bar in it.
-                let side = |element: usize, across: usize, run: &TextRun| {
-                    let box_sides = sides(element);
-                    let spacer =
-                        |width: f32| (width > 0.0).then(|| indent_run(run, width)).flatten();
-                    let margin = spacer(box_sides.margin[across]).map(|spacer| TextRun {
-                        background: None,
-                        inline_box: None,
-                        ..spacer
-                    });
-                    let width = box_sides.border[across];
+                // A margin lies in the boxes around this one, and border and padding in this
+                // one as well, as one space holding an exact border bar.
+                let side = |element: usize, across: usize, run: &TextRun, depth: usize| {
+                    let sides = sides_of(element);
+                    let owner_of = |at: Option<usize>| {
+                        at.and_then(|at| projection.original_index(at))
+                            .unwrap_or(run.owner)
+                    };
+                    let outer = depth.checked_sub(1).map(|at| here[at]);
+                    let margin = (sides.margin[across] > 0.0)
+                        .then(|| indent_run(run, sides.margin[across]))
+                        .flatten()
+                        .map(|spacer| TextRun {
+                            inline_boxes: decorations(&here[..depth]),
+                            owner: owner_of(outer.or(Some(container_of[arena]))),
+                            ..spacer
+                        });
+                    let bar = sides.border[across];
+                    let room = bar + sides.padding[across];
+                    let visible = raw_paints[element].visible;
                     let edge = raw_paints[element].border[across]
-                        .filter(|_| width > 0.0)
-                        .map(|color| (across == 3, width, color));
-                    let inner = spacer(width + box_sides.padding[across]).map(|spacer| TextRun {
-                        background: background_of(Some(element)),
-                        inline_box: Some(InlineDecoration {
+                        .filter(|_| bar > 0.0 && visible)
+                        .map(|color| (across == 3, bar, color));
+                    // Up to the next space that fits: a thin border must keep its bar.
+                    let step = run.size.max(1.0) / 6.0;
+                    let inner = (room > 0.0)
+                        .then(|| indent_run(run, (room / step).ceil() * step * 1.0001))
+                        .flatten()
+                        .map(|spacer| TextRun {
+                            inline_boxes: decorations(&here[..=depth]),
                             edge,
-                            ..decoration(element)
-                        }),
-                        ..spacer
-                    });
+                            visible,
+                            owner: owner_of(Some(element)),
+                            ..spacer
+                        });
                     [margin, inner]
                 };
                 let before = index
                     .checked_sub(1)
                     .map_or(&[][..], |at| chains[at].as_slice());
-                for &element in here.iter().filter(|element| !before.contains(element)) {
-                    placed.extend(side(element, 3, &run).into_iter().flatten());
+                for (depth, &element) in here.iter().enumerate() {
+                    // 8.6: only the element's first box, wherever blocks cut it, opens it.
+                    if !before.contains(&element) && opened.insert(element) {
+                        placed.extend(side(element, 3, &run, depth).into_iter().flatten());
+                    }
                 }
                 let after = chains.get(index + 1).map_or(&[][..], Vec::as_slice);
-                let closing: Vec<TextRun> = here
-                    .iter()
-                    .rev()
-                    .filter(|element| !after.contains(element))
-                    .flat_map(|&element| {
-                        let mut parts = side(element, 1, &run);
+                let mut closing = Vec::new();
+                for (depth, &element) in here.iter().enumerate().rev() {
+                    if !after.contains(&element) && last_leaf.get(&element) == Some(&arena) {
+                        let mut parts = side(element, 1, &run, depth);
                         parts.reverse();
-                        parts.into_iter().flatten()
-                    })
-                    .collect();
-                run.inline_box = here.last().map(|&element| decoration(element));
+                        closing.extend(parts.into_iter().flatten());
+                    }
+                }
+                run.inline_boxes = decorations(here);
                 placed.push(run);
                 placed.extend(closing);
             }
@@ -1100,7 +1128,8 @@ impl BoxTree {
                             text,
                             size: prepared.font_sizes[projected],
                             line_size: None,
-                            inline_box: None,
+                            inline_boxes: Vec::new(),
+                            edge: None,
                             color: raw_paints[projected].color,
                             background: None,
                             weight: style.weight,
@@ -1658,8 +1687,7 @@ fn css_cursor(keyword: &str) -> Option<mouse::Interaction> {
 pub struct InlineDecoration {
     pub padding: [f32; 2],
     pub border: [(f32, Option<[f32; 3]>); 2],
-    /// A border at this run's start (`true`) or end, for the spaces that take its room.
-    pub edge: Option<(bool, f32, [f32; 3])>,
+    pub background: Option<[f32; 3]>,
 }
 
 /// A run in capitals, with what was lowercase at a smaller size.
@@ -1705,6 +1733,8 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         background: None,
         underline: false,
         line_through: false,
+        inline_boxes: Vec::new(),
+        edge: None,
         ..first.clone()
     })
 }
@@ -2066,62 +2096,63 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                 y: area.y + corner.y,
                 ..area
             };
-            let (padding, border) = run
-                .inline_box
-                .map_or(([0.0; 2], [(0.0, None); 2]), |sides| {
-                    (sides.padding, sides.border)
-                });
             // 10.6.1: an inline box wraps the font's content area, not the taller line box.
-            let (content_top, content_height) = if run.inline_box.is_some() {
+            let sided = !run.inline_boxes.is_empty();
+            let (content_top, content_height) = if sided {
                 let height = area.height.min(run.line_size.unwrap_or(run.size) * 1.3);
                 (area.y + (area.height - height) / 2.0, height)
             } else {
                 (area.y, area.height)
             };
-            let top = content_top - padding[0];
-            let bottom = content_top + content_height + padding[1];
-            if let Some(background) = run.background {
-                quad(
-                    renderer,
-                    Rectangle {
+            let content_bottom = content_top + content_height;
+            for sides in &run.inline_boxes {
+                let top = content_top - sides.padding[0];
+                let bottom = content_bottom + sides.padding[1];
+                if let Some(background) = sides.background {
+                    let bounds = Rectangle {
                         y: top,
                         height: bottom - top,
                         ..area
-                    },
-                    background,
-                );
-            }
-            if let Some((start, width, edge)) = run.inline_box.and_then(|sides| sides.edge) {
-                quad(
-                    renderer,
-                    Rectangle {
-                        x: if start {
-                            area.x
-                        } else {
-                            area.x + area.width - width
-                        },
-                        y: top - border[0].0,
-                        width,
-                        height: bottom + border[1].0 - (top - border[0].0),
-                    },
-                    edge,
-                );
-            }
-            for (at, height, edge) in [
-                (top - border[0].0, border[0].0, border[0].1),
-                (bottom, border[1].0, border[1].1),
-            ] {
-                if let Some(edge) = edge.filter(|_| height > 0.0) {
-                    quad(
-                        renderer,
-                        Rectangle {
+                    };
+                    quad(renderer, bounds, background);
+                }
+                let edges = [
+                    (top - sides.border[0].0, sides.border[0]),
+                    (bottom, sides.border[1]),
+                ];
+                for (at, (height, edge)) in edges {
+                    if let Some(edge) = edge.filter(|_| height > 0.0) {
+                        let bounds = Rectangle {
                             y: at,
                             height,
                             ..area
-                        },
-                        edge,
-                    );
+                        };
+                        quad(renderer, bounds, edge);
+                    }
                 }
+            }
+            if let Some(background) = run.background {
+                let bounds = Rectangle {
+                    y: content_top,
+                    height: content_height,
+                    ..area
+                };
+                quad(renderer, bounds, background);
+            }
+            if let (Some((start, width, edge)), Some(sides)) = (run.edge, run.inline_boxes.last()) {
+                let top = content_top - sides.padding[0] - sides.border[0].0;
+                let bottom = content_bottom + sides.padding[1] + sides.border[1].0;
+                let bounds = Rectangle {
+                    x: if start {
+                        area.x
+                    } else {
+                        area.x + area.width - width
+                    },
+                    y: top,
+                    width,
+                    height: bottom - top,
+                };
+                quad(renderer, bounds, edge);
             }
             // Line boxes may be taller than the text: measure from their centre, by size.
             let line = |offset: f32| Rectangle {
@@ -2255,9 +2286,13 @@ fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
             );
         }
     };
+    // The spaces that hold an indent or an inline box's sides stay with their word.
+    let breaks = |character: char| {
+        character.is_whitespace() && !matches!(character, '\u{2002}'..='\u{2006}')
+    };
     for run in &leaf.runs {
-        for chunk in run.text.split_inclusive(char::is_whitespace) {
-            let body = chunk.trim_end();
+        for chunk in run.text.split_inclusive(breaks) {
+            let body = chunk.trim_end_matches(breaks);
             if !body.is_empty() {
                 word.push(TextRun {
                     text: body.to_owned(),
@@ -2694,23 +2729,21 @@ where
         hosts
     }
 
-    /// Whether `node`'s hosted widget has the focus now. `otherwise` answers for a node that
-    /// hosts nothing focusable.
-    fn host_holds_focus(
+    /// Whether `node` hosts something focusable that does not have the focus now.
+    fn host_lost_focus(
         &mut self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
         node: Option<usize>,
-        otherwise: bool,
     ) -> bool {
         let hosts = self.focus_hosts(tree, layout, renderer);
         let Some(&(index, _)) = hosts.iter().find(|host| Some(host.1) == node) else {
-            return !otherwise;
+            return false;
         };
         let mut found = HostFocus::IsFocused(false);
         self.operate_host(tree, layout, renderer, index, &mut found);
-        matches!(found, HostFocus::IsFocused(true))
+        !matches!(found, HostFocus::IsFocused(true))
     }
 
     /// A box's `tabindex`; a press message implies 0.
@@ -3194,7 +3227,7 @@ where
                     keyboard::Key::Named(keyboard::key::Named::Escape)
                 );
                 let held = tree.state.downcast_ref::<Interaction>().focused;
-                if escaped && !self.host_holds_focus(tree, layout, renderer, held, false) {
+                if escaped && self.host_lost_focus(tree, layout, renderer, held) {
                     tree.state.downcast_mut::<Interaction>().focused = None;
                     shell.invalidate_layout();
                     shell.request_redraw();
@@ -3238,8 +3271,13 @@ where
                     if focused.is_some() =>
                 {
                     // Keys in a focused widget are its own, whatever boxes hold it.
-                    if self.host_holds_focus(tree, layout, renderer, focused, true) {
-                        return;
+                    let hosts = self.focus_hosts(tree, layout, renderer);
+                    for (index, _) in hosts {
+                        let mut found = HostFocus::IsFocused(false);
+                        self.operate_host(tree, layout, renderer, index, &mut found);
+                        if matches!(found, HostFocus::IsFocused(true)) {
+                            return;
+                        }
                     }
                     if let Some(message) = self.press_message(focused) {
                         shell.publish(message);

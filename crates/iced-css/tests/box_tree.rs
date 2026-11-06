@@ -175,8 +175,8 @@ fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
             size * (360.0 / width).ceil()
         })
         .unwrap();
-    // The inline box's sides take spaces across: margin 7px and padding 9px, each about a third.
-    let text = "\u{2004}\u{2004}one two three four\u{2004}\u{2004}";
+    // The inline box's sides take spaces across: margin 7px, about a third, and padding 9px, up to a half.
+    let text = "\u{2004}\u{2002}one two three four\u{2002}\u{2004}";
     assert_eq!(seen, vec![(text.to_owned(), 20.0, 80.0)]);
     assert_eq!(g[1].unwrap().content.bottom, 100.0);
     assert_eq!(g[2].unwrap().border.top, 100.0);
@@ -2652,6 +2652,25 @@ mod animation {
     }
 
     #[test]
+    fn a_color_reaches_text_when_only_one_end_has_inline_sides() {
+        let source = || node("page", vec![node("s", vec![text("x", "x")])]);
+        let from = BoxTree::new(source(), "#s { display:inline; color:#000000; }").unwrap();
+        let to = from
+            .restyled(&["#s { display:inline; color:#ffffff; padding:0 8px; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "s", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let leaves = shown.text_leaves();
+        let text = leaves[0].1.runs.iter().find(|run| run.text == "x").unwrap();
+        assert!(near(text.color.unwrap(), [0.5; 3]), "{:?}", text.color);
+    }
+
+    #[test]
     fn repeats_and_hidden_ends_start_nothing_extra() {
         let from = tree("#box { width:100px; height:10px; background-color:#000000; }");
         let to = from
@@ -3151,31 +3170,29 @@ fn an_inline_box_opens_and_closes_around_its_runs_once() {
     .unwrap();
     let leaves = tree.text_leaves();
     let runs = &leaves[0].1.runs;
-    let parts: Vec<(&str, Option<[f32; 3]>)> = runs
-        .iter()
-        .map(|run| (run.text.as_str(), run.background))
-        .collect();
-    let green = Some([0.0, 1.0, 0.0]);
+    let texts: Vec<&str> = runs.iter().map(|run| run.text.as_str()).collect();
     assert_eq!(
-        parts,
+        texts,
         vec![
-            ("a", None),
-            ("\u{2003}", None),
-            ("\u{2002}\u{2005}", green),
-            ("b", green),
-            ("c", green),
-            ("\u{2002}", green),
-            ("\u{2003}", None),
-            ("d", None),
+            "a",
+            "\u{2003}",
+            "\u{2002}\u{2004}",
+            "b",
+            "c",
+            "\u{2002}",
+            "\u{2003}",
+            "d",
         ]
     );
-    assert_eq!(runs[3].inline_box.unwrap().padding, [2.0, 2.0]);
-    assert_eq!(
-        runs[2].inline_box.unwrap().edge,
-        Some((true, 4.0, [1.0, 0.0, 0.0]))
+    assert_eq!(runs[2].edge, Some((true, 4.0, [1.0, 0.0, 0.0])));
+    assert_eq!(runs[5].edge, None);
+    assert_eq!(runs[3].inline_boxes[0].padding, [2.0, 2.0]);
+    assert_eq!(runs[3].inline_boxes[0].background, Some([0.0, 1.0, 0.0]));
+    assert!(runs[0].inline_boxes.is_empty());
+    assert!(
+        runs[1].inline_boxes.is_empty(),
+        "a margin is outside the box"
     );
-    assert_eq!(runs[5].inline_box.unwrap().edge, None);
-    assert_eq!(runs[0].inline_box, None);
     // Blank content opens nothing.
     let root = node("page", vec![node("span", vec![text("b", " ")])]);
     let tree = BoxTree::new(root, "#span { display:inline; padding:8px; }").unwrap();
@@ -3184,4 +3201,99 @@ fn an_inline_box_opens_and_closes_around_its_runs_once() {
             .iter()
             .all(|(_, leaf)| leaf.text().trim().is_empty())
     );
+}
+
+#[test]
+fn nested_inline_boxes_paint_every_level_and_blocks_do_not_repeat_sides() {
+    let root = node(
+        "page",
+        vec![node(
+            "o",
+            vec![text("a", "a"), node("i", vec![text("b", "b")])],
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { font-size:16px; }
+         #o { display:inline; padding:4px; background-color:#0000ff; }
+         #i { display:inline; margin:0 16px; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let run = |text: &str| {
+        leaves[0]
+            .1
+            .runs
+            .iter()
+            .find(|run| run.text == text)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(run("b").inline_boxes.len(), 2);
+    // The inner margin still lies inside the outer box.
+    assert_eq!(run("\u{2003}").inline_boxes.len(), 1);
+
+    let root = node(
+        "span",
+        vec![text("a", "one"), node("block", vec![]), text("b", "two")],
+    );
+    let root = node("page", vec![root]);
+    let tree = BoxTree::new(
+        root,
+        "#page { font-size:12px; }
+         #span { display:inline; padding:0 12px; }
+         #block { display:block; height:1px; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves[0].1.text(), "\u{2003}one");
+    assert_eq!(leaves[1].1.text(), "two\u{2003}");
+}
+
+#[test]
+fn hidden_boxes_keep_their_room_and_thin_side_borders_keep_their_bars() {
+    let root = node("page", vec![node("s", vec![text("x", "x")])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { font-size:16px; }
+         #s { display:inline; border-left:1px solid #ff0000; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves[0].1.runs[0].edge, Some((true, 1.0, [1.0, 0.0, 0.0])));
+
+    let root = node("page", vec![node("s", vec![text("x", "x")])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { font-size:16px; }
+         #s { display:inline; visibility:hidden; padding:0 8px; border:2px solid #ff0000;
+              background-color:#0000ff; }
+         #x { visibility:visible; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert!(
+        leaves[0]
+            .1
+            .runs
+            .iter()
+            .all(|run| run.inline_boxes.is_empty() && run.edge.is_none())
+    );
+    assert_eq!(leaves[0].1.runs.len(), 3, "the room stays");
+    assert!(!leaves[0].1.runs[0].visible);
+}
+
+#[test]
+fn an_indent_takes_no_sides_from_the_box_it_precedes() {
+    let root = node("page", vec![node("s", vec![text("x", "x")])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { font-size:16px; text-indent:16px; }
+         #s { display:inline; border:2px solid #ff0000; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let indent = &leaves[0].1.runs[0];
+    assert_eq!(indent.text, "\u{2003}");
+    assert!(indent.inline_boxes.is_empty() && indent.edge.is_none());
 }

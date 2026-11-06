@@ -881,36 +881,40 @@ fn narrow_columns_hold_whole_small_caps_words() {
 
 #[test]
 fn inline_boxes_draw_their_sides_across_lines() {
-    let root = node(
-        "page",
-        vec![
-            text("a", "before "),
-            node(
-                "chip",
-                vec![text(
-                    "b",
-                    "a chip with enough words to break onto the next line",
-                )],
-            ),
-            text("c", " after"),
-        ],
-    );
-    let tree = BoxTree::new(
-        root,
-        "#page { background-color:white; color:black; width:300px; line-height:2; }
-         #chip { display:inline; padding:3px 8px; margin:0 8px; background-color:#adcbe3;
-                 border:2px solid #2a4d69; }",
-    )
-    .unwrap();
-    let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
-    let name = format!("inline-box-{}.png", std::process::id());
-    assert!(
+    let draw = |chip: &str, picture: &std::path::Path| {
+        let root = node(
+            "page",
+            vec![
+                text("a", "before "),
+                node(
+                    "chip",
+                    vec![text(
+                        "b",
+                        "a chip with enough words to break onto the next line",
+                    )],
+                ),
+                text("c", " after"),
+            ],
+        );
+        let css = format!(
+            "#page {{ background-color:white; color:black; width:300px; line-height:2; }}
+             #chip {{ display:inline; {chip} }}"
+        );
+        let tree = BoxTree::new(root, &css).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(picture)
             .unwrap()
-    );
+    };
+    let picture = std::env::temp_dir().join(format!("inline-box-{}.png", std::process::id()));
+    let boxed =
+        "padding:3px 8px; margin:0 8px; background-color:#adcbe3; border:2px solid #2a4d69;";
+    assert!(draw(boxed, &picture));
+    assert!(draw(boxed, &picture));
+    assert!(!draw("background-color:#adcbe3;", &picture));
+    assert!(!draw("", &picture));
 }
 
 #[test]
