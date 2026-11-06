@@ -239,7 +239,7 @@ pub enum RunSource {
 }
 
 /// One `::before` or `::after`, as text in its element. Box properties other than
-/// `display` and `clear` do not apply to it here, and `counter()` items produce nothing.
+/// `display` and `clear` do not apply to it here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeneratedRun {
     pub text: String,
@@ -1212,20 +1212,30 @@ pub struct TreePaint {
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
 fn list_marker(kind: &str, ordinal: usize) -> Option<String> {
-    let number = ordinal.to_string();
+    let value = i32::try_from(ordinal).unwrap_or(i32::MAX);
+    match kind {
+        "none" => None,
+        "disc" | "circle" | "square" => Some(format!("{}\u{a0}", counter_label(kind, value))),
+        _ => Some(format!("{}.\u{a0}", counter_label(kind, value))),
+    }
+}
+
+/// 12.4.1, 12.5.1: a counter value in a list style. Styles with no representation for a
+/// value, and the Greek, Armenian and Georgian ones here, fall back to decimal.
+fn counter_label(kind: &str, value: i32) -> String {
     let alpha = |base: u8| {
-        let mut value = ordinal;
+        let mut rest = value;
         let mut out = Vec::new();
-        while value > 0 {
-            value -= 1;
-            out.push(base + (value % 26) as u8);
-            value /= 26;
+        while rest > 0 {
+            rest -= 1;
+            out.push(base + (rest % 26) as u8);
+            rest /= 26;
         }
         out.reverse();
         String::from_utf8_lossy(&out).into_owned()
     };
-    let roman = |value: usize| {
-        const TABLE: [(usize, &str); 13] = [
+    let roman = || {
+        const TABLE: [(i32, &str); 13] = [
             (1000, "m"),
             (900, "cm"),
             (500, "d"),
@@ -1250,20 +1260,180 @@ fn list_marker(kind: &str, ordinal: usize) -> Option<String> {
         }
         out
     };
-    let label = match kind {
-        "none" => return None,
-        "disc" => return Some("\u{2022}\u{a0}".to_owned()),
-        "circle" => return Some("\u{25e6}\u{a0}".to_owned()),
-        "square" => return Some("\u{25aa}\u{a0}".to_owned()),
-        "decimal-leading-zero" => format!("{ordinal:02}"),
-        "lower-alpha" | "lower-latin" => alpha(b'a'),
-        "upper-alpha" | "upper-latin" => alpha(b'A'),
-        "lower-roman" => roman(ordinal),
-        "upper-roman" => roman(ordinal).to_uppercase(),
-        // Greek, Armenian and Georgian fall back to decimal here.
-        _ => number,
-    };
-    Some(format!("{label}.\u{a0}"))
+    match kind {
+        "none" => String::new(),
+        "disc" => "\u{2022}".to_owned(),
+        "circle" => "\u{25e6}".to_owned(),
+        "square" => "\u{25aa}".to_owned(),
+        "decimal-leading-zero" if (0..10).contains(&value) => format!("0{value}"),
+        "lower-alpha" | "lower-latin" if value > 0 => alpha(b'a'),
+        "upper-alpha" | "upper-latin" if value > 0 => alpha(b'A'),
+        "lower-roman" if (1..4000).contains(&value) => roman(),
+        "upper-roman" if (1..4000).contains(&value) => roman().to_uppercase(),
+        _ => value.to_string(),
+    }
+}
+
+/// What 12.4 needs to know about one element or pseudo-element.
+#[derive(Default, Clone)]
+struct CounterActions {
+    reset: Vec<(String, i32)>,
+    increment: Vec<(String, i32)>,
+}
+
+/// One pending `content` value, and the marker text that precedes it.
+#[derive(Clone)]
+struct PendingContent {
+    marker: String,
+    items: Vec<ContentItem>,
+    actions: CounterActions,
+}
+
+/// Document-order generated text: 12.4's counter scopes and 12.3.2's quote depth. A
+/// scope belongs to the parent of its resetting element, so it reaches later siblings and
+/// their descendants; a pseudo-element's belongs to its element.
+struct CounterWalk<'a> {
+    children: &'a [Vec<usize>],
+    parents: &'a [Option<usize>],
+    /// Elements that generate boxes; `display: none` affects no counter (12.4.3).
+    rendered: &'a [bool],
+    actions: &'a [CounterActions],
+    pending: &'a [[Option<PendingContent>; 2]],
+    attribute: &'a dyn Fn(usize, &str) -> Option<String>,
+    scopes: Vec<Vec<(String, i32)>>,
+    quotes: usize,
+    out: Vec<[Option<String>; 2]>,
+}
+
+impl CounterWalk<'_> {
+    /// The nearest scope with this name, from `at` outward.
+    fn find(&mut self, at: usize, name: &str) -> Option<&mut i32> {
+        let mut here = Some(at);
+        while let Some(node) = here {
+            if self.scopes[node].iter().any(|(owned, _)| owned == name) {
+                return self.scopes[node]
+                    .iter_mut()
+                    .rev()
+                    .find(|(owned, _)| owned == name)
+                    .map(|(_, value)| value);
+            }
+            here = self.parents[node];
+        }
+        None
+    }
+
+    fn apply(&mut self, holder: usize, reader: usize, actions: &CounterActions) {
+        for (name, value) in &actions.reset {
+            let scope = &mut self.scopes[holder];
+            match scope.iter_mut().find(|(owned, _)| owned == name) {
+                Some(entry) => entry.1 = *value,
+                None => scope.push((name.clone(), *value)),
+            }
+        }
+        for (name, amount) in &actions.increment {
+            match self.find(reader, name) {
+                Some(value) => *value = value.saturating_add(*amount),
+                // 12.4: an increment with no counter in scope resets it to 0 first.
+                None => self.scopes[holder].push((name.clone(), *amount)),
+            }
+        }
+    }
+
+    fn content(&mut self, at: usize, pending: &PendingContent) -> String {
+        self.apply(at, at, &pending.actions);
+        let mut text = pending.marker.clone();
+        for item in &pending.items {
+            match item {
+                ContentItem::Text(value) => text.push_str(value),
+                ContentItem::Attribute(name) => {
+                    if let Some(value) = (self.attribute)(at, name) {
+                        text.push_str(&value);
+                    }
+                }
+                // 12.3.2: quote depth nests; an unmatched close stays at the outside.
+                ContentItem::Quote(keyword) => match keyword.as_str() {
+                    "open-quote" => {
+                        text.push(if self.quotes == 0 {
+                            '\u{201c}'
+                        } else {
+                            '\u{2018}'
+                        });
+                        self.quotes += 1;
+                    }
+                    "close-quote" => {
+                        self.quotes = self.quotes.saturating_sub(1);
+                        text.push(if self.quotes == 0 {
+                            '\u{201d}'
+                        } else {
+                            '\u{2019}'
+                        });
+                    }
+                    "no-open-quote" => self.quotes += 1,
+                    "no-close-quote" => self.quotes = self.quotes.saturating_sub(1),
+                    _ => {}
+                },
+                ContentItem::Uri(_) => {}
+                ContentItem::Counter {
+                    name,
+                    separator,
+                    style,
+                } => {
+                    let kind = style.as_str();
+                    match separator {
+                        None => {
+                            let value = self.find(at, name).map_or(0, |value| *value);
+                            text.push_str(&counter_label(kind, value));
+                        }
+                        Some(separator) => {
+                            // counters(): every scope in reach, outermost first.
+                            let mut chain = Vec::new();
+                            let mut here = Some(at);
+                            while let Some(node) = here {
+                                if let Some(entry) = self.scopes[node]
+                                    .iter()
+                                    .rev()
+                                    .find(|(owned, _)| owned == name)
+                                {
+                                    chain.push(entry.1);
+                                }
+                                here = self.parents[node];
+                            }
+                            if chain.is_empty() {
+                                chain.push(0);
+                            }
+                            chain.reverse();
+                            let labels: Vec<_> = chain
+                                .iter()
+                                .map(|value| counter_label(kind, *value))
+                                .collect();
+                            text.push_str(&labels.join(separator));
+                        }
+                    }
+                }
+            }
+        }
+        text
+    }
+
+    fn walk(&mut self, at: usize) {
+        if !self.rendered[at] {
+            return;
+        }
+        let holder = self.parents[at].unwrap_or(at);
+        let actions = self.actions;
+        self.apply(holder, at, &actions[at]);
+        let pending = self.pending;
+        if let Some(before) = &pending[at][0] {
+            self.out[at][0] = Some(self.content(at, before));
+        }
+        let children = self.children;
+        for &child in &children[at] {
+            self.walk(child);
+        }
+        if let Some(after) = &pending[at][1] {
+            self.out[at][1] = Some(self.content(at, after));
+        }
+    }
 }
 
 /// A computed line height, keeping the number form that inherits as a number (10.8.1).
@@ -1378,6 +1548,18 @@ pub fn evaluate_tree_paint<'r>(
     // Each list parent's running item count.
     let mut items = vec![0_usize; projection.len()];
     let nodes = snapshot.construction().nodes();
+    let mut counter_actions: Vec<CounterActions> = Vec::with_capacity(projection.len());
+    let mut pending: Vec<[Option<PendingContent>; 2]> = Vec::with_capacity(projection.len());
+    let mut rendered: Vec<bool> = Vec::with_capacity(projection.len());
+    let directives = |value: DefaultedValueRef<'_>| -> Vec<(String, i32)> {
+        match value {
+            DefaultedValueRef::Compute(SpecifiedValue::Counters(list)) => list
+                .iter()
+                .map(|directive| (directive.name.clone(), directive.value.saturating_i32()))
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
     for (index, &font_size) in font_sizes.iter().enumerate() {
         let original = projection.original[index];
         let mut winners = PropertyWinners::new();
@@ -1684,6 +1866,16 @@ pub fn evaluate_tree_paint<'r>(
             (None, marker)
         };
         markers.push(outside.map(|text| text.trim_end_matches('\u{a0}').to_owned()));
+        counter_actions.push(CounterActions {
+            reset: directives(defaulted("counter-reset")?),
+            increment: directives(defaulted("counter-increment")?),
+        });
+        rendered.push(
+            display
+                .resolution(original)
+                .is_some_and(|value| value.display != Display::None),
+        );
+        let mut pending_pair = [None, None];
         let mut pair = [None, None];
         for (side, pseudo) in [PseudoElement::Before, PseudoElement::After]
             .into_iter()
@@ -1721,24 +1913,7 @@ pub fn evaluate_tree_paint<'r>(
             let mut content = None;
             if let DefaultedValueRef::Compute(SpecifiedValue::Content(list)) = cascaded("content")?
             {
-                let mut text = String::new();
-                for item in list {
-                    match item {
-                        ContentItem::Text(value) => text.push_str(value),
-                        ContentItem::Attribute(name) => {
-                            if let Some(value) = nodes[original].metadata().attribute(name) {
-                                text.push_str(value);
-                            }
-                        }
-                        ContentItem::Quote(keyword) => match keyword.as_str() {
-                            "open-quote" => text.push('\u{201c}'),
-                            "close-quote" => text.push('\u{201d}'),
-                            _ => {}
-                        },
-                        ContentItem::Uri(_) | ContentItem::Counter { .. } => {}
-                    }
-                }
-                content = Some(text);
+                content = Some(list.clone());
             }
             let hide_display = matches!(
                 cascaded("display")?,
@@ -1768,11 +1943,16 @@ pub fn evaluate_tree_paint<'r>(
             if content.is_none() && marker_text.is_none() {
                 continue;
             }
-            let text = format!(
-                "{}{}",
-                marker_text.unwrap_or_default(),
-                content.unwrap_or_default()
-            );
+            pending_pair[side] = Some(PendingContent {
+                marker: marker_text.unwrap_or_default(),
+                items: content.unwrap_or_default(),
+                actions: CounterActions {
+                    reset: directives(cascaded("counter-reset")?),
+                    increment: directives(cascaded("counter-increment")?),
+                },
+            });
+            // Filled in document order below, once every counter has been seen.
+            let text = String::new();
             let owner = styles[index].clone();
             let size = match cascaded("font-size")? {
                 DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => match target {
@@ -1889,6 +2069,47 @@ pub fn evaluate_tree_paint<'r>(
             });
         }
         generated.push(pair);
+        pending.push(pending_pair);
+    }
+    let parents: Vec<Option<usize>> = projection
+        .original
+        .iter()
+        .map(|&original| {
+            nodes[original]
+                .parent()
+                .map(|parent| projection.projected[parent])
+        })
+        .collect();
+    let mut children = vec![Vec::new(); parents.len()];
+    for (index, parent) in parents.iter().enumerate() {
+        if let Some(parent) = parent {
+            children[*parent].push(index);
+        }
+    }
+    let attribute = |at: usize, name: &str| {
+        nodes[projection.original[at]]
+            .metadata()
+            .attribute(name)
+            .map(str::to_owned)
+    };
+    let mut walk = CounterWalk {
+        children: &children,
+        parents: &parents,
+        rendered: &rendered,
+        actions: &counter_actions,
+        pending: &pending,
+        attribute: &attribute,
+        scopes: vec![Vec::new(); parents.len()],
+        quotes: 0,
+        out: vec![[None, None]; parents.len()],
+    };
+    walk.walk(0);
+    for (index, texts) in walk.out.into_iter().enumerate() {
+        for (side, text) in texts.into_iter().enumerate() {
+            if let (Some(made), Some(text)) = (&mut generated[index][side], text) {
+                made.text = text;
+            }
+        }
     }
     Ok(TreePaint {
         paints,

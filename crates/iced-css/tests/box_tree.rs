@@ -1321,3 +1321,99 @@ fn inline_generated_text_beside_inline_blocks_is_refused_and_blank_text_is_not()
     let root = node("page", vec![text("gap", "  "), node("a", vec![])]);
     assert!(BoxTree::new(root, "#a { display:inline-block; }").is_ok());
 }
+
+#[test]
+fn counters_count_in_document_order_with_scopes() {
+    let section = |id: &str, inner: Vec<Element>| node(id, inner);
+    let root = node(
+        "page",
+        vec![
+            section("s1", vec![node("a", vec![]), node("b", vec![])]),
+            section("s2", vec![node("c", vec![])]),
+            node("hidden", vec![]),
+            section("s3", vec![]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { counter-reset:chapter; }
+         #s1, #s2, #s3 { counter-increment:chapter; counter-reset:item 4; }
+         #s1:before, #s2:before, #s3:before { content:\"Chapter \" counter(chapter, upper-roman) \": \"; }
+         #a, #b, #c { counter-increment:item; }
+         #a:before, #b:before, #c:before { content:counters(chapter, \".\") \"-\" counter(item); }
+         #hidden { display:none; counter-increment:chapter 100; }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "Chapter I:",
+            "1-5",
+            "1-6",
+            "Chapter II:",
+            "2-5",
+            "Chapter III:",
+        ]
+    );
+}
+
+#[test]
+fn after_sees_its_subtree_and_pseudo_actions_apply() {
+    let root = node(
+        "page",
+        vec![node("list", vec![node("a", vec![]), node("b", vec![])])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#list { counter-reset:n; }
+         #a, #b { counter-increment:n 2; }
+         #list:after { content:\"total \" counter(n, decimal-leading-zero); }
+         #b:before { counter-increment:n 10; content:counter(n, lower-alpha); }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    // #b gets +2 then its pseudo +10, so 14 reads as n; the total sees all of it.
+    assert_eq!(texts, vec!["n", "total 14"]);
+}
+
+#[test]
+fn an_undeclared_counter_reads_zero_and_quotes_nest() {
+    let root = node("page", vec![node("outer", vec![node("inner", vec![])])]);
+    let tree = BoxTree::new(
+        root,
+        "#outer:before { content:open-quote counter(missing); }
+         #inner:before { content:open-quote; }
+         #inner:after { content:close-quote; }
+         #outer:after { content:close-quote; }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    assert_eq!(texts, vec!["\u{201c}0", "\u{2018}\u{2019}", "\u{201d}"]);
+}
+
+#[test]
+fn a_reset_reaches_later_siblings_and_counters_nest_outermost_first() {
+    let root = node(
+        "page",
+        vec![
+            node("a", vec![]),
+            node("b", vec![]),
+            node("o", vec![node("i", vec![])]),
+            node("z", vec![]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#a { counter-reset:x 5; }
+         #b:before { content:counter(x, decimal-leading-zero); }
+         #o { counter-reset:n 1; }
+         #i { counter-reset:n 2; }
+         #i:before { content:counters(n, \".\"); }
+         #z { counter-increment:fresh 3; }
+         #z:before { content:counter(fresh); }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    assert_eq!(texts, vec!["05", "1.2", "3"]);
+}
