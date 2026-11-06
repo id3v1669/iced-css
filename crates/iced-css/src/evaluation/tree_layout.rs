@@ -397,14 +397,30 @@ pub fn prepare_captured_tree(
     // Open elements, innermost last: an element's `::after` follows all its content.
     let mut ancestors: Vec<usize> = Vec::new();
     for index in 0..=count {
-        let source_parent = (index < count)
-            .then(|| {
-                projection.snapshot.construction().nodes()[projection.original[index]].parent()
-            })
-            .flatten()
-            .map(|parent| projection.projected[parent]);
+        // Skip absent boxes first: their subtrees must not close any open element.
+        let mut resolved = None;
+        if index < count {
+            let original = projection.original[index];
+            let resolution = display.resolution(original).ok_or(E::Facts(
+                ClearanceBoxFactsError::SourceJoin { projected: index },
+            ))?;
+            if resolution.display == Display::None {
+                continue;
+            }
+            let parent = projection.snapshot.construction().nodes()[original]
+                .parent()
+                .map(|parent| projection.projected[parent]);
+            let parent_slot = match parent {
+                Some(parent) => match container[parent] {
+                    Some(value) => Some(value),
+                    None => continue,
+                },
+                None => None,
+            };
+            resolved = Some((original, resolution, parent, parent_slot));
+        }
         while let Some(&top) = ancestors.last() {
-            if index < count && Some(top) == source_parent {
+            if resolved.is_some_and(|(_, _, parent, _)| Some(top) == parent) {
                 break;
             }
             ancestors.pop();
@@ -416,28 +432,8 @@ pub fn prepare_captured_tree(
                 }
             }
         }
-        if index == count {
+        let Some((original, resolution, parent, parent_slot)) = resolved else {
             break;
-        }
-        let original = projection.original[index];
-        let resolution =
-            display
-                .resolution(original)
-                .ok_or(E::Facts(ClearanceBoxFactsError::SourceJoin {
-                    projected: index,
-                }))?;
-        if resolution.display == Display::None {
-            continue;
-        }
-        let parent = projection.snapshot.construction().nodes()[original]
-            .parent()
-            .map(|parent| projection.projected[parent]);
-        let parent_slot = match parent {
-            Some(parent) => match container[parent] {
-                Some(value) => Some(value),
-                None => continue,
-            },
-            None => None,
         };
         let source_node = &projection.snapshot.construction().nodes()[original];
         let is_text = source_node.text().is_some() && projection.nodes[index].children.is_empty();
@@ -1037,6 +1033,8 @@ pub struct TreePaint {
     pub paints: Vec<BoxPaint>,
     pub styles: Vec<TextStyle>,
     pub generated: Vec<[Option<GeneratedRun>; 2]>,
+    /// The outside list marker's text per row (12.5.1); it takes no room in the flow.
+    pub markers: Vec<Option<String>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -1197,6 +1195,8 @@ pub fn evaluate_tree_paint<'r>(
     let outline_color = id("outline-color")?;
     let mut generated: Vec<[Option<GeneratedRun>; 2]> = Vec::with_capacity(projection.len());
     let mut marker_types: Vec<Option<String>> = Vec::with_capacity(projection.len());
+    let mut marker_inside: Vec<bool> = Vec::with_capacity(projection.len());
+    let mut markers: Vec<Option<String>> = Vec::with_capacity(projection.len());
     // Each list parent's running item count.
     let mut items = vec![0_usize; projection.len()];
     let nodes = snapshot.construction().nodes();
@@ -1440,6 +1440,22 @@ pub fn evaluate_tree_paint<'r>(
             None
         };
         marker_types.push(marker_type);
+        let inside = match defaulted("list-style-position")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "inside"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_some_and(|parent| marker_inside[parent])
+            }
+            _ => false,
+        };
+        marker_inside.push(inside);
+        let (marker, outside) = if inside {
+            (marker, None)
+        } else {
+            (None, marker)
+        };
+        markers.push(outside.map(|text| text.trim_end_matches('\u{a0}').to_owned()));
         let mut pair = [None, None];
         for (side, pseudo) in [PseudoElement::Before, PseudoElement::After]
             .into_iter()
@@ -1546,6 +1562,21 @@ pub fn evaluate_tree_paint<'r>(
                         .map_or(font_size, |c| c.value),
                     LengthTarget::Auto => font_size,
                 },
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                    let table = FontSizeTable::new(16.0).map_err(E::FontMedium)?;
+                    match keyword.as_str() {
+                        "xx-small" => table.entries()[0],
+                        "x-small" => table.entries()[1],
+                        "small" => table.entries()[2],
+                        "medium" => table.entries()[3],
+                        "large" => table.entries()[4],
+                        "x-large" => table.entries()[5],
+                        "xx-large" => table.entries()[6],
+                        "larger" => table.larger(font_size).map_or(font_size, |c| c.value),
+                        "smaller" => table.smaller(font_size).map_or(font_size, |c| c.value),
+                        _ => font_size,
+                    }
+                }
                 _ => font_size,
             };
             let weight = match cascaded("font-weight")? {
@@ -1593,17 +1624,39 @@ pub fn evaluate_tree_paint<'r>(
                 projected: index,
                 error,
             })?;
+            let keyword_of = |name: &'static str, inherited: &'static str| {
+                Ok::<_, TreeLayoutError>(match cascaded(name)? {
+                    DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                        keyword.as_str()
+                    }
+                    _ => inherited,
+                })
+            };
+            let family = match cascaded("font-family")? {
+                DefaultedValueRef::Compute(SpecifiedValue::FontFamily(list)) => family_of(list),
+                _ => owner.family.clone(),
+            };
+            let white_space = keyword_of("white-space", owner.white_space)?;
+            let text_transform = keyword_of("text-transform", owner.text_transform)?;
+            let shown = match keyword_of("visibility", if visible { "visible" } else { "hidden" })?
+            {
+                "visible" => true,
+                _ => false,
+            };
             pair[side] = Some(GeneratedRun {
                 text,
                 size,
                 color: rgb(pseudo_color.value(), limits.numeric),
                 background: rgb(pseudo_background.value(), limits.numeric),
-                visible,
+                visible: shown,
                 style: TextStyle {
                     weight,
                     italic,
                     underline,
                     line_through,
+                    family,
+                    white_space,
+                    text_transform,
                     ..owner
                 },
                 block,
@@ -1616,5 +1669,6 @@ pub fn evaluate_tree_paint<'r>(
         paints,
         styles,
         generated,
+        markers,
     })
 }

@@ -843,6 +843,55 @@ mod interactive {
     }
 
     #[test]
+    fn a_widget_survives_generated_text_on_its_box() {
+        let root = node("page", vec![node("slot", vec![])]);
+        let tree = BoxTree::new(root, "#slot:before { content:\"x\"; }").unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(9.0)).into();
+        assert_eq!(Rig::new(view).slot().height, 9.0);
+    }
+
+    #[test]
+    fn a_drag_keeps_the_cursor_after_leaving_the_widget() {
+        let root = node("page", vec![node("slot", vec![]), node("rest", vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#slot { width:50px; height:50px; } #rest { height:50px; }",
+        )
+        .unwrap();
+        let button = iced::widget::button(space(50.0))
+            .width(50.0)
+            .height(50.0)
+            .on_press(1_u8);
+        let view: View<'_> = tree.interactive().widget("slot", button).into();
+        let mut rig = Rig::new(view);
+        rig.send(
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            Point::new(10.0, 10.0),
+        );
+        // The press state reached the widget; its release is still routed on the way out,
+        // and a release outside the button does not click it.
+        assert!(
+            rig.send(
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+                Point::new(10.0, 80.0)
+            )
+            .is_empty()
+        );
+        // The same release over the button clicks: it had the cursor throughout.
+        rig.send(
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            Point::new(10.0, 10.0),
+        );
+        assert_eq!(
+            rig.send(
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+                Point::new(10.0, 10.0)
+            ),
+            vec![1]
+        );
+    }
+
+    #[test]
     fn draw_with_clips_widgets_and_text_runs_without_panicking() {
         let root = node(
             "page",
@@ -850,12 +899,14 @@ mod interactive {
                 text("copy", "words"),
                 node("clip", vec![node("slot", vec![])]),
                 node("float", vec![]),
+                node("item", vec![]),
             ],
         );
         let tree = BoxTree::new(
             root,
             "#clip { overflow:auto; height:5px; background-color:#ff0000; }
-             #float { float:left; width:5px; height:5px; }",
+             #float { float:left; width:5px; height:5px; }
+             #item { display:list-item; }",
         )
         .unwrap();
         let view: View<'_> = tree.interactive().widget("slot", space(20.0)).into();
@@ -1027,28 +1078,75 @@ fn block_text_leaf_keeps_generated_runs_inside_and_its_own_paint() {
 }
 
 #[test]
-fn list_items_get_markers_by_type_and_ordinal() {
+fn list_items_get_outside_markers_by_type_and_ordinal() {
     let root = node(
         "page",
         vec![
             node("a", vec![text("ta", "one")]),
             node("b", vec![text("tb", "two")]),
             node("c", vec![text("tc", "three")]),
+            node("d", vec![text("td", "four")]),
         ],
     );
     let tree = BoxTree::new(
         root,
-        "#a, #b, #c { display:list-item; }
+        "#a, #b, #c, #d { display:list-item; }
          #a { list-style-type:decimal; }
          #b { list-style-type:lower-roman; }
-         #c { list-style-type:none; }",
+         #c { list-style-type:none; }
+         #d { list-style-position:inside; }",
     )
     .unwrap();
     let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
-    assert_eq!(texts, vec!["1.\u{a0}one", "ii.\u{a0}two", "three"],);
-    let root = node("page", vec![node("a", vec![text("ta", "one")])]);
-    let tree = BoxTree::new(root, "#a { display:list-item; }").unwrap();
-    assert_eq!(tree.text_leaves()[0].1.text(), "\u{2022}\u{a0}one");
+    // Outside markers take no room; an inside one joins the first line (ordinal 4).
+    assert_eq!(texts, vec!["one", "two", "three", "\u{2022}\u{a0}four"]);
+    let markers: Vec<_> = tree
+        .markers()
+        .iter()
+        .map(|(at, leaf)| (*at, leaf.text()))
+        .collect();
+    assert_eq!(markers, vec![(1, "1.".to_owned()), (3, "ii.".to_owned())]);
+    // A block first child no longer gets pushed below a marker line.
+    let root = node("page", vec![node("li", vec![node("p", vec![])])]);
+    let tree = BoxTree::new(root, "#li { display:list-item; } #p { height:5px; }").unwrap();
+    assert_eq!(tree.markers()[&1].text(), "\u{2022}");
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[2].unwrap().border.top, 0.0);
+}
+
+#[test]
+fn a_skipped_subtree_does_not_close_open_elements() {
+    let root = node(
+        "page",
+        vec![node("gone", vec![text("inner", "x")]), node("kept", vec![])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#gone { display:none; }
+         #kept { height:5px; }
+         #page:after { content:\"end\"; }",
+    )
+    .unwrap();
+    let g = tree.layout_text(100.0, None, &mut |_, _| 7.0).unwrap();
+    // #page's content ends after #kept, so its :after sits below it.
+    assert_eq!(g[0].unwrap().content.bottom, 12.0);
+    assert_eq!(g[3].unwrap().border.top, 0.0);
+}
+
+#[test]
+fn pseudo_takes_its_own_text_properties_and_keyword_sizes() {
+    let root = node("page", vec![node("a", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#a:before { content:\"x y\"; font-size:x-large; font-family:Verdana;
+                     text-transform:uppercase; background-color:#ff0000; }",
+    )
+    .unwrap();
+    let leaf = tree.text_leaves()[0].1;
+    assert_eq!(leaf.runs[0].text, "X Y");
+    assert_eq!(leaf.runs[0].size, 24.0);
+    assert_eq!(leaf.runs[0].family.as_deref(), Some("Verdana"));
+    assert_eq!(leaf.runs[0].background, Some([1.0, 0.0, 0.0]));
 }
 
 #[test]

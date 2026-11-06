@@ -354,6 +354,7 @@ struct Style {
     texts: Vec<Option<TextLeaf>>,
     ids: Vec<Option<String>>,
     originals: Vec<usize>,
+    markers: BTreeMap<usize, TextLeaf>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -367,6 +368,8 @@ pub struct BoxTree {
     ids: Vec<Option<String>>,
     /// The source node per projected index.
     originals: Vec<usize>,
+    /// Outside list markers, by projected index of their item.
+    markers: BTreeMap<usize, TextLeaf>,
     source: Arc<Source>,
 }
 
@@ -428,6 +431,7 @@ impl BoxTree {
             texts: self.texts.clone(),
             ids: self.ids.clone(),
             originals: self.originals.clone(),
+            markers: self.markers.clone(),
         }
     }
 
@@ -438,17 +442,28 @@ impl BoxTree {
             texts: style.texts,
             ids: style.ids,
             originals: style.originals,
+            markers: style.markers,
             source,
         }
     }
 
-    /// The leaf box with this CSS id, in this styling. Display none has none.
+    /// The slot a widget for this CSS id occupies, in this styling: the leaf box itself,
+    /// or the anonymous block of generated text it replaces when the box has only that.
+    /// Display none has none.
     fn leaf_slot(&self, id: &str) -> Option<usize> {
+        let prepared = &self.prepared;
         self.ids.iter().enumerate().find_map(|(arena, value)| {
-            (value.as_deref() == Some(id)
-                && !self.prepared.anonymous[arena]
-                && self.prepared.boxes[arena].children.is_empty())
-            .then_some(arena)
+            if value.as_deref() != Some(id) || prepared.anonymous[arena] {
+                return None;
+            }
+            let children = &prepared.boxes[arena].children;
+            match children.first() {
+                None => Some(arena),
+                Some(first) if children.iter().all(|child| prepared.anonymous[*child]) => {
+                    Some(*first)
+                }
+                Some(_) => None,
+            }
         })
     }
 
@@ -564,6 +579,7 @@ impl BoxTree {
             mut paints,
             styles,
             generated,
+            markers,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
             .map_err(failed)?;
         let prepared = prepare_captured_tree(
@@ -620,7 +636,23 @@ impl BoxTree {
                 .map(|(&run, (text, _))| {
                     let style = style_of(run);
                     let (size, color, background, visible) = match (run, generated_of(run)) {
-                        (_, Some(made)) => (made.size, made.color, made.background, made.visible),
+                        (run_source, Some(made)) => {
+                            // Generated text keeps an enclosing inline's background.
+                            let (RunSource::Node(at)
+                            | RunSource::Before(at)
+                            | RunSource::After(at)) = run_source;
+                            let mut owner = Some(at);
+                            let mut background = made.background;
+                            while background.is_none() {
+                                let Some(here) = owner else { break };
+                                if prepared.slot[here].is_some_and(|slot| prepared.anonymous[slot])
+                                {
+                                    background = raw_paints[here].background;
+                                }
+                                owner = prepared.inline_parent[here];
+                            }
+                            (made.size, made.color, background, made.visible)
+                        }
                         (
                             RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at),
                             None,
@@ -684,11 +716,43 @@ impl BoxTree {
                     paints[projected].border = [None; 4];
                 }
             } else if let Some(leaf) = &mut texts[arena] {
-                for run in &mut leaf.runs {
-                    run.background = None;
+                for (run, source) in leaf.runs.iter_mut().zip(&prepared.runs[arena]) {
+                    if matches!(source, RunSource::Node(_)) {
+                        run.background = None;
+                    }
                 }
             }
         }
+        let marker_leaves = markers
+            .into_iter()
+            .enumerate()
+            .filter_map(|(projected, text)| {
+                let text = text?;
+                prepared.slot[projected]?;
+                let style = &styles[projected];
+                Some((
+                    projected,
+                    TextLeaf {
+                        runs: vec![TextRun {
+                            text,
+                            size: prepared.font_sizes[projected],
+                            color: raw_paints[projected].color,
+                            background: None,
+                            weight: style.weight,
+                            italic: style.italic,
+                            family: style.family.clone(),
+                            underline: false,
+                            line_through: false,
+                            visible: raw_paints[projected].visible,
+                            owner: projection.original_index(projected).unwrap_or_default(),
+                        }],
+                        align: "right",
+                        wraps: false,
+                        line_height: style.line_height,
+                    },
+                ))
+            })
+            .collect();
         let originals: Vec<usize> = (0..count)
             .map(|projected| projection.original_index(projected).unwrap_or_default())
             .collect();
@@ -708,6 +772,7 @@ impl BoxTree {
             texts,
             ids,
             originals,
+            markers: marker_leaves,
             source: Arc::clone(source),
         })
     }
@@ -810,6 +875,12 @@ impl BoxTree {
         }
     }
 
+    /// Outside list markers, by projected index of their item.
+    #[must_use]
+    pub fn markers(&self) -> &BTreeMap<usize, TextLeaf> {
+        &self.markers
+    }
+
     /// The inline content of each box, by projected index of its first run.
     #[must_use]
     pub fn text_leaves(&self) -> Vec<(usize, &TextLeaf)> {
@@ -834,7 +905,7 @@ impl BoxTree {
             .into_iter()
             .filter_map(|step| match step {
                 PaintStep::Box(index) => Some(index),
-                PaintStep::Text(_) | PaintStep::Outline(_) => None,
+                PaintStep::Text(_) | PaintStep::Outline(_) | PaintStep::Marker(_) => None,
             })
             .collect()
     }
@@ -900,10 +971,15 @@ impl BoxTree {
         let prepared = &self.prepared;
         let mut floats = Vec::new();
         let mut texts = Vec::new();
+        let mut marks = Vec::new();
         let mut stack = vec![root];
         while let Some(arena) = stack.pop() {
             if !prepared.anonymous[arena] {
-                steps.push(PaintStep::Box(prepared.positions[arena].0));
+                let projected = prepared.positions[arena].0;
+                steps.push(PaintStep::Box(projected));
+                if self.markers.contains_key(&projected) {
+                    marks.push(projected);
+                }
             }
             if self.texts[arena].is_some() || embedded.contains(&arena) {
                 texts.push(arena);
@@ -923,6 +999,7 @@ impl BoxTree {
             self.paint_context(float, embedded, positioned, steps);
         }
         steps.extend(texts.into_iter().map(PaintStep::Text));
+        steps.extend(marks.into_iter().map(PaintStep::Marker));
     }
 
     /// Wraps the tree as an iced element that fills the size it is given.
@@ -1044,6 +1121,7 @@ where
             scroll_limits: Vec::new(),
             clips: Vec::new(),
             paragraphs: BTreeMap::new(),
+            marker_paragraphs: BTreeMap::new(),
             elements,
             ids,
             slots: Vec::new(),
@@ -1060,6 +1138,8 @@ enum PaintStep {
     Text(usize),
     /// A box's outline, by projected index.
     Outline(usize),
+    /// A list item's outside marker, by projected index.
+    Marker(usize),
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1164,6 +1244,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     presses: Vec<(String, Message)>,
     /// Shaped text, its top-left corner relative to the layout, and its color, by arena.
     paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
+    /// Shaped outside markers and their corners, by projected index of their item.
+    marker_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point)>,
 }
 
 /// Family names live for the program: iced fonts hold a `&'static str`, and a stylesheet
@@ -1406,12 +1488,31 @@ where
                 && self.tree.prepared.anonymous[arena]
                 && let Some((shaped, corner, _)) = self.paragraphs.get(&arena)
                 && let Some(leaf) = self.tree.texts[arena].as_ref()
-                && let Some(run) = shaped
-                    .hit_span(Point::new(point.x - corner.x, point.y - corner.y))
-                    .and_then(|span| leaf.runs.get(span))
-                && run.visible
+                && self
+                    .clips
+                    .get(arena)
+                    .copied()
+                    .flatten()
+                    .is_none_or(|clip: FlowRect| {
+                        point.x >= clip.left
+                            && point.x < clip.right
+                            && point.y >= clip.top
+                            && point.y < clip.bottom
+                    })
             {
-                return Some(run.owner);
+                // The shaper snaps a point outside its text to the nearest run, so the
+                // run's own rectangles decide.
+                let local = Point::new(point.x - corner.x, point.y - corner.y);
+                if let Some(span) = shaped.hit_span(local)
+                    && let Some(run) = leaf.runs.get(span)
+                    && run.visible
+                    && shaped
+                        .span_bounds(span)
+                        .iter()
+                        .any(|rect| rect.contains(local))
+                {
+                    return Some(run.owner);
+                }
             }
             let PaintStep::Box(step) = step else {
                 continue;
@@ -1463,16 +1564,19 @@ where
         &self,
         index: usize,
         cursor: mouse::Cursor,
-        bounds: Rectangle,
+        top: Option<usize>,
+        pressed: Option<usize>,
     ) -> mouse::Cursor {
         let Some(arena) = self.slots.get(index).copied().flatten() else {
             return mouse::Cursor::Unavailable;
         };
         let projected = self.tree.prepared.positions[arena].0;
         let owner = self.tree.originals.get(projected).copied();
-        match cursor.position_in(bounds).and_then(|point| self.hit(point)) {
-            found if found.is_some() && found == owner => cursor,
-            _ => mouse::Cursor::Unavailable,
+        // A press that started on the widget keeps it the cursor, as a drag needs.
+        if (top.is_some() && top == owner) || (pressed.is_some() && pressed == owner) {
+            cursor
+        } else {
+            mouse::Cursor::Unavailable
         }
     }
 
@@ -1610,6 +1714,9 @@ where
             let Some(geometry) = self.slot_geometry.get(arena) else {
                 continue;
             };
+            if self.slots.contains(&Some(arena)) {
+                continue;
+            }
             let place = geometry.leaf_band.unwrap_or(geometry.content);
             self.paragraphs.insert(
                 arena,
@@ -1619,6 +1726,26 @@ where
                     Color::BLACK,
                 ),
             );
+        }
+        self.marker_paragraphs.clear();
+        for (projected, leaf) in &self.tree.markers {
+            let Some(Some(geometry)) = self.geometry.get(*projected) else {
+                continue;
+            };
+            let shaped: Renderer::Paragraph = paragraph(renderer, leaf, f32::INFINITY);
+            // 12.5.1: to the side of the principal box, at its first line, with DP21's gap.
+            let gap = leaf.runs[0].size * 0.5;
+            let width = shaped.min_bounds().width;
+            let left = if self.tree.prepared.boxes[self.tree.prepared.slot[*projected].unwrap_or(0)]
+                .direction
+                == iced_css_core::formatting::block::Direction::Rtl
+            {
+                geometry.border.right + gap
+            } else {
+                geometry.border.left - gap - width
+            };
+            self.marker_paragraphs
+                .insert(*projected, (shaped, Point::new(left, geometry.content.top)));
         }
         let mut nodes = Vec::with_capacity(self.elements.len());
         for (index, element) in self.elements.iter_mut().enumerate() {
@@ -1679,8 +1806,12 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        let top = cursor
+            .position_in(layout.bounds())
+            .and_then(|point| self.hit(point));
+        let pressed = tree.state.downcast_ref::<Interaction>().active;
         let cursors: Vec<_> = (0..self.elements.len())
-            .map(|index| self.child_cursor(index, cursor, layout.bounds()))
+            .map(|index| self.child_cursor(index, cursor, top, pressed))
             .collect();
         let shown: Vec<_> = (0..self.elements.len())
             .map(|index| self.visible_slot(index).is_some())
@@ -1786,6 +1917,10 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        let top = cursor
+            .position_in(layout.bounds())
+            .and_then(|point| self.hit(point));
+        let pressed = tree.state.downcast_ref::<Interaction>().active;
         let inner = self
             .elements
             .iter()
@@ -1797,7 +1932,7 @@ where
                 element.as_widget().mouse_interaction(
                     child,
                     child_layout,
-                    self.child_cursor(index, cursor, layout.bounds()),
+                    self.child_cursor(index, cursor, top, pressed),
                     viewport,
                     renderer,
                 )
@@ -1827,10 +1962,14 @@ where
         let origin = bounds.position();
         let embedded = self.embedded();
         let steps = self.tree.paint_steps(&embedded);
+        let top = cursor.position_in(bounds).and_then(|point| self.hit(point));
+        let pressed = tree.state.downcast_ref::<Interaction>().active;
         let prepared = &self.tree.prepared;
         let clip_of = |step: &PaintStep| -> Rectangle {
             let arena = match *step {
-                PaintStep::Box(index) | PaintStep::Outline(index) => prepared.slot[index],
+                PaintStep::Box(index) | PaintStep::Outline(index) | PaintStep::Marker(index) => {
+                    prepared.slot[index]
+                }
                 PaintStep::Text(arena) => Some(arena),
             };
             let clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
@@ -1853,8 +1992,8 @@ where
             let mut end = start + 1;
             while end < steps.len()
                 && clip_of(&steps[end]) == clip
-                && !(matches!(steps[end - 1], PaintStep::Text(_))
-                    && !matches!(steps[end], PaintStep::Text(_)))
+                && !(matches!(steps[end - 1], PaintStep::Text(_) | PaintStep::Marker(_))
+                    && !matches!(steps[end], PaintStep::Text(_) | PaintStep::Marker(_)))
             {
                 end += 1;
             }
@@ -1866,6 +2005,12 @@ where
                         }
                         PaintStep::Outline(index) => {
                             draw_outline(&self.tree, &self.geometry, renderer, origin, index);
+                        }
+                        PaintStep::Marker(index) => {
+                            if let Some((shaped, corner)) = self.marker_paragraphs.get(&index) {
+                                let position = Point::new(origin.x + corner.x, origin.y + corner.y);
+                                renderer.fill_paragraph(shaped, position, Color::BLACK, clip);
+                            }
                         }
                         PaintStep::Text(arena) => {
                             if let Some((shaped, corner, color)) = self.paragraphs.get(&arena) {
@@ -1883,7 +2028,7 @@ where
                                     theme,
                                     style,
                                     child_layout,
-                                    self.child_cursor(index, cursor, bounds),
+                                    self.child_cursor(index, cursor, top, pressed),
                                     viewport,
                                 );
                             }
