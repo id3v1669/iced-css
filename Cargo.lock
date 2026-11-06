@@ -1728,6 +1728,7 @@ dependencies = [
  "iced",
  "iced-css",
  "iced-css-core",
+ "iced_test",
 ]
 
 [[package]]

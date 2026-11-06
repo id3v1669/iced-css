@@ -1638,11 +1638,8 @@ pub fn evaluate_tree_paint<'r>(
             };
             let white_space = keyword_of("white-space", owner.white_space)?;
             let text_transform = keyword_of("text-transform", owner.text_transform)?;
-            let shown = match keyword_of("visibility", if visible { "visible" } else { "hidden" })?
-            {
-                "visible" => true,
-                _ => false,
-            };
+            let shown =
+                keyword_of("visibility", if visible { "visible" } else { "hidden" })? == "visible";
             pair[side] = Some(GeneratedRun {
                 text,
                 size,

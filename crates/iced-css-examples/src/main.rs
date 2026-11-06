@@ -89,6 +89,24 @@ fn tree() -> BoxTree {
 
 #[cfg(test)]
 #[test]
+fn hosted_button_and_box_press_work_on_the_real_renderer() {
+    let app = App {
+        tree: tree(),
+        button: 3,
+        card: 1,
+    };
+    let mut ui = iced_test::simulator(view(&app));
+    ui.click("Button: 3  Card: 1")
+        .expect("the hosted button's label is findable");
+    // Well inside the card, below the two lines of text and the button.
+    ui.point_at(iced::Point::new(600.0, 250.0));
+    let _ = ui.simulate(iced_test::simulator::click());
+    let messages: Vec<_> = ui.into_messages().collect();
+    assert!(matches!(messages[..], [Message::Button, Message::Card]));
+}
+
+#[cfg(test)]
+#[test]
 fn the_example_stylesheet_is_accepted() {
     let tree = tree();
     let geometry = tree

@@ -1309,17 +1309,12 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
         .map(|run| {
             let mut span = text::Span::new(run.text.as_str())
                 .size(Pixels(run.size))
-                .font(font_of(base, run))
-                .underline(run.underline)
-                .strikethrough(run.line_through);
+                .font(font_of(base, run));
             if !run.visible {
                 return span.color(Color::TRANSPARENT);
             }
             if let Some(c) = run.color {
                 span = span.color(Color::from_rgb(c[0], c[1], c[2]));
-            }
-            if let Some(c) = run.background {
-                span = span.background(Color::from_rgb(c[0], c[1], c[2]));
             }
             span
         })
@@ -1348,6 +1343,54 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
             text::Wrapping::None
         },
     })
+}
+
+/// Inline backgrounds and text decorations. A paragraph only draws glyphs: these sit in
+/// its run rectangles. `corner` is where the paragraph is drawn.
+fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
+    leaf: &TextLeaf,
+    shaped: &Renderer::Paragraph,
+    renderer: &mut Renderer,
+    corner: Point,
+) {
+    let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
+        renderer.fill_quad(
+            Quad {
+                bounds,
+                ..Quad::default()
+            },
+            Color::from_rgb(color[0], color[1], color[2]),
+        );
+    };
+    for (index, run) in leaf.runs.iter().enumerate() {
+        if !run.visible {
+            continue;
+        }
+        let color = run.color.unwrap_or([0.0; 3]);
+        let thickness = (run.size / 14.0).max(1.0);
+        for area in shaped.span_bounds(index) {
+            let area = Rectangle {
+                x: area.x + corner.x,
+                y: area.y + corner.y,
+                ..area
+            };
+            if let Some(background) = run.background {
+                quad(renderer, area, background);
+            }
+            let line = |at: f32| Rectangle {
+                x: area.x,
+                y: area.y + area.height * at,
+                width: area.width,
+                height: thickness,
+            };
+            if run.underline {
+                quad(renderer, line(0.85), color);
+            }
+            if run.line_through {
+                quad(renderer, line(0.55), color);
+            }
+        }
+    }
 }
 
 /// The narrowest width a leaf can wrap to: its widest single word.
@@ -1718,13 +1761,23 @@ where
                 continue;
             }
             let place = geometry.leaf_band.unwrap_or(geometry.content);
+            let width = (place.right - place.left).ceil();
+            // A paragraph aligns its lines within its widest line and draws from that
+            // block's corner: place the block in the content box.
+            let block = paragraph::<Renderer>(renderer, leaf, width)
+                .min_bounds()
+                .width;
+            let corner = Point::new(
+                match leaf.align {
+                    "center" => place.left + (width - block) / 2.0,
+                    "right" => place.left + width - block,
+                    _ => place.left,
+                },
+                place.top,
+            );
             self.paragraphs.insert(
                 arena,
-                (
-                    paragraph(renderer, leaf, (place.right - place.left).ceil()),
-                    Point::new(place.left, place.top),
-                    Color::BLACK,
-                ),
+                (paragraph(renderer, leaf, width), corner, Color::BLACK),
             );
         }
         self.marker_paragraphs.clear();
@@ -1984,6 +2037,20 @@ where
                     .unwrap_or(Rectangle::new(origin, Size::ZERO))
             })
         };
+        // 14.2: the root's background covers the whole canvas.
+        if let Some(color) = prepared
+            .positions
+            .first()
+            .and_then(|(root, _)| self.tree.paints[*root].background)
+        {
+            renderer.fill_quad(
+                Quad {
+                    bounds,
+                    ..Quad::default()
+                },
+                Color::from_rgb(color[0], color[1], color[2]),
+            );
+        }
         // A layer draws its text over its quads, so anything painted after text needs
         // a layer of its own, as does any change of clip.
         let mut start = 0;
@@ -2014,8 +2081,11 @@ where
                         }
                         PaintStep::Text(arena) => {
                             if let Some((shaped, corner, color)) = self.paragraphs.get(&arena) {
-                                let position = Point::new(origin.x + corner.x, origin.y + corner.y);
-                                renderer.fill_paragraph(shaped, position, *color, clip);
+                                let corner = Point::new(origin.x + corner.x, origin.y + corner.y);
+                                if let Some(leaf) = self.tree.texts[arena].as_ref() {
+                                    draw_run_decorations(leaf, shaped, renderer, corner);
+                                }
+                                renderer.fill_paragraph(shaped, corner, *color, clip);
                             }
                             if let Some(index) =
                                 self.slots.iter().position(|slot| *slot == Some(arena))

@@ -11,3 +11,6 @@ publish = false
 iced.workspace = true
 iced-css.workspace = true
 iced-css-core.workspace = true
+
+[dev-dependencies]
+iced_test.workspace = true
