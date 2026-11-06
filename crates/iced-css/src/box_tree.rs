@@ -903,6 +903,61 @@ impl BoxTree {
                 }
             }
         }
+        // 15.6: small capitals are simulated by scaling capital letters.
+        for (arena, runs) in prepared.runs.iter().enumerate() {
+            let Some(leaf) = &mut texts[arena] else {
+                continue;
+            };
+            let mut split = Vec::with_capacity(leaf.runs.len());
+            for (run, &source) in leaf.runs.drain(..).zip(runs) {
+                let small_caps = match (source, generated_of(source)) {
+                    (_, Some(made)) => made.style.small_caps,
+                    (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at), None) => {
+                        styles[at].small_caps
+                    }
+                };
+                if small_caps {
+                    split.extend(small_capitals(&run));
+                } else {
+                    split.push(run);
+                }
+            }
+            leaf.runs = split;
+        }
+        // 16.1: `text-indent` applies to the first line of a block container, so to the leaf
+        // that holds it: spaces of a known fraction of the font size come closest.
+        for arena in 0..prepared.boxes.len() {
+            let owner = if prepared.anonymous[arena] {
+                let first_line = prepared
+                    .boxes
+                    .iter()
+                    .enumerate()
+                    .find_map(|(parent, value)| {
+                        let found = value.children.contains(&arena);
+                        let first = value.children.iter().find(|child| {
+                            let child = &prepared.boxes[**child];
+                            child.float.is_none() && !child.out_of_flow
+                        });
+                        (found && first == Some(&arena) && value.inline_row.is_none())
+                            .then_some(parent)
+                    });
+                if first_line.is_none() {
+                    continue;
+                }
+                container_of[arena]
+            } else {
+                prepared.positions[arena].0
+            };
+            let indent = styles[owner].text_indent;
+            let Some(leaf) = texts[arena].as_mut().filter(|leaf| !leaf.is_empty()) else {
+                continue;
+            };
+            if indent > 0.0
+                && let Some(spacer) = indent_run(&leaf.runs[0], indent)
+            {
+                leaf.runs.insert(0, spacer);
+            }
+        }
         let marker_leaves = markers
             .into_iter()
             .enumerate()
@@ -1458,6 +1513,52 @@ fn css_cursor(keyword: &str) -> Option<mouse::Interaction> {
         "ne-resize" | "sw-resize" => Shown::ResizingDiagonallyUp,
         "nw-resize" | "se-resize" => Shown::ResizingDiagonallyDown,
         _ => return None,
+    })
+}
+
+/// A run in capitals, with what was lowercase at a smaller size.
+fn small_capitals(run: &TextRun) -> Vec<TextRun> {
+    let mut parts: Vec<TextRun> = Vec::new();
+    let mut lower = false;
+    for character in run.text.chars() {
+        let here = character.is_lowercase();
+        if parts.is_empty() || here != lower {
+            parts.push(TextRun {
+                text: String::new(),
+                size: if here { run.size * 0.8 } else { run.size },
+                ..run.clone()
+            });
+            lower = here;
+        }
+        if let Some(part) = parts.last_mut() {
+            part.text.extend(character.to_uppercase());
+        }
+    }
+    parts
+}
+
+/// Invisible spaces about `indent` wide at `first`'s font, or `None` when too small to show.
+fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
+    let mut left = indent / first.size.max(1.0);
+    let mut text = String::new();
+    for (width, space) in [
+        (1.0, '\u{2003}'),
+        (0.5, '\u{2002}'),
+        (1.0 / 3.0, '\u{2004}'),
+        (0.25, '\u{2005}'),
+        (1.0 / 6.0, '\u{2006}'),
+    ] {
+        while left >= width {
+            text.push(space);
+            left -= width;
+        }
+    }
+    (!text.is_empty()).then(|| TextRun {
+        text,
+        background: None,
+        underline: false,
+        line_through: false,
+        ..first.clone()
     })
 }
 

@@ -721,3 +721,29 @@ fn clip_does_nothing_on_a_static_box() {
     assert!(picture("", &name));
     assert!(picture("clip:rect(0, 10px, 10px, 0);", &name));
 }
+
+#[test]
+fn text_indent_and_small_caps_draw() {
+    let root = node(
+        "page",
+        vec![text(
+            "copy",
+            "Indented small capitals wrap across more than one line in a narrow box",
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background-color:white; color:black; width:300px; }
+         #copy { display:block; text-indent:40px; font-variant:small-caps; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    let name = format!("indent-{}.png", std::process::id());
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    );
+}

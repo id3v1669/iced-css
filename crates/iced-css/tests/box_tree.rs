@@ -2618,6 +2618,38 @@ mod animation {
     }
 
     #[test]
+    fn a_later_inline_sibling_starts_nothing_either() {
+        let source = || {
+            node(
+                "page",
+                vec![
+                    node("first", vec![text("one", "one")]),
+                    node("span", vec![text("two", "two")]),
+                ],
+            )
+        };
+        let css = |color: &str| {
+            format!(
+                "#first, #span {{ display:inline; }} #span {{ background-color:{color}; outline:1px solid {color}; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("#000000")).unwrap();
+        let to = from.restyled(&[&css("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(
+                &from,
+                &to,
+                "span",
+                &["background-color", "outline-color"],
+                second(),
+                Instant::now(),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
     fn repeats_and_hidden_ends_start_nothing_extra() {
         let from = tree("#box { width:100px; height:10px; background-color:#000000; }");
         let to = from
@@ -2946,4 +2978,56 @@ fn clip_cuts_absolute_boxes_and_what_they_hold() {
     )
     .unwrap();
     assert_eq!(tree.paints()[1].clip.map(|sides| sides[0]), Some(Some(5.0)));
+}
+
+#[test]
+fn small_caps_scale_what_was_lowercase() {
+    let root = node("page", vec![text("t", "Ab c")]);
+    let tree = BoxTree::new(root, "#page { font-variant:small-caps; font-size:10px; }").unwrap();
+    let leaves = tree.text_leaves();
+    let runs = &leaves[0].1.runs;
+    let parts: Vec<(&str, f32)> = runs
+        .iter()
+        .map(|run| (run.text.as_str(), run.size))
+        .collect();
+    assert_eq!(
+        parts,
+        vec![("A", 10.0), ("B", 8.0), (" ", 10.0), ("C", 8.0)]
+    );
+    assert_eq!(leaves[0].1.text(), "AB C");
+}
+
+#[test]
+fn text_indent_leads_the_first_line_of_a_block_only() {
+    let root = node(
+        "page",
+        vec![
+            text("a", "first"),
+            node("box", vec![]),
+            text("b", "after a block"),
+            node("own", vec![text("c", "own")]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { text-indent:10px; font-size:10px; }
+         #own { text-indent:0; }
+         #box { height:1px; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let of = |index: usize| leaves[index].1.text();
+    assert_eq!(of(0), "\u{2003}first");
+    // Later anonymous blocks are not the first line of their container.
+    assert_eq!(of(1), "after a block");
+    assert_eq!(of(2), "own");
+    assert_eq!(leaves[0].1.runs.len(), 2);
+    assert!(!leaves[0].1.runs[0].underline);
+    // Blank content gets no indent, and a negative one is ignored.
+    let root = node("page", vec![text("a", "words")]);
+    let tree = BoxTree::new(root, "#page { text-indent:-10px; }").unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "words");
+    let root = node("page", vec![node("gap", vec![])]);
+    let tree = BoxTree::new(root, "#page { text-indent:10px; }").unwrap();
+    assert!(tree.text_leaves().is_empty());
 }

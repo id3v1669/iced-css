@@ -72,8 +72,9 @@ scrolling list item's outside marker moves with the text, unclipped. Animations 
 inline backgrounds, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.
 
-Not read at all: `letter-spacing`, `word-spacing`, `text-indent`, `font-variant`,
-`list-style-image`, and URL cursors (their keyword fallback is used).
+Not read at all: `letter-spacing`, `word-spacing`, `list-style-image`, and URL cursors (their
+keyword fallback is used). `text-indent` is approximated by leading spaces, positive lengths only
+(no percentages or hanging indents). `font-variant: small-caps` scales capitals.
 
 ## Status
 

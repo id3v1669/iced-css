@@ -1625,6 +1625,10 @@ pub enum TextLineHeight {
 /// Computed text properties of one row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
+    /// `font-variant: small-caps`.
+    pub small_caps: bool,
+    /// `text-indent` in pixels. A percentage has no width to resolve against here: 0.
+    pub text_indent: f32,
     /// 100 to 900.
     pub weight: u16,
     pub italic: bool,
@@ -1907,7 +1911,18 @@ pub fn evaluate_tree_paint<'r>(
             .bidi_style(original)
             .is_some_and(|style| style.direction() == ComputedDirection::RightToLeft);
         let keywords = display.text_keywords(original);
+        let small_caps = match defaulted("font-variant")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "small-caps"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_some_and(|parent: usize| styles[parent].small_caps)
+            }
+            _ => false,
+        };
         styles.push(TextStyle {
+            small_caps,
+            text_indent: 0.0,
             weight: weight.number(),
             italic,
             line_height,
@@ -2034,6 +2049,16 @@ pub fn evaluate_tree_paint<'r>(
             }
             other => length(other),
         };
+        let text_indent = match defaulted("text-indent")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Length(value)) => signed(value),
+            DefaultedValueRef::ParentComputed => {
+                parent_index.map_or(0.0, |parent: usize| styles[parent].text_indent)
+            }
+            _ => 0.0,
+        };
+        if let Some(style) = styles.last_mut() {
+            style.text_indent = text_indent;
+        }
         let clip = match defaulted("clip")? {
             DefaultedValueRef::Compute(SpecifiedValue::ClipRect(sides)) => Some(
                 sides
