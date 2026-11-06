@@ -31,8 +31,18 @@ fn text(id: &str, content: &'static str) -> Node {
         .unwrap()
         .erase()
 }
+/// The Vulkan loader's first driver scan is not safe to run from several threads: parallel
+/// tests crashed in it, inside `loader_scanned_icd_add`. Renderers are made one at a time.
+fn simulator(view: Element<'_, u8>) -> iced_test::Simulator<'_, u8> {
+    static CREATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one_at_a_time = CREATING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    iced_test::simulator(view)
+}
+
 fn click(view: Element<'_, u8>, at: Point) -> Vec<u8> {
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     ui.point_at(at);
     let _ = ui.simulate(iced_test::simulator::click());
     ui.into_messages().collect()
@@ -118,7 +128,7 @@ fn renders_a_table_from_a_stylesheet() {
          #r1b, #r2b, #fb {{ text-align:right; }}"
     );
     let view: Element<'_, u8> = BoxTree::new(root, &css).unwrap().view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
     let path = std::env::temp_dir().join("iced-css-box-tree-table");
     let _ = std::fs::remove_dir_all(&path);
@@ -146,7 +156,7 @@ fn inline_blocks_lay_out_as_a_navigation_row() {
         .interactive()
         .on_press("about", 1)
         .into();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
     let path = std::env::temp_dir().join("iced-css-box-tree-nav");
     let _ = std::fs::remove_dir_all(&path);
@@ -182,7 +192,7 @@ fn text_widens_past_a_shorter_float_on_the_real_renderer() {
         .interactive()
         .on_press("copy", 1)
         .into();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
     let path = std::env::temp_dir().join("iced-css-box-tree-widen");
     let _ = std::fs::remove_dir_all(&path);
@@ -335,7 +345,7 @@ fn renders_background_images_from_a_stylesheet() {
         #child { width:40px; height:40px; background-color:#00796b; }
         #missing { background:#fff9c4 url(no-such-file.png); }";
     let view: Element<'_, u8> = BoxTree::with_base(root, css, &path).unwrap().view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
     assert!(snapshot.matches_image(path.join("images.png")).unwrap());
 }
@@ -408,7 +418,7 @@ fn renders_inline_runs_lists_floats_clips_and_stacking() {
         #q:after { content:close-quote; color:#6a1b9a; }
     ";
     let view: Element<'_, u8> = BoxTree::new(root, css).unwrap().view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
     let path = std::env::temp_dir().join("iced-css-box-tree-render");
     let _ = std::fs::remove_dir_all(&path);
@@ -433,7 +443,7 @@ fn unbreakable_text_can_be_scrolled_to() {
     )
     .unwrap();
     let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     // A first comparison records the picture, so a second one sees any movement.
     let picture = std::env::temp_dir().join(format!("scroll-text-{}.png", std::process::id()));
     assert!(
@@ -487,7 +497,7 @@ fn a_frame_of_an_animation_draws_between_its_ends() {
     assert_eq!(count, 3);
     animations.advance(start + Duration::from_millis(500), &to);
     let view: Element<'_, u8> = animations.presented(&to).view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     assert!(
         ui.snapshot(&Theme::Light)
             .unwrap()
@@ -515,7 +525,7 @@ fn text_sits_in_a_line_beside_inline_blocks() {
     )
     .unwrap();
     let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     assert!(
         ui.snapshot(&Theme::Light)
             .unwrap()
@@ -538,7 +548,7 @@ fn a_scrollers_own_text_can_be_scrolled_to() {
     )
     .unwrap();
     let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let picture = std::env::temp_dir().join(format!(
         "a_scrollers_own_text_can_be_scrolled_to-{}.png",
         std::process::id()
@@ -576,7 +586,7 @@ fn text_a_child_clips_does_not_extend_the_scroller() {
     )
     .unwrap();
     let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let picture = std::env::temp_dir().join(format!(
         "text_a_child_clips_does_not_extend_the_scroller-{}.png",
         std::process::id()
@@ -611,7 +621,7 @@ fn justified_text_draws_differently_from_left_aligned() {
         );
         let tree = BoxTree::new(root, &css).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(picture)
@@ -635,7 +645,7 @@ fn clip_rect_cuts_an_absolute_box() {
     )
     .unwrap();
     let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let name = format!("clip-rect-{}.png", std::process::id());
     assert!(
         ui.snapshot(&Theme::Light)
@@ -659,7 +669,7 @@ fn blank_text_adds_no_scroll_range() {
     )
     .unwrap();
     let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let picture = std::env::temp_dir().join(format!("blank-{}.png", std::process::id()));
     assert!(
         ui.snapshot(&Theme::Light)
@@ -690,7 +700,7 @@ fn a_fixed_child_stays_inside_its_ancestors_clip() {
         );
         let tree = BoxTree::new(root, &css).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(std::env::temp_dir().join(name))
@@ -711,7 +721,7 @@ fn clip_does_nothing_on_a_static_box() {
         );
         let tree = BoxTree::new(root, &css).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(std::env::temp_dir().join(name))
@@ -738,7 +748,7 @@ fn text_indent_and_small_caps_draw() {
     )
     .unwrap();
     let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     let name = format!("indent-{}.png", std::process::id());
     assert!(
         ui.snapshot(&Theme::Light)
@@ -766,7 +776,7 @@ fn tab_reaches_hosted_text_inputs_in_box_order() {
         .widget("two", input(2))
         .on_press("card", 9)
         .into();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     use iced::keyboard::key::Named;
     let _ = ui.tap_key(Named::Tab);
     let _ = ui.typewrite("a");
@@ -795,7 +805,7 @@ fn list_style_images_replace_outside_markers_and_fall_back_to_text() {
         );
         let tree = BoxTree::with_base(root, &sheet, &path).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(path.join(name))
@@ -837,7 +847,7 @@ fn keys_in_a_hosted_input_stay_its_own() {
         .widget("one", iced::widget::text_input("", "").on_input(|_| 1))
         .on_press("card", 9)
         .into();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     // The press box comes first in Tab order, then the input.
     let _ = ui.tap_key(Named::Tab);
     let _ = ui.tap_key(Named::Tab);
@@ -868,7 +878,7 @@ fn narrow_columns_hold_whole_small_caps_words() {
         );
         let tree = BoxTree::new(root, &sheet).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(std::env::temp_dir().join(name))
@@ -902,7 +912,7 @@ fn inline_boxes_draw_their_sides_across_lines() {
         );
         let tree = BoxTree::new(root, &css).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(picture)
@@ -930,7 +940,7 @@ fn enter_still_presses_a_box_whose_hosted_input_lacks_focus() {
         )
         .on_press("one", 9)
         .into();
-    let mut ui = iced_test::simulator(view);
+    let mut ui = simulator(view);
     // Past the 50px input, inside the box.
     ui.point_at(Point::new(150.0, 10.0));
     let _ = ui.simulate(iced_test::simulator::click());
@@ -957,7 +967,7 @@ fn unbroken_text_keeps_its_column_whole() {
         );
         let tree = BoxTree::new(root, &sheet).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(std::env::temp_dir().join(name))
@@ -990,7 +1000,7 @@ fn a_hidden_child_leaves_its_parents_paint_whole() {
         );
         let tree = BoxTree::new(root, &sheet).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(std::env::temp_dir().join(name))
@@ -1022,7 +1032,7 @@ fn a_hidden_child_leaves_a_parent_without_sides_whole() {
         );
         let tree = BoxTree::new(root, &sheet).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(std::env::temp_dir().join(name))
@@ -1049,7 +1059,7 @@ fn authored_wide_spaces_still_break_a_columns_minimum() {
              #d { display:table-cell; width:50px; height:30px; background-color:#d9534f; }";
         let tree = BoxTree::new(root, sheet).unwrap();
         let view: Element<'_, u8> = tree.view();
-        let mut ui = iced_test::simulator(view);
+        let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(std::env::temp_dir().join(name))
@@ -1059,4 +1069,100 @@ fn authored_wide_spaces_still_break_a_columns_minimum() {
     let name = format!("wide-space-{}.png", std::process::id());
     assert!(draw("aaaa\u{2003}bbbb", &name));
     assert!(!draw("aaaa\u{a0}bbbb", &name));
+}
+
+/// What a press at `x`, in the first line, sends: 1 for `#outer`, 2 for `#inner`.
+fn pressed_at(css: &str, x: f32) -> Vec<u8> {
+    let root = node(
+        "page",
+        vec![node("outer", vec![node("inner", vec![text("t", "text")])])],
+    );
+    let sheet = format!(
+        "#page {{ width:600px; font-size:16px; }}
+         #outer, #inner {{ display:inline; }}
+         {css}"
+    );
+    let tree = BoxTree::new(root, &sheet).unwrap();
+    let view: Element<'_, u8> = tree
+        .interactive()
+        .on_press("outer", 1)
+        .on_press("inner", 2)
+        .into();
+    click(view, Point::new(x, 10.0))
+}
+
+#[test]
+fn inline_sides_answer_for_their_own_box() {
+    // The inner box's padding is its own.
+    assert_eq!(pressed_at("#inner { padding:0 48px; }", 10.0), vec![2]);
+    // Its margin belongs to the box around it.
+    assert_eq!(pressed_at("#inner { margin:0 48px; }", 10.0), vec![1]);
+    // A hidden box around takes no presses, so the margin answers for nothing here.
+    assert_eq!(
+        pressed_at(
+            "#outer { visibility:hidden; } #inner { visibility:visible; margin:0 48px; }",
+            10.0
+        ),
+        Vec::<u8>::new()
+    );
+    // An indent is blank space of the block, not of the first word.
+    assert_eq!(
+        pressed_at("#page { text-indent:48px; }", 10.0),
+        Vec::<u8>::new()
+    );
+    assert_eq!(pressed_at("#page { text-indent:48px; }", 56.0), vec![2]);
+}
+
+#[test]
+fn a_columns_minimum_holds_a_word_with_its_sides() {
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "t",
+            vec![node(
+                "r",
+                vec![
+                    node("c", vec![node("s", vec![text("w", "word")])]),
+                    node("d", vec![]),
+                ],
+            )],
+        );
+        let sheet = format!(
+            "#t {{ display:table; width:1px; color:black; }}
+             #r {{ display:table-row; }}
+             #c {{ display:table-cell; {css} }}
+             #s {{ display:inline; padding:0 16px; background-color:#adcbe3; }}
+             #d {{ display:table-cell; width:50px; height:30px; background-color:#d9534f; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("word-with-sides-{}.png", std::process::id());
+    assert!(draw("white-space:nowrap;", &name));
+    assert!(draw("", &name));
+}
+
+#[test]
+fn small_letters_keep_the_full_line_height_on_screen() {
+    // Text the color of the page, so only the block below it shows where the line ends.
+    let draw = |words: &'static str, name: &str| {
+        let root = node("page", vec![text("t", words), node("below", vec![])]);
+        let sheet = "#page { background-color:white; color:white; font-size:40px; font-variant:small-caps; }
+             #t { display:block; }
+             #below { height:10px; background-color:#d9534f; }";
+        let tree = BoxTree::new(root, sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("small-line-{}.png", std::process::id());
+    assert!(draw("HI", &name));
+    assert!(draw("hi", &name));
 }

@@ -1048,12 +1048,11 @@ impl BoxTree {
                             inline_boxes: decorations(&here[..depth]),
                             // Nothing hidden answers input: the nearest box around that shows.
                             owner: owner_of(
-                                here[..depth]
-                                    .iter()
-                                    .rev()
-                                    .find(|at| raw_paints[**at].visible)
-                                    .copied()
-                                    .or(Some(container_of[arena])),
+                                std::iter::successors(prepared.inline_parent[element], |at| {
+                                    prepared.inline_parent[*at]
+                                })
+                                .find(|at| raw_paints[*at].visible)
+                                .or(Some(container_of[arena])),
                             ),
                             ..spacer
                         });

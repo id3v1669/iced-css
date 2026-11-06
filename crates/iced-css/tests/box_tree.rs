@@ -3411,6 +3411,21 @@ fn a_box_closes_before_trailing_white_space_and_spaces_show_backgrounds_around_t
 }
 
 #[test]
+fn a_hidden_generated_run_shows_the_background_around_it_not_its_own() {
+    let root = node("page", vec![node("o", vec![text("x", "x")])]);
+    let tree = BoxTree::new(
+        root,
+        "#o { display:inline; background-color:#0000ff; }
+         #o:before { content:\"y\"; visibility:hidden; background-color:#ff0000; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let run = &leaves[0].1.runs[0];
+    assert!(!run.visible);
+    assert_eq!(run.background, Some([0.0, 0.0, 1.0]));
+}
+
+#[test]
 fn a_hidden_box_lends_no_background() {
     let root = node("page", vec![node("s", vec![text("x", "x")])]);
     let tree = BoxTree::new(
