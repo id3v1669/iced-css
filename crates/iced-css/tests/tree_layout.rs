@@ -160,14 +160,13 @@ fn leaf_content_measures_by_source_node_and_shrinks_floats() {
 }
 
 #[test]
-fn outside_block_flow_is_refused_by_source() {
-    assert!(matches!(
-        run("#c { display:inline-table; }", |_| None),
-        Err(TreeLayoutError::Unsupported {
-            projected: C,
-            property: "display"
-        })
-    ));
+fn outside_block_flow_kinds_all_lay_out() {
+    for display in ["inline-table", "inline-block", "inline", "table-cell"] {
+        assert!(
+            run(&format!("#c {{ display:{display}; }}"), |_| None).is_ok(),
+            "{display}"
+        );
+    }
 }
 
 #[test]

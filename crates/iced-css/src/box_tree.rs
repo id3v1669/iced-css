@@ -6,8 +6,7 @@
 //! in leaf boxes by CSS id, where they receive input; boxes can publish a message on press;
 //! `:hover`, `:active` and `:focus` restyle the tree. Boxes with a press message or a
 //! `tabindex` attribute take focus by click and Tab; Enter and Space press the focused box. `overflow` other than visible clips, and
-//! `auto` and `scroll` boxes scroll vertically with the wheel; there is no horizontal
-//! scrolling or draggable bar. Captured payloads themselves are not drawn.
+//! `auto` and `scroll` boxes scroll on both axes with the wheel; there is no draggable bar. Captured payloads themselves are not drawn.
 use crate::{
     animation::engine::ProgressLimits,
     capture::{CaptureLimits, CapturedElement, Construction, source::ConstructionState},
@@ -39,6 +38,7 @@ use iced_css_core::{
         ua_display::{UaDisplayCatalog, UaDisplayLimits},
     },
     formatting::{
+        block::Direction,
         block_flow::{
             Dim, FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
         },
@@ -1290,6 +1290,8 @@ struct Interaction {
     focused: Option<usize>,
     /// Vertical scroll offsets by source node. They outlive restyles and view rebuilds.
     scrolled: BTreeMap<usize, f32>,
+    /// Horizontal scroll offsets by source node.
+    scrolled_x: BTreeMap<usize, f32>,
 }
 
 /// The pixels one wheel line scrolls.
@@ -1324,54 +1326,68 @@ fn scrolling_descendants(prepared: &PreparedTree, root: usize, mut visit: impl F
     }
 }
 
-/// How far each scrolling box can scroll, after moving its contents by its offset.
-/// Parents come first in arena order, so nested scrollers measure moved contents.
+/// How far each scrolling box can scroll down and across, after moving its contents by
+/// its offsets. Parents come first in arena order, so nested scrollers measure moved
+/// contents. Only rightward overflow scrolls: contents never reach left of an ltr box's
+/// start in a way 11.1.1 lets anyone scroll to, and rtl scrollers stay put horizontally.
 fn apply_scrolling(
     prepared: &PreparedTree,
     geometry: &mut [FlowGeometry],
-    scrolled: impl Fn(usize) -> f32,
-    viewport_bottom: f32,
-) -> Vec<f32> {
-    let mut limits = vec![0.0_f32; prepared.boxes.len()];
+    scrolled: impl Fn(usize) -> (f32, f32),
+    viewport: Size,
+) -> Vec<(f32, f32)> {
+    let mut limits = vec![(0.0_f32, 0.0_f32); prepared.boxes.len()];
     for arena in 0..geometry.len() {
         if !prepared.scrolls[arena] {
             continue;
         }
         let padding = geometry[arena].padding;
-        // The root scrolls the viewport, however tall the root itself is.
-        let bottom = if arena == 0 {
-            viewport_bottom
+        // The root scrolls the viewport, however big the root itself is.
+        let (bottom, right) = if arena == 0 {
+            (viewport.height, viewport.width)
         } else {
-            padding.bottom
+            (padding.bottom, padding.right)
         };
-        let mut reach = bottom;
+        let (mut reach, mut reach_x) = (bottom, right);
         scrolling_descendants(prepared, arena, |child, reaches| {
             if reaches {
                 reach = reach.max(geometry[child].border.bottom);
+                reach_x = reach_x.max(geometry[child].border.right);
             }
         });
         // 11.1.1: the scrollable area includes the box's own end padding; at the root,
-        // the box's whole bottom edge.
-        let trailing = if arena == 0 {
+        // the box's whole edge.
+        let (trailing, trailing_x) = if arena == 0 {
             reach = reach.max(geometry[0].border.bottom);
-            0.0
+            reach_x = reach_x.max(geometry[0].border.right);
+            (0.0, 0.0)
         } else {
-            padding.bottom - geometry[arena].content.bottom
+            (
+                padding.bottom - geometry[arena].content.bottom,
+                padding.right - geometry[arena].content.right,
+            )
         };
         let limit = if reach > bottom {
             reach + trailing - bottom
         } else {
             0.0
         };
-        limits[arena] = limit;
-        let offset = scrolled(arena).clamp(0.0, limit);
-        if offset == 0.0 {
+        let ltr = prepared.boxes[arena].direction == Direction::Ltr;
+        let limit_x = if ltr && reach_x > right {
+            reach_x + trailing_x - right
+        } else {
+            0.0
+        };
+        limits[arena] = (limit, limit_x);
+        let (down, across) = scrolled(arena);
+        let (offset, offset_x) = (down.clamp(0.0, limit), across.clamp(0.0, limit_x));
+        if offset == 0.0 && offset_x == 0.0 {
             continue;
         }
         let mut moved = Vec::new();
         scrolling_descendants(prepared, arena, |child, _| moved.push(child));
         for child in moved {
-            geometry[child].move_by(0.0, -offset);
+            geometry[child].move_by(-offset_x, -offset);
         }
     }
     limits
@@ -1386,8 +1402,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     geometry: Vec<Option<FlowGeometry>>,
     /// The same layout by arena slot, including anonymous blocks.
     slot_geometry: Vec<FlowGeometry>,
-    /// How far each arena slot can scroll.
-    scroll_limits: Vec<f32>,
+    /// How far each arena slot can scroll, down and across.
+    scroll_limits: Vec<(f32, f32)>,
     /// The widget's height at the last layout.
     canvas_height: f32,
     clips: Vec<Option<FlowRect>>,
@@ -2083,7 +2099,7 @@ where
             let Some(limit) = self
                 .scroll_limits
                 .get(slot)
-                .copied()
+                .map(|limits| limits.0)
                 .filter(|limit| *limit > 0.0)
             else {
                 continue;
@@ -2266,10 +2282,12 @@ where
             &mut self.slot_geometry,
             |arena| {
                 let node = originals.get(positions[arena].0).copied();
-                node.and_then(|node| interaction.scrolled.get(&node).copied())
-                    .unwrap_or(0.0)
+                let read = |map: &BTreeMap<usize, f32>| {
+                    node.and_then(|node| map.get(&node).copied()).unwrap_or(0.0)
+                };
+                (read(&interaction.scrolled), read(&interaction.scrolled_x))
             },
-            available.height,
+            available,
         );
         self.geometry = self.tree.prepared.by_projected(&self.slot_geometry);
         self.clips = self.tree.clips(&self.geometry);
@@ -2514,9 +2532,9 @@ where
             if shell.is_event_captured() {
                 return;
             }
-            let amount = match delta {
-                mouse::ScrollDelta::Lines { y, .. } => -y * WHEEL_LINE,
-                mouse::ScrollDelta::Pixels { y, .. } => -y,
+            let (amount, amount_x) = match delta {
+                mouse::ScrollDelta::Lines { x, y } => (-y * WHEEL_LINE, -x * WHEEL_LINE),
+                mouse::ScrollDelta::Pixels { x, y } => (-y, -x),
             };
             // The nearest box that can still move this way takes the wheel.
             let nodes = self.tree.source.construction.nodes();
@@ -2528,16 +2546,26 @@ where
                     .iter()
                     .position(|value| *value == node)
                     .and_then(|projected| self.tree.prepared.slot[projected]);
-                if let Some(limit) = arena.and_then(|arena| self.scroll_limits.get(arena)) {
+                if let Some(&(limit, limit_x)) =
+                    arena.and_then(|arena| self.scroll_limits.get(arena))
+                {
                     let current = state
                         .scrolled
                         .get(&node)
                         .copied()
                         .unwrap_or(0.0)
-                        .clamp(0.0, *limit);
-                    let wanted = (current + amount).clamp(0.0, *limit);
-                    if wanted != current {
+                        .clamp(0.0, limit);
+                    let current_x = state
+                        .scrolled_x
+                        .get(&node)
+                        .copied()
+                        .unwrap_or(0.0)
+                        .clamp(0.0, limit_x);
+                    let wanted = (current + amount).clamp(0.0, limit);
+                    let wanted_x = (current_x + amount_x).clamp(0.0, limit_x);
+                    if wanted != current || wanted_x != current_x {
                         state.scrolled.insert(node, wanted);
+                        state.scrolled_x.insert(node, wanted_x);
                         shell.capture_event();
                         shell.invalidate_layout();
                         shell.request_redraw();
@@ -2684,7 +2712,10 @@ where
                     .get(&self.tree.originals[prepared.positions[0].0])
                     .copied()
                     .unwrap_or(0.0)
-                    .clamp(0.0, self.scroll_limits.first().copied().unwrap_or(0.0));
+                    .clamp(
+                        0.0,
+                        self.scroll_limits.first().map_or(0.0, |limits| limits.0),
+                    );
                 let mut placed = moved_rectangle(geometry.padding, origin);
                 placed.y -= scrolled;
                 placed
@@ -2810,57 +2841,81 @@ where
         }
         // A plain position indicator at each scrolled box's right padding edge.
         renderer.with_layer(bounds, |renderer| {
-            let scrolled = &tree.state.downcast_ref::<Interaction>().scrolled;
-            for (arena, limit) in self.scroll_limits.iter().enumerate() {
-                let Some(geometry) = self.slot_geometry.get(arena).filter(|_| *limit > 0.0) else {
+            let interaction = tree.state.downcast_ref::<Interaction>();
+            for (arena, &(limit, limit_x)) in self.scroll_limits.iter().enumerate() {
+                let Some(geometry) = self.slot_geometry.get(arena) else {
                     continue;
                 };
-                let projected = prepared.positions[arena].0;
+                let node = self.tree.originals.get(prepared.positions[arena].0);
                 let area = geometry.padding;
-                let end = if arena == 0 {
-                    bounds.height
-                } else {
-                    area.bottom
+                let read = |map: &BTreeMap<usize, f32>, limit: f32| {
+                    node.and_then(|node| map.get(node))
+                        .copied()
+                        .unwrap_or(0.0)
+                        .clamp(0.0, limit)
                 };
-                let shown = (end - area.top).max(1.0);
-                let thumb = (shown * shown / (shown + limit)).max(8.0);
-                let offset = self
-                    .tree
-                    .originals
-                    .get(projected)
-                    .and_then(|node| scrolled.get(node))
-                    .copied()
-                    .unwrap_or(0.0)
-                    .clamp(0.0, *limit);
-                let travel = (shown - thumb).max(0.0);
-                let bar = Rectangle {
-                    x: origin.x + area.right - 4.0,
-                    y: origin.y + area.top + travel * offset / limit,
-                    width: 4.0,
-                    height: thumb,
+                // The bar is proportional: what shows, over all there is.
+                let track = |shown: f32, limit: f32, offset: f32| {
+                    let thumb = (shown * shown / (shown + limit)).max(8.0);
+                    (thumb, (shown - thumb).max(0.0) * offset / limit)
                 };
-                // An ancestor's clip hides the bar along with the box.
-                let visible = self
-                    .clips
-                    .get(arena)
-                    .copied()
-                    .flatten()
-                    .map_or(Some(bar), |clip| {
-                        bar.intersection(&Rectangle {
-                            x: clip.left + origin.x,
-                            y: clip.top + origin.y,
-                            width: (clip.right - clip.left).max(0.0),
-                            height: (clip.bottom - clip.top).max(0.0),
-                        })
+                let mut bars = Vec::new();
+                if limit > 0.0 {
+                    let end = if arena == 0 {
+                        bounds.height
+                    } else {
+                        area.bottom
+                    };
+                    let shown = (end - area.top).max(1.0);
+                    let (thumb, along) = track(shown, limit, read(&interaction.scrolled, limit));
+                    bars.push(Rectangle {
+                        x: origin.x + area.right - 4.0,
+                        y: origin.y + area.top + along,
+                        width: 4.0,
+                        height: thumb,
                     });
-                if let Some(bounds) = visible {
-                    renderer.fill_quad(
-                        Quad {
-                            bounds,
-                            ..Quad::default()
-                        },
-                        Color::from_rgba(0.0, 0.0, 0.0, 0.4),
-                    );
+                }
+                if limit_x > 0.0 {
+                    let end = if arena == 0 { bounds.width } else { area.right };
+                    let shown = (end - area.left).max(1.0);
+                    let (thumb, along) =
+                        track(shown, limit_x, read(&interaction.scrolled_x, limit_x));
+                    let bottom = if arena == 0 {
+                        bounds.height
+                    } else {
+                        area.bottom
+                    };
+                    bars.push(Rectangle {
+                        x: origin.x + area.left + along,
+                        y: origin.y + bottom - 4.0,
+                        width: thumb,
+                        height: 4.0,
+                    });
+                }
+                for bar in bars {
+                    // An ancestor's clip hides the bar along with the box.
+                    let visible =
+                        self.clips
+                            .get(arena)
+                            .copied()
+                            .flatten()
+                            .map_or(Some(bar), |clip| {
+                                bar.intersection(&Rectangle {
+                                    x: clip.left + origin.x,
+                                    y: clip.top + origin.y,
+                                    width: (clip.right - clip.left).max(0.0),
+                                    height: (clip.bottom - clip.top).max(0.0),
+                                })
+                            });
+                    if let Some(bounds) = visible {
+                        renderer.fill_quad(
+                            Quad {
+                                bounds,
+                                ..Quad::default()
+                            },
+                            Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                        );
+                    }
                 }
             }
         });

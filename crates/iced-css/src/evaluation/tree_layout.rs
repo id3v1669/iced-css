@@ -594,13 +594,16 @@ pub fn prepare_captured_tree(
         ) {
             continue;
         }
-        let in_row = resolution.display == Display::InlineBlock;
+        let in_row = matches!(
+            resolution.display,
+            Display::InlineBlock | Display::InlineTable
+        );
         let table_role = table_role_of(resolution.display);
         // 17.2.1: a misplaced table part, or a non-table box in one, gets anonymous parts.
         let parent_slot = parent_slot.map(|target| build.table_parent(target, index, table_role));
         // 9.2.2: inline-blocks in a run form lines of their own. Mixing them with text in
         // one line needs atomic inlines in a paragraph, which is refused below.
-        if resolution.display == Display::InlineBlock
+        if in_row
             && let Some(target) = parent_slot
             && !build.open[target].is_some_and(|group| inline_rows.contains(&group))
         {
@@ -730,7 +733,9 @@ pub fn prepare_captured_tree(
         let in_flow = !is_float && !value.out_of_flow;
         build.boxes.push(value);
         if let Some(target) = parent_slot {
-            if in_row && let Some(group) = build.open[target] {
+            if in_row
+                && let Some(group) = build.open[target].filter(|open| inline_rows.contains(open))
+            {
                 // Inline-blocks establish a context; floats and absolutes stay as they are.
                 build.boxes[arena].establishes_bfc = true;
                 build.boxes[group].children.push(arena);
@@ -1116,7 +1121,7 @@ fn refuse_in_row(
 
 fn table_role_of(display: Display) -> Option<TableRole> {
     Some(match display {
-        Display::Table => TableRole::Table {
+        Display::Table | Display::InlineTable => TableRole::Table {
             spacing: [0.0, 0.0],
         },
         Display::TableHeaderGroup => TableRole::HeaderGroup,

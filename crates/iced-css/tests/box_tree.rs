@@ -110,8 +110,9 @@ fn paint_order_is_flow_then_float_then_positioned() {
 }
 
 #[test]
-fn unsupported_display_is_reported() {
-    let error = BoxTree::new(page(), "#note { display:inline-table; }").unwrap_err();
+fn text_beside_an_inline_block_is_reported() {
+    let root = node("page", vec![text("t", "words"), node("b", vec![])]);
+    let error = BoxTree::new(root, "#b { display:inline-block; }").unwrap_err();
     assert!(error.to_string().contains("display"));
 }
 
@@ -1166,6 +1167,43 @@ mod interactive {
         );
     }
 
+    fn wheel_across(amount: f32) -> mouse::Event {
+        mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Pixels { x: amount, y: 0.0 },
+        }
+    }
+
+    #[test]
+    fn wheel_scrolls_across_and_rtl_boxes_stay_put() {
+        let root = node("page", vec![node("list", vec![node("slot", vec![])])]);
+        let css = "#list { overflow:auto; height:50px; width:60px; padding-right:5px; }
+             #slot { width:100px; height:10px; }";
+        let tree = BoxTree::new(root, css).unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(10.0)).into();
+        let mut rig = Rig::new(view);
+        let inside = Point::new(5.0, 5.0);
+        rig.send(wheel_across(-15.0), inside);
+        assert_eq!(rig.slot().x, -15.0);
+        // Content reaches 100 past a 65 padding edge, plus 5 of end padding: limit 40.
+        rig.send(wheel_across(-1000.0), inside);
+        assert_eq!(rig.slot().x, -40.0);
+        // Nothing to scroll vertically here, so the vertical wheel leaves it alone.
+        rig.send(wheel(-20.0), inside);
+        assert_eq!(rig.slot().y, 0.0);
+        let root = node("page", vec![node("list", vec![node("slot", vec![])])]);
+        let tree = BoxTree::new(
+            root,
+            "#list { overflow:auto; height:50px; width:60px; direction:rtl; }
+             #slot { width:100px; height:10px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(10.0)).into();
+        let mut rig = Rig::new(view);
+        let before = rig.slot().x;
+        rig.send(wheel_across(-15.0), inside);
+        assert_eq!(rig.slot().x, before);
+    }
+
     #[test]
     fn draw_with_clips_widgets_and_text_runs_without_panicking() {
         let root = node(
@@ -1973,4 +2011,30 @@ fn background_image_properties_cascade_and_remote_urls_are_ignored() {
     let root = node("page", vec![node("a", vec![])]);
     let tree = BoxTree::new(root, "#a { display:none; background-image:url(x.png); }").unwrap();
     assert!(tree.background_images().is_empty());
+}
+
+#[test]
+fn inline_tables_line_up_with_inline_blocks() {
+    let root = node(
+        "page",
+        vec![
+            node("b", vec![]),
+            node("t", vec![node("r", vec![node("c", vec![])])]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#b { display:inline-block; width:20px; height:4px; }
+         #t { display:inline-table; }
+         #r { display:table-row; }
+         #c { display:table-cell; width:15px; height:9px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(
+        (g[2].unwrap().border.left, g[2].unwrap().border.right),
+        (20.0, 35.0)
+    );
+    assert_eq!(g[0].unwrap().border.bottom, 9.0);
+    assert_eq!(g[1].unwrap().border.top, 5.0);
 }
