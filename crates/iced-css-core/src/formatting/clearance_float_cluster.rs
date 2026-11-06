@@ -374,6 +374,12 @@ fn build_with_reserves<'s>(
     let selection_limit = NonZeroUsize::new(count).expect("nonempty validated cluster");
     // The most recent normal fixes every following float's hypothetical top.
     let mut anchor = (before_facts, before, through);
+    // CSS2.2 9.5.1 rule 5: no float's outer top above any earlier block's outer top.
+    let outer_top = |facts: ChildFacts<'_>, border: BlockVertical, source: usize| {
+        sum(&[border.top, -facts.margin.used_top()], "block_outer_top")
+            .map_err(|error| Error::Placement { source, error })
+    };
+    let mut block_limit = outer_top(before_facts, before, 2)?;
     let mut widths = input.float_widths.iter().copied();
     for (index, facts) in input.children.iter().copied().enumerate().skip(1) {
         let source = index + 2;
@@ -396,6 +402,7 @@ fn build_with_reserves<'s>(
                 check_contact(facts, next.vertical(), *float, source)?;
             }
             anchor = (facts, next.vertical(), next_through);
+            block_limit = block_limit.max(outer_top(facts, next.vertical(), source)?);
             tail.push(next);
             continue;
         }
@@ -421,6 +428,7 @@ fn build_with_reserves<'s>(
                     })?,
                 None => None,
             };
+        let flow_top = flow_top.max(block_limit);
         let hypothetical_top = match selected {
             Some(bottom) if bottom > flow_top => bottom,
             _ => flow_top,

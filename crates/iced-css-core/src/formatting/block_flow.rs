@@ -1,0 +1,878 @@
+//! General CSS 2.2 block flow over an arbitrary box tree: nested normal blocks, floats
+//! and block formatting contexts. Covers 8.3.1 margin collapsing (siblings, parent and
+//! child, collapse-through), 9.5.1 float placement, 9.5.2 clearance, 9.5 new-BFC float
+//! avoidance, 10.3.3/10.3.5 widths and 10.6.3/10.6.7 heights.
+//!
+//! Leaf content is an opaque measured rectangle. Inline layout, positioning and paint
+//! are the caller's. Policy: a clearance equal to zero is no clearance (9.5.2 "past"),
+//! and a float whose margin box would be negative occupies zero extent (user U7=A by
+//! delegated decision), keeping its border box where its margins put it.
+use super::{
+    block::{AutoLength, BlockWidthError, BlockWidthInput, Direction, solve_block_width},
+    clearance::{ClearSide, ClearanceFloatError, lowest_clearance_float_bottom},
+    floats::{
+        Band, FloatError, FloatRequest, FloatSide, PlacedFloat, exclusion_band, next_band_edge,
+        place_float,
+    },
+    margins::{MarginError, MarginExtrema},
+    shrink::{ShrinkWidthError, ShrinkWidthInput, solve_shrink_width},
+};
+use std::num::NonZeroUsize;
+
+/// A specified length before its containing block is known.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Dim {
+    Auto,
+    Px(f32),
+    /// Percent of the containing block's width, or its height for vertical sizes.
+    Percent(f32),
+}
+
+impl Dim {
+    fn horizontal(self, basis: f32) -> AutoLength {
+        match self {
+            Self::Auto => AutoLength::Auto,
+            Self::Px(value) => AutoLength::Value(value),
+            Self::Percent(value) => AutoLength::Value(basis * value / 100.0),
+        }
+    }
+    fn zero_auto(self, basis: f32) -> f32 {
+        match self.horizontal(basis) {
+            AutoLength::Auto => 0.0,
+            AutoLength::Value(value) => value,
+        }
+    }
+    /// A percentage of an indefinite basis computes to auto (10.5, 10.7).
+    fn vertical(self, basis: Option<f32>) -> Option<f32> {
+        match (self, basis) {
+            (Self::Auto, _) | (Self::Percent(_), None) => None,
+            (Self::Px(value), _) => Some(value),
+            (Self::Percent(value), Some(basis)) => Some(basis * value / 100.0),
+        }
+    }
+}
+
+/// One box. `children` index the same arena; the arena must form one tree rooted at 0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlowBox {
+    pub children: Vec<usize>,
+    pub direction: Direction,
+    pub float: Option<FloatSide>,
+    pub clear: ClearSide,
+    /// `overflow` other than visible, or any other 9.4.1 establishing condition.
+    pub establishes_bfc: bool,
+    pub width: Dim,
+    pub min_width: Dim,
+    pub max_width: Dim,
+    pub height: Dim,
+    pub min_height: Dim,
+    pub max_height: Dim,
+    /// Top, right, bottom, left.
+    pub margin: [Dim; 4],
+    pub padding: [Dim; 4],
+    pub border: [f32; 4],
+    /// Measured content of a leaf; ignored when the box has children.
+    pub content: Option<FlowContent>,
+}
+
+impl Default for FlowBox {
+    fn default() -> Self {
+        Self {
+            children: Vec::new(),
+            direction: Direction::Ltr,
+            float: None,
+            clear: ClearSide::None,
+            establishes_bfc: false,
+            width: Dim::Auto,
+            min_width: Dim::Auto,
+            max_width: Dim::Auto,
+            height: Dim::Auto,
+            min_height: Dim::Auto,
+            max_height: Dim::Auto,
+            margin: [Dim::Px(0.0); 4],
+            padding: [Dim::Px(0.0); 4],
+            border: [0.0; 4],
+            content: None,
+        }
+    }
+}
+
+/// Leaf measurements; the caller shapes text at the used width beforehand.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FlowContent {
+    pub height: f32,
+    pub preferred_width: f32,
+    pub preferred_min_width: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FlowRect {
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FlowGeometry {
+    pub border: FlowRect,
+    pub padding: FlowRect,
+    pub content: FlowRect,
+    /// Used top, right, bottom, left.
+    pub margin: [f32; 4],
+    pub clearance: Option<f32>,
+    /// Adjoining top and bottom margins (8.3.1).
+    pub collapsed_through: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlowViewport {
+    pub left: f32,
+    pub top: f32,
+    pub width: f32,
+    /// The initial containing block height, when the host knows it.
+    pub height: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlowLimits {
+    pub boxes: NonZeroUsize,
+    pub depth: NonZeroUsize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FlowError {
+    Boxes,
+    Depth,
+    /// A child index is out of range, repeated, or the root.
+    Tree {
+        node: usize,
+    },
+    Nonfinite {
+        node: usize,
+    },
+    Width {
+        node: usize,
+        error: BlockWidthError,
+    },
+    Shrink {
+        node: usize,
+        error: ShrinkWidthError,
+    },
+    Float {
+        node: usize,
+        error: FloatError,
+    },
+    Clear {
+        node: usize,
+        error: ClearanceFloatError,
+    },
+    Margin {
+        node: usize,
+        error: MarginError,
+    },
+}
+
+impl std::fmt::Display for FlowError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "block flow: {self:?}")
+    }
+}
+impl std::error::Error for FlowError {}
+
+#[derive(Clone, Copy)]
+struct Containing {
+    left: f32,
+    width: f32,
+    height: Option<f32>,
+    /// Known once the containing block's own top edge has settled.
+    top: Option<f32>,
+    direction: Direction,
+}
+
+/// The vertical cursor of one block formatting context.
+struct Flow {
+    y: f32,
+    pending: MarginExtrema,
+    /// Open boxes whose top border edge waits on an adjoining margin's resolution.
+    unsettled: Vec<usize>,
+    floats: Vec<PlacedFloat>,
+    /// The lowest earlier block outer top, for 9.5.1 rule 5.
+    block_limit: f32,
+}
+
+impl Flow {
+    fn new(y: f32) -> Self {
+        Self {
+            y,
+            pending: MarginExtrema::default(),
+            unsettled: Vec::new(),
+            floats: Vec::new(),
+            block_limit: y,
+        }
+    }
+    fn position(&self) -> f32 {
+        self.y + self.pending.collapsed()
+    }
+    fn adjoin(&mut self, value: f32, node: usize) -> Result<(), FlowError> {
+        self.pending
+            .extend(&[value], NonZeroUsize::MIN)
+            .map_err(|error| FlowError::Margin { node, error })
+    }
+    fn lowest(&self, clear: ClearSide, node: usize) -> Result<Option<f32>, FlowError> {
+        let Some(limit) = NonZeroUsize::new(self.floats.len()) else {
+            return Ok(None);
+        };
+        lowest_clearance_float_bottom(&self.floats, clear, limit)
+            .map_err(|error| FlowError::Clear { node, error })
+    }
+}
+
+struct Solver<'a> {
+    boxes: &'a [FlowBox],
+    geometry: Vec<FlowGeometry>,
+}
+
+/// Lays out the tree rooted at index 0 as one block formatting context root.
+///
+/// # Errors
+/// Rejects a malformed tree, nonfinite measurements, and exceeded limits, and returns
+/// the failing node for a solver error. Nothing is published on failure.
+pub fn layout_block_flow(
+    boxes: &[FlowBox],
+    viewport: FlowViewport,
+    limits: FlowLimits,
+) -> Result<Vec<FlowGeometry>, FlowError> {
+    if boxes.is_empty() || boxes.len() > limits.boxes.get() {
+        return Err(FlowError::Boxes);
+    }
+    validate(boxes)?;
+    if tree_depth(boxes) > limits.depth.get() {
+        return Err(FlowError::Depth);
+    }
+    let mut solver = Solver {
+        boxes,
+        geometry: vec![FlowGeometry::default(); boxes.len()],
+    };
+    let containing = Containing {
+        left: viewport.left,
+        width: viewport.width,
+        height: viewport.height,
+        top: Some(viewport.top),
+        direction: boxes[0].direction,
+    };
+    solver.layout_root(containing, viewport.top)?;
+    Ok(solver.geometry)
+}
+
+fn validate(boxes: &[FlowBox]) -> Result<(), FlowError> {
+    let mut seen = vec![false; boxes.len()];
+    seen[0] = true;
+    for (node, value) in boxes.iter().enumerate() {
+        for &child in &value.children {
+            if child >= boxes.len() || seen[child] {
+                return Err(FlowError::Tree { node });
+            }
+            seen[child] = true;
+        }
+        let dims = [
+            value.width,
+            value.min_width,
+            value.max_width,
+            value.height,
+            value.min_height,
+            value.max_height,
+        ];
+        let finite_dims =
+            dims.iter()
+                .chain(&value.margin)
+                .chain(&value.padding)
+                .all(|dim| match dim {
+                    Dim::Auto => true,
+                    Dim::Px(number) | Dim::Percent(number) => number.is_finite(),
+                });
+        let content = value.content.unwrap_or_default();
+        if !finite_dims
+            || !value.border.iter().all(|edge| edge.is_finite())
+            || !content.height.is_finite()
+            || !content.preferred_width.is_finite()
+            || !content.preferred_min_width.is_finite()
+        {
+            return Err(FlowError::Nonfinite { node });
+        }
+    }
+    if let Some(node) = seen.iter().position(|reached| !reached) {
+        return Err(FlowError::Tree { node });
+    }
+    Ok(())
+}
+
+fn tree_depth(boxes: &[FlowBox]) -> usize {
+    let mut deepest = 0;
+    let mut stack = vec![(0, 1)];
+    while let Some((node, depth)) = stack.pop() {
+        deepest = deepest.max(depth);
+        stack.extend(boxes[node].children.iter().map(|&child| (child, depth + 1)));
+    }
+    deepest
+}
+
+fn rect(left: f32, right: f32, top: f32, bottom: f32) -> FlowRect {
+    FlowRect {
+        left,
+        right,
+        top,
+        bottom,
+    }
+}
+
+impl Solver<'_> {
+    fn paddings(&self, node: usize, basis: f32) -> [f32; 4] {
+        self.boxes[node].padding.map(|dim| dim.zero_auto(basis))
+    }
+
+    /// Longest-line and narrowest-line content widths (10.3.5's preferred widths).
+    fn measure(&self, node: usize) -> (f32, f32) {
+        let value = &self.boxes[node];
+        if value.children.is_empty() {
+            let content = value.content.unwrap_or_default();
+            return (content.preferred_min_width, content.preferred_width);
+        }
+        let (mut minimum, mut preferred, mut row) = (0.0_f32, 0.0_f32, 0.0_f32);
+        for &child in &value.children {
+            let (child_min, child_preferred) = self.outer_measure(child);
+            minimum = minimum.max(child_min);
+            if self.boxes[child].float.is_some() {
+                row += child_preferred;
+            } else {
+                preferred = preferred.max(row).max(child_preferred);
+                row = 0.0;
+            }
+        }
+        (minimum, preferred.max(row))
+    }
+
+    fn outer_measure(&self, node: usize) -> (f32, f32) {
+        let value = &self.boxes[node];
+        let side = |dims: [Dim; 4]| dims[1].zero_auto(0.0) + dims[3].zero_auto(0.0);
+        let frame = side(value.margin) + side(value.padding) + value.border[1] + value.border[3];
+        match value.width {
+            Dim::Px(width) => (frame + width, frame + width),
+            _ => {
+                let (minimum, preferred) = self.measure(node);
+                (frame + minimum, frame + preferred)
+            }
+        }
+    }
+
+    fn layout_root(&mut self, containing: Containing, top: f32) -> Result<(), FlowError> {
+        let node = 0;
+        let value = &self.boxes[node];
+        let width = self.block_width(node, containing)?;
+        let basis = containing.width;
+        let padding = self.paddings(node, basis);
+        let mt = value.margin[0].zero_auto(basis);
+        let mb = value.margin[2].zero_auto(basis);
+        let border_top = top + mt;
+        self.finish_bfc_box(
+            node,
+            containing,
+            width,
+            containing.left + width.1,
+            border_top,
+            padding,
+        )?;
+        self.geometry[node].margin = [mt, width.2, mb, width.1];
+        Ok(())
+    }
+
+    /// Returns the used (width, margin left, margin right).
+    fn block_width(&self, node: usize, cb: Containing) -> Result<(f32, f32, f32), FlowError> {
+        let value = &self.boxes[node];
+        let padding = self.paddings(node, cb.width);
+        let result = solve_block_width(BlockWidthInput {
+            containing_width: cb.width,
+            direction: cb.direction,
+            width: value.width.horizontal(cb.width),
+            margin_left: value.margin[3].horizontal(cb.width),
+            margin_right: value.margin[1].horizontal(cb.width),
+            border_left: value.border[3],
+            border_right: value.border[1],
+            padding_left: padding[3],
+            padding_right: padding[1],
+            min_width: value.min_width.zero_auto(cb.width),
+            max_width: match value.max_width {
+                Dim::Auto => None,
+                other => Some(other.zero_auto(cb.width)),
+            },
+        })
+        .map_err(|error| FlowError::Width { node, error })?;
+        Ok((result.width, result.margin_left, result.margin_right))
+    }
+
+    fn lay_children(
+        &mut self,
+        node: usize,
+        flow: &mut Flow,
+        cb: Containing,
+    ) -> Result<(), FlowError> {
+        for &child in &self.boxes[node].children.clone() {
+            if self.boxes[child].float.is_some() {
+                self.layout_float(child, flow, cb)?;
+            } else if self.boxes[child].establishes_bfc {
+                self.layout_bfc_block(child, flow, cb)?;
+            } else {
+                self.layout_normal(child, flow, cb)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn set_top(&mut self, node: usize, top: f32) {
+        self.geometry[node].border.top = top;
+    }
+
+    fn settle(&mut self, flow: &mut Flow) -> f32 {
+        let top = flow.position();
+        for node in std::mem::take(&mut flow.unsettled) {
+            self.set_top(node, top);
+        }
+        flow.y = top;
+        flow.pending = MarginExtrema::default();
+        top
+    }
+
+    /// Applies clear to a box whose top margin already adjoins `flow.pending`. Returns
+    /// the clearance. Open ancestors settle above it, without the box's own margin.
+    fn apply_clear(
+        &mut self,
+        node: usize,
+        flow: &mut Flow,
+        top_margin: f32,
+    ) -> Result<Option<f32>, FlowError> {
+        let clear = self.boxes[node].clear;
+        let Some(bottom) = flow.lowest(clear, node)? else {
+            flow.adjoin(top_margin, node)?;
+            return Ok(None);
+        };
+        let mut joined = flow.pending;
+        joined
+            .extend(&[top_margin], NonZeroUsize::MIN)
+            .map_err(|error| FlowError::Margin { node, error })?;
+        let hypothetical = flow.y + joined.collapsed();
+        if bottom <= hypothetical {
+            flow.pending = joined;
+            return Ok(None);
+        }
+        self.settle(flow);
+        let clearance = bottom - (flow.y + top_margin);
+        flow.y = bottom;
+        Ok(Some(clearance))
+    }
+
+    fn layout_normal(
+        &mut self,
+        node: usize,
+        flow: &mut Flow,
+        cb: Containing,
+    ) -> Result<(), FlowError> {
+        let value = &self.boxes[node];
+        let (width, ml, mr) = self.block_width(node, cb)?;
+        let basis = cb.width;
+        let padding = self.paddings(node, basis);
+        let border = value.border;
+        let mt = value.margin[0].zero_auto(basis);
+        let mb = value.margin[2].zero_auto(basis);
+        let content = value.content.filter(|_| value.children.is_empty());
+        let clearance = self.apply_clear(node, flow, mt)?;
+        let mut settled = clearance.is_some();
+        if settled {
+            self.set_top(node, flow.y);
+        }
+        if border[0] + padding[0] != 0.0 {
+            if !settled {
+                let top = flow.position();
+                self.set_top(node, top);
+                self.settle(flow);
+                settled = true;
+            }
+            flow.y += border[0] + padding[0];
+        } else if !settled {
+            flow.unsettled.push(node);
+        }
+        let border_left = cb.left + ml;
+        let content_left = border_left + border[3] + padding[3];
+        let height = value.height.vertical(cb.height);
+        let minimum = value.min_height.vertical(cb.height).unwrap_or(0.0);
+        let maximum = value.max_height.vertical(cb.height);
+        let inner = Containing {
+            left: content_left,
+            width,
+            height: height.map(|h| clamp(h, minimum, maximum)),
+            top: settled.then_some(flow.y),
+            direction: value.direction,
+        };
+        if let Some(leaf) = content.filter(|leaf| leaf.height != 0.0) {
+            self.settle(flow);
+            flow.y += leaf.height;
+        }
+        self.lay_children(node, flow, inner)?;
+        let still_open = flow.unsettled.contains(&node);
+        let separated = border[2] + padding[2] != 0.0;
+        let zero_or_auto = height.is_none_or(|h| h == 0.0);
+        if still_open && !separated && zero_or_auto && minimum == 0.0 {
+            // 8.3.1: as with a nonzero bottom border, then the margins join the run.
+            let top = flow.position();
+            flow.unsettled.retain(|open| *open != node);
+            flow.adjoin(mb, node)?;
+            self.geometry[node].border = rect(
+                border_left,
+                border_left + border[3] + padding[3] + width + padding[1] + border[1],
+                top,
+                top,
+            );
+            self.geometry[node].padding = rect(
+                border_left + border[3],
+                content_left + width + padding[1],
+                top,
+                top,
+            );
+            self.geometry[node].content = rect(content_left, content_left + width, top, top);
+            self.geometry[node].margin = [mt, mr, mb, ml];
+            self.geometry[node].clearance = None;
+            self.geometry[node].collapsed_through = true;
+            flow.block_limit = flow.block_limit.max(top - mt);
+            return Ok(());
+        }
+        if still_open {
+            self.settle(flow);
+        }
+        let top = self.geometry[node].border.top;
+        let content_top = top + border[0] + padding[0];
+        let bottom_adjoins = height.is_none() && !separated && minimum == 0.0 && maximum.is_none();
+        let content_bottom = match height {
+            Some(specified) => content_top + clamp(specified, minimum, maximum),
+            None if bottom_adjoins => flow.y,
+            None => {
+                let flowed = flow.position() - content_top;
+                content_top + clamp(flowed, minimum, maximum)
+            }
+        };
+        let border_bottom = content_bottom + padding[2] + border[2];
+        flow.block_limit = flow.block_limit.max(top - mt);
+        if bottom_adjoins {
+            flow.adjoin(mb, node)?;
+            flow.y = border_bottom;
+        } else {
+            flow.y = border_bottom;
+            flow.pending = MarginExtrema::default();
+            flow.adjoin(mb, node)?;
+        }
+        self.publish(
+            node,
+            border_left,
+            width,
+            padding,
+            top,
+            content_bottom,
+            [mt, mr, mb, ml],
+            clearance,
+        );
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn publish(
+        &mut self,
+        node: usize,
+        border_left: f32,
+        width: f32,
+        padding: [f32; 4],
+        top: f32,
+        content_bottom: f32,
+        margin: [f32; 4],
+        clearance: Option<f32>,
+    ) {
+        let border = self.boxes[node].border;
+        let padding_left = border_left + border[3];
+        let content_left = padding_left + padding[3];
+        let content_right = content_left + width;
+        let padding_right = content_right + padding[1];
+        let padding_top = top + border[0];
+        let content_top = padding_top + padding[0];
+        let padding_bottom = content_bottom + padding[2];
+        self.geometry[node] = FlowGeometry {
+            border: rect(
+                border_left,
+                padding_right + border[1],
+                top,
+                padding_bottom + border[2],
+            ),
+            padding: rect(padding_left, padding_right, padding_top, padding_bottom),
+            content: rect(content_left, content_right, content_top, content_bottom),
+            margin,
+            clearance,
+            collapsed_through: false,
+        };
+    }
+
+    /// Lays out a BFC root's contents with its border top fixed, publishing the box.
+    /// Returns the used border-box bottom. Floats do not escape.
+    fn finish_bfc_box(
+        &mut self,
+        node: usize,
+        cb: Containing,
+        width: (f32, f32, f32),
+        border_left: f32,
+        top: f32,
+        padding: [f32; 4],
+    ) -> Result<f32, FlowError> {
+        let value = &self.boxes[node];
+        let border = value.border;
+        let content_left = border_left + border[3] + padding[3];
+        let content_top = top + border[0] + padding[0];
+        let height = value.height.vertical(cb.height);
+        let minimum = value.min_height.vertical(cb.height).unwrap_or(0.0);
+        let maximum = value.max_height.vertical(cb.height);
+        let inner = Containing {
+            left: content_left,
+            width: width.0,
+            height: height.map(|h| clamp(h, minimum, maximum)),
+            top: Some(content_top),
+            direction: value.direction,
+        };
+        let mut flow = Flow::new(content_top);
+        if let Some(leaf) = value.content.filter(|_| value.children.is_empty()) {
+            flow.y += leaf.height;
+        }
+        self.lay_children(node, &mut flow, inner)?;
+        // 10.6.7: the bottom margin edge of the last in-flow child and every float.
+        let flowed = flow
+            .floats
+            .iter()
+            .fold(flow.position(), |bottom, float| bottom.max(float.bottom));
+        let used = match height {
+            Some(specified) => clamp(specified, minimum, maximum),
+            None => clamp((flowed - content_top).max(0.0), minimum, maximum),
+        };
+        let content_bottom = content_top + used;
+        self.publish(
+            node,
+            border_left,
+            width.0,
+            padding,
+            top,
+            content_bottom,
+            [0.0; 4],
+            None,
+        );
+        Ok(self.geometry[node].border.bottom)
+    }
+
+    fn translate(&mut self, node: usize, dx: f32, dy: f32) {
+        let geometry = &mut self.geometry[node];
+        for edges in [
+            &mut geometry.border,
+            &mut geometry.padding,
+            &mut geometry.content,
+        ] {
+            edges.left += dx;
+            edges.right += dx;
+            edges.top += dy;
+            edges.bottom += dy;
+        }
+        for &child in &self.boxes[node].children {
+            self.translate(child, dx, dy);
+        }
+    }
+
+    fn layout_float(
+        &mut self,
+        node: usize,
+        flow: &mut Flow,
+        cb: Containing,
+    ) -> Result<(), FlowError> {
+        let value = &self.boxes[node];
+        let side = value.float.ok_or(FlowError::Tree { node })?;
+        let basis = cb.width;
+        let padding = self.paddings(node, basis);
+        let (preferred_min_width, preferred_width) = self.measure(node);
+        let used = solve_shrink_width(ShrinkWidthInput {
+            containing_width: cb.width,
+            width: value.width.horizontal(basis),
+            margin_left: value.margin[3].horizontal(basis),
+            margin_right: value.margin[1].horizontal(basis),
+            border_left: value.border[3],
+            border_right: value.border[1],
+            padding_left: padding[3],
+            padding_right: padding[1],
+            scrollbar_width: 0.0,
+            preferred_min_width,
+            preferred_width,
+            min_width: value.min_width.zero_auto(basis),
+            max_width: match value.max_width {
+                Dim::Auto => None,
+                other => Some(other.zero_auto(basis)),
+            },
+        })
+        .map_err(|error| FlowError::Shrink { node, error })?;
+        let (ml, mr) = (used.margin_left, used.margin_right);
+        let mt = value.margin[0].zero_auto(basis);
+        let mb = value.margin[2].zero_auto(basis);
+        // A float's contents are laid out at a provisional origin, then moved.
+        let border_box_bottom = self.finish_bfc_box(
+            node,
+            Containing {
+                left: 0.0,
+                top: Some(0.0),
+                ..cb
+            },
+            (used.width, 0.0, 0.0),
+            0.0,
+            0.0,
+            padding,
+        )?;
+        let border_width = self.geometry[node].border.right;
+        let mut hypothetical = flow.position().max(flow.block_limit);
+        if let Some(bottom) = flow.lowest(value.clear, node)? {
+            hypothetical = hypothetical.max(bottom);
+        }
+        // 9.5.1 rule 4 cannot apply above a parent whose own top edge is still open.
+        let containing_top = cb.top.unwrap_or(hypothetical);
+        let band = NonZeroUsize::new(flow.floats.len() + 1).ok_or(FlowError::Boxes)?;
+        let placement = place_float(
+            &flow.floats,
+            Band {
+                left: cb.left,
+                right: cb.left + cb.width,
+            },
+            FloatRequest {
+                side,
+                width: (ml + border_width + mr).max(0.0),
+                height: (mt + border_box_bottom + mb).max(0.0),
+                containing_top,
+                hypothetical_top: hypothetical,
+            },
+            band,
+        )
+        .map_err(|error| FlowError::Float { node, error })?;
+        flow.floats.push(placement.placed);
+        self.translate(node, placement.placed.left + ml, placement.placed.top + mt);
+        self.geometry[node].margin = [mt, mr, mb, ml];
+        Ok(())
+    }
+
+    fn layout_bfc_block(
+        &mut self,
+        node: usize,
+        flow: &mut Flow,
+        cb: Containing,
+    ) -> Result<(), FlowError> {
+        let value = &self.boxes[node];
+        let (solved, ml, mr) = self.block_width(node, cb)?;
+        let basis = cb.width;
+        let padding = self.paddings(node, basis);
+        let border = value.border;
+        let mt = value.margin[0].zero_auto(basis);
+        let mb = value.margin[2].zero_auto(basis);
+        let clearance = self.apply_clear(node, flow, mt)?;
+        let hypothetical = if clearance.is_some() {
+            flow.y
+        } else {
+            let top = flow.position();
+            self.settle(flow);
+            top
+        };
+        let frame = ml + border[3] + padding[3] + padding[1] + border[1] + mr;
+        let auto_width = value.width == Dim::Auto;
+        let containing = Band {
+            left: cb.left,
+            right: cb.left + cb.width,
+        };
+        let float_error = |error| FlowError::Float { node, error };
+        // 9.5: the border box must not overlap a float. An auto width narrows to the
+        // band; otherwise and below the box's minimum, the search moves down.
+        let (minimum, _) = self.measure(node);
+        let mut y = hypothetical;
+        let (left, width, bottom) = loop {
+            let first = exclusion_band(&flow.floats, containing, y).map_err(float_error)?;
+            let width = if auto_width {
+                solved.min(first.width() - frame)
+            } else {
+                solved
+            };
+            let fitted = (width + frame) <= first.width() && (!auto_width || width >= minimum);
+            let next = next_band_edge(&flow.floats, y).map_err(float_error)?;
+            let Some(edge) = next.filter(|_| !fitted && !flow.floats.is_empty()) else {
+                let left = if first.left > cb.left {
+                    first.left + ml
+                } else {
+                    cb.left + ml
+                };
+                // Place at origin to learn the height, then check the whole span.
+                let bottom = self.finish_bfc_box(
+                    node,
+                    Containing {
+                        left: 0.0,
+                        top: Some(0.0),
+                        ..cb
+                    },
+                    (width.max(0.0), 0.0, 0.0),
+                    0.0,
+                    0.0,
+                    padding,
+                )?;
+                match first_conflict(&flow.floats, left - ml, width + frame, y, bottom)
+                    .map_err(float_error)?
+                {
+                    Some(lower) => {
+                        y = lower;
+                        continue;
+                    }
+                    None => break (left, width.max(0.0), bottom),
+                }
+            };
+            y = edge;
+        };
+        self.translate(node, left, y);
+        let geometry = &mut self.geometry[node];
+        geometry.margin = [mt, mr, mb, ml];
+        geometry.clearance = clearance;
+        let _ = width;
+        flow.y = y + bottom;
+        flow.block_limit = flow.block_limit.max(y - mt);
+        flow.pending = MarginExtrema::default();
+        flow.adjoin(mb, node)?;
+        Ok(())
+    }
+}
+
+/// The next band edge if a box of this span overlaps a float below its first band.
+fn first_conflict(
+    floats: &[PlacedFloat],
+    left: f32,
+    width: f32,
+    y: f32,
+    height: f32,
+) -> Result<Option<f32>, FloatError> {
+    let bottom = y + height;
+    for float in floats
+        .iter()
+        .filter(|float| float.top < bottom && float.bottom > y)
+    {
+        let overlaps = float.left < left + width && float.right > left;
+        if overlaps && width > 0.0 {
+            return next_band_edge(floats, y).map(|edge| edge.filter(|edge| *edge > y));
+        }
+    }
+    Ok(None)
+}
+
+fn clamp(value: f32, minimum: f32, maximum: Option<f32>) -> f32 {
+    let capped = maximum.map_or(value, |limit| value.min(limit));
+    capped.max(minimum)
+}
+
+#[cfg(test)]
+#[path = "block_flow_tests.rs"]
+mod tests;

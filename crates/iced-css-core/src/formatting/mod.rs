@@ -48,6 +48,8 @@ pub mod table_repair_stage3;
 
 pub mod table_row_inventory;
 
+pub mod block_flow;
+
 pub mod clearance;
 
 pub mod clearance_owner;

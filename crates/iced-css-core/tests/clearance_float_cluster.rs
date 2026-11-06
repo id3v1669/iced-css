@@ -506,3 +506,19 @@ fn g9b_float_count_and_first_child_validated() {
         Err(ClearanceFloatClusterError::ClusterOrder { source: 2 })
     ));
 }
+
+#[test]
+fn g9b_float_never_rises_above_an_earlier_block_outer_top() {
+    // B1 0-10, N 10-110 pulls the flow back by 60; rule 5 holds F at N's outer top.
+    let nodes = sources(1, 1);
+    let (outer, parent, mut children) = facts(&nodes, 1);
+    plain(&mut children[1], 100.0);
+    children[1].margin.bottom = AutoLength::Value(-60.0);
+    floated(&mut children[2], Float::Left, 5.0);
+    let owner = build(&nodes, outer, parent, &children, &[40.0]).unwrap();
+    assert_eq!(float_edges(&owner), vec![[0.0, 40.0, 50.0, 55.0]]);
+    let mut pulled = children.clone();
+    pulled[1].margin.bottom = AutoLength::Value(-105.0);
+    let owner = build(&nodes, outer, parent, &pulled, &[40.0]).unwrap();
+    assert_eq!(float_edges(&owner), vec![[0.0, 40.0, 10.0, 15.0]]);
+}
