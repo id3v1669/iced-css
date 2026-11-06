@@ -1284,6 +1284,9 @@ pub struct BackgroundImage {
     pub fixed: bool,
 }
 
+/// The computed repeat, position and attachment, kept for `inherit`.
+type BackgroundParts = (&'static str, [BackgroundOffset; 2], bool);
+
 /// Everything `evaluate_tree_paint` computes per projected row.
 pub struct TreePaint {
     pub paints: Vec<BoxPaint>,
@@ -1661,6 +1664,7 @@ pub fn evaluate_tree_paint<'r>(
     let mut markers: Vec<Option<String>> = Vec::with_capacity(projection.len());
     let mut spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
     let mut backgrounds: Vec<Option<BackgroundImage>> = Vec::with_capacity(projection.len());
+    let mut background_parts: Vec<BackgroundParts> = Vec::with_capacity(projection.len());
     let mut vertical_aligns: Vec<Option<&'static str>> = Vec::with_capacity(projection.len());
     let mut captions_below: Vec<bool> = Vec::with_capacity(projection.len());
     let mut collapses: Vec<bool> = Vec::with_capacity(projection.len());
@@ -1948,18 +1952,12 @@ pub fn evaluate_tree_paint<'r>(
                 .map(|image| image.uri.clone()),
             _ => None,
         };
-        let inherited_background = parent_index.and_then(|parent| backgrounds[parent].clone());
+        // Inherit reads the parent's computed values, whether or not it has an image.
+        let inherited_background = parent_index.map(|parent| background_parts[parent]);
         let repeat = match defaulted("background-repeat")? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => keyword.as_str(),
             DefaultedValueRef::ParentComputed => {
-                inherited_background.as_ref().map_or("repeat", |image| {
-                    match (image.repeat_x, image.repeat_y) {
-                        (true, true) => "repeat",
-                        (true, false) => "repeat-x",
-                        (false, true) => "repeat-y",
-                        (false, false) => "no-repeat",
-                    }
-                })
+                inherited_background.map_or("repeat", |parts: BackgroundParts| parts.0)
             }
             _ => "repeat",
         };
@@ -1973,20 +1971,19 @@ pub fn evaluate_tree_paint<'r>(
         };
         let position = match defaulted("background-position")? {
             DefaultedValueRef::Compute(SpecifiedValue::LengthPair(x, y)) => [offset(x), offset(y)],
-            DefaultedValueRef::ParentComputed => inherited_background
-                .as_ref()
-                .map_or([BackgroundOffset::Percent(0.0); 2], |image| image.position),
+            DefaultedValueRef::ParentComputed => {
+                inherited_background.map_or([BackgroundOffset::Percent(0.0); 2], |parts| parts.1)
+            }
             _ => [BackgroundOffset::Percent(0.0); 2],
         };
         let fixed = match defaulted("background-attachment")? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
                 keyword.as_str() == "fixed"
             }
-            DefaultedValueRef::ParentComputed => inherited_background
-                .as_ref()
-                .is_some_and(|image| image.fixed),
+            DefaultedValueRef::ParentComputed => inherited_background.is_some_and(|parts| parts.2),
             _ => false,
         };
+        background_parts.push((repeat, position, fixed));
         backgrounds.push(uri.map(|uri| BackgroundImage {
             uri,
             repeat_x: matches!(repeat, "repeat" | "repeat-x"),

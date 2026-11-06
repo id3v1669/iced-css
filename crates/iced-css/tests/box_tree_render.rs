@@ -329,10 +329,12 @@ fn renders_background_images_from_a_stylesheet() {
             ),
         ],
     );
-    let css = "#page { padding:16px; background-color:#fafafa; }
+    let css = "#page { padding:16px; background:#fafafa url(tile.png) repeat-y; }
         #repeat, #across, #single, #missing { height:96px; margin-bottom:12px; width:400px;
                                               border:2px solid #37474f; }
-        #repeat { background-image:url(tile.png); }
+        #repeat { background-image:url(tile.png); background-color:#ffffff; }
+        #t1 { display:inline; color:#ffffff; background-color:#37474f;
+              text-decoration:underline; font-weight:bold; }
         #across { background:url(tile.png) repeat-x 50% 50%; }
         #single { background:#e0f2f1 url(tile.png) no-repeat right bottom; }
         #child { width:40px; height:40px; background-color:#00796b; }

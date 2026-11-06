@@ -40,8 +40,8 @@ let element = tree
 - **Also:** `inline-block` lines, lists and markers, `:before`/`:after` with counters and
   quotes, `visibility`, outlines, `overflow` clipping and wheel scrolling.
 - **Background images** (with the `image` Cargo feature): local files through `url()`, with `repeat`, `position` and
-  `attachment`; relative paths resolve against `BoxTree::with_base`. They paint inside the
-  padding edge, and remote URLs draw nothing.
+  `attachment`; relative paths resolve against `BoxTree::with_base`. Paths outside the base
+  and remote URLs draw nothing.
 - **Keyboard:** boxes with a press message or `tabindex` take focus by click and Tab, and
   match `:focus`; Enter and Space press them.
 - **Native widgets:** any iced `Element` can sit in a leaf box and receives input.

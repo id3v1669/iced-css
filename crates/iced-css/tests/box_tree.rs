@@ -901,6 +901,70 @@ mod interactive {
         assert_eq!(rig.slot().y, 3.0);
     }
 
+    #[test]
+    fn stale_or_hidden_focus_does_nothing_and_does_not_panic() {
+        use iced::keyboard::key::Named;
+        let mut rig = focus_rig();
+        for _ in 0..3 {
+            key(&mut rig, Named::Tab, false);
+        }
+        // A rebuilt view with fewer nodes keeps the old focus index in its state.
+        let small = BoxTree::new(node("page", vec![]), "").unwrap();
+        let mut next: View<'_> = small.interactive().on_press("page", 1).into();
+        rig.tree.diff(&next);
+        rig.node = next.as_widget_mut().layout(&mut rig.tree, &(), &limits());
+        rig.element = next;
+        assert!(key(&mut rig, Named::Enter, false).is_empty());
+        // A focused box that a rule hides fires nothing.
+        let root = node("page", vec![node("a", vec![])]);
+        let tree =
+            BoxTree::new(root, "#a { height:5px; } #a:focus { visibility:hidden; }").unwrap();
+        let view: View<'_> = tree.interactive().on_press("a", 9).into();
+        let mut rig = Rig::new(view);
+        key(&mut rig, Named::Tab, false);
+        assert!(key(&mut rig, Named::Enter, false).is_empty());
+    }
+
+    #[test]
+    fn tab_scrolls_the_focused_box_into_view_through_every_scroller() {
+        use iced::keyboard::key::Named;
+        let root = node(
+            "page",
+            vec![node(
+                "list",
+                vec![
+                    node("first", vec![]),
+                    node("slot", vec![]),
+                    node("spacer", vec![]),
+                    node("far", vec![]),
+                ],
+            )],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#list { overflow:auto; height:50px; }
+             #first, #far { height:10px; }
+             #slot { height:5px; }
+             #spacer { height:100px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(5.0))
+            .on_press("first", 1)
+            .on_press("far", 2)
+            .into();
+        let mut rig = Rig::new(view);
+        assert_eq!(rig.slot().y, 10.0);
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(rig.slot().y, 10.0);
+        // #far ends at 125; to show it in a 50px box the list scrolls by 75.
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(rig.slot().y, -65.0);
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(rig.slot().y, 10.0);
+    }
+
     fn wheel(lines: f32) -> mouse::Event {
         mouse::Event::WheelScrolled {
             delta: mouse::ScrollDelta::Pixels { x: 0.0, y: lines },
@@ -1881,6 +1945,30 @@ fn background_image_properties_cascade_and_remote_urls_are_ignored() {
         value.position,
         [BackgroundOffset::Px(10.0), BackgroundOffset::Percent(50.0)]
     );
+    // Only files under the base: no absolute paths and no climbing out.
+    for escape in ["/etc/x.png", "../x.png", "a/../../x.png", "c:x.png"] {
+        let root = node("page", vec![node("a", vec![])]);
+        let css = format!("#a {{ background-image:url({escape}); }}");
+        assert!(
+            BoxTree::new(root, &css)
+                .unwrap()
+                .background_images()
+                .is_empty()
+        );
+    }
+    let root = node("page", vec![node("a", vec![])]);
+    let css = "#a { background-image:url(./img/x.png); }";
+    assert_eq!(
+        BoxTree::new(root, css).unwrap().background_images().len(),
+        1
+    );
+    // Inherit reads the parent's values even if the parent has no image.
+    let root = node("page", vec![node("a", vec![])]);
+    let css = "#page { background-repeat:no-repeat; }
+        #a { background-repeat:inherit; background-image:url(x.png); }";
+    let tree = BoxTree::new(root, css).unwrap();
+    let inherited = tree.background_images()[0].1.clone();
+    assert!(!inherited.repeat_x && !inherited.repeat_y);
     // display none has no image to load.
     let root = node("page", vec![node("a", vec![])]);
     let tree = BoxTree::new(root, "#a { display:none; background-image:url(x.png); }").unwrap();

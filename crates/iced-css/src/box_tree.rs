@@ -65,7 +65,7 @@ use iced_css_core::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     num::{NonZeroU64, NonZeroUsize},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{Arc, Mutex, PoisonError},
 };
 
@@ -402,9 +402,9 @@ impl BoxTree {
         Self::with_base(root, css, Path::new("."))
     }
 
-    /// As [`BoxTree::new`], resolving relative `url()`s against `base`. Only local files
-    /// load: a `url()` with a scheme draws nothing. A missing or undecodable file draws
-    /// nothing too, as 14.2.1 lets a box show its background color instead.
+    /// As [`BoxTree::new`], resolving relative `url()`s against `base`. Only files under it
+    /// load: a `url()` with a scheme, an absolute path or `..` draws nothing. A missing or
+    /// undecodable file draws nothing too, and the box shows its background color.
     ///
     /// # Errors
     /// Returns a stylesheet, capture, cascade or unsupported-display failure.
@@ -865,7 +865,12 @@ impl BoxTree {
             .filter_map(|(projected, value)| {
                 let value = value?;
                 prepared.slot[projected].filter(|slot| !prepared.anonymous[*slot])?;
-                if value.uri.contains("://") || value.uri.starts_with("data:") {
+                // Only files under the base: no scheme, no absolute path, no `..`.
+                let relative = Path::new(&value.uri);
+                let inside = relative
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+                if !inside || value.uri.contains(':') {
                     return None;
                 }
                 let handle = image::Handle::from_path(source.base.join(&value.uri));
@@ -1251,9 +1256,11 @@ where
             geometry: Vec::new(),
             slot_geometry: Vec::new(),
             scroll_limits: Vec::new(),
+            canvas_height: 0.0,
             clips: Vec::new(),
             paragraphs: BTreeMap::new(),
             allocations: Vec::new(),
+            loaded: BTreeSet::new(),
             rest_paragraphs: BTreeMap::new(),
             marker_paragraphs: BTreeMap::new(),
             elements,
@@ -1381,6 +1388,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     slot_geometry: Vec<FlowGeometry>,
     /// How far each arena slot can scroll.
     scroll_limits: Vec<f32>,
+    /// The widget's height at the last layout.
+    canvas_height: f32,
     clips: Vec<Option<FlowRect>>,
     elements: Vec<Element<'a, Message, Theme, Renderer>>,
     /// The CSS id naming each element's box.
@@ -1394,6 +1403,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     rest_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, TextLeaf)>,
     /// Holds the background images while they draw.
     allocations: Vec<image::Allocation>,
+    /// The projected indices whose background image loaded.
+    loaded: BTreeSet<usize>,
     /// Shaped outside markers and their corners, by projected index of their item.
     marker_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point)>,
 }
@@ -1725,10 +1736,14 @@ fn moved_rectangle(rect: FlowRect, origin: Point) -> Rectangle {
     }
 }
 
-/// Whether this step draws something a layer paints after its quads.
-fn paints_over_quads(tree: &BoxTree, step: PaintStep) -> bool {
+/// Whether `next` needs a new layer after `step`: a layer paints images and then text over
+/// all its quads. Text may follow text, but anything after an image needs a fresh layer,
+/// since text brings quads of its own for backgrounds and decorations.
+fn breaks_layer(tree: &BoxTree, step: PaintStep, next: PaintStep) -> bool {
     match step {
-        PaintStep::Text(_) | PaintStep::Marker(_) => true,
+        PaintStep::Text(_) | PaintStep::Marker(_) => {
+            !matches!(next, PaintStep::Text(_) | PaintStep::Marker(_))
+        }
         PaintStep::Box(index) => tree.backgrounds.contains_key(&index),
         PaintStep::Outline(_) => false,
     }
@@ -1766,8 +1781,8 @@ fn draw_background_image<Renderer: BackgroundRenderer>(
     };
     let (first_x, columns) = tiles(x0, width, area.x, area.width, value.repeat_x);
     let (first_y, rows) = tiles(y0, height, area.y, area.height, value.repeat_y);
-    // A sane bound: an image of one pixel over a large area is still drawn, once per pixel.
-    if columns.saturating_mul(rows) > 1_000_000 {
+    // `area` is already clipped to what can show. One pixel over a 4K window still draws.
+    if columns.saturating_mul(rows) > 16_000_000 {
         return;
     }
     for row in 0..rows {
@@ -1820,6 +1835,14 @@ fn draw_outline<Renderer: renderer::Renderer>(
     }
 }
 
+/// Which of a box's quads to draw. An image goes between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoxParts {
+    All,
+    Background,
+    Border,
+}
+
 /// One box's background and border bands, offset to the layout origin.
 fn draw_box<Renderer: renderer::Renderer>(
     tree: &BoxTree,
@@ -1827,6 +1850,7 @@ fn draw_box<Renderer: renderer::Renderer>(
     renderer: &mut Renderer,
     origin: Point,
     index: usize,
+    parts: BoxParts,
 ) {
     let Some(Some(geometry)) = geometry.get(index) else {
         return;
@@ -1851,7 +1875,7 @@ fn draw_box<Renderer: renderer::Renderer>(
         return;
     }
     let border = geometry.border;
-    if let Some(color) = paint.background {
+    if let Some(color) = paint.background.filter(|_| parts != BoxParts::Border) {
         // 14.2: the background extends under the border.
         quad(
             renderer,
@@ -1859,10 +1883,12 @@ fn draw_box<Renderer: renderer::Renderer>(
             color,
         );
     }
-    let bands = border_bands(border, geometry.padding);
-    for (band, color) in bands.into_iter().zip(paint.border) {
-        if let Some(color) = color {
-            quad(renderer, band, color);
+    if parts != BoxParts::Background {
+        let bands = border_bands(border, geometry.padding);
+        for (band, color) in bands.into_iter().zip(paint.border) {
+            if let Some(color) = color {
+                quad(renderer, band, color);
+            }
         }
     }
 }
@@ -2019,6 +2045,78 @@ where
         explicit.or(pressable.then_some(0))
     }
 
+    /// Whether this source node has a rendered, visible box.
+    fn takes_focus(&self, node: usize) -> bool {
+        self.tree
+            .originals
+            .iter()
+            .position(|value| *value == node)
+            .is_some_and(|projected| {
+                self.tree.prepared.slot[projected].is_some() && self.tree.paints[projected].visible
+            })
+    }
+
+    /// The scroll offsets that bring `node`'s box into view, innermost scroller first.
+    fn scroll_into_view(&self, node: usize, scrolled: &mut BTreeMap<usize, f32>) {
+        let nodes = self.tree.source.construction.nodes();
+        let Some(projected) = self.tree.originals.iter().position(|value| *value == node) else {
+            return;
+        };
+        let Some(Some(geometry)) = self.geometry.get(projected) else {
+            return;
+        };
+        let (mut top, mut bottom) = (geometry.border.top, geometry.border.bottom);
+        let mut at = nodes[node].parent();
+        while let Some(ancestor) = at {
+            at = nodes[ancestor].parent();
+            let Some(index) = self
+                .tree
+                .originals
+                .iter()
+                .position(|value| *value == ancestor)
+            else {
+                continue;
+            };
+            let Some(slot) = self.tree.prepared.slot[index] else {
+                continue;
+            };
+            let Some(limit) = self
+                .scroll_limits
+                .get(slot)
+                .copied()
+                .filter(|limit| *limit > 0.0)
+            else {
+                continue;
+            };
+            let Some(area) = self.slot_geometry.get(slot).map(|outer| outer.padding) else {
+                continue;
+            };
+            let end = if slot == 0 {
+                self.canvas_height
+            } else {
+                area.bottom
+            };
+            let current = scrolled
+                .get(&ancestor)
+                .copied()
+                .unwrap_or(0.0)
+                .clamp(0.0, limit);
+            let delta = if top < area.top {
+                top - area.top
+            } else if bottom > end {
+                (bottom - end).min(top - area.top)
+            } else {
+                0.0
+            };
+            let wanted = (current + delta).clamp(0.0, limit);
+            if wanted != current {
+                scrolled.insert(ancestor, wanted);
+                top -= wanted - current;
+                bottom -= wanted - current;
+            }
+        }
+    }
+
     /// The nearest focusable box from `node` outward, as a click finds it.
     fn focus_target(&self, node: Option<usize>) -> Option<usize> {
         let nodes = self.tree.source.construction.nodes();
@@ -2030,6 +2128,15 @@ where
             at = nodes[here].parent();
         }
         None
+    }
+
+    /// A background image that loaded. A failed one must not draw: some renderers report a
+    /// missing file as one pixel, which would then tile across the whole box.
+    fn loaded_background(&self, projected: usize) -> Option<&(BackgroundImage, image::Handle)> {
+        self.loaded
+            .contains(&projected)
+            .then(|| self.tree.backgrounds.get(&projected))
+            .flatten()
     }
 
     fn embedded(&self) -> BTreeSet<usize> {
@@ -2084,12 +2191,14 @@ where
         if !self.measured {
             self.measured = true;
             self.slots = self.ids.iter().map(|id| self.tree.leaf_slot(id)).collect();
-            self.allocations = self
-                .tree
-                .backgrounds
-                .values()
-                .filter_map(|(_, handle)| renderer.load_background(handle))
-                .collect();
+            self.allocations.clear();
+            self.loaded.clear();
+            for (projected, (_, handle)) in &self.tree.backgrounds {
+                if let Some(allocation) = renderer.load_background(handle) {
+                    self.allocations.push(allocation);
+                    self.loaded.insert(*projected);
+                }
+            }
             self.tree.set_text_widths(|leaf| {
                 let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
                 (narrowest_width(renderer, leaf), longest)
@@ -2149,6 +2258,7 @@ where
                 },
             )
             .unwrap_or_default();
+        self.canvas_height = available.height;
         let originals = &self.tree.originals;
         let positions = &self.tree.prepared.positions;
         self.scroll_limits = apply_scrolling(
@@ -2342,7 +2452,12 @@ where
             if shell.is_event_captured() {
                 return;
             }
-            let focused = tree.state.downcast_ref::<Interaction>().focused;
+            // A rebuilt view may have fewer nodes, and a restyle may have hidden the box.
+            let focused = tree
+                .state
+                .downcast_ref::<Interaction>()
+                .focused
+                .filter(|node| self.takes_focus(*node));
             let next = match key.as_ref() {
                 keyboard::Key::Named(keyboard::key::Named::Tab) => {
                     let order = self.tab_order();
@@ -2376,7 +2491,13 @@ where
             state.focused = next;
             let after = (state.hovered, state.active, state.focused);
             shell.capture_event();
-            if self.base.variant(after) != self.base.variant(before) {
+            let mut scrolled = state.scrolled.clone();
+            if let Some(node) = next {
+                self.scroll_into_view(node, &mut scrolled);
+            }
+            let moved = scrolled != state.scrolled;
+            state.scrolled = scrolled;
+            if moved || self.base.variant(after) != self.base.variant(before) {
                 shell.invalidate_layout();
                 shell.request_redraw();
             }
@@ -2549,13 +2670,24 @@ where
         if let Some(background) = prepared
             .positions
             .first()
-            .and_then(|(root, _)| self.tree.backgrounds.get(root))
+            .and_then(|(root, _)| self.loaded_background(*root))
             && let Some(Some(geometry)) = self.geometry.get(prepared.positions[0].0)
         {
             let positioning = if background.0.fixed {
                 viewport_box
             } else {
-                moved_rectangle(geometry.padding, origin)
+                // The canvas scrolls with the root, unlike any other scroller's background.
+                let scrolled = tree
+                    .state
+                    .downcast_ref::<Interaction>()
+                    .scrolled
+                    .get(&self.tree.originals[prepared.positions[0].0])
+                    .copied()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, self.scroll_limits.first().copied().unwrap_or(0.0));
+                let mut placed = moved_rectangle(geometry.padding, origin);
+                placed.y -= scrolled;
+                placed
             };
             renderer.with_layer(bounds, |renderer| {
                 draw_background_image(renderer, background, positioning, bounds);
@@ -2569,8 +2701,7 @@ where
             let mut end = start + 1;
             while end < steps.len()
                 && clip_of(&steps[end]) == clip
-                && !(paints_over_quads(&self.tree, steps[end - 1])
-                    && !matches!(steps[end], PaintStep::Text(_) | PaintStep::Marker(_)))
+                && !breaks_layer(&self.tree, steps[end - 1], steps[end])
             {
                 end += 1;
             }
@@ -2578,21 +2709,60 @@ where
                 for step in &steps[start..end] {
                     match *step {
                         PaintStep::Box(index) => {
-                            draw_box(&self.tree, &self.geometry, renderer, origin, index);
-                            // The root's image was drawn for the canvas already. Other
-                            // images stop at the padding edge, so borders stay on top.
-                            if index != prepared.positions[0].0
-                                && self.tree.paints[index].visible
-                                && let Some(background) = self.tree.backgrounds.get(&index)
-                                && let Some(Some(geometry)) = self.geometry.get(index)
-                            {
-                                let area = moved_rectangle(geometry.padding, origin);
-                                let positioning = if background.0.fixed {
-                                    viewport_box
-                                } else {
-                                    area
-                                };
-                                draw_background_image(renderer, background, positioning, area);
+                            let root = index == prepared.positions[0].0;
+                            let image = self
+                                .loaded_background(index)
+                                .filter(|_| self.tree.paints[index].visible);
+                            match (root, image, self.geometry.get(index)) {
+                                // The canvas already has the root's background and image.
+                                (true, _, _) => draw_box(
+                                    &self.tree,
+                                    &self.geometry,
+                                    renderer,
+                                    origin,
+                                    index,
+                                    BoxParts::Border,
+                                ),
+                                (false, Some(background), Some(Some(geometry))) => {
+                                    draw_box(
+                                        &self.tree,
+                                        &self.geometry,
+                                        renderer,
+                                        origin,
+                                        index,
+                                        BoxParts::Background,
+                                    );
+                                    // 14.2.1: placed from the padding edge, painted out to the
+                                    // border edge, under the border.
+                                    let padding = moved_rectangle(geometry.padding, origin);
+                                    let positioning = if background.0.fixed {
+                                        viewport_box
+                                    } else {
+                                        padding
+                                    };
+                                    let area = moved_rectangle(geometry.border, origin)
+                                        .intersection(&clip)
+                                        .unwrap_or(Rectangle::new(origin, Size::ZERO));
+                                    draw_background_image(renderer, background, positioning, area);
+                                    renderer.with_layer(clip, |renderer| {
+                                        draw_box(
+                                            &self.tree,
+                                            &self.geometry,
+                                            renderer,
+                                            origin,
+                                            index,
+                                            BoxParts::Border,
+                                        );
+                                    });
+                                }
+                                _ => draw_box(
+                                    &self.tree,
+                                    &self.geometry,
+                                    renderer,
+                                    origin,
+                                    index,
+                                    BoxParts::All,
+                                ),
                             }
                         }
                         PaintStep::Outline(index) => {
@@ -2777,7 +2947,14 @@ mod tests {
         let geometry = tree.layout(100.0, Some(80.0)).unwrap();
         let mut renderer = Recording::default();
         for index in tree.paint_order() {
-            draw_box(&tree, &geometry, &mut renderer, Point::new(5.0, 7.0), index);
+            draw_box(
+                &tree,
+                &geometry,
+                &mut renderer,
+                Point::new(5.0, 7.0),
+                index,
+                BoxParts::All,
+            );
         }
         let outlined = BoxTree::new(
             node("a", vec![]),
