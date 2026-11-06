@@ -597,8 +597,12 @@ pub fn prepare_captured_tree(
                     .text()
                     .is_some_and(|text| text.trim().is_empty());
                 if inline_rows.contains(&group) {
-                    // White space between inline-blocks generates nothing here.
-                    if !blank {
+                    // White space between inline-blocks generates nothing here; inside a
+                    // piece of text it separates words as usual.
+                    let in_piece = build.boxes[group].children.last().is_some_and(|last| {
+                        build.anonymous[*last] && build.boxes[*last].table.is_none()
+                    });
+                    if !blank || in_piece {
                         let piece = build.row_text(group, index);
                         build.runs[piece].push(RunSource::Node(index));
                         slot[index] = Some(piece);
@@ -650,7 +654,11 @@ pub fn prepare_captured_tree(
             inline_rows.push(group);
             build.boxes[group].inline_row = Some(RowAlign::Left);
             if !earlier.is_empty() {
-                let piece = build.row_text(group, index);
+                // The piece belongs to its first text, not to the inline-block after it.
+                let owner = match earlier[0] {
+                    RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at) => at,
+                };
+                let piece = build.row_text(group, owner);
                 for run in &earlier {
                     if let RunSource::Node(at) = run {
                         slot[*at] = Some(piece);

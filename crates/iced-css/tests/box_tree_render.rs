@@ -600,31 +600,27 @@ fn text_a_child_clips_does_not_extend_the_scroller() {
 }
 
 #[test]
-fn justified_text_reaches_both_edges() {
-    let root = node(
-        "page",
-        vec![text(
-            "copy",
-            "several words of ordinary text wrap across more than one line here so that the \
-             first line has to stretch out to meet both edges of a narrow box while the last \
-             one does not",
-        )],
-    );
-    let tree = BoxTree::new(
-        root,
-        "#page { background-color:white; color:black; width:300px; }
-         #copy { display:block; text-align:justify; }",
-    )
-    .unwrap();
-    let view: Element<'_, u8> = tree.view();
-    let mut ui = iced_test::simulator(view);
-    let name = format!("justify-{}.png", std::process::id());
-    assert!(
+fn justified_text_draws_differently_from_left_aligned() {
+    const COPY: &str = "several words of ordinary text wrap across more than one line here so \
+         that the lines have to stretch out to meet the widest of them while the last one does not";
+    let draw = |align: &str, picture: &std::path::Path| {
+        let root = node("page", vec![text("copy", COPY)]);
+        let css = format!(
+            "#page {{ background-color:white; color:black; width:300px; }}
+             #copy {{ display:block; text-align:{align}; }}"
+        );
+        let tree = BoxTree::new(root, &css).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(picture)
             .unwrap()
-    );
+    };
+    let picture = std::env::temp_dir().join(format!("justify-{}.png", std::process::id()));
+    assert!(draw("justify", &picture));
+    assert!(draw("justify", &picture));
+    assert!(!draw("left", &picture));
 }
 
 #[test]
@@ -645,6 +641,40 @@ fn clip_rect_cuts_an_absolute_box() {
         ui.snapshot(&Theme::Light)
             .unwrap()
             .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    );
+}
+
+#[test]
+fn blank_text_adds_no_scroll_range() {
+    let root = node(
+        "page",
+        vec![node("list", vec![node("full", vec![]), text("gap", " ")])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background-color:white; }
+         #list { overflow:auto; height:50px; width:80px; background-color:#2a4d69; }
+         #full { height:50px; background-color:#d9534f; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = iced_test::simulator(view);
+    let picture = std::env::temp_dir().join(format!("blank-{}.png", std::process::id()));
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    ui.point_at(Point::new(10.0, 10.0));
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y: -10.0 },
+    })]);
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
             .unwrap()
     );
 }

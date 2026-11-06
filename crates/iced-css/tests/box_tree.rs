@@ -2516,6 +2516,53 @@ mod animation {
     }
 
     #[test]
+    fn an_interruption_from_another_capture_starts_from_its_own_value() {
+        let from = tree("#box { width:100px; }");
+        let to = from.restyled(&["#box { width:200px; }"]).unwrap();
+        let fresh = tree("#box { width:200px; }");
+        let far = fresh.restyled(&["#box { width:300px; }"]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["width"], second(), start)
+            .unwrap();
+        let halfway = start + Duration::from_millis(500);
+        animations
+            .request(&fresh, &far, "box", &["width"], second(), halfway)
+            .unwrap();
+        let shown = animations.presented(&far);
+        let geometry = shown.layout(800.0, Some(600.0)).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        assert_eq!(border.right - border.left, 200.0);
+    }
+
+    #[test]
+    fn an_inline_element_animates_no_box_of_its_own() {
+        let source = || node("page", vec![node("span", vec![text("line", "words")])]);
+        let from = BoxTree::new(
+            source(),
+            "#span { display:inline; background-color:#000000; }",
+        )
+        .unwrap();
+        let to = from
+            .restyled(&["#span { display:inline; background-color:#ffffff; margin-left:5px; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(
+                &from,
+                &to,
+                "span",
+                &["background-color", "margin-left"],
+                second(),
+                Instant::now(),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(!animations.is_animating());
+    }
+
+    #[test]
     fn repeats_and_hidden_ends_start_nothing_extra() {
         let from = tree("#box { width:100px; height:10px; background-color:#000000; }");
         let to = from
@@ -2630,6 +2677,31 @@ mod animation {
             [0.5; 3]
         ));
     }
+}
+
+#[test]
+fn text_pieces_in_a_line_keep_words_their_container_and_their_owner() {
+    let span = node;
+    let root = node(
+        "wrap",
+        vec![
+            node("chip", vec![]),
+            span("s1", vec![text("hello", "Hello")]),
+            text("gap", " "),
+            span("s2", vec![text("world", "world")]),
+        ],
+    );
+    let css = "#wrap { text-align:right; }
+        #chip { display:inline-block; text-align:left; width:10px; }
+        #s1, #s2 { display:inline; }";
+    let tree = BoxTree::new(root, css).unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves[0].1.text(), "Hello world");
+    assert_eq!(leaves[0].1.align, "right");
+
+    let root = node("page", vec![text("one", "one"), node("a", vec![])]);
+    let tree = BoxTree::new(root, "#a { display:inline-block; }").unwrap();
+    assert_eq!(tree.text_leaves()[0].0, 1, "first run's index, not #a's");
 }
 
 #[test]

@@ -727,8 +727,13 @@ impl BoxTree {
             prepared.positions.iter().map(|&(owner, _)| owner).collect();
         for (arena, value) in prepared.boxes.iter().enumerate() {
             for &child in &value.children {
+                // Through an anonymous parent, its own block container: parents come first.
                 if prepared.anonymous[child] {
-                    container_of[child] = prepared.positions[arena].0;
+                    container_of[child] = if prepared.anonymous[arena] {
+                        container_of[arena]
+                    } else {
+                        prepared.positions[arena].0
+                    };
                 }
             }
         }
@@ -1470,7 +1475,7 @@ fn apply_scrolling(
     prepared: &PreparedTree,
     geometry: &mut [FlowGeometry],
     scrolled: impl Fn(usize) -> (f32, f32),
-    text_size: impl Fn(usize, f32) -> Option<Size>,
+    text_size: impl Fn(usize, &FlowGeometry) -> Option<Size>,
     viewport: Size,
 ) -> Vec<(f32, f32)> {
     let mut limits = vec![(0.0_f32, 0.0_f32); prepared.boxes.len()];
@@ -1487,8 +1492,9 @@ fn apply_scrolling(
         };
         let (mut reach, mut reach_x) = (bottom, right);
         // A scroller's own text scrolls in it too.
-        let place = geometry[arena].leaf_band.unwrap_or(geometry[arena].content);
-        if let Some(size) = text_size(arena, place.right - place.left) {
+        let own_text = text_size(arena, &geometry[arena]);
+        if let Some(size) = own_text {
+            let place = geometry[arena].leaf_band.unwrap_or(geometry[arena].content);
             reach = reach.max(place.top + size.height);
             reach_x = reach_x.max(place.left + size.width);
         }
@@ -1498,12 +1504,12 @@ fn apply_scrolling(
                 reach = reach.max(box_of.border.bottom);
                 reach_x = reach_x.max(box_of.border.right);
                 // Text runs past a box too small for it, unless that box clips it.
-                if !prepared.clipped[child] {
+                if !prepared.clipped[child]
+                    && let Some(size) = text_size(child, box_of)
+                {
                     let place = box_of.leaf_band.unwrap_or(box_of.content);
-                    if let Some(size) = text_size(child, place.right - place.left) {
-                        reach = reach.max(place.top + size.height);
-                        reach_x = reach_x.max(place.left + size.width);
-                    }
+                    reach = reach.max(place.top + size.height);
+                    reach_x = reach_x.max(place.left + size.width);
                 }
             }
         });
@@ -1535,6 +1541,16 @@ fn apply_scrolling(
         let (offset, offset_x) = (down.clamp(0.0, limit), across.clamp(0.0, limit_x));
         if offset == 0.0 && offset_x == 0.0 {
             continue;
+        }
+        if own_text.is_some() {
+            let own = &mut geometry[arena];
+            let rectangles = [Some(&mut own.content), own.leaf_band.as_mut()];
+            for place in rectangles.into_iter().flatten() {
+                place.left -= offset_x;
+                place.right -= offset_x;
+                place.top -= offset;
+                place.bottom -= offset;
+            }
         }
         let mut moved = Vec::new();
         scrolling_descendants(prepared, arena, |child, _| moved.push(child));
@@ -2484,10 +2500,22 @@ where
                 };
                 (read(&interaction.scrolled), read(&interaction.scrolled_x))
             },
-            |arena, width| {
-                texts[arena]
-                    .as_ref()
-                    .map(|leaf| paragraph(renderer, leaf, width).min_bounds())
+            |arena, geometry| {
+                // What layout and paint lay out: nothing blank or under a hosted widget, at
+                // the width rounded the same way. Split text already sized its box.
+                let leaf = texts[arena].as_ref().filter(|leaf| !leaf.is_empty())?;
+                if geometry.leaf_after.is_some() || slots.contains(&Some(arena)) {
+                    return None;
+                }
+                let place = geometry.leaf_band.unwrap_or(geometry.content);
+                let width = (place.right - place.left).ceil();
+                let size = paragraph(renderer, leaf, width).min_bounds();
+                // Right and centered lines overflow toward the start, where nothing scrolls.
+                Some(if matches!(leaf.align, "right" | "center") {
+                    Size::new(0.0, size.height)
+                } else {
+                    size
+                })
             },
             available,
         );
@@ -2898,7 +2926,20 @@ where
                 }
                 PaintStep::Text(arena) => Some(arena),
             };
-            let clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
+            let mut clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
+            // A box clips its own text as it clips its children.
+            if let PaintStep::Text(arena) = *step
+                && prepared.clipped[arena]
+                && let Some(outer) = self.slot_geometry.get(arena)
+            {
+                let more = outer.padding;
+                clip = Some(clip.map_or(more, |clip| FlowRect {
+                    left: clip.left.max(more.left),
+                    right: clip.right.min(more.right),
+                    top: clip.top.max(more.top),
+                    bottom: clip.bottom.min(more.bottom),
+                }));
+            }
             clip.map_or(bounds, |clip| {
                 bounds
                     .intersection(&Rectangle {
@@ -3280,5 +3321,32 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn a_scrollers_own_text_moves_with_its_offset() {
+        let tree = BoxTree::new(
+            node("page", vec![node("line", vec![])]),
+            "#line { overflow:auto; width:60px; height:20px; }",
+        )
+        .unwrap();
+        let mut geometry: Vec<FlowGeometry> = tree
+            .layout(800.0, Some(600.0))
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        let left = geometry[1].content.left;
+        let padding = geometry[1].padding;
+        let limits = apply_scrolling(
+            &tree.prepared,
+            &mut geometry,
+            |_| (0.0, 15.0),
+            |arena, _| (arena == 1).then_some(Size::new(100.0, 10.0)),
+            Size::new(800.0, 600.0),
+        );
+        assert_eq!(limits[1].1, 40.0);
+        assert_eq!(geometry[1].content.left, left - 15.0);
+        assert_eq!(geometry[1].padding, padding);
     }
 }

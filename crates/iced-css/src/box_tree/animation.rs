@@ -136,8 +136,9 @@ pub(super) struct Follower {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Followers {
     boxes: Vec<Follower>,
-    /// Text runs by arena slot and place, each showing the color at both ends.
-    runs: Vec<(usize, usize)>,
+    /// Text runs by arena slot, place and owner, each showing the color at both ends. An
+    /// interaction styling can shift slots, so the owner is checked again when presenting.
+    runs: Vec<(usize, usize, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -163,14 +164,14 @@ impl BoxTree {
         self.prepared.slot[projected]?;
         let paint = &self.paints[projected];
         let color = |value: Option<[f32; 3]>| value.map(Value::Color);
-        let boxed = || {
-            self.prepared.slot[projected]
-                .and_then(|slot| self.prepared.boxes.get(slot).map(|value| (slot, value)))
-        };
+        // An inline element's slot is its paragraph's box, which is not this element's.
+        let own = self.prepared.slot[projected].filter(|slot| !self.prepared.anonymous[*slot]);
+        let boxed =
+            || own.and_then(|slot| self.prepared.boxes.get(slot).map(|value| (slot, value)));
         let length = |value: Dim| Some(Value::Length(value));
         match field {
             Field::Color => color(paint.color),
-            Field::Background => Some(match (paint.background, paint.background_fade) {
+            Field::Background => own.map(|_| match (paint.background, paint.background_fade) {
                 (None, _) => Value::Fade([0.0; 3], 0.0),
                 (Some(value), None) => Value::Color(value),
                 (Some(value), Some(alpha)) => Value::Fade(value, alpha),
@@ -317,12 +318,13 @@ impl BoxTree {
                 }
             }
         }
-        for &(arena, at) in &followers.runs {
+        for &(arena, at, owner) in &followers.runs {
             if let Some(run) = self
                 .texts
                 .get_mut(arena)
                 .and_then(Option::as_mut)
                 .and_then(|leaf| leaf.runs.get_mut(at))
+                .filter(|run| run.owner == owner)
             {
                 swap(&mut run.color);
             }
@@ -374,7 +376,7 @@ impl BoxTree {
                 if followers.boxes.iter().any(|f| f.node == run.owner)
                     && old.is_some_and(|old| old.owner == run.owner && same(old.color, run.color))
                 {
-                    followers.runs.push((arena, at));
+                    followers.runs.push((arena, at, run.owner));
                 }
             }
         }
@@ -406,7 +408,7 @@ struct Track {
 /// let open = tree.restyled(&["#panel { width:300px; }"])?;
 /// let timing = AnimationTiming::new(Duration::from_millis(200), Duration::ZERO);
 /// animations.request(&tree, &open, "panel", &["width"], timing, Instant::now())?;
-/// // Keep `open` as the tree. Each frame: `animations.advance(now)`, and in the view
+/// // Keep `open` as the tree. Each frame: `animations.advance(now, &open)`, and in the view
 /// // `animations.presented(&open).view()`. `animations.frames(Message::Frame)` subscribes.
 /// # Ok(())
 /// # }
@@ -449,8 +451,8 @@ impl BoxTreeAnimations {
     /// request starts from the current presented value.
     ///
     /// Returns the animations started. Nothing starts for a property that did not change, is
-    /// not animatable or not yet supported here, or has no in-between (`auto`, transparent,
-    /// a length and a percentage): those take `to`'s value at once.
+    /// not animatable or not yet supported here, or has no in-between (`auto`, a transparent
+    /// border, a length and a percentage): those take `to`'s value at once.
     ///
     /// # Errors
     /// Returns an unknown property name or a refused timing. Nothing changes then.
@@ -506,7 +508,7 @@ impl BoxTreeAnimations {
             }
             let start = self
                 .current(id, property)
-                .filter(|(track, _)| track.target == committed)
+                .filter(|(track, _)| track.target == committed && track.capture == capture)
                 .map_or(committed, |(_, value)| value);
             started.push(Track {
                 id: id.to_owned(),
@@ -521,6 +523,9 @@ impl BoxTreeAnimations {
                 },
                 capture,
             });
+        }
+        if started.is_empty() && !self.sources.contains_key(id) {
+            return Ok(0);
         }
         if !self.sources.contains_key(id) {
             let source = self.engine.register_source().map_err(failed)?;
