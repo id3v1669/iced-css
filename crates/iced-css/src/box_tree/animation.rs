@@ -177,8 +177,10 @@ impl BoxTree {
                 (Some(value), Some(alpha)) => Value::Fade(value, alpha),
             }),
             Field::BorderColor(side) => color(paint.border[side]),
-            Field::OutlineColor => color(paint.outline.map(|outline| outline.1)),
-            Field::OutlineWidth => paint.outline.and_then(|outline| length(Dim::Px(outline.0))),
+            Field::OutlineColor => color(own.and(paint.outline).map(|outline| outline.1)),
+            Field::OutlineWidth => own
+                .and(paint.outline)
+                .and_then(|outline| length(Dim::Px(outline.0))),
             Field::Width => length(boxed()?.1.width),
             Field::MinWidth => length(boxed()?.1.min_width),
             Field::MaxWidth => length(boxed()?.1.max_width),

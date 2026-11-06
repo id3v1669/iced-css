@@ -65,7 +65,9 @@ their bottoms rather than baselines; `border-collapse` shares each edge at the w
 the later cell on top rather than resolving conflicts per edge; `justify` stretches lines to the widest line rather than the box, leaves a line split at a float's end unstretched, and is start-aligned in rtl;
 one line height and alignment per paragraph; inline box padding and borders; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
-text properties, not other box properties. An rtl scroller does not scroll across. Animations do not cover `auto`, transparent borders, a length to a percentage,
+text properties, not other box properties. An rtl scroller does not scroll across. `table-layout: fixed` reads `table-column` widths but not column groups. A row of hidden
+empty cells keeps its height. `clip`ped content still extends a scroller's range. An own-text
+scrolling list item's outside marker moves with the text, unclipped. Animations do not cover `auto`, transparent borders, a length to a percentage,
 inline backgrounds, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.
 

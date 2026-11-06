@@ -2779,23 +2779,107 @@ fn empty_cells_hide_only_without_content_and_without_collapse() {
             "table",
             vec![node(
                 "r",
-                vec![node("a", vec![]), node("b", vec![text("t", "x")])],
+                vec![
+                    node("a", vec![]),
+                    node("b", vec![text("t", "x")]),
+                    node("c", vec![text("gap", "  ")]),
+                    node("d", vec![node("out", vec![])]),
+                ],
             )],
         )
     };
-    let css = |collapse: &str| {
+    let css = |collapse: &str, cell: &str| {
         format!(
             "#table {{ display:table; empty-cells:hide; border-collapse:{collapse}; }}
              #r {{ display:table-row; }}
-             #a, #b {{ display:table-cell; background-color:#ff0000; border:1px solid #00ff00; }}"
+             #a, #b, #c, #d {{ display:table-cell; background-color:#ff0000; {cell} }}
+             #out {{ position:absolute; }}"
         )
     };
-    let tree = BoxTree::new(root(), &css("separate")).unwrap();
-    assert_eq!(tree.paints()[2].background, None);
-    assert_eq!(tree.paints()[2].border, [None; 4]);
-    assert_eq!(tree.paints()[3].background, Some([1.0, 0.0, 0.0]));
-    let tree = BoxTree::new(root(), &css("collapse")).unwrap();
-    assert_eq!(tree.paints()[2].background, Some([1.0, 0.0, 0.0]));
+    let tree = BoxTree::new(root(), &css("separate", "")).unwrap();
+    let hidden = |tree: &BoxTree, id: usize| tree.paints()[id].hidden_empty;
+    assert!(hidden(&tree, 2));
+    assert!(!hidden(&tree, 3));
+    assert!(hidden(&tree, 5), "white space collapses away");
+    assert!(hidden(&tree, 7), "out-of-flow content does not count");
+    // The table decides collapse, not the cell.
+    let tree = BoxTree::new(root(), &css("collapse", "border-collapse:separate;")).unwrap();
+    assert!(!hidden(&tree, 2));
+    let tree = BoxTree::new(root(), &css("separate", "border-collapse:collapse;")).unwrap();
+    assert!(hidden(&tree, 2));
+}
+
+#[test]
+fn fixed_tables_ignore_content_and_grow_only_for_their_columns() {
+    let across = |css: &str, cells: Vec<Element>, at: usize| {
+        let root = node(
+            "table",
+            vec![node("r1", cells), node("r2", vec![node("e", vec![])])],
+        );
+        let css = format!(
+            "#table {{ display:table; table-layout:fixed; }}
+             #r1, #r2 {{ display:table-row; }}
+             #a, #b, #e {{ display:table-cell; height:5px; }}
+             {css}"
+        );
+        let geometry = BoxTree::new(root, &css)
+            .unwrap()
+            .layout(800.0, None)
+            .unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (border.left, border.right)
+    };
+    let cells = || vec![node("a", vec![]), node("b", vec![])];
+    // A wide cell in a later row changes nothing.
+    assert_eq!(
+        across("#table { width:300px; } #e { width:400px; }", cells(), 0),
+        (0.0, 300.0)
+    );
+    assert_eq!(
+        across("#table { width:300px; } #e { width:400px; }", cells(), 3),
+        (150.0, 300.0)
+    );
+    // First-row widths past the table's own widen it.
+    assert_eq!(
+        across("#table { width:100px; } #a, #b { width:80%; }", cells(), 0),
+        (0.0, 160.0)
+    );
+}
+
+#[test]
+fn fixed_tables_read_column_elements_first() {
+    let root = node(
+        "table",
+        vec![
+            node("c1", vec![]),
+            node("r", vec![node("a", vec![]), node("b", vec![])]),
+        ],
+    );
+    let css = "#table { display:table; table-layout:fixed; width:300px; }
+        #c1 { display:table-column; width:200px; }
+        #r { display:table-row; }
+        #a { display:table-cell; width:10px; height:5px; }
+        #b { display:table-cell; height:5px; }";
+    let geometry = BoxTree::new(root, css)
+        .unwrap()
+        .layout(800.0, None)
+        .unwrap();
+    let border = geometry[3].as_ref().unwrap().border;
+    assert_eq!((border.left, border.right), (0.0, 200.0));
+}
+
+#[test]
+fn clip_takes_negative_and_inherited_sides() {
+    let root = node("page", vec![node("abs", vec![node("kid", vec![])])]);
+    let tree = BoxTree::new(
+        root,
+        "#abs { position:absolute; clip:rect(-5px, 50px, auto, -10px); }
+         #kid { clip:inherit; }",
+    )
+    .unwrap();
+    let sides = Some([Some(-5.0), Some(50.0), None, Some(-10.0)]);
+    assert_eq!(tree.paints()[1].clip, sides);
+    assert_eq!(tree.paints()[2].clip, sides);
 }
 
 #[test]

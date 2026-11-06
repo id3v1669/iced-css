@@ -678,3 +678,25 @@ fn blank_text_adds_no_scroll_range() {
             .unwrap()
     );
 }
+
+#[test]
+fn a_fixed_child_stays_inside_its_ancestors_clip() {
+    let picture = |css: &str, name: &str| {
+        let root = node("page", vec![node("abs", vec![node("kid", vec![])])]);
+        let css = format!(
+            "#page {{ background-color:white; }}
+             #abs {{ position:absolute; width:10px; height:10px; {css} }}
+             #kid {{ position:fixed; top:0; left:0; width:100px; height:100px; background-color:#d9534f; }}"
+        );
+        let tree = BoxTree::new(root, &css).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = iced_test::simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("fixed-clip-{}.png", std::process::id());
+    assert!(picture("clip:rect(0, 10px, 10px, 0);", &name));
+    assert!(!picture("", &name));
+}

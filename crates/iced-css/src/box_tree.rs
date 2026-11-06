@@ -959,20 +959,39 @@ impl BoxTree {
         let originals: Vec<usize> = (0..count)
             .map(|projected| projection.original_index(projected).unwrap_or_default())
             .collect();
-        // 17.6.1: `empty-cells: hide` draws no background or border on a cell with no content.
-        // It has no effect with collapsed borders.
+        // 17.6.1.1: `empty-cells: hide` draws no background or border on a cell with no
+        // content but collapsed white space and out-of-flow boxes. It has no effect in a table
+        // with collapsed borders, whose edges are shared.
+        let mut parent_of = vec![None; prepared.boxes.len()];
+        for (arena, value) in prepared.boxes.iter().enumerate() {
+            for &child in &value.children {
+                parent_of[child] = Some(arena);
+            }
+        }
+        let blank = |arena: usize| texts[arena].as_ref().is_none_or(TextLeaf::is_empty);
         for (arena, value) in prepared.boxes.iter().enumerate() {
             let owner = prepared.positions[arena].0;
-            if value.table == Some(TableRole::Cell)
-                && !prepared.anonymous[arena]
-                && !collapses[owner]
-                && paints[owner].hide_empty
-                && value.children.is_empty()
-                && texts[arena].is_none()
+            if value.table != Some(TableRole::Cell)
+                || prepared.anonymous[arena]
+                || !paints[owner].hide_empty
+                || !blank(arena)
             {
-                paints[owner].background = None;
-                paints[owner].border = [None; 4];
+                continue;
             }
+            let empty = value.children.iter().all(|&child| {
+                let inner = &prepared.boxes[child];
+                inner.out_of_flow
+                    || (prepared.anonymous[child] && inner.children.is_empty() && blank(child))
+            });
+            let mut table = parent_of[arena];
+            while let Some(at) = table {
+                if matches!(prepared.boxes[at].table, Some(TableRole::Table { .. })) {
+                    break;
+                }
+                table = parent_of[at];
+            }
+            let collapsed = table.is_some_and(|at| collapses[prepared.positions[at].0]);
+            paints[owner].hidden_empty = empty && !collapsed;
         }
         let ids = prepared
             .positions
@@ -1150,6 +1169,13 @@ impl BoxTree {
             return steps;
         }
         self.stacking_context(0, embedded, &mut steps);
+        steps.retain(|step| {
+            let PaintStep::Box(index) = *step else {
+                return true;
+            };
+            !self.paints[index].hidden_empty
+                || prepared.slot[index].is_some_and(|slot| embedded.contains(&slot))
+        });
         // 18.4: outlines may be drawn above everything else.
         for (projected, paint) in self.paints.iter().enumerate() {
             let boxed = prepared.slot[projected].is_some_and(|slot| !prepared.anonymous[slot]);
@@ -1277,6 +1303,8 @@ impl BoxTree {
             }))
         };
         let mut clips: Vec<Option<FlowRect>> = vec![None; count];
+        // `clip` alone, down through the box tree: a fixed box escapes `overflow`, not this.
+        let mut cut: Vec<Option<FlowRect>> = vec![None; count];
         for arena in 0..count {
             let position = prepared.positions[arena].1;
             let owner = prepared.positions[arena].0;
@@ -1294,8 +1322,10 @@ impl BoxTree {
                         left: sides[3].map_or(border.left, |side| border.left + side),
                     }
                 });
+            let above = parents[arena].and_then(|parent: usize| cut[parent]);
+            cut[arena] = own.map_or(above, |own| meet(above, own));
             if position == Position::Fixed {
-                clips[arena] = own;
+                clips[arena] = cut[arena];
                 continue;
             }
             let mut holder = parents[arena];
@@ -2498,6 +2528,7 @@ where
         let originals = &self.tree.originals;
         let positions = &self.tree.prepared.positions;
         let texts = &self.tree.texts;
+        let boxes = &self.tree.prepared.boxes;
         self.scroll_limits = apply_scrolling(
             &self.tree.prepared,
             &mut self.slot_geometry,
@@ -2512,17 +2543,19 @@ where
                 // What layout and paint lay out: nothing blank or under a hosted widget, at
                 // the width rounded the same way. Split text already sized its box.
                 let leaf = texts[arena].as_ref().filter(|leaf| !leaf.is_empty())?;
-                if geometry.leaf_after.is_some() || slots.contains(&Some(arena)) {
+                let auto_height = boxes[arena].height == Dim::Auto;
+                if (geometry.leaf_after.is_some() && auto_height) || slots.contains(&Some(arena)) {
                     return None;
                 }
                 let place = geometry.leaf_band.unwrap_or(geometry.content);
                 let width = (place.right - place.left).ceil();
                 let size = paragraph(renderer, leaf, width).min_bounds();
-                // Right and centered lines overflow toward the start, where nothing scrolls.
-                Some(if matches!(leaf.align, "right" | "center") {
-                    Size::new(0.0, size.height)
-                } else {
-                    size
+                // Right lines overflow toward the start, where nothing scrolls; centered ones
+                // spill half each way.
+                Some(match leaf.align {
+                    "right" => Size::new(0.0, size.height),
+                    "center" => Size::new((width + size.width) / 2.0, size.height),
+                    _ => size,
                 })
             },
             available,

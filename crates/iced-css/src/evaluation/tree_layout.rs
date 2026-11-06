@@ -614,11 +614,23 @@ pub fn prepare_captured_tree(
             ancestors.push(index);
             continue;
         }
-        // 17.2: columns only carry properties this layout does not read.
+        // 17.2: of columns, only a direct `table-column`'s width is read, by fixed tables.
         if matches!(
             resolution.display,
             Display::TableColumn | Display::TableColumnGroup
         ) {
+            if resolution.display == Display::TableColumn
+                && let Some(table) = parent_slot
+                && matches!(build.boxes[table].table, Some(TableRole::Table { .. }))
+            {
+                let width = flow_box(&rows[index], facts.numeric)
+                    .map_err(|error| E::Percentage {
+                        projected: index,
+                        error,
+                    })?
+                    .width;
+                build.boxes[table].column_widths.push(width);
+            }
             continue;
         }
         let in_row = matches!(
@@ -1274,6 +1286,8 @@ pub struct BoxPaint {
     pub clip: Option<[Option<f32>; 4]>,
     /// `empty-cells: hide`.
     pub hide_empty: bool,
+    /// A cell `empty-cells: hide` keeps from drawing, unless it hosts a widget.
+    pub hidden_empty: bool,
     /// `table-layout: fixed`.
     pub fixed_table: bool,
     /// Top, right, bottom, left.
@@ -1972,15 +1986,20 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => false,
         };
-        let fixed_table = matches!(
-            defaulted("table-layout")?,
-            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
-                if keyword.as_str() == "fixed"
-        );
+        let fixed_table = match defaulted("table-layout")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "fixed"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_some_and(|parent: usize| paints[parent].fixed_table)
+            }
+            _ => false,
+        };
         paints.push(BoxPaint {
             cursor,
             clip: None,
             hide_empty,
+            hidden_empty: false,
             fixed_table,
             // A system color has no palette here: text stays visible, in black.
             color: match row[0].value() {
@@ -2008,14 +2027,26 @@ pub fn evaluate_tree_paint<'r>(
                 .map_or(0.0, |c| c.value),
             _ => 0.0,
         };
-        if let DefaultedValueRef::Compute(SpecifiedValue::ClipRect(sides)) = defaulted("clip")?
-            && let Some(paint) = paints.last_mut()
-        {
-            paint.clip = Some(
+        // 11.1.2: negative lengths are permitted here.
+        let signed = |side: &LengthTarget| match side {
+            LengthTarget::Absolute(value) => {
+                value.to_finite_f32(limits.numeric).map_or(0.0, |c| c.value)
+            }
+            other => length(other),
+        };
+        let clip = match defaulted("clip")? {
+            DefaultedValueRef::Compute(SpecifiedValue::ClipRect(sides)) => Some(
                 sides
                     .each_ref()
-                    .map(|side| (!matches!(side, LengthTarget::Auto)).then(|| length(side))),
-            );
+                    .map(|side| (!matches!(side, LengthTarget::Auto)).then(|| signed(side))),
+            ),
+            DefaultedValueRef::ParentComputed => {
+                parent_index.and_then(|parent: usize| paints[parent].clip)
+            }
+            _ => None,
+        };
+        if let Some(paint) = paints.last_mut() {
+            paint.clip = clip;
         }
         let raw_spacing = match defaulted("border-spacing")? {
             DefaultedValueRef::Compute(SpecifiedValue::LengthPair(across, down)) => {

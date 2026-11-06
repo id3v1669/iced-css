@@ -95,6 +95,8 @@ pub struct FlowBox {
     pub caption_below: bool,
     /// `table-layout: fixed`: the first row alone sets the columns of a table with a width.
     pub fixed_table: bool,
+    /// The widths of a table's `table-column` children, in column order.
+    pub column_widths: Vec<Dim>,
     /// An anonymous block whose children are inline-blocks, placed in wrapping lines
     /// with this alignment. Each line aligns its boxes' bottom margin edges: the baseline
     /// of an empty inline-block, and an approximation for one holding text.
@@ -131,6 +133,7 @@ impl Default for FlowBox {
             cell_align: RowAlign::Left,
             caption_below: false,
             fixed_table: false,
+            column_widths: Vec::new(),
             inline_row: None,
             out_of_flow: false,
             establishes_bfc: false,
@@ -685,11 +688,50 @@ impl Solver<'_> {
         (mins, prefs)
     }
 
-    /// 17.5.2.1: widths from the first row's cells; the remaining columns share what is
-    /// left, and with none remaining the extra goes evenly. Content does not count.
-    fn fixed_columns(&self, rows: &[usize], count: usize, available: f32, basis: f32) -> Vec<f32> {
+    /// 17.5.2.1: a fixed table with a width is that wide, or as wide as its columns and
+    /// their gaps if those are more. Its cells' content does not count. `None` otherwise.
+    fn fixed_table_width(&self, node: usize, width: f32) -> Option<f32> {
+        let value = &self.boxes[node];
+        let Some(TableRole::Table { spacing }) = value.table else {
+            return None;
+        };
+        if !value.fixed_table || value.width == Dim::Auto {
+            return None;
+        }
+        let (rows, _) = self.table_parts(node);
+        let (mins, _) = self.table_columns(&rows, spacing[0]);
+        let gaps = table_gaps(spacing[0], &mins);
+        let columns = self.fixed_columns(
+            node,
+            &rows,
+            mins.len(),
+            spacing[0],
+            (width - gaps).max(0.0),
+            width,
+        );
+        Some(width.max(columns.iter().sum::<f32>() + gaps))
+    }
+
+    /// 17.5.2.1: widths from column elements, then from the first row's cells; the remaining
+    /// columns share what is left, and with none remaining the extra goes evenly.
+    fn fixed_columns(
+        &self,
+        node: usize,
+        rows: &[usize],
+        count: usize,
+        spacing: f32,
+        available: f32,
+        basis: f32,
+    ) -> Vec<f32> {
         let (placed, _) = self.table_grid(rows);
         let mut known: Vec<Option<f32>> = vec![None; count];
+        for (slot, dim) in known.iter_mut().zip(&self.boxes[node].column_widths) {
+            *slot = match *dim {
+                Dim::Px(width) => Some(width),
+                Dim::Percent(percent) => Some(percent / 100.0 * basis),
+                Dim::Auto => None,
+            };
+        }
         for item in placed.iter().filter(|item| item.row == 0) {
             let value = &self.boxes[item.cell];
             let wanted = match value.width {
@@ -699,8 +741,11 @@ impl Solver<'_> {
             };
             let side = |dims: [Dim; 4]| dims[1].zero_auto(basis) + dims[3].zero_auto(basis);
             let outer = wanted + side(value.padding) + value.border[1] + value.border[3];
+            // The gaps inside a span count toward the cell's room.
+            let inner_gaps = spacing * (item.col_span - 1) as f32;
+            let each = ((outer - inner_gaps) / item.col_span as f32).max(0.0);
             for width in &mut known[item.column..item.column + item.col_span] {
-                *width = Some(outer / item.col_span as f32);
+                width.get_or_insert(each);
             }
         }
         let taken: f32 = known.iter().flatten().sum();
@@ -733,7 +778,7 @@ impl Solver<'_> {
         let edge = [spacing[0].max(0.0), spacing[1].max(0.0)];
         let (sum_min, sum_pref): (f32, f32) = (mins.iter().sum(), prefs.iter().sum());
         let fixed = (self.boxes[node].fixed_table && self.boxes[node].width != Dim::Auto)
-            .then(|| self.fixed_columns(&rows, count, available, inner.width));
+            .then(|| self.fixed_columns(node, &rows, count, spacing[0], available, inner.width));
         let widths: Vec<f32> = fixed.unwrap_or_else(|| {
             (0..count)
                 .map(|column| {
@@ -977,6 +1022,9 @@ impl Solver<'_> {
         let first = self.block_width_at(node, cb, value.width.horizontal(cb.width), padding)?;
         if !matches!(value.table, Some(TableRole::Table { .. })) {
             return Ok(first);
+        }
+        if let Some(floor) = self.fixed_table_width(node, first.0) {
+            return self.block_width_at(node, cb, AutoLength::Value(floor), padding);
         }
         let (minimum, preferred) = self.measure(node);
         let wanted = if value.width == Dim::Auto {
@@ -1536,7 +1584,9 @@ impl Solver<'_> {
         })
         .map_err(|error| FlowError::Shrink { node, error })?;
         // 17.5.2.2 holds for a floating or inline table too.
-        let used_width = if matches!(value.table, Some(TableRole::Table { .. })) {
+        let used_width = if let Some(fixed) = self.fixed_table_width(node, used.width) {
+            fixed
+        } else if matches!(value.table, Some(TableRole::Table { .. })) {
             used.width.max(preferred_min_width)
         } else {
             used.width
