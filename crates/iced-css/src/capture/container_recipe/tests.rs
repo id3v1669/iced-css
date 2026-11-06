@@ -65,6 +65,7 @@ fn construction_and_erasure_preserve_native_conversion_hint_and_default_phases()
     assert!(take().is_empty());
 }
 #[derive(Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 enum PaintEvent {
     Quad(renderer::Quad, iced::Background),
     Content(iced::Color, iced::Rectangle),

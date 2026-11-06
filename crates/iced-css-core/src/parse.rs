@@ -173,7 +173,7 @@ fn parse_signed_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<
         }
         Token::Dimension { unit, .. } => error(parser, format!("unsupported length unit: {unit}")),
         Token::Percentage { unit_value, .. } => Ok(Length::Percent(unit_value)),
-        Token::Number { value, .. } if value == 0.0 => Ok(Length::Px(0.0)),
+        Token::Number { value: 0.0, .. } => Ok(Length::Px(0.0)),
         Token::Number { .. } => error(parser, "non-zero lengths require a unit"),
         Token::Ident(ident) if ident.eq_ignore_ascii_case("auto") => Ok(Length::Auto),
         other => error(parser, format!("expected a length, got {other:?}")),

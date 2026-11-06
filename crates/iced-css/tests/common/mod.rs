@@ -293,7 +293,7 @@ fn render(sim: &mut Sim) -> Vec<u8> {
         &mut clipboard::Null,
         &mut sim.messages,
     );
-    let _ = ui.draw(
+    ui.draw(
         &mut sim.renderer,
         &theme,
         &iced_test::core::renderer::Style {
