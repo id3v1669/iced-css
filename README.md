@@ -23,6 +23,9 @@ let element = tree
     .into();
 ```
 
+`BoxTree::restyled(&[sheet, ...])` swaps in edited or additional author sheets without
+capturing the tree again, which is enough to build hot reload on.
+
 `crates/iced-css-examples` is a complete page; run it with `cargo run -p iced-css-examples`.
 
 ## What works

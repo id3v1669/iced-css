@@ -139,7 +139,11 @@ fn facts() -> ClearanceBoxFactsLimits {
         numeric: numeric(),
     }
 }
-fn parse(css: &str) -> Result<OwnedStylesheetGraph, BoxTreeError> {
+/// The cascade order space each author sheet gets, which also clears the user agent's.
+const SHEET_ORDER: u64 = 100_000_000;
+
+/// Parses one author sheet. `order` places its rules in the cascade, later over earlier.
+fn parse(css: &str, order: u64) -> Result<OwnedStylesheetGraph, BoxTreeError> {
     let context = RuleContext {
         first_order: 0,
         first_declaration: NonZeroU64::MIN,
@@ -199,8 +203,8 @@ fn parse(css: &str) -> Result<OwnedStylesheetGraph, BoxTreeError> {
         0,
         // Author rules order after every user agent rule.
         RuleContext {
-            first_order: 100_000,
-            first_declaration: NonZeroU64::new(100_000).expect("positive"),
+            first_order: SHEET_ORDER * (order + 1),
+            first_declaration: NonZeroU64::new(SHEET_ORDER * (order + 1)).expect("positive"),
         },
         OwnedGraphLimits {
             record_bytes: nz(BYTES),
@@ -344,7 +348,7 @@ type InteractionKey = (Option<usize>, Option<usize>, Option<usize>);
 #[derive(Debug)]
 struct Source {
     construction: Construction,
-    css: String,
+    sheets: Vec<String>,
     /// What relative `url()`s resolve against.
     base: PathBuf,
     /// Restyles already cascaded. Pointerless, so nothing here keeps the source alive.
@@ -416,8 +420,25 @@ impl BoxTree {
         let (_, construction) = root.into_parts();
         let source = Arc::new(Source {
             construction,
-            css: css.to_owned(),
+            sheets: vec![css.to_owned()],
             base: base.to_owned(),
+            variants: Mutex::new(BTreeMap::new()),
+        });
+        Self::styled(&source, (None, None, None))
+    }
+
+    /// The same captured tree under other author sheets, later ones over earlier ones. Use
+    /// it to reload edited styles: the capture stays, and a rejected sheet leaves this tree
+    /// as it was. Widget state that survives a view rebuild keeps its hover, focus and
+    /// scroll offsets.
+    ///
+    /// # Errors
+    /// Returns a stylesheet, cascade or unsupported-display failure.
+    pub fn restyled(&self, sheets: &[&str]) -> Result<Self, BoxTreeError> {
+        let source = Arc::new(Source {
+            construction: self.source.construction.clone(),
+            sheets: sheets.iter().map(|sheet| (*sheet).to_owned()).collect(),
+            base: self.source.base.clone(),
             variants: Mutex::new(BTreeMap::new()),
         });
         Self::styled(&source, (None, None, None))
@@ -497,7 +518,7 @@ impl BoxTree {
 
     fn styled(source: &Arc<Source>, key: InteractionKey) -> Result<Self, BoxTreeError> {
         let construction = source.construction.clone();
-        let css = source.css.as_str();
+
         let count = construction.nodes().len();
         // The selector source extends hover and active to ancestors (5.11.3).
         let mut states = vec![ConstructionState::default(); count];
@@ -550,14 +571,23 @@ impl BoxTree {
             values: colors(),
         })
         .map_err(failed)?;
-        let graph = parse(css)?;
-        let sheet = SheetId::new(NonZeroU64::MIN);
+        let graphs = source
+            .sheets
+            .iter()
+            .zip(0_u64..)
+            .map(|(css, order)| parse(css, order))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ids: Vec<SheetId> = (1..=graphs.len() as u64)
+            .map(|id| SheetId::new(NonZeroU64::new(id).expect("positive")))
+            .collect();
         let sheets = AuthorSheets::new(
-            vec![AuthorSheet {
-                id: sheet,
-                enabled: true,
-                membership: Membership::Persistent,
-            }],
+            ids.iter()
+                .map(|id| AuthorSheet {
+                    id: *id,
+                    enabled: true,
+                    membership: Membership::Persistent,
+                })
+                .collect(),
             vec![],
             true,
             None,
@@ -565,14 +595,18 @@ impl BoxTree {
             SheetLimits {
                 entries: big(),
                 retained_bytes: nz(BYTES),
-                work: nz(100),
+                work: nz(100 + 10 * ids.len()),
             },
         )
         .map_err(failed)?;
-        let bindings = [GraphBinding {
-            graph: &graph,
-            origin: GraphOrigin::Author(sheet),
-        }];
+        let bindings: Vec<GraphBinding<'_>> = graphs
+            .iter()
+            .zip(&ids)
+            .map(|(graph, id)| GraphBinding {
+                graph,
+                origin: GraphOrigin::Author(*id),
+            })
+            .collect();
         let bundle = DisplayRuleBundle::new(
             &catalog,
             &bindings,

@@ -2038,3 +2038,36 @@ fn inline_tables_line_up_with_inline_blocks() {
     assert_eq!(g[0].unwrap().border.bottom, 9.0);
     assert_eq!(g[1].unwrap().border.top, 5.0);
 }
+
+#[test]
+fn restyling_swaps_sheets_later_over_earlier_and_keeps_the_tree() {
+    let root = node("page", vec![node("a", vec![]), node("b", vec![])]);
+    let tree = BoxTree::new(root, "#a { height:5px; }").unwrap();
+    assert_eq!(
+        tree.layout(100.0, None).unwrap()[1].unwrap().border.bottom,
+        5.0
+    );
+    let next = tree
+        .restyled(&[
+            "#a { height:9px; } #b { height:1px; }",
+            "#a { height:20px; }",
+        ])
+        .unwrap();
+    let g = next.layout(100.0, None).unwrap();
+    assert_eq!(g[1].unwrap().border.bottom, 20.0);
+    assert_eq!(g[2].unwrap().border.bottom, 21.0);
+    // The first tree still lays out as it did, and importance beats order.
+    assert_eq!(
+        tree.layout(100.0, None).unwrap()[1].unwrap().border.bottom,
+        5.0
+    );
+    let next = tree
+        .restyled(&["#a { height:9px !important; }", "#a { height:20px; }"])
+        .unwrap();
+    assert_eq!(
+        next.layout(100.0, None).unwrap()[1].unwrap().border.bottom,
+        9.0
+    );
+    // No sheets is legal: the user agent's defaults remain.
+    assert!(tree.restyled(&[]).is_ok());
+}
