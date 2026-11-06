@@ -292,50 +292,62 @@ impl Build {
         // groups and captions need a table.
         loop {
             let here = self.boxes[target].table;
-            let wanted = match (here, role) {
-                (Some(TableRole::Table { .. }), None | Some(TableRole::Cell)) => {
-                    Some(TableRole::BodyGroup)
+            let group = |role: Option<TableRole>| {
+                matches!(
+                    role,
+                    Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
+                )
+            };
+            let in_table = matches!(here, Some(TableRole::Table { .. }));
+            let in_row = here == Some(TableRole::Row);
+            let wanted = match role {
+                // Only a cell or caption or plain block holds these.
+                None | Some(TableRole::Table { .. }) => {
+                    if in_table {
+                        Some(TableRole::BodyGroup)
+                    } else if group(here) {
+                        Some(TableRole::Row)
+                    } else if in_row {
+                        Some(TableRole::Cell)
+                    } else {
+                        None
+                    }
                 }
-                (
-                    Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup),
-                    None | Some(TableRole::Cell),
-                ) => Some(TableRole::Row),
-                (Some(TableRole::Row), None) => Some(TableRole::Cell),
-                (
-                    Some(TableRole::Row),
-                    Some(
-                        TableRole::Row
-                        | TableRole::HeaderGroup
-                        | TableRole::BodyGroup
-                        | TableRole::FooterGroup
-                        | TableRole::Caption
-                        | TableRole::Table { .. },
-                    ),
-                ) => Some(TableRole::Cell),
-                (
-                    None | Some(TableRole::Cell | TableRole::Caption),
-                    Some(
-                        TableRole::Cell
-                        | TableRole::Row
-                        | TableRole::HeaderGroup
-                        | TableRole::BodyGroup
-                        | TableRole::FooterGroup
-                        | TableRole::Caption,
-                    ),
-                ) => Some(TableRole::Table {
-                    spacing: [0.0, 0.0],
-                }),
-                (
-                    Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup),
-                    Some(
-                        TableRole::HeaderGroup
-                        | TableRole::BodyGroup
-                        | TableRole::FooterGroup
-                        | TableRole::Caption
-                        | TableRole::Table { .. },
-                    ),
-                ) => Some(TableRole::Cell),
-                _ => None,
+                Some(TableRole::Cell) => {
+                    if in_row {
+                        None
+                    } else if in_table || group(here) {
+                        Some(TableRole::Row)
+                    } else {
+                        Some(TableRole::Table {
+                            spacing: [0.0, 0.0],
+                        })
+                    }
+                }
+                Some(TableRole::Row) => {
+                    if in_table || group(here) {
+                        None
+                    } else if in_row {
+                        Some(TableRole::Cell)
+                    } else {
+                        Some(TableRole::Table {
+                            spacing: [0.0, 0.0],
+                        })
+                    }
+                }
+                Some(_) => {
+                    if in_table {
+                        None
+                    } else if group(here) {
+                        Some(TableRole::Row)
+                    } else if in_row {
+                        Some(TableRole::Cell)
+                    } else {
+                        Some(TableRole::Table {
+                            spacing: [0.0, 0.0],
+                        })
+                    }
+                }
             };
             let Some(wanted) = wanted else {
                 return target;
@@ -534,7 +546,10 @@ pub fn prepare_captured_tree(
                         | TableRole::Row
                 )
             );
-            if in_part
+            let open_part = build.open[target]
+                .and_then(|open| build.boxes[open].table)
+                .filter(|role| *role != TableRole::Cell);
+            if (open_part.is_some() || (in_part && build.open[target].is_none()))
                 && is_text
                 && source_node
                     .text()
@@ -579,6 +594,10 @@ pub fn prepare_captured_tree(
         ) {
             continue;
         }
+        let in_row = resolution.display == Display::InlineBlock;
+        let table_role = table_role_of(resolution.display);
+        // 17.2.1: a misplaced table part, or a non-table box in one, gets anonymous parts.
+        let parent_slot = parent_slot.map(|target| build.table_parent(target, index, table_role));
         // 9.2.2: inline-blocks in a run form lines of their own. Mixing them with text in
         // one line needs atomic inlines in a paragraph, which is refused below.
         if resolution.display == Display::InlineBlock
@@ -606,10 +625,6 @@ pub fn prepare_captured_tree(
             inline_rows.push(group);
             build.boxes[group].inline_row = Some(RowAlign::Left);
         }
-        let in_row = resolution.display == Display::InlineBlock;
-        let table_role = table_role_of(resolution.display);
-        // 17.2.1: a misplaced table part, or a non-table box in one, gets anonymous parts.
-        let parent_slot = parent_slot.map(|target| build.table_parent(target, index, table_role));
         if parent.is_some()
             && table_role.is_none()
             && !in_row
@@ -721,7 +736,7 @@ pub fn prepare_captured_tree(
                 build.boxes[group].children.push(arena);
             } else {
                 match build.open[target] {
-                    Some(group) if is_float => {
+                    Some(group) if is_float && build.boxes[group].table.is_none() => {
                         // A float belongs at its line's top, and the run avoids it: placing
                         // it before the whole run is exact for a float on the first line.
                         let at = build.boxes[target]

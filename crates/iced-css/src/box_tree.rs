@@ -611,7 +611,8 @@ impl BoxTree {
             if let Some(TableRole::Table { spacing }) = &mut value.table {
                 *spacing = spacings[owner];
             }
-            value.cell_align = match vertical_aligns[owner] {
+            // An anonymous cell has initial values, not those of the box it wraps.
+            value.cell_align = match vertical_aligns[owner].filter(|_| !prepared.anonymous[arena]) {
                 Some("middle") => RowAlign::Center,
                 Some("bottom") => RowAlign::Right,
                 _ => RowAlign::Left,

@@ -1565,3 +1565,61 @@ fn hidden_pseudo_with_an_inside_marker_does_not_count_and_counter_inherit_copies
     .unwrap();
     assert_eq!(tree.text_leaves()[0].1.text(), "7.7");
 }
+
+#[test]
+fn anonymous_parts_cover_nested_tables_rows_of_inline_blocks_and_blank_text() {
+    // A table directly in a table sits in an anonymous cell, with its own content.
+    let root = node("t", vec![node("inner", vec![node("c", vec![])])]);
+    let tree = BoxTree::new(
+        root,
+        "#t, #inner { display:table; } #c { display:table-cell; width:9px; height:4px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[2].unwrap().border.bottom, 4.0);
+    assert_eq!(g[0].unwrap().border.bottom, 4.0);
+    // Inline-blocks in a row share one anonymous cell, in one line.
+    let root = node("r", vec![node("a", vec![]), node("b", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#r { display:table-row; }
+         #a, #b { display:inline-block; width:10px; height:2px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(
+        (g[1].unwrap().border.left, g[2].unwrap().border.left),
+        (0.0, 10.0)
+    );
+    assert_eq!(g[1].unwrap().border.top, g[2].unwrap().border.top);
+    // Blank text between loose cells doesn't split their table.
+    let root = node(
+        "page",
+        vec![node("a", vec![]), text("gap", "  "), node("b", vec![])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#a, #b { display:table-cell; width:10px; height:2px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[3].unwrap().border.left, 10.0);
+    assert_eq!(g[3].unwrap().border.top, 0.0);
+    // White space between inline runs inside an anonymous cell is kept.
+    let root = node(
+        "r",
+        vec![text("a", "one"), text("gap", " "), text("b", "two")],
+    );
+    let tree = BoxTree::new(root, "#r { display:table-row; }").unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "one two");
+    // A float after a loose table stays after it.
+    let root = node("page", vec![node("a", vec![]), node("f", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#a { display:table-cell; width:10px; height:20px; }
+         #f { float:left; width:5px; height:5px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[2].unwrap().border.top, 20.0);
+}
