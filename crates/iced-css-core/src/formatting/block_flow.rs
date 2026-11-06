@@ -52,6 +52,23 @@ impl Dim {
     }
 }
 
+/// A box's part in a table (17.2). Column spans and rowspans are not modeled, `border-collapse`
+/// is treated as separate borders with no spacing, and extra specified table height is
+/// not distributed to rows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TableRole {
+    /// Horizontal and vertical `border-spacing`.
+    Table {
+        spacing: [f32; 2],
+    },
+    HeaderGroup,
+    BodyGroup,
+    FooterGroup,
+    Row,
+    Cell,
+    Caption,
+}
+
 /// One box. `children` index the same arena; the arena must form one tree rooted at 0.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FlowBox {
@@ -59,6 +76,7 @@ pub struct FlowBox {
     pub direction: Direction,
     pub float: Option<FloatSide>,
     pub clear: ClearSide,
+    pub table: Option<TableRole>,
     /// Absolutely positioned: takes no part in flow; the result holds only its static
     /// position, in `border.left` and `border.top`, for the caller's 10.3.7/10.6.4 pass.
     pub out_of_flow: bool,
@@ -85,6 +103,7 @@ impl Default for FlowBox {
             direction: Direction::Ltr,
             float: None,
             clear: ClearSide::None,
+            table: None,
             out_of_flow: false,
             establishes_bfc: false,
             width: Dim::Auto,
@@ -392,6 +411,19 @@ impl Solver<'_> {
     /// Longest-line and narrowest-line content widths (10.3.5's preferred widths).
     fn measure(&self, node: usize) -> (f32, f32) {
         let value = &self.boxes[node];
+        if let Some(TableRole::Table { spacing }) = value.table {
+            let (rows, captions) = self.table_parts(node);
+            let (mins, prefs) = self.table_columns(&rows);
+            let gaps = spacing[0] * (mins.len() + 1) as f32;
+            let mut minimum = mins.iter().sum::<f32>() + gaps;
+            let mut preferred = prefs.iter().sum::<f32>() + gaps;
+            for caption in captions {
+                let (caption_min, caption_preferred) = self.outer_measure(caption);
+                minimum = minimum.max(caption_min);
+                preferred = preferred.max(caption_preferred);
+            }
+            return (minimum, preferred);
+        }
         if value.children.is_empty() {
             let content = value.content.unwrap_or_default();
             return (content.preferred_min_width, content.preferred_width);
@@ -412,6 +444,161 @@ impl Solver<'_> {
         }
         // Negative margins can shrink a float row below the widest single child.
         (minimum, preferred.max(row).max(minimum))
+    }
+
+    /// The table's rows in display order (17.2: header, body, footer), and captions.
+    fn table_parts(&self, table: usize) -> (Vec<usize>, Vec<usize>) {
+        let (mut head, mut body, mut foot, mut captions) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for &child in &self.boxes[table].children {
+            let inner = || self.boxes[child].children.iter().copied();
+            match self.boxes[child].table {
+                Some(TableRole::Row) => body.push(child),
+                Some(TableRole::HeaderGroup) => head.extend(inner()),
+                Some(TableRole::BodyGroup) => body.extend(inner()),
+                Some(TableRole::FooterGroup) => foot.extend(inner()),
+                Some(TableRole::Caption) => captions.push(child),
+                _ => {}
+            }
+        }
+        head.append(&mut body);
+        head.append(&mut foot);
+        (head, captions)
+    }
+
+    /// Each column's narrowest and preferred width over its cells (17.5.2.2).
+    fn table_columns(&self, rows: &[usize]) -> (Vec<f32>, Vec<f32>) {
+        let (mut mins, mut prefs) = (Vec::new(), Vec::new());
+        for &row in rows {
+            for (column, &cell) in self.boxes[row].children.iter().enumerate() {
+                if column == mins.len() {
+                    mins.push(0.0_f32);
+                    prefs.push(0.0_f32);
+                }
+                let (minimum, preferred) = self.outer_measure(cell);
+                mins[column] = mins[column].max(minimum);
+                prefs[column] = prefs[column].max(preferred);
+            }
+        }
+        (mins, prefs)
+    }
+
+    /// Lays out rows and captions in `inner`; returns the content bottom.
+    fn layout_table(
+        &mut self,
+        node: usize,
+        spacing: [f32; 2],
+        inner: Containing,
+        content_top: f32,
+    ) -> Result<f32, FlowError> {
+        let (rows, captions) = self.table_parts(node);
+        let (mins, prefs) = self.table_columns(&rows);
+        let count = mins.len();
+        let available = (inner.width - spacing[0] * (count + 1) as f32).max(0.0);
+        let (sum_min, sum_pref): (f32, f32) = (mins.iter().sum(), prefs.iter().sum());
+        let widths: Vec<f32> = (0..count)
+            .map(|column| {
+                if available >= sum_pref {
+                    // Extra room goes by preferred width, or evenly with none to go by.
+                    let share = if sum_pref > 0.0 {
+                        prefs[column] / sum_pref
+                    } else {
+                        1.0 / count as f32
+                    };
+                    prefs[column] + (available - sum_pref) * share
+                } else if available > sum_min {
+                    mins[column]
+                        + (prefs[column] - mins[column]) * (available - sum_min)
+                            / (sum_pref - sum_min)
+                } else {
+                    mins[column]
+                }
+            })
+            .collect();
+        let mut y = content_top;
+        let cell_box = |solver: &mut Self, cell: usize, width: f32, basis: f32| {
+            let padding = solver.paddings(cell, basis);
+            let border = solver.boxes[cell].border;
+            let content = (width - border[3] - padding[3] - padding[1] - border[1]).max(0.0);
+            let bottom = solver.finish_bfc_box(
+                cell,
+                Containing {
+                    left: 0.0,
+                    width: content,
+                    height: None,
+                    top: Some(0.0),
+                    direction: inner.direction,
+                },
+                (content, 0.0, 0.0),
+                0.0,
+                0.0,
+                padding,
+            )?;
+            Ok::<f32, FlowError>(bottom)
+        };
+        // 17.4: a caption is a block above the table's grid, as wide as the table.
+        for caption in captions {
+            let height = cell_box(self, caption, inner.width, inner.width)?;
+            self.translate(caption, inner.left, y);
+            y += height;
+        }
+        let grid_top = y;
+        y += spacing[1];
+        for &row in &rows {
+            let mut height = self.boxes[row].height.vertical(None).unwrap_or(0.0);
+            let cells = self.boxes[row].children.clone();
+            let mut x = 0.0;
+            for (column, &cell) in cells.iter().enumerate() {
+                x += spacing[0];
+                let width = widths[column];
+                let bottom = cell_box(self, cell, width, inner.width)?;
+                let left = match inner.direction {
+                    Direction::Ltr => inner.left + x,
+                    Direction::Rtl => inner.left + inner.width - x - width,
+                };
+                self.translate(cell, left, y);
+                height = height.max(bottom);
+                x += width;
+            }
+            // 17.5.3: every cell fills its row; its content stays at the top.
+            for &cell in &cells {
+                let geometry = &mut self.geometry[cell];
+                let extra = y + height - geometry.border.bottom;
+                geometry.border.bottom += extra;
+                geometry.padding.bottom += extra;
+            }
+            let area = rect(inner.left, inner.left + inner.width, y, y + height);
+            self.geometry[row] = FlowGeometry {
+                border: area,
+                padding: area,
+                content: area,
+                ..FlowGeometry::default()
+            };
+            y += height + spacing[1];
+        }
+        for &child in &self.boxes[node].children.clone() {
+            if matches!(
+                self.boxes[child].table,
+                Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
+            ) {
+                let group = &self.boxes[child].children;
+                let span = group.iter().fold(None, |span: Option<(f32, f32)>, &row| {
+                    let edge = self.geometry[row].border;
+                    Some(span.map_or((edge.top, edge.bottom), |(top, bottom)| {
+                        (top.min(edge.top), bottom.max(edge.bottom))
+                    }))
+                });
+                let (top, bottom) = span.unwrap_or((grid_top, grid_top));
+                let area = rect(inner.left, inner.left + inner.width, top, bottom);
+                self.geometry[child] = FlowGeometry {
+                    border: area,
+                    padding: area,
+                    content: area,
+                    ..FlowGeometry::default()
+                };
+            }
+        }
+        Ok(y)
     }
 
     fn outer_measure(&self, node: usize) -> (f32, f32) {
@@ -859,10 +1046,14 @@ impl Solver<'_> {
             direction: value.direction,
         };
         let mut flow = Flow::new(content_top);
-        if let Some(height) = self.leaf_height(node, width.0) {
-            flow.y += height;
+        if let Some(TableRole::Table { spacing }) = value.table {
+            flow.y = self.layout_table(node, spacing, inner, content_top)?;
+        } else {
+            if let Some(height) = self.leaf_height(node, width.0) {
+                flow.y += height;
+            }
+            self.lay_children(node, &mut flow, inner)?;
         }
-        self.lay_children(node, &mut flow, inner)?;
         // 10.6.7: the bottom margin edge of the last in-flow child and every float.
         let flowed = flow
             .floats
@@ -1016,6 +1207,14 @@ impl Solver<'_> {
         flow.clearance_through = false;
         let value = &self.boxes[node];
         let (solved, ml, mr) = self.block_width(node, cb)?;
+        // 17.5.2.2: an auto-width table is only as wide as its contents ask for.
+        let solved =
+            if matches!(value.table, Some(TableRole::Table { .. })) && value.width == Dim::Auto {
+                let (_, preferred) = self.measure(node);
+                solved.min(preferred)
+            } else {
+                solved
+            };
         let basis = cb.width;
         let padding = self.paddings(node, basis);
         let border = value.border;

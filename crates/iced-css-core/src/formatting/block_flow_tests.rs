@@ -825,3 +825,179 @@ fn blank_text_with_clearance_counts_as_empty_for_the_margin_rule() {
     .unwrap();
     assert_eq!(g[1].border.bottom, 50.0);
 }
+
+fn cell(width: Dim, height: f32) -> FlowBox {
+    FlowBox {
+        table: Some(TableRole::Cell),
+        establishes_bfc: true,
+        width,
+        height: Dim::Px(height),
+        ..FlowBox::default()
+    }
+}
+fn table_of(spacing: [f32; 2], width: Dim) -> FlowBox {
+    FlowBox {
+        table: Some(TableRole::Table { spacing }),
+        establishes_bfc: true,
+        width,
+        ..FlowBox::default()
+    }
+}
+fn row() -> FlowBox {
+    FlowBox {
+        table: Some(TableRole::Row),
+        ..FlowBox::default()
+    }
+}
+
+#[test]
+fn table_columns_rows_and_spacing() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([2.0, 3.0], Dim::Auto),
+            row(),
+            cell(Dim::Px(10.0), 5.0),
+            cell(Dim::Px(20.0), 8.0),
+            row(),
+            cell(Dim::Px(15.0), 4.0),
+            cell(Dim::Px(5.0), 4.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4), (1, 5), (5, 6), (5, 7)],
+    );
+    // Columns 15 and 20, with three 2px gaps: an auto table shrinks to 41.
+    assert_eq!((g[1].border.left, g[1].border.right), (0.0, 41.0));
+    assert_eq!((g[3].border.left, g[3].border.right), (2.0, 17.0));
+    assert_eq!((g[4].border.left, g[4].border.right), (19.0, 39.0));
+    // Row heights 8 and 4, with three 3px gaps; cells fill their row.
+    assert_eq!((g[3].border.top, g[3].border.bottom), (3.0, 11.0));
+    assert_eq!(g[3].content.bottom, 8.0);
+    assert_eq!((g[6].border.top, g[6].border.bottom), (14.0, 18.0));
+    assert_eq!(g[1].border.bottom, 21.0);
+    assert_eq!((g[5].border.top, g[5].border.bottom), (14.0, 18.0));
+}
+
+#[test]
+fn a_wide_table_shares_extra_room_and_a_narrow_one_shrinks_to_minimums() {
+    let wide = table_of([0.0, 0.0], Dim::Px(90.0));
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            wide,
+            row(),
+            cell(Dim::Px(10.0), 1.0),
+            cell(Dim::Px(20.0), 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4)],
+    );
+    assert_eq!((g[3].border.right, g[4].border.right), (30.0, 90.0));
+    let leaf = |pref: f32, min: f32| FlowBox {
+        table: Some(TableRole::Cell),
+        establishes_bfc: true,
+        content: Some(FlowContent {
+            height: 1.0,
+            preferred_width: pref,
+            preferred_min_width: min,
+        }),
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Auto),
+            row(),
+            leaf(300.0, 20.0),
+            leaf(100.0, 40.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4)],
+    );
+    // 100 available, between 60 and 400: each moves 40/340 from its minimum.
+    let first = g[3].border.right;
+    assert!((first - (20.0 + 280.0 * 40.0 / 340.0)).abs() < 0.01);
+    assert!((g[4].border.right - 100.0).abs() < 0.01);
+}
+
+#[test]
+fn table_groups_order_header_first_and_footer_last_with_captions_above() {
+    let group = |role| FlowBox {
+        table: Some(role),
+        ..FlowBox::default()
+    };
+    let caption = FlowBox {
+        table: Some(TableRole::Caption),
+        establishes_bfc: true,
+        height: Dim::Px(7.0),
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Px(50.0)),
+            group(TableRole::FooterGroup),
+            row(),
+            cell(Dim::Auto, 1.0),
+            group(TableRole::BodyGroup),
+            row(),
+            cell(Dim::Auto, 2.0),
+            group(TableRole::HeaderGroup),
+            row(),
+            cell(Dim::Auto, 4.0),
+            caption,
+        ],
+        &[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (1, 5),
+            (5, 6),
+            (6, 7),
+            (1, 8),
+            (8, 9),
+            (9, 10),
+            (1, 11),
+        ],
+    );
+    assert_eq!(g[11].border.top, 0.0);
+    assert_eq!(g[11].border.right, 50.0);
+    assert_eq!(g[10].border.top, 7.0);
+    assert_eq!(g[7].border.top, 11.0);
+    assert_eq!(g[4].border.top, 13.0);
+    assert_eq!((g[8].border.top, g[8].border.bottom), (7.0, 11.0));
+    assert_eq!((g[2].border.top, g[2].border.bottom), (13.0, 14.0));
+    assert_eq!(g[1].border.bottom, 14.0);
+}
+
+#[test]
+fn rtl_tables_run_columns_from_the_right_and_float_shrink_measures_them() {
+    let mut rtl = table_of([0.0, 0.0], Dim::Px(50.0));
+    rtl.direction = Direction::Rtl;
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            rtl,
+            row(),
+            cell(Dim::Px(10.0), 1.0),
+            cell(Dim::Px(10.0), 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4)],
+    );
+    assert_eq!(g[3].border.right, 50.0);
+    assert_eq!(g[4].border.right, 25.0);
+    let floating = FlowBox {
+        float: Some(FloatSide::Left),
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            floating,
+            table_of([1.0, 0.0], Dim::Auto),
+            row(),
+            cell(Dim::Px(10.0), 1.0),
+            cell(Dim::Px(20.0), 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (3, 4), (3, 5)],
+    );
+    assert_eq!(g[1].border.right, 33.0);
+}

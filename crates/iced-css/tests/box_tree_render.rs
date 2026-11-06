@@ -63,6 +63,99 @@ fn a_press_on_inline_text_goes_to_the_run_under_the_point() {
 }
 
 #[test]
+fn renders_a_table_from_a_stylesheet() {
+    let row = |id: &str, a: &'static str, b: &'static str, c: &'static str| {
+        node(
+            id,
+            vec![
+                node(&format!("{id}a"), vec![text(&format!("{id}at"), a)]),
+                node(&format!("{id}b"), vec![text(&format!("{id}bt"), b)]),
+                node(&format!("{id}c"), vec![text(&format!("{id}ct"), c)]),
+            ],
+        )
+    };
+    let root = node(
+        "page",
+        vec![node(
+            "table",
+            vec![
+                node("cap", vec![text("captext", "Quarterly results")]),
+                node(
+                    "foot",
+                    vec![row(
+                        "f",
+                        "Total",
+                        "12",
+                        "A much longer note in the last column",
+                    )],
+                ),
+                node(
+                    "body",
+                    vec![
+                        row("r1", "North", "5", "Up"),
+                        row("r2", "South", "7", "Down"),
+                    ],
+                ),
+                node("head", vec![row("h", "Region", "Sales", "Note")]),
+            ],
+        )],
+    );
+    let cells = ["h", "r1", "r2", "f"]
+        .iter()
+        .flat_map(|r| ["a", "b", "c"].map(|c| format!("#{r}{c}")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let css = format!(
+        "#page {{ padding:16px; background-color:#ffffff; color:#222222; }}
+         #table {{ display:table; width:70%; border-spacing:4px 2px; background-color:#cfd8dc; }}
+         #cap {{ display:table-caption; font-weight:bold; padding:6px; }}
+         #head {{ display:table-header-group; font-weight:bold; background-color:#90a4ae; }}
+         #body {{ display:table-row-group; }}
+         #foot {{ display:table-footer-group; font-style:italic; }}
+         #h, #r1, #r2, #f {{ display:table-row; }}
+         #r2 {{ background-color:#fff3e0; }}
+         {cells} {{ display:table-cell; padding:4px 8px; border:1px solid #607d8b; }}
+         #r1b, #r2b, #fb {{ text-align:right; }}"
+    );
+    let view: Element<'_, u8> = BoxTree::new(root, &css).unwrap().view();
+    let mut ui = iced_test::simulator(view);
+    let snapshot = ui.snapshot(&Theme::Light).unwrap();
+    let path = std::env::temp_dir().join("iced-css-box-tree-table");
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(snapshot.matches_image(path.join("table.png")).unwrap());
+}
+
+#[test]
+fn misplaced_table_parts_are_refused_not_guessed() {
+    for (css, tree) in [
+        (
+            "#a { display:table-cell; }",
+            node("page", vec![node("a", vec![])]),
+        ),
+        (
+            "#a { display:table-row; }",
+            node("page", vec![node("a", vec![])]),
+        ),
+        (
+            "#page { display:table; } #a { height:1px; }",
+            node("page", vec![node("a", vec![])]),
+        ),
+        (
+            "#page { display:table; }",
+            node("page", vec![text("t", "words")]),
+        ),
+    ] {
+        assert!(
+            BoxTree::new(tree, css)
+                .unwrap_err()
+                .to_string()
+                .contains("display")
+        );
+    }
+}
+
+#[test]
 fn centered_and_right_aligned_text_sits_where_it_is_hit() {
     let view = |align: &str| -> Element<'_, u8> {
         BoxTree::new(

@@ -36,7 +36,7 @@ use iced_css_core::{
         ua_display::{UaDisplayCatalog, UaDisplayLimits},
     },
     formatting::{
-        block_flow::{FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport},
+        block_flow::{FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, TableRole},
         display::Position,
     },
     identity::SourceChangeLimits,
@@ -580,9 +580,10 @@ impl BoxTree {
             styles,
             generated,
             markers,
+            spacings,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
             .map_err(failed)?;
-        let prepared = prepare_captured_tree(
+        let mut prepared = prepare_captured_tree(
             &projection,
             &display,
             facts(),
@@ -591,6 +592,11 @@ impl BoxTree {
             &generated,
         )
         .map_err(failed)?;
+        for (arena, value) in prepared.boxes.iter_mut().enumerate() {
+            if let Some(TableRole::Table { spacing }) = &mut value.table {
+                *spacing = spacings[prepared.positions[arena].0];
+            }
+        }
         let nodes = snapshot.construction().nodes();
         let raw_paints = paints.clone();
         let generated_of = |run: RunSource| -> Option<&GeneratedRun> {

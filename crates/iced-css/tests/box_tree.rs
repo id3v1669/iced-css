@@ -111,7 +111,7 @@ fn paint_order_is_flow_then_float_then_positioned() {
 
 #[test]
 fn unsupported_display_is_reported() {
-    let error = BoxTree::new(page(), "#note { display:table; }").unwrap_err();
+    let error = BoxTree::new(page(), "#note { display:inline-block; }").unwrap_err();
     assert!(error.to_string().contains("display"));
 }
 

@@ -30,7 +30,7 @@ use iced_css_core::{
         block::{AutoLength, Direction},
         block_flow::{
             Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
-            layout_block_flow_measured, preferred_content_widths,
+            TableRole, layout_block_flow_measured, preferred_content_widths,
         },
         clearance::ClearSide,
         display::{Display, Float, Position},
@@ -440,6 +440,23 @@ pub fn prepare_captured_tree(
         if resolution.display == Display::Inline
             && let Some(target) = parent_slot
         {
+            // A table part holds no inline runs without an anonymous cell, which is not
+            // built here (17.2.1).
+            if matches!(
+                build.boxes[target].table,
+                Some(
+                    TableRole::Table { .. }
+                        | TableRole::HeaderGroup
+                        | TableRole::BodyGroup
+                        | TableRole::FooterGroup
+                        | TableRole::Row
+                )
+            ) {
+                return Err(E::Unsupported {
+                    projected: index,
+                    property: "display",
+                });
+            }
             let group = build.inline_group(target, index);
             slot[index] = Some(group);
             container[index] = Some(target);
@@ -455,7 +472,44 @@ pub fn prepare_captured_tree(
             ancestors.push(index);
             continue;
         }
-        if parent.is_some() && !matches!(resolution.display, Display::Block | Display::ListItem) {
+        // 17.2: columns only carry properties this layout does not read.
+        if matches!(
+            resolution.display,
+            Display::TableColumn | Display::TableColumnGroup
+        ) {
+            continue;
+        }
+        let table_role = table_role_of(resolution.display);
+        // 17.2.1 would wrap misplaced table parts in anonymous boxes. Those are not built
+        // here, so a table part must sit in its proper parent, and vice versa.
+        let parent_role = parent_slot.and_then(|target| build.boxes[target].table);
+        let placed = match (parent_role, table_role) {
+            (None, None) => true,
+            (None, Some(TableRole::Table { .. })) => true,
+            (Some(TableRole::Cell | TableRole::Caption), None) => true,
+            (Some(TableRole::Cell | TableRole::Caption), Some(TableRole::Table { .. })) => true,
+            (
+                Some(TableRole::Table { .. }),
+                Some(
+                    TableRole::HeaderGroup
+                    | TableRole::BodyGroup
+                    | TableRole::FooterGroup
+                    | TableRole::Row
+                    | TableRole::Caption,
+                ),
+            ) => true,
+            (
+                Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup),
+                Some(TableRole::Row),
+            ) => true,
+            (Some(TableRole::Row), Some(TableRole::Cell)) => true,
+            _ => false,
+        };
+        if !placed
+            || (parent.is_some()
+                && table_role.is_none()
+                && !matches!(resolution.display, Display::Block | Display::ListItem))
+        {
             return Err(E::Unsupported {
                 projected: index,
                 property: "display",
@@ -503,6 +557,24 @@ pub fn prepare_captured_tree(
         }
         if projection.nodes[index].children.is_empty() && !is_text {
             value.content = content(original);
+        }
+        if let Some(role) = table_role {
+            value.table = Some(role);
+            match role {
+                TableRole::Table { .. } | TableRole::Cell | TableRole::Caption => {
+                    value.establishes_bfc = true;
+                    // 17.5: margins do not apply to cells; a table keeps its own.
+                    if matches!(role, TableRole::Cell) {
+                        value.margin = [Dim::Px(0.0); 4];
+                    }
+                }
+                // 17.5.1 layers paint backgrounds only; nothing else applies to them.
+                _ => {
+                    value.margin = [Dim::Px(0.0); 4];
+                    value.padding = [Dim::Px(0.0); 4];
+                    value.border = [0.0; 4];
+                }
+            }
         }
         let arena = build.boxes.len();
         slot[index] = Some(arena);
@@ -880,6 +952,21 @@ fn place_absolute(
     Ok(())
 }
 
+fn table_role_of(display: Display) -> Option<TableRole> {
+    Some(match display {
+        Display::Table => TableRole::Table {
+            spacing: [0.0, 0.0],
+        },
+        Display::TableHeaderGroup => TableRole::HeaderGroup,
+        Display::TableRowGroup => TableRole::BodyGroup,
+        Display::TableFooterGroup => TableRole::FooterGroup,
+        Display::TableRow => TableRole::Row,
+        Display::TableCell => TableRole::Cell,
+        Display::TableCaption => TableRole::Caption,
+        _ => return None,
+    })
+}
+
 fn parent_content(
     boxes: &[FlowBox],
     geometry: &[FlowGeometry],
@@ -1035,6 +1122,8 @@ pub struct TreePaint {
     pub generated: Vec<[Option<GeneratedRun>; 2]>,
     /// The outside list marker's text per row (12.5.1); it takes no room in the flow.
     pub markers: Vec<Option<String>>,
+    /// The computed `border-spacing` per row, zero under `border-collapse: collapse`.
+    pub spacings: Vec<[f32; 2]>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -1197,6 +1286,9 @@ pub fn evaluate_tree_paint<'r>(
     let mut marker_types: Vec<Option<String>> = Vec::with_capacity(projection.len());
     let mut marker_inside: Vec<bool> = Vec::with_capacity(projection.len());
     let mut markers: Vec<Option<String>> = Vec::with_capacity(projection.len());
+    let mut spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
+    let mut collapses: Vec<bool> = Vec::with_capacity(projection.len());
+    let mut raw_spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
     // Each list parent's running item count.
     let mut items = vec![0_usize; projection.len()];
     let nodes = snapshot.construction().nodes();
@@ -1417,6 +1509,39 @@ pub fn evaluate_tree_paint<'r>(
         });
         visibility.push(visible);
         z_indices.push(z_index);
+        let length = |target: &LengthTarget| match target {
+            LengthTarget::Absolute(value) => value
+                .to_nonnegative_f32(limits.numeric)
+                .map_or(0.0, |c| c.value),
+            LengthTarget::Relative(value, RelativeUnit::Em) => value
+                .scaled_finite_f32(font_size, limits.numeric)
+                .map_or(0.0, |c| c.value),
+            LengthTarget::Relative(value, RelativeUnit::Ex) => value
+                .scaled_finite_f32(font_size * 0.5, limits.numeric)
+                .map_or(0.0, |c| c.value),
+            _ => 0.0,
+        };
+        let raw_spacing = match defaulted("border-spacing")? {
+            DefaultedValueRef::Compute(SpecifiedValue::LengthPair(across, down)) => {
+                [length(across), length(down)]
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.map_or([0.0, 0.0], |parent| raw_spacings[parent])
+            }
+            _ => [0.0, 0.0],
+        };
+        let collapse = match defaulted("border-collapse")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "collapse"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_some_and(|parent| collapses[parent])
+            }
+            _ => false,
+        };
+        raw_spacings.push(raw_spacing);
+        collapses.push(collapse);
+        spacings.push(if collapse { [0.0, 0.0] } else { raw_spacing });
         // Generated content: text in the element, inheriting from it.
         let marker_type = match defaulted("list-style-type")? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
@@ -1667,5 +1792,6 @@ pub fn evaluate_tree_paint<'r>(
         styles,
         generated,
         markers,
+        spacings,
     })
 }
