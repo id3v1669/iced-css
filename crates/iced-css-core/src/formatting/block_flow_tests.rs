@@ -1487,3 +1487,29 @@ fn absurd_spans_are_clamped() {
     );
     assert_eq!(g[1].border.bottom, 1.0);
 }
+
+#[test]
+fn text_widens_past_stacked_floats_at_the_first_edge_with_more_room() {
+    let mut boxes = vec![
+        FlowBox::default(),
+        float(FloatSide::Left, 80.0, 10.0),
+        float(FloatSide::Left, 80.0, 10.0),
+        text_leaf(5.0),
+    ];
+    boxes[0].children = vec![1, 2, 3];
+    let mut asked = Vec::new();
+    let g = layout_block_flow_split(
+        &boxes,
+        viewport(),
+        limits(),
+        &mut |node, _| (node == 3).then_some(60.0),
+        &mut |_, narrow, until, wide| {
+            asked.push((narrow, until, wide));
+            Some(40.0)
+        },
+    )
+    .unwrap();
+    // The second float stacks below the first; only past both is there more room.
+    assert_eq!(asked, vec![(20.0, 20.0, 100.0)]);
+    assert_eq!(g[3].leaf_after.unwrap().top, 20.0);
+}

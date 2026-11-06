@@ -559,29 +559,34 @@ impl Solver<'_> {
         (head, captions)
     }
 
-    /// The index past the last row in the same row group as `rows[row_index]`. Rows directly
-    /// in the table form a group with their neighbours (17.2.1's anonymous group).
-    fn group_end(&self, rows: &[usize], row_index: usize) -> usize {
-        let group_of = |row: usize| {
-            self.boxes.iter().position(|candidate| {
-                candidate.children.contains(&row)
-                    && matches!(
-                        candidate.table,
-                        Some(
-                            TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup
-                        )
-                    )
-            })
-        };
-        let own = group_of(rows[row_index]);
-        rows[row_index..]
-            .iter()
-            .position(|row| group_of(*row) != own)
-            .map_or(rows.len(), |offset| row_index + offset)
+    /// For each row, the index past the last row of its row group. Rows directly in the
+    /// table form a group with their neighbours (17.2.1's anonymous group).
+    fn group_ends(&self, rows: &[usize]) -> Vec<usize> {
+        let mut group_of = vec![None; self.boxes.len()];
+        for (index, candidate) in self.boxes.iter().enumerate() {
+            if matches!(
+                candidate.table,
+                Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
+            ) {
+                for &row in &candidate.children {
+                    group_of[row] = Some(index);
+                }
+            }
+        }
+        let mut ends = vec![rows.len(); rows.len()];
+        for index in (0..rows.len().saturating_sub(1)).rev() {
+            if group_of[rows[index]] == group_of[rows[index + 1]] {
+                ends[index] = ends[index + 1];
+            } else {
+                ends[index] = index + 1;
+            }
+        }
+        ends
     }
 
     /// 17.5: cells claim grid slots row by row, skipping slots a rowspan from above holds.
     fn table_grid(&self, rows: &[usize]) -> (Vec<GridCell>, usize) {
+        let ends = self.group_ends(rows);
         let mut held: Vec<usize> = Vec::new();
         let mut placed = Vec::new();
         let mut columns = 0;
@@ -595,8 +600,7 @@ impl Solver<'_> {
                 let col_span = value.col_span.clamp(1, MAX_SPAN);
                 // A rowspan stops at the end of its row group, or a span past any sane table
                 // at the limit of what can be represented.
-                let group_end = self.group_end(rows, row_index);
-                let row_span = value.row_span.clamp(1, group_end - row_index);
+                let row_span = value.row_span.clamp(1, ends[row_index] - row_index);
                 if held.len() < column + col_span {
                     held.resize(column + col_span, 0);
                 }
@@ -1255,15 +1259,17 @@ impl Solver<'_> {
             bound = bound.saturating_sub(1);
             if at_used == height || bound == 0 {
                 let band = displaced.then(|| rect(near, far.max(near), y, y));
-                // Past the lowest narrowing float that ends inside the text, it can widen.
+                // Past a float that ends inside the text it can widen: the first such
+                // bottom with more room below it than this band has.
                 let end = y + at_used;
-                let until = flow
+                let mut bottoms: Vec<f32> = flow
                     .floats
                     .iter()
                     .filter(|float| float.top < end && float.bottom > y && float.bottom < end)
                     .map(|float| float.bottom)
-                    .fold(f32::INFINITY, f32::min);
-                if until.is_finite() && displaced {
+                    .collect();
+                bottoms.sort_by(f32::total_cmp);
+                for until in bottoms.into_iter().filter(|_| displaced) {
                     let (mut wide_near, mut wide_far) = (left, right);
                     for float in flow
                         .floats
@@ -1275,12 +1281,14 @@ impl Solver<'_> {
                             FloatSide::Right => wide_far = wide_far.min(float.left),
                         }
                     }
-                    if wide_far - wide_near > used
-                        && let Some(total) =
+                    if wide_far - wide_near > used {
+                        if let Some(total) =
                             (self.text_split)(node, used, until - y, wide_far - wide_near)
-                    {
-                        let after = rect(wide_near, wide_far, until, until);
-                        return Ok((band, y - probe + total, Some(after)));
+                        {
+                            let after = rect(wide_near, wide_far, until, until);
+                            return Ok((band, y - probe + total, Some(after)));
+                        }
+                        break;
                     }
                 }
                 return Ok((band, y - probe + at_used, None));

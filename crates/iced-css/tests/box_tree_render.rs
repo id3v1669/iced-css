@@ -220,32 +220,37 @@ fn text_widens_past_a_shorter_float_on_the_real_renderer() {
 }
 
 #[test]
-fn misplaced_table_parts_are_refused_not_guessed() {
-    for (css, tree) in [
-        (
-            "#a { display:table-cell; }",
-            node("page", vec![node("a", vec![])]),
-        ),
-        (
-            "#a { display:table-row; }",
-            node("page", vec![node("a", vec![])]),
-        ),
-        (
-            "#page { display:table; } #a { height:1px; }",
-            node("page", vec![node("a", vec![])]),
-        ),
-        (
-            "#page { display:table; }",
-            node("page", vec![text("t", "words")]),
-        ),
-    ] {
-        assert!(
-            BoxTree::new(tree, css)
-                .unwrap_err()
-                .to_string()
-                .contains("display")
-        );
-    }
+fn centered_text_still_splits_and_bidirectional_text_stays_narrow() {
+    let long = "This paragraph is long enough to run beside the short float for a few lines, \
+        and then, once it has passed the float's bottom edge, the following lines should use \
+        the whole width of the page again, and it keeps going for a good while after that.";
+    let css = |align: &str| {
+        format!(
+            "#page {{ width:420px; padding:8px; text-align:{align}; }}
+             #side {{ float:left; width:120px; height:60px; margin-right:8px; }}"
+        )
+    };
+    let view = |content: &'static str, align: &str| -> Element<'_, u8> {
+        BoxTree::new(
+            node("page", vec![node("side", vec![]), text("copy", content)]),
+            &css(align),
+        )
+        .unwrap()
+        .interactive()
+        .on_press("copy", 1)
+        .on_press("page", 3)
+        .into()
+    };
+    // Centered lines below the float come back to full width, past the float's right edge
+    // to its left: a press well left of the old band's start lands in text.
+    assert_eq!(
+        click(view(long, "center"), Point::new(40.0, 110.0)),
+        vec![1]
+    );
+    let mixed = "\u{5e9}\u{5dc}\u{5d5}\u{5dd} words words words words words words words words \
+        words words words words words words words words words words words words words words \
+        words words words words words words words words words words words words words words";
+    assert_eq!(click(view(mixed, "left"), Point::new(40.0, 110.0)), vec![3]);
 }
 
 #[test]

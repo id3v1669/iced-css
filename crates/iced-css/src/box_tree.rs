@@ -1452,8 +1452,7 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
 }
 
 /// Splits a leaf where its lines at `narrow` first start at or below `until`, for text
-/// that widens past a float. Returns the two parts and the first part's height. A forced
-/// line break gives more than one buffer line, whose offsets do not add up: no split.
+/// that widens past a float. Returns the two parts and the first part's height.
 fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
@@ -1461,10 +1460,30 @@ fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
     until: f32,
 ) -> Option<(TextLeaf, TextLeaf, f32)> {
     let whole = leaf.text();
-    if whole.contains('\n') {
+    // Forced breaks give several buffer lines, whose offsets do not add up. Bidirectional
+    // text reorders per line and its second part would re-detect its base direction.
+    if whole.chars().any(|character| {
+        matches!(
+            character,
+            '\n' | '\r' | '\x0B' | '\x0C' | '\u{85}' | '\u{2028}' | '\u{2029}'
+                | '\u{590}'..='\u{8FF}'
+                | '\u{FB1D}'..='\u{FDFF}'
+                | '\u{FE70}'..='\u{FEFF}'
+                | '\u{10800}'..='\u{10FFF}'
+                | '\u{1E800}'..='\u{1EFFF}'
+        )
+    }) {
         return None;
     }
-    let shaped = paragraph::<Renderer>(renderer, leaf, narrow);
+    // Lines start at x = 0 only when left aligned, so scan an aligned-left copy. The same
+    // line breaks result whatever the alignment. The band's position can differ by a float
+    // rounding between layout and paint, which must not move the cut across a line.
+    let until = (until * 4.0).round() / 4.0;
+    let scanning = TextLeaf {
+        align: "left",
+        ..leaf.clone()
+    };
+    let shaped = paragraph::<Renderer>(renderer, &scanning, narrow);
     let height = shaped.min_bounds().height;
     let offset_at = |y: f32| {
         shaped

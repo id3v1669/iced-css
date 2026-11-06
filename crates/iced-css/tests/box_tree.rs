@@ -111,7 +111,7 @@ fn paint_order_is_flow_then_float_then_positioned() {
 
 #[test]
 fn unsupported_display_is_reported() {
-    let error = BoxTree::new(page(), "#note { display:table-row; }").unwrap_err();
+    let error = BoxTree::new(page(), "#note { display:inline-table; }").unwrap_err();
     assert!(error.to_string().contains("display"));
 }
 
@@ -1231,24 +1231,66 @@ fn inline_runs_remember_their_owner_for_hit_tests() {
 }
 
 #[test]
-fn generated_content_on_table_parts_is_refused_and_cells_take_it() {
+fn generated_content_in_table_parts_gets_an_anonymous_cell() {
     let table = || node("t", vec![node("r", vec![node("c", vec![])])]);
     let base = "#t { display:table; } #r { display:table-row; } #c { display:table-cell; }";
     let on = |selector: &str| format!("{base} {selector}:before {{ content:\"x\"; }}");
-    assert!(
-        BoxTree::new(table(), &on("#t"))
-            .unwrap_err()
-            .to_string()
-            .contains("content")
+    for selector in ["#t", "#r", "#c"] {
+        let tree = BoxTree::new(table(), &on(selector)).unwrap();
+        assert_eq!(tree.text_leaves()[0].1.text(), "x");
+        assert!(tree.layout_text(100.0, None, &mut |_, _| 5.0).is_ok());
+    }
+}
+
+#[test]
+fn missing_table_parts_are_generated_around_misplaced_ones() {
+    // Lone cells in a block: one anonymous table and row around them both.
+    let root = node(
+        "page",
+        vec![node("a", vec![]), node("b", vec![]), node("after", vec![])],
     );
-    assert!(
-        BoxTree::new(table(), &on("#r"))
-            .unwrap_err()
-            .to_string()
-            .contains("content")
+    let tree = BoxTree::new(
+        root,
+        "#a, #b { display:table-cell; width:20px; height:5px; } #after { height:1px; }",
+    )
+    .unwrap();
+    let g = tree.layout(100.0, None).unwrap();
+    assert_eq!(g[1].unwrap().border.left, 0.0);
+    assert_eq!(g[2].unwrap().border.left, 20.0);
+    assert_eq!(g[1].unwrap().border.top, g[2].unwrap().border.top);
+    assert_eq!(g[3].unwrap().border.top, 5.0);
+    // A block and text in a row become cells; blank text between parts is nothing.
+    let root = node(
+        "t",
+        vec![
+            text("gap", "   "),
+            node(
+                "r",
+                vec![node("block", vec![]), text("words", "w"), text("more", "x")],
+            ),
+        ],
     );
-    let tree = BoxTree::new(table(), &on("#c")).unwrap();
-    assert_eq!(tree.text_leaves()[0].1.text(), "x");
+    let tree = BoxTree::new(
+        root,
+        "#t { display:table; } #r { display:table-row; } #block { width:10px; height:3px; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves.len(), 1);
+    assert_eq!(leaves[0].1.text(), "wx");
+    let g = tree.layout_text(100.0, None, &mut |_, _| 3.0).unwrap();
+    assert_eq!(g[3].unwrap().border.right, 10.0);
+    // A row directly in a block gets a table, and a row in a row a cell and table.
+    let root = node("page", vec![node("row", vec![node("c", vec![])])]);
+    let tree = BoxTree::new(
+        root,
+        "#row { display:table-row; } #c { display:table-cell; height:4px; }",
+    )
+    .unwrap();
+    assert_eq!(
+        tree.layout(100.0, None).unwrap()[2].unwrap().border.bottom,
+        4.0
+    );
 }
 
 #[test]

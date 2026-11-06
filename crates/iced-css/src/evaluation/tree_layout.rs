@@ -284,8 +284,86 @@ impl Build {
         arena
     }
 
+    /// 17.2.1: the parent a box with `role` (`None` is any non-table box) actually goes in,
+    /// building the anonymous table parts it is missing. Consecutive misplaced siblings
+    /// share them, through the same open slot inline runs use.
+    fn table_parent(&mut self, mut target: usize, owner: usize, role: Option<TableRole>) -> usize {
+        // Blocks and inlines under a table part need a cell; cells need a row; rows and
+        // groups and captions need a table.
+        loop {
+            let here = self.boxes[target].table;
+            let wanted = match (here, role) {
+                (Some(TableRole::Table { .. }), None | Some(TableRole::Cell)) => {
+                    Some(TableRole::BodyGroup)
+                }
+                (
+                    Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup),
+                    None | Some(TableRole::Cell),
+                ) => Some(TableRole::Row),
+                (Some(TableRole::Row), None) => Some(TableRole::Cell),
+                (
+                    Some(TableRole::Row),
+                    Some(
+                        TableRole::Row
+                        | TableRole::HeaderGroup
+                        | TableRole::BodyGroup
+                        | TableRole::FooterGroup
+                        | TableRole::Caption
+                        | TableRole::Table { .. },
+                    ),
+                ) => Some(TableRole::Cell),
+                (
+                    None | Some(TableRole::Cell | TableRole::Caption),
+                    Some(
+                        TableRole::Cell
+                        | TableRole::Row
+                        | TableRole::HeaderGroup
+                        | TableRole::BodyGroup
+                        | TableRole::FooterGroup
+                        | TableRole::Caption,
+                    ),
+                ) => Some(TableRole::Table {
+                    spacing: [0.0, 0.0],
+                }),
+                (
+                    Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup),
+                    Some(
+                        TableRole::HeaderGroup
+                        | TableRole::BodyGroup
+                        | TableRole::FooterGroup
+                        | TableRole::Caption
+                        | TableRole::Table { .. },
+                    ),
+                ) => Some(TableRole::Cell),
+                _ => None,
+            };
+            let Some(wanted) = wanted else {
+                return target;
+            };
+            let reuse = self.open[target].filter(|open| {
+                matches!(
+                    (self.boxes[*open].table, wanted),
+                    (Some(TableRole::Table { .. }), TableRole::Table { .. })
+                        | (Some(TableRole::Cell), TableRole::Cell)
+                ) || self.boxes[*open].table == Some(wanted)
+            });
+            target = match reuse {
+                Some(open) => open,
+                None => {
+                    let made = self.anonymous_box(target, owner, ClearSide::None);
+                    self.boxes[made].table = Some(wanted);
+                    self.boxes[made].establishes_bfc =
+                        matches!(wanted, TableRole::Table { .. } | TableRole::Cell);
+                    self.open[target] = Some(made);
+                    made
+                }
+            };
+        }
+    }
+
     fn inline_group(&mut self, target: usize, owner: usize) -> usize {
-        if let Some(group) = self.open[target] {
+        // An open anonymous table part is not a run: a run starts fresh after it.
+        if let Some(group) = self.open[target].filter(|open| self.boxes[*open].table.is_none()) {
             return group;
         }
         let group = self.anonymous_box(target, owner, ClearSide::None);
@@ -430,6 +508,7 @@ pub fn prepare_captured_tree(
                 if text_block[top] {
                     build.runs[target].push(RunSource::After(top));
                 } else {
+                    let target = build.table_parent(target, top, None);
                     refuse_in_row(&build, &inline_rows, target, value, top)?;
                     build.generated(target, top, RunSource::After(top), value);
                 }
@@ -443,9 +522,9 @@ pub fn prepare_captured_tree(
         if resolution.display == Display::Inline
             && let Some(target) = parent_slot
         {
-            // A table part holds no inline runs without an anonymous cell, which is not
-            // built here (17.2.1).
-            if matches!(
+            // 17.2.1: blank text between table parts generates nothing; other inline
+            // content goes in an anonymous cell.
+            let in_part = matches!(
                 build.boxes[target].table,
                 Some(
                     TableRole::Table { .. }
@@ -454,12 +533,16 @@ pub fn prepare_captured_tree(
                         | TableRole::FooterGroup
                         | TableRole::Row
                 )
-            ) {
-                return Err(E::Unsupported {
-                    projected: index,
-                    property: "display",
-                });
+            );
+            if in_part
+                && is_text
+                && source_node
+                    .text()
+                    .is_some_and(|text| text.trim().is_empty())
+            {
+                continue;
             }
+            let target = build.table_parent(target, index, None);
             let group = build.inline_group(target, index);
             slot[index] = Some(group);
             container[index] = Some(target);
@@ -525,37 +608,12 @@ pub fn prepare_captured_tree(
         }
         let in_row = resolution.display == Display::InlineBlock;
         let table_role = table_role_of(resolution.display);
-        // 17.2.1 would wrap misplaced table parts in anonymous boxes. Those are not built
-        // here, so a table part must sit in its proper parent, and vice versa.
-        let parent_role = parent_slot.and_then(|target| build.boxes[target].table);
-        let placed = matches!(
-            (parent_role, table_role),
-            (None | Some(TableRole::Cell | TableRole::Caption), None)
-                | (
-                    None | Some(TableRole::Cell | TableRole::Caption),
-                    Some(TableRole::Table { .. })
-                )
-                | (
-                    Some(TableRole::Table { .. }),
-                    Some(
-                        TableRole::HeaderGroup
-                            | TableRole::BodyGroup
-                            | TableRole::FooterGroup
-                            | TableRole::Row
-                            | TableRole::Caption
-                    )
-                )
-                | (
-                    Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup),
-                    Some(TableRole::Row)
-                )
-                | (Some(TableRole::Row), Some(TableRole::Cell))
-        );
-        if !placed
-            || (parent.is_some()
-                && table_role.is_none()
-                && !in_row
-                && !matches!(resolution.display, Display::Block | Display::ListItem))
+        // 17.2.1: a misplaced table part, or a non-table box in one, gets anonymous parts.
+        let parent_slot = parent_slot.map(|target| build.table_parent(target, index, table_role));
+        if parent.is_some()
+            && table_role.is_none()
+            && !in_row
+            && !matches!(resolution.display, Display::Block | Display::ListItem)
         {
             return Err(E::Unsupported {
                 projected: index,
@@ -623,16 +681,7 @@ pub fn prepare_captured_tree(
                 value.col_span = span("colspan", 1);
                 value.row_span = span("rowspan", usize::MAX);
             }
-            // These parts' direct children must be table parts: generated text would need
-            // an anonymous cell (17.2.1).
-            if !matches!(role, TableRole::Cell | TableRole::Caption)
-                && (pseudo(index, 0).is_some() || pseudo(index, 1).is_some())
-            {
-                return Err(E::Unsupported {
-                    projected: index,
-                    property: "content",
-                });
-            }
+
             match role {
                 TableRole::Table { .. } | TableRole::Cell | TableRole::Caption => {
                     value.establishes_bfc = true;
@@ -697,7 +746,8 @@ pub fn prepare_captured_tree(
             if is_text {
                 build.runs[arena].push(RunSource::Before(index));
             } else {
-                build.generated(arena, index, RunSource::Before(index), value);
+                let target = build.table_parent(arena, index, None);
+                build.generated(target, index, RunSource::Before(index), value);
             }
         }
         if is_text {
