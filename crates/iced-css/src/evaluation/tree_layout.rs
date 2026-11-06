@@ -30,7 +30,11 @@ use iced_css_core::{
     },
     identity::SourceRef,
     source::{Metadata, SourceNode},
-    values::{ConversionError, NumericLimits, bidi::ComputedDirection},
+    values::{
+        ConversionError, NumericLimits,
+        bidi::ComputedDirection,
+        font_size::{FontSizeError, FontSizeTable},
+    },
 };
 use std::num::NonZeroUsize;
 
@@ -107,6 +111,7 @@ pub enum TreeLayoutError {
         projected: usize,
         error: ConversionError,
     },
+    FontMedium(FontSizeError),
     Flow(FlowError),
     AbsoluteWidth {
         projected: usize,
@@ -207,13 +212,19 @@ pub fn layout_captured_tree(
     projection: &TreeSourceProjection<'_>,
     display: &SourceDisplay<'_, '_, '_>,
     facts: ClearanceBoxFactsLimits,
+    // The `medium` font size in pixels; `em`, `ex` and font keywords need it.
+    font_medium: Option<f32>,
     viewport: FlowViewport,
     limits: FlowLimits,
     mut content: impl FnMut(usize) -> Option<FlowContent>,
 ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
     use TreeLayoutError as E;
     let count = projection.len();
-    let mut prepared = prepare_box_facts(projection, display, facts, BoxFactMode::Sequence, None)
+    let font = font_medium
+        .map(FontSizeTable::new)
+        .transpose()
+        .map_err(E::FontMedium)?;
+    let mut prepared = prepare_box_facts(projection, display, facts, BoxFactMode::Sequence, font)
         .map_err(E::Facts)?;
     prepared.absolute_offsets = true;
     let mut rows = vec![initial_box_fact(); count];
@@ -318,7 +329,9 @@ pub fn layout_captured_tree(
         match position {
             Position::Relative => {
                 let basis = parent_content(&boxes, &geometry, arena, viewport);
-                let (dx, dy) = relative_shift(&boxes[arena], offset, basis);
+                let direction = parent_of(&boxes, arena)
+                    .map_or(boxes[arena].direction, |parent| boxes[parent].direction);
+                let (dx, dy) = relative_shift(direction, offset, basis);
                 shift(&boxes, &mut geometry, arena, dx, dy);
             }
             Position::Absolute | Position::Fixed => {
@@ -433,7 +446,8 @@ fn place_absolute(
     let width = absolute_width(AbsoluteWidthInput {
         containing_width: cb_width,
         containing_direction: direction,
-        static_direction: value.direction,
+        static_direction: parent_of(boxes, arena)
+            .map_or(value.direction, |parent| boxes[parent].direction),
         static_left: static_border.left - block.left,
         static_right: block.right - static_border.right,
         left: auto(offset[3], cb_width),
@@ -472,6 +486,8 @@ fn place_absolute(
         root.min_height = Dim::Auto;
         root.max_height = Dim::Auto;
         root.margin = [Dim::Px(0.0); 4];
+        // The percentages' basis is the containing block, not this synthetic viewport.
+        root.padding = padding.map(Dim::Px);
         layout_block_flow(
             &arena_copy,
             FlowViewport {
@@ -541,14 +557,13 @@ fn parent_content(
 ) -> (f32, Option<f32>) {
     parent_of(boxes, arena).map_or((viewport.width, viewport.height), |parent| {
         let content: FlowRect = geometry[parent].content;
-        (
-            content.right - content.left,
-            Some(content.bottom - content.top),
-        )
+        // 9.3.2: a percentage of an auto-height containing block computes to auto.
+        let height = (boxes[parent].height != Dim::Auto).then_some(content.bottom - content.top);
+        (content.right - content.left, height)
     })
 }
 
-fn relative_shift(value: &FlowBox, offset: [Dim; 4], basis: (f32, Option<f32>)) -> (f32, f32) {
+fn relative_shift(direction: Direction, offset: [Dim; 4], basis: (f32, Option<f32>)) -> (f32, f32) {
     let horizontal = |dim: Dim| match dim {
         Dim::Auto => None,
         Dim::Px(number) => Some(number),
@@ -560,11 +575,11 @@ fn relative_shift(value: &FlowBox, offset: [Dim; 4], basis: (f32, Option<f32>)) 
         Dim::Percent(number) => basis.1.map(|height| height * number / 100.0),
     };
     let [top, right, bottom, left] = offset;
-    // 9.4.3: top wins over bottom; the direction's start edge wins horizontally.
+    // 9.4.3: top wins over bottom; the containing block's start edge wins horizontally.
     let dy = vertical(top)
         .or_else(|| vertical(bottom).map(|v| -v))
         .unwrap_or(0.0);
-    let (first, second) = match value.direction {
+    let (first, second) = match direction {
         Direction::Ltr => (horizontal(left), horizontal(right).map(|v| -v)),
         Direction::Rtl => (horizontal(right).map(|v| -v), horizontal(left)),
     };

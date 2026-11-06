@@ -203,6 +203,15 @@ struct Flow {
     floats: Vec<PlacedFloat>,
     /// The lowest earlier block outer top, for 9.5.1 rule 5.
     block_limit: f32,
+    /// Floats and static positions inside an open parent: 9.5.1 rule 4 needs that
+    /// parent's top, which its adjoining margins have not fixed yet.
+    deferred: Vec<(usize, Containing)>,
+    /// Collapsed-through boxes whose margins joined an open parent's (8.3.1): their
+    /// top border edge is that parent's.
+    open_through: Vec<usize>,
+    /// The open run ends in an empty box with clearance, whose bottom margin must not
+    /// collapse with its parent's (8.3.1).
+    clearance_through: bool,
 }
 
 impl Flow {
@@ -213,6 +222,9 @@ impl Flow {
             unsettled: Vec::new(),
             floats: Vec::new(),
             block_limit: y,
+            deferred: Vec::new(),
+            open_through: Vec::new(),
+            clearance_through: false,
         }
     }
     fn position(&self) -> f32 {
@@ -366,20 +378,30 @@ impl Solver<'_> {
                 row = 0.0;
             }
         }
-        (minimum, preferred.max(row))
+        // Negative margins can shrink a float row below the widest single child.
+        (minimum, preferred.max(row).max(minimum))
     }
 
     fn outer_measure(&self, node: usize) -> (f32, f32) {
         let value = &self.boxes[node];
         let side = |dims: [Dim; 4]| dims[1].zero_auto(0.0) + dims[3].zero_auto(0.0);
         let frame = side(value.margin) + side(value.padding) + value.border[1] + value.border[3];
-        match value.width {
-            Dim::Px(width) => (frame + width, frame + width),
-            _ => {
-                let (minimum, preferred) = self.measure(node);
-                (frame + minimum, frame + preferred)
-            }
-        }
+        let lower = match value.min_width {
+            Dim::Px(limit) => limit,
+            _ => 0.0,
+        };
+        let upper = match value.max_width {
+            Dim::Px(limit) => Some(limit),
+            _ => None,
+        };
+        let (minimum, preferred) = match value.width {
+            Dim::Px(width) => (width, width),
+            _ => self.measure(node),
+        };
+        (
+            frame + clamp(minimum, lower, upper),
+            frame + clamp(preferred, lower, upper),
+        )
     }
 
     fn layout_root(&mut self, containing: Containing, top: f32) -> Result<(), FlowError> {
@@ -435,10 +457,11 @@ impl Solver<'_> {
     ) -> Result<(), FlowError> {
         for &child in &self.boxes[node].children.clone() {
             if self.boxes[child].out_of_flow {
-                // 10.3.7/10.6.4: the static margin edge, with the run collapsed so far.
-                self.geometry[child].border.left = cb.left;
-                self.geometry[child].border.right = cb.left + cb.width;
-                self.geometry[child].border.top = flow.position();
+                if flow.unsettled.is_empty() {
+                    self.record_static(child, flow.position(), cb);
+                } else {
+                    flow.deferred.push((child, cb));
+                }
             } else if self.boxes[child].float.is_some() {
                 self.layout_float(child, flow, cb)?;
             } else if self.boxes[child].establishes_bfc {
@@ -454,14 +477,51 @@ impl Solver<'_> {
         self.geometry[node].border.top = top;
     }
 
-    fn settle(&mut self, flow: &mut Flow) -> f32 {
+    /// 10.3.7/10.6.4: the static margin edge, with the run collapsed so far.
+    fn record_static(&mut self, node: usize, top: f32, cb: Containing) {
+        let border = &mut self.geometry[node].border;
+        border.left = cb.left;
+        border.right = cb.left + cb.width;
+        border.top = top;
+    }
+
+    /// The open parents' top is now known: place what was waiting for it.
+    fn flush(&mut self, flow: &mut Flow, top: f32) -> Result<(), FlowError> {
+        for node in std::mem::take(&mut flow.open_through) {
+            let geometry = &mut self.geometry[node];
+            for edges in [
+                &mut geometry.border,
+                &mut geometry.padding,
+                &mut geometry.content,
+            ] {
+                edges.top = top;
+                edges.bottom = top;
+            }
+        }
+        for (node, cb) in std::mem::take(&mut flow.deferred) {
+            if self.boxes[node].out_of_flow {
+                self.record_static(node, top, cb);
+            } else {
+                let cb = Containing {
+                    top: Some(top),
+                    ..cb
+                };
+                self.place_float_box(node, flow, cb, top)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn settle(&mut self, flow: &mut Flow) -> Result<f32, FlowError> {
         let top = flow.position();
         for node in std::mem::take(&mut flow.unsettled) {
             self.set_top(node, top);
         }
         flow.y = top;
         flow.pending = MarginExtrema::default();
-        top
+        flow.clearance_through = false;
+        self.flush(flow, top)?;
+        Ok(top)
     }
 
     /// Applies clear to a box whose top margin already adjoins `flow.pending`. Returns
@@ -486,7 +546,7 @@ impl Solver<'_> {
             flow.pending = joined;
             return Ok(None);
         }
-        self.settle(flow);
+        self.settle(flow)?;
         let clearance = bottom - (flow.y + top_margin);
         flow.y = bottom;
         Ok(Some(clearance))
@@ -506,6 +566,7 @@ impl Solver<'_> {
         let mt = value.margin[0].zero_auto(basis);
         let mb = value.margin[2].zero_auto(basis);
         let content = value.content.filter(|_| value.children.is_empty());
+        flow.clearance_through = false;
         let clearance = self.apply_clear(node, flow, mt)?;
         let mut settled = clearance.is_some();
         if settled {
@@ -515,7 +576,7 @@ impl Solver<'_> {
             if !settled {
                 let top = flow.position();
                 self.set_top(node, top);
-                self.settle(flow);
+                self.settle(flow)?;
                 settled = true;
             }
             flow.y += border[0] + padding[0];
@@ -535,7 +596,7 @@ impl Solver<'_> {
             direction: value.direction,
         };
         if let Some(leaf) = content.filter(|leaf| leaf.height != 0.0) {
-            self.settle(flow);
+            self.settle(flow)?;
             flow.y += leaf.height;
         }
         self.lay_children(node, flow, inner)?;
@@ -564,25 +625,33 @@ impl Solver<'_> {
             self.geometry[node].clearance = None;
             self.geometry[node].collapsed_through = true;
             flow.block_limit = flow.block_limit.max(top - mt);
+            if flow.unsettled.is_empty() {
+                self.flush(flow, top)?;
+            } else {
+                flow.open_through.push(node);
+            }
             return Ok(());
         }
         if still_open {
-            self.settle(flow);
+            self.settle(flow)?;
         }
         let top = self.geometry[node].border.top;
         let content_top = top + border[0] + padding[0];
-        let bottom_adjoins = height.is_none() && !separated && minimum == 0.0 && maximum.is_none();
+        // 8.3.1 reads only `height` and `min-height`; `max-height` still caps the box.
+        let bottom_adjoins = height.is_none() && !separated && minimum == 0.0;
         let content_bottom = match height {
             Some(specified) => content_top + clamp(specified, minimum, maximum),
-            None if bottom_adjoins => flow.y,
+            None if bottom_adjoins => {
+                content_top + clamp((flow.y - content_top).max(0.0), 0.0, maximum)
+            }
             None => {
-                let flowed = flow.position() - content_top;
+                let flowed = (flow.position() - content_top).max(0.0);
                 content_top + clamp(flowed, minimum, maximum)
             }
         };
         let border_bottom = content_bottom + padding[2] + border[2];
         flow.block_limit = flow.block_limit.max(top - mt);
-        if bottom_adjoins {
+        if bottom_adjoins && !flow.clearance_through {
             flow.adjoin(mb, node)?;
             flow.y = border_bottom;
         } else {
@@ -590,6 +659,13 @@ impl Solver<'_> {
             flow.pending = MarginExtrema::default();
             flow.adjoin(mb, node)?;
         }
+        flow.clearance_through = clearance.is_some()
+            && border[0] + padding[0] == 0.0
+            && !separated
+            && zero_or_auto
+            && minimum == 0.0
+            && content.is_none()
+            && content_bottom == content_top;
         self.publish(
             node,
             border_left,
@@ -721,6 +797,21 @@ impl Solver<'_> {
         flow: &mut Flow,
         cb: Containing,
     ) -> Result<(), FlowError> {
+        if !flow.unsettled.is_empty() {
+            flow.deferred.push((node, cb));
+            return Ok(());
+        }
+        let top = flow.position();
+        self.place_float_box(node, flow, cb, top)
+    }
+
+    fn place_float_box(
+        &mut self,
+        node: usize,
+        flow: &mut Flow,
+        cb: Containing,
+        flow_top: f32,
+    ) -> Result<(), FlowError> {
         let value = &self.boxes[node];
         let side = value.float.ok_or(FlowError::Tree { node })?;
         let basis = cb.width;
@@ -762,7 +853,7 @@ impl Solver<'_> {
             padding,
         )?;
         let border_width = self.geometry[node].border.right;
-        let mut hypothetical = flow.position().max(flow.block_limit);
+        let mut hypothetical = flow_top.max(flow.block_limit);
         if let Some(bottom) = flow.lowest(value.clear, node)? {
             hypothetical = hypothetical.max(bottom);
         }
@@ -797,6 +888,7 @@ impl Solver<'_> {
         flow: &mut Flow,
         cb: Containing,
     ) -> Result<(), FlowError> {
+        flow.clearance_through = false;
         let value = &self.boxes[node];
         let (solved, ml, mr) = self.block_width(node, cb)?;
         let basis = cb.width;
@@ -808,11 +900,14 @@ impl Solver<'_> {
         let hypothetical = if clearance.is_some() {
             flow.y
         } else {
-            let top = flow.position();
-            self.settle(flow);
-            top
+            self.settle(flow)?
         };
-        let frame = ml + border[3] + padding[3] + padding[1] + border[1] + mr;
+        // A solved margin may hold an auto or over-constrained share; fitting beside a
+        // float uses only the specified margins.
+        let box_frame = border[3] + padding[3] + padding[1] + border[1];
+        let specified_left = value.margin[3].zero_auto(basis);
+        let frame = specified_left + box_frame + value.margin[1].zero_auto(basis);
+        let least = value.min_width.zero_auto(basis);
         let auto_width = value.width == Dim::Auto;
         let containing = Band {
             left: cb.left,
@@ -826,17 +921,19 @@ impl Solver<'_> {
         let (left, width, bottom) = loop {
             let first = exclusion_band(&flow.floats, containing, y).map_err(float_error)?;
             let width = if auto_width {
-                solved.min(first.width() - frame)
+                // 10.4: min-width still holds; too narrow a band then moves the box down.
+                solved.min(first.width() - frame).max(least)
             } else {
                 solved
             };
             let fitted = (width + frame) <= first.width() && (!auto_width || width >= minimum);
             let next = next_band_edge(&flow.floats, y).map_err(float_error)?;
             let Some(edge) = next.filter(|_| !fitted && !flow.floats.is_empty()) else {
-                let left = if first.left > cb.left {
-                    first.left + ml
-                } else {
+                let unnarrowed = first.left == containing.left && first.right == containing.right;
+                let left = if unnarrowed {
                     cb.left + ml
+                } else {
+                    first.left + specified_left
                 };
                 // Place at origin to learn the height, then check the whole span.
                 let bottom = self.finish_bfc_box(
@@ -851,7 +948,7 @@ impl Solver<'_> {
                     0.0,
                     padding,
                 )?;
-                match first_conflict(&flow.floats, left - ml, width + frame, y, bottom)
+                match first_conflict(&flow.floats, left, width + box_frame, y, bottom)
                     .map_err(float_error)?
                 {
                     Some(lower) => {

@@ -450,3 +450,171 @@ fn shrink_to_fit_preferred_width_sums_a_row_of_floats() {
     assert_eq!(g[1].border.right, 50.0);
     assert_eq!(g[3].border.left, 30.0);
 }
+
+#[test]
+fn float_in_an_open_parent_waits_for_the_parent_top() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox::default(),
+            float(FloatSide::Left, 40.0, 20.0),
+            margins(50.0, 0.0, h(5.0)),
+        ],
+        &[(0, 1), (1, 2), (1, 3)],
+    );
+    assert_eq!(g[1].border.top, 50.0);
+    assert_eq!(g[2].border.top, 50.0);
+}
+
+#[test]
+fn empty_child_of_an_open_parent_takes_the_parent_top() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox::default(),
+            margins(0.0, 30.0, FlowBox::default()),
+            h(5.0),
+        ],
+        &[(0, 1), (1, 2), (1, 3)],
+    );
+    assert_eq!(g[1].border.top, 30.0);
+    assert_eq!(g[2].border.top, 30.0);
+    assert_eq!(g[2].border.bottom, 30.0);
+    assert_eq!(g[3].border.top, 30.0);
+}
+
+#[test]
+fn max_height_does_not_stop_bottom_margin_collapse_but_caps_the_box() {
+    let mut p = FlowBox {
+        max_height: Dim::Px(100.0),
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            p.clone(),
+            margins(0.0, 30.0, h(10.0)),
+            margins(5.0, 0.0, h(1.0)),
+        ],
+        &[(0, 1), (1, 2), (0, 3)],
+    );
+    assert_eq!(g[1].border.bottom, 10.0);
+    assert_eq!(g[3].border.top, 40.0);
+    p.max_height = Dim::Px(4.0);
+    let g = tree(vec![FlowBox::default(), p, h(10.0)], &[(0, 1), (1, 2)]);
+    assert_eq!(g[1].border.bottom, 4.0);
+}
+
+#[test]
+fn auto_height_never_goes_negative() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox::default(),
+            h(10.0),
+            margins(-50.0, 0.0, h(5.0)),
+        ],
+        &[(0, 1), (1, 2), (1, 3)],
+    );
+    assert_eq!(g[3].border.top, -40.0);
+    assert_eq!(g[1].border.bottom, 0.0);
+}
+
+#[test]
+fn empty_box_with_clearance_keeps_its_bottom_margin_from_its_parent() {
+    let parent = margins(0.0, 5.0, FlowBox::default());
+    let empty = FlowBox {
+        clear: ClearSide::Both,
+        ..margins(0.0, 10.0, FlowBox::default())
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            float(FloatSide::Left, 40.0, 50.0),
+            parent,
+            empty,
+            h(1.0),
+        ],
+        &[(0, 1), (0, 2), (2, 3), (0, 4)],
+    );
+    assert_eq!(g[3].clearance, Some(50.0));
+    // P ends at E's border bottom, and only P's own margin follows it.
+    assert_eq!(g[2].border.bottom, 50.0);
+    assert_eq!(g[4].border.top, 55.0);
+}
+
+#[test]
+fn negative_margin_float_row_keeps_preferred_at_least_minimum() {
+    let mut narrow = float(FloatSide::Left, 10.0, 1.0);
+    narrow.margin[3] = Dim::Px(-40.0);
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox {
+                float: Some(FloatSide::Left),
+                ..FlowBox::default()
+            },
+            float(FloatSide::Left, 50.0, 1.0),
+            narrow,
+        ],
+        &[(0, 1), (1, 2), (1, 3)],
+    );
+    assert_eq!(g[1].border.right, 50.0);
+}
+
+#[test]
+fn new_bfc_narrowing_respects_min_width_and_ignores_over_constrained_margin() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            float(FloatSide::Left, 60.0, 30.0),
+            FlowBox {
+                establishes_bfc: true,
+                min_width: Dim::Px(50.0),
+                height: Dim::Px(5.0),
+                ..FlowBox::default()
+            },
+        ],
+        &[(0, 1), (0, 2)],
+    );
+    assert_eq!(g[2].border.top, 30.0);
+    assert_eq!(g[2].border.left, 0.0);
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            float(FloatSide::Left, 40.0, 30.0),
+            FlowBox {
+                establishes_bfc: true,
+                width: Dim::Px(50.0),
+                height: Dim::Px(5.0),
+                ..FlowBox::default()
+            },
+        ],
+        &[(0, 1), (0, 2)],
+    );
+    assert_eq!((g[2].border.left, g[2].border.top), (40.0, 0.0));
+}
+
+#[test]
+fn preferred_width_honours_a_child_max_width() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox {
+                float: Some(FloatSide::Left),
+                ..FlowBox::default()
+            },
+            FlowBox {
+                max_width: Dim::Px(20.0),
+                content: Some(FlowContent {
+                    height: 1.0,
+                    preferred_width: 90.0,
+                    preferred_min_width: 5.0,
+                }),
+                ..FlowBox::default()
+            },
+        ],
+        &[(0, 1), (1, 2)],
+    );
+    assert_eq!(g[1].border.right, 20.0);
+}

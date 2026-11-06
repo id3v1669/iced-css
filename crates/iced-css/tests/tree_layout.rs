@@ -51,6 +51,7 @@ fn run(
         &projection,
         &display,
         fact_limits(),
+        Some(16.0),
         FlowViewport {
             left: 0.0,
             top: 0.0,
@@ -227,4 +228,48 @@ fn overflow_establishes_a_bfc_that_avoids_floats() {
     );
     assert_eq!(g[B].border.left, 0.0);
     assert_eq!(g[C].border.left, 50.0);
+}
+
+#[test]
+fn absolute_percent_padding_uses_the_containing_block_width() {
+    let g = solved("#a2 { position:absolute; width:100px; padding:10%; }");
+    // Basis is the 200px initial containing block.
+    assert_eq!(g[A2].content.left - g[A2].border.left, 20.0);
+}
+
+#[test]
+fn offset_conflicts_and_static_position_use_the_containing_direction() {
+    let g = solved(
+        "#a { direction:ltr; }
+         #a1 { direction:rtl; position:relative; left:10px; right:10px; height:1px; }
+         #b { direction:rtl; position:absolute; width:100px; }",
+    );
+    assert_eq!(g[A1].border.left, 10.0);
+    // The root is the static containing block and it is ltr.
+    assert_eq!(g[B].border.left, 0.0);
+}
+
+#[test]
+fn relative_percent_top_of_an_auto_height_parent_is_auto() {
+    let g = solved(
+        "#a1 { position:relative; top:50%; height:4px; }
+         #a2 { height:96px; }",
+    );
+    assert_eq!(g[A1].border.top, 0.0);
+    let g = solved(
+        "#a { height:100px; }
+         #a1 { position:relative; top:50%; height:4px; }",
+    );
+    assert_eq!(g[A1].border.top, 50.0);
+}
+
+#[test]
+fn em_units_resolve_with_the_font_table() {
+    let g = solved(
+        "#a { font-size:20px; }
+         #a1 { height:2em; margin-bottom:1ex; }
+         #a2 { height:1px; }",
+    );
+    assert_eq!(g[A1].border.bottom, 40.0);
+    assert_eq!(g[A2].border.top, 50.0);
 }
