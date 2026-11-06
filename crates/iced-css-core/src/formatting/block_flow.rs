@@ -61,8 +61,9 @@ pub enum RowAlign {
     Right,
 }
 
-/// A box's part in a table (17.2). A negative `spacing` overlaps cells, which is how the
-/// caller models collapsed borders. Extra specified table height is not distributed.
+/// A box's part in a table (17.2). A negative `spacing` overlaps neighbouring cells and
+/// leaves none at the table's edges, which is how the caller models collapsed borders.
+/// Extra specified table height is not distributed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TableRole {
     /// Horizontal and vertical `border-spacing`.
@@ -311,6 +312,15 @@ impl Flow {
     }
 }
 
+/// The room `count` columns' spacing takes: one gap between neighbours, and at the table's
+/// edges only when the spacing is positive.
+fn table_gaps(spacing: f32, count: usize) -> f32 {
+    if count == 0 {
+        return spacing.max(0.0);
+    }
+    spacing * (count - 1) as f32 + 2.0 * spacing.max(0.0)
+}
+
 /// The most columns one cell can span; HTML's own limit.
 const MAX_SPAN: usize = 1000;
 
@@ -507,9 +517,9 @@ impl Solver<'_> {
         if let Some(TableRole::Table { spacing }) = value.table {
             let (rows, captions) = self.table_parts(node);
             let (mins, prefs) = self.table_columns(&rows, spacing[0]);
-            let gaps = spacing[0] * (mins.len() + 1) as f32;
-            let mut minimum = mins.iter().sum::<f32>() + gaps;
-            let mut preferred = prefs.iter().sum::<f32>() + gaps;
+            let gaps = table_gaps(spacing[0], mins.len());
+            let mut minimum = (mins.iter().sum::<f32>() + gaps).max(0.0);
+            let mut preferred = (prefs.iter().sum::<f32>() + gaps).max(minimum);
             for caption in captions {
                 let (caption_min, caption_preferred) = self.outer_measure(caption);
                 minimum = minimum.max(caption_min);
@@ -667,7 +677,8 @@ impl Solver<'_> {
         let (rows, captions) = self.table_parts(node);
         let (mins, prefs) = self.table_columns(&rows, spacing[0]);
         let count = mins.len();
-        let available = (inner.width - spacing[0] * (count + 1) as f32).max(0.0);
+        let available = (inner.width - table_gaps(spacing[0], count)).max(0.0);
+        let edge = [spacing[0].max(0.0), spacing[1].max(0.0)];
         let (sum_min, sum_pref): (f32, f32) = (mins.iter().sum(), prefs.iter().sum());
         let widths: Vec<f32> = (0..count)
             .map(|column| {
@@ -719,7 +730,7 @@ impl Solver<'_> {
             y += height;
         }
         let grid_top = y;
-        y += spacing[1];
+        y += edge[1];
         let (placed, _) = self.table_grid(&rows);
         // First every cell at its width, which gives the rows their heights.
         let mut heights: Vec<f32> = rows
@@ -759,8 +770,9 @@ impl Solver<'_> {
             y += height + spacing[1];
         }
         for (item, (width, _, cell_natural)) in placed.iter().zip(measures) {
-            let before: f32 =
-                widths[..item.column].iter().sum::<f32>() + spacing[0] * (item.column + 1) as f32;
+            let before: f32 = widths[..item.column].iter().sum::<f32>()
+                + edge[0]
+                + spacing[0] * item.column as f32;
             let left = match inner.direction {
                 Direction::Ltr => inner.left + before,
                 Direction::Rtl => inner.left + inner.width - before - width,
@@ -803,6 +815,10 @@ impl Solver<'_> {
                     self.translate(child, 0.0, offset);
                 }
             }
+        }
+        // The last row's trailing gap gives way to the table's edge.
+        if !rows.is_empty() {
+            y += edge[1] - spacing[1];
         }
         for (index, &row) in rows.iter().enumerate() {
             let area = rect(

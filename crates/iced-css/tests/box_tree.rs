@@ -1670,3 +1670,32 @@ fn collapse_without_cell_borders_keeps_the_table_border_and_no_spacing() {
     assert_eq!(g[3].unwrap().border.left, 13.0);
     assert!(tree.paints()[0].border[0].is_some());
 }
+
+#[test]
+fn collapse_overlaps_per_axis_and_a_loose_cell_keeps_its_paint() {
+    let root = node(
+        "t",
+        vec![
+            node("r1", vec![node("a", vec![])]),
+            node("r2", vec![node("b", vec![])]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#t { display:table; border-collapse:collapse; width:100%; }
+         #r1, #r2 { display:table-row; }
+         #a, #b { display:table-cell; border-left:10px solid; height:5px; }",
+    )
+    .unwrap();
+    let g = tree.layout(200.0, None).unwrap();
+    assert_eq!(g[4].unwrap().border.top, 5.0);
+    assert_eq!(g[0].unwrap().border.right, 200.0);
+    let root = node("page", vec![node("a", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { border-collapse:collapse; }
+         #a { display:table-cell; border:2px solid #ff0000; }",
+    )
+    .unwrap();
+    assert_eq!(tree.paints()[1].border[0], Some([1.0, 0.0, 0.0]));
+}

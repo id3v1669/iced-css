@@ -1513,3 +1513,45 @@ fn text_widens_past_stacked_floats_at_the_first_edge_with_more_room() {
     assert_eq!(asked, vec![(20.0, 20.0, 100.0)]);
     assert_eq!(g[3].leaf_after.unwrap().top, 20.0);
 }
+
+#[test]
+fn negative_spacing_overlaps_cells_without_touching_captions_or_going_negative() {
+    let caption = FlowBox {
+        table: Some(TableRole::Caption),
+        establishes_bfc: true,
+        height: Dim::Px(7.0),
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([-2.0, -1.0], Dim::Auto),
+            caption,
+            row(),
+            cell(Dim::Px(10.0), 5.0),
+            cell(Dim::Px(10.0), 5.0),
+            row(),
+            cell(Dim::Px(10.0), 5.0),
+        ],
+        &[(0, 1), (1, 2), (1, 3), (3, 4), (3, 5), (1, 6), (6, 7)],
+    );
+    assert_eq!((g[1].border.left, g[1].border.right), (0.0, 18.0));
+    assert_eq!((g[4].border.left, g[5].border.left), (0.0, 8.0));
+    // The grid starts right under the caption, flush with the table.
+    assert_eq!(g[4].border.top, 7.0);
+    assert_eq!(g[7].border.top, 11.0);
+    assert_eq!(g[1].border.bottom, 16.0);
+    // Empty cells don't make a negative width, floating or not.
+    let empty = FlowBox {
+        table: Some(TableRole::Cell),
+        establishes_bfc: true,
+        ..FlowBox::default()
+    };
+    let mut floating = table_of([-2.0, -2.0], Dim::Auto);
+    floating.float = Some(FloatSide::Left);
+    let g = tree(
+        vec![FlowBox::default(), floating, row(), empty.clone(), empty],
+        &[(0, 1), (1, 2), (2, 3), (2, 4)],
+    );
+    assert_eq!(g[1].border.right, 0.0);
+}
