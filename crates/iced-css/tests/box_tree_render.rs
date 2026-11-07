@@ -2149,7 +2149,7 @@ fn generated_blocks_keep_the_right_background_in_text_and_inline_owners() {
     assert!(snap(root, &sheet, &name));
     // In an inline element, the block shows its own background, not the inline's.
     let name = format!("generated-inline-owner-{id}.png");
-    let base = "#w { background-color:white; color:black; } #s { background-color:#f0ad4e; }";
+    let base = "#w { background-color:white; color:black; } #s { display:inline; background-color:#f0ad4e; }";
     let boxed = "display:block; width:40px; height:20px; background-color:#d9534f;";
     assert!(snap(
         node(
