@@ -1494,7 +1494,7 @@ fn a_column_fills_an_anonymous_cell_not_its_content() {
 }
 
 #[test]
-fn a_widget_in_an_empty_table_row_is_drawn_and_pressed() {
+fn a_widget_in_an_empty_table_row_is_drawn() {
     let view = |hosted: bool| -> Element<'static, u8> {
         let root = node("t", vec![node("r", vec![])]);
         let tree = BoxTree::new(
@@ -1531,4 +1531,85 @@ fn a_widget_in_an_empty_table_row_is_drawn_and_pressed() {
             .unwrap()
     );
     assert_eq!(click(view(true), Point::new(10.0, 10.0)), vec![7]);
+}
+
+#[test]
+fn a_widget_in_an_empty_row_group_is_drawn() {
+    let view = |hosted: bool| -> Element<'static, u8> {
+        let root = node("t", vec![node("g", vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#t { display:table; width:100px; background-color:white; }
+             #g { display:table-row-group; height:40px; }",
+        )
+        .unwrap();
+        let mut interactive = tree.interactive();
+        if hosted {
+            interactive = interactive.widget(
+                "g",
+                iced::widget::button(iced::widget::text("go"))
+                    .on_press(7)
+                    .width(80)
+                    .height(30),
+            );
+        }
+        interactive.into()
+    };
+    let name = std::env::temp_dir().join(format!("empty-group-widget-{}.png", std::process::id()));
+    assert!(
+        simulator(view(false))
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&name)
+            .unwrap()
+    );
+    assert!(
+        !simulator(view(true))
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&name)
+            .unwrap()
+    );
+}
+
+#[test]
+fn a_spanning_cell_does_not_widen_a_column_and_a_hidden_column_paints_nothing() {
+    let draw = |css: &str, name: &str| {
+        let wide = node("a", vec![])
+            .style_attribute("colspan", "2", limits())
+            .unwrap();
+        let root = node(
+            "t",
+            vec![
+                node("c1", vec![]),
+                node("c2", vec![]),
+                node("r1", vec![wide]),
+                node("r2", vec![node("c", vec![]), node("d", vec![])]),
+            ],
+        );
+        let sheet = format!(
+            "#t {{ display:table; background-color:white; }}
+             #c1, #c2 {{ display:table-column; }}
+             #r1, #r2 {{ display:table-row; }}
+             #a, #c, #d {{ display:table-cell; height:30px; }}
+             #c, #d {{ width:40px; }} {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("column-span-{}.png", std::process::id());
+    assert!(draw("#c1, #c2 { background-color:#d9534f; }", &name));
+    assert!(!draw("#c1 { background-color:#d9534f; }", &name));
+    let name = format!("column-hidden-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(draw(
+        "#c2 { background-color:#d9534f; visibility:hidden; }",
+        &name
+    ));
+    assert!(!draw("#c2 { background-color:#d9534f; }", &name));
 }
