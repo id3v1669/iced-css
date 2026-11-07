@@ -964,13 +964,33 @@ impl BoxTree {
             &generated,
         )
         .map_err(failed)?;
+        // 17.2.1: an anonymous table inherits from its parent, the parent of the element it
+        // wraps, so it takes `border-collapse` and `border-spacing` from there, not from the
+        // cell. That parent may be an inline element, which has no box here.
+        let inherits: Vec<usize> = prepared
+            .positions
+            .iter()
+            .enumerate()
+            .map(|(arena, &(owner, _))| {
+                let anonymous_table = prepared.anonymous[arena]
+                    && matches!(prepared.boxes[arena].table, Some(TableRole::Table { .. }));
+                anonymous_table
+                    .then(|| {
+                        let original = projection.original_index(owner)?;
+                        let parent = source.construction.nodes()[original].parent()?;
+                        projection.projected_index(parent)
+                    })
+                    .flatten()
+                    .unwrap_or(owner)
+            })
+            .collect();
         let mut collapse_spacing: Vec<Option<[f32; 2]>> = vec![None; prepared.boxes.len()];
         // 17.6.2: collapsed borders share one line: neighbouring cells overlap by the widest
         // cell border on that axis, and the table's edge is the outer cells'. The width is
         // not per edge; `resolve_collapsed_edges` picks what each shared edge draws.
         for table in 0..prepared.boxes.len() {
             if !matches!(prepared.boxes[table].table, Some(TableRole::Table { .. }))
-                || !collapses[prepared.positions[table].0]
+                || !collapses[inherits[table]]
             {
                 continue;
             }
@@ -1017,7 +1037,7 @@ impl BoxTree {
         for (arena, value) in prepared.boxes.iter_mut().enumerate() {
             let owner = prepared.positions[arena].0;
             if let Some(TableRole::Table { spacing }) = &mut value.table {
-                *spacing = collapse_spacing[arena].unwrap_or(spacings[owner]);
+                *spacing = collapse_spacing[arena].unwrap_or(spacings[inherits[arena]]);
             }
             // An anonymous cell has initial values, not those of the box it wraps.
             value.cell_align = match vertical_aligns[owner].filter(|_| !prepared.anonymous[arena]) {
@@ -1598,7 +1618,7 @@ impl BoxTree {
         // 17.6.3: with collapsed borders, inset draws like ridge and outset like groove.
         for (arena, value) in prepared.boxes.iter().enumerate() {
             let owner = prepared.positions[arena].0;
-            // The table decides, and an anonymous cell's owner is the box it wraps.
+            // The table decides, an anonymous one by what it inherits.
             let mut table = parent_of[arena];
             while let Some(at) = table {
                 if matches!(prepared.boxes[at].table, Some(TableRole::Table { .. })) {
@@ -1606,7 +1626,7 @@ impl BoxTree {
                 }
                 table = parent_of[at];
             }
-            let collapsed = table.is_some_and(|at| collapses[prepared.positions[at].0]);
+            let collapsed = table.is_some_and(|at| collapses[inherits[at]]);
             if value.table == Some(TableRole::Cell) && !prepared.anonymous[arena] && collapsed {
                 for line in &mut paints[owner].border_style {
                     *line = match *line {
@@ -1642,7 +1662,7 @@ impl BoxTree {
                 }
                 table = parent_of[at];
             }
-            let collapsed = table.is_some_and(|at| collapses[prepared.positions[at].0]);
+            let collapsed = table.is_some_and(|at| collapses[inherits[at]]);
             paints[owner].hidden_empty = empty && !collapsed;
         }
         // 17.6.1.1: a row whose cells, spanning ones included, all hide with nothing visible
@@ -1650,9 +1670,7 @@ impl BoxTree {
         use iced_css_core::formatting::block_flow::{table_grid, table_parts};
         let mut hidden_rows = Vec::new();
         for (table, value) in prepared.boxes.iter().enumerate() {
-            if !matches!(value.table, Some(TableRole::Table { .. }))
-                || collapses[prepared.positions[table].0]
-            {
+            if !matches!(value.table, Some(TableRole::Table { .. })) || collapses[inherits[table]] {
                 continue;
             }
             let (rows, _) = table_parts(&prepared.boxes, table);

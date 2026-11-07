@@ -2031,3 +2031,53 @@ fn a_hidden_empty_cell_hosting_a_widget_keeps_its_row() {
     assert!(draw("show", &name));
     assert!(draw("hide", &name));
 }
+
+#[test]
+fn an_anonymous_table_inherits_from_its_parent_not_its_cell() {
+    let draw = |cell: &str, name: &str| {
+        let root = node("w", vec![node("c", vec![]), node("d", vec![])]);
+        let sheet = format!(
+            "#w {{ background-color:white; }}
+             #c, #d {{ display:table-cell; width:40px; height:30px; background-color:#d9534f;
+                     border:4px solid #2a4d69; }} #c {{ {cell} }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // `border-spacing` and `border-collapse` on a cell do nothing: they apply to tables, and
+    // the anonymous table around these cells takes them from `#w`.
+    let name = format!("anonymous-table-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(draw("border-spacing:20px;", &name));
+    assert!(draw("border-collapse:collapse;", &name));
+}
+
+#[test]
+fn an_anonymous_table_in_an_inline_element_inherits_from_it() {
+    let draw = |span: &str, name: &str| {
+        let root = node(
+            "w",
+            vec![node("s", vec![node("c", vec![]), node("d", vec![])])],
+        );
+        let sheet = format!(
+            "#w {{ background-color:white; }} #s {{ display:inline; {span} }}
+             #c, #d {{ display:table-cell; width:40px; height:30px; background-color:#d9534f; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // The inline element has no box of its own, yet its spacing reaches the table.
+    let name = format!("anonymous-table-inline-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(!draw("border-spacing:20px;", &name));
+}
