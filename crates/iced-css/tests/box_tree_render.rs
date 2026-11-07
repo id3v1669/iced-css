@@ -1736,3 +1736,85 @@ fn a_column_group_keeps_generated_content_after_the_table() {
     assert!(draw(false, &name));
     assert!(draw(true, &name));
 }
+
+#[test]
+fn an_rtl_scroller_scrolls_left_with_the_wheel() {
+    let root = node(
+        "page",
+        vec![node("box", vec![node("wide", vec![node("mark", vec![])])])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background:white; }
+         #box { direction:rtl; overflow:auto; width:100px; height:40px; }
+         #wide { width:300px; height:40px; }
+         #mark { width:60px; height:40px; background-color:#d9534f; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = simulator(view);
+    let picture = std::env::temp_dir().join(format!("rtl-scroll-{}.png", std::process::id()));
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    ui.point_at(Point::new(10.0, 10.0));
+    // Toward the start there is nothing: the picture stays.
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Pixels { x: -40.0, y: 0.0 },
+    })]);
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Pixels { x: 40.0, y: 0.0 },
+    })]);
+    assert!(
+        !ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+}
+
+#[test]
+fn rtl_text_wider_than_its_scroller_can_be_scrolled_to() {
+    let root = node(
+        "page",
+        vec![node(
+            "list",
+            vec![text("line", "a line that is much wider than its box")],
+        )],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background:white; }
+         #list { direction:rtl; overflow:auto; width:60px; height:40px; white-space:nowrap; }
+         #line { color:black; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = simulator(view);
+    let picture = std::env::temp_dir().join(format!("rtl-scroll-text-{}.png", std::process::id()));
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    ui.point_at(Point::new(10.0, 10.0));
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Pixels { x: 40.0, y: 0.0 },
+    })]);
+    assert!(
+        !ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+}

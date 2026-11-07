@@ -2555,13 +2555,22 @@ fn scrolling_descendants(prepared: &PreparedTree, root: usize, mut visit: impl F
 
 /// How far each scrolling box can scroll down and across, after moving its contents by
 /// its offsets. Parents come first in arena order, so nested scrollers measure moved
-/// contents. Only rightward overflow scrolls: contents never reach left of an ltr box's
-/// start in a way 11.1.1 lets anyone scroll to, and rtl scrollers stay put horizontally.
+/// contents. Across, a box scrolls toward its end: an ltr box's contents past its right,
+/// an rtl box's past its left (11.1.1). The offset counts from the start either way.
+/// Where a box's text reaches, from its place's top left: down, and across from `from` to
+/// `to`, which run past the place where the text is wider.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TextExtent {
+    height: f32,
+    from: f32,
+    to: f32,
+}
+
 fn apply_scrolling(
     prepared: &PreparedTree,
     geometry: &mut [FlowGeometry],
     scrolled: impl Fn(usize) -> (f32, f32),
-    text_size: impl Fn(usize, &FlowGeometry) -> Option<Size>,
+    text_size: impl Fn(usize, &FlowGeometry) -> Option<TextExtent>,
     viewport: Size,
 ) -> Vec<(f32, f32)> {
     let mut limits = vec![(0.0_f32, 0.0_f32); prepared.boxes.len()];
@@ -2577,25 +2586,30 @@ fn apply_scrolling(
             (padding.bottom, padding.right)
         };
         let (mut reach, mut reach_x) = (bottom, right);
+        let start_x = if arena == 0 { 0.0 } else { padding.left };
+        let mut reach_left = start_x;
         // A scroller's own text scrolls in it too.
         let own_text = text_size(arena, &geometry[arena]);
-        if let Some(size) = own_text {
+        if let Some(text) = own_text {
             let place = geometry[arena].leaf_band.unwrap_or(geometry[arena].content);
-            reach = reach.max(place.top + size.height);
-            reach_x = reach_x.max(place.left + size.width);
+            reach = reach.max(place.top + text.height);
+            reach_x = reach_x.max(place.left + text.to);
+            reach_left = reach_left.min(place.left + text.from);
         }
         scrolling_descendants(prepared, arena, |child, reaches| {
             if reaches {
                 let box_of = &geometry[child];
                 reach = reach.max(box_of.border.bottom);
                 reach_x = reach_x.max(box_of.border.right);
+                reach_left = reach_left.min(box_of.border.left);
                 // Text runs past a box too small for it, unless that box clips it.
                 if !prepared.clipped[child]
-                    && let Some(size) = text_size(child, box_of)
+                    && let Some(text) = text_size(child, box_of)
                 {
                     let place = box_of.leaf_band.unwrap_or(box_of.content);
-                    reach = reach.max(place.top + size.height);
-                    reach_x = reach_x.max(place.left + size.width);
+                    reach = reach.max(place.top + text.height);
+                    reach_x = reach_x.max(place.left + text.to);
+                    reach_left = reach_left.min(place.left + text.from);
                 }
             }
         });
@@ -2604,6 +2618,7 @@ fn apply_scrolling(
         let (trailing, trailing_x) = if arena == 0 {
             reach = reach.max(geometry[0].border.bottom);
             reach_x = reach_x.max(geometry[0].border.right);
+            reach_left = reach_left.min(geometry[0].border.left);
             (0.0, 0.0)
         } else {
             (
@@ -2619,6 +2634,13 @@ fn apply_scrolling(
         let ltr = prepared.boxes[arena].direction == Direction::Ltr;
         let limit_x = if ltr && reach_x > right {
             reach_x + trailing_x - right
+        } else if !ltr && reach_left < start_x {
+            let end_padding = if arena == 0 {
+                0.0
+            } else {
+                geometry[arena].content.left - padding.left
+            };
+            start_x - reach_left + end_padding
         } else {
             0.0
         };
@@ -2628,12 +2650,14 @@ fn apply_scrolling(
         if offset == 0.0 && offset_x == 0.0 {
             continue;
         }
+        // Scrolling toward an rtl box's end moves its contents right.
+        let shift_x = if ltr { -offset_x } else { offset_x };
         if own_text.is_some() {
             let own = &mut geometry[arena];
             let rectangles = [Some(&mut own.content), own.leaf_band.as_mut()];
             for place in rectangles.into_iter().flatten() {
-                place.left -= offset_x;
-                place.right -= offset_x;
+                place.left += shift_x;
+                place.right += shift_x;
                 place.top -= offset;
                 place.bottom -= offset;
             }
@@ -2641,7 +2665,7 @@ fn apply_scrolling(
         let mut moved = Vec::new();
         scrolling_descendants(prepared, arena, |child, _| moved.push(child));
         for child in moved {
-            geometry[child].move_by(-offset_x, -offset);
+            geometry[child].move_by(shift_x, -offset);
         }
     }
     limits
@@ -3794,9 +3818,16 @@ where
             let moved = bring(scrolled, limit, area.top, end, top, bottom);
             top -= moved;
             bottom -= moved;
-            let moved = bring(scrolled_x, limit_x, area.left, end_x, left, right);
-            left -= moved;
-            right -= moved;
+            if self.tree.prepared.boxes[slot].direction == Direction::Rtl {
+                // Mirrored, so the offset grows toward the box's left end.
+                let moved = bring(scrolled_x, limit_x, -end_x, -area.left, -right, -left);
+                left += moved;
+                right += moved;
+            } else {
+                let moved = bring(scrolled_x, limit_x, area.left, end_x, left, right);
+                left -= moved;
+                right -= moved;
+            }
         }
     }
 
@@ -3975,12 +4006,17 @@ where
                 let place = geometry.leaf_band.unwrap_or(geometry.content);
                 let width = (place.right - place.left).ceil();
                 let size = paragraph(renderer, leaf, width).min_bounds();
-                // Right lines overflow toward the start, where nothing scrolls; centered ones
+                // Where paint puts the lines: right ones overflow leftward, centered ones
                 // spill half each way.
-                Some(match leaf.align {
-                    "right" => Size::new(0.0, size.height),
-                    "center" => Size::new((width + size.width) / 2.0, size.height),
-                    _ => size,
+                let (from, to) = match leaf.align {
+                    "right" => (width - size.width, place.right - place.left),
+                    "center" => ((width - size.width) / 2.0, (width + size.width) / 2.0),
+                    _ => (0.0, size.width),
+                };
+                Some(TextExtent {
+                    height: size.height,
+                    from,
+                    to,
                 })
             },
             available,
@@ -4319,7 +4355,12 @@ where
                         .unwrap_or(0.0)
                         .clamp(0.0, limit_x);
                     let wanted = (current + amount).clamp(0.0, limit);
-                    let wanted_x = (current_x + amount_x).clamp(0.0, limit_x);
+                    // An rtl box's offset grows leftward.
+                    let rtl = arena.is_some_and(|arena| {
+                        self.tree.prepared.boxes[arena].direction == Direction::Rtl
+                    });
+                    let toward_end = if rtl { -amount_x } else { amount_x };
+                    let wanted_x = (current_x + toward_end).clamp(0.0, limit_x);
                     if left && wanted != current {
                         state.scrolled.insert(node, wanted);
                         (left, moved) = (false, true);
@@ -4515,7 +4556,11 @@ where
                     );
                 let mut placed = moved_rectangle(geometry.padding, origin);
                 placed.y -= scrolled;
-                placed.x -= across;
+                if prepared.boxes[0].direction == Direction::Rtl {
+                    placed.x += across;
+                } else {
+                    placed.x -= across;
+                }
                 placed
             };
             renderer.with_layer(bounds, |renderer| {
@@ -4739,8 +4784,13 @@ where
                     } else {
                         area.bottom
                     };
+                    let rtl = prepared.boxes[arena].direction == Direction::Rtl;
                     bars.push(Rectangle {
-                        x: origin.x + area.left + along,
+                        x: if rtl {
+                            origin.x + end - along - thumb
+                        } else {
+                            origin.x + area.left + along
+                        },
                         y: origin.y + bottom - 4.0,
                         width: thumb,
                         height: 4.0,
@@ -4894,6 +4944,65 @@ mod tests {
     }
 
     #[test]
+    fn an_rtl_scroller_scrolls_toward_its_left_end() {
+        let tree = BoxTree::new(
+            node("page", vec![node("box", vec![node("wide", vec![])])]),
+            "#box { direction:rtl; overflow:auto; width:100px; height:40px; padding-left:5px; }
+             #wide { width:300px; height:40px; }",
+        )
+        .unwrap();
+        let mut geometry: Vec<FlowGeometry> = tree
+            .layout(800.0, Some(600.0))
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        let wide = geometry[2].border;
+        let limits = apply_scrolling(
+            &tree.prepared,
+            &mut geometry,
+            |arena| (0.0, if arena == 1 { 30.0 } else { 0.0 }),
+            |_, _| None,
+            Size::new(800.0, 600.0),
+        );
+        // 300px of contents overflow the 105px padding box by 195px; its 5px end padding
+        // follows them.
+        assert_eq!(limits[1].1, 200.0);
+        assert_eq!(geometry[2].border.left, wide.left + 30.0);
+        assert_eq!(geometry[2].border.right, wide.right + 30.0);
+    }
+
+    #[test]
+    fn right_aligned_text_extends_an_rtl_scroller_leftward() {
+        let tree = BoxTree::new(
+            node("page", vec![node("box", vec![node("line", vec![])])]),
+            "#box { direction:rtl; overflow:auto; width:100px; height:40px; }",
+        )
+        .unwrap();
+        let mut geometry: Vec<FlowGeometry> = tree
+            .layout(800.0, Some(600.0))
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        // A 260px line right-aligned in the 100px box reaches 160px past its left.
+        let limits = apply_scrolling(
+            &tree.prepared,
+            &mut geometry,
+            |_| (0.0, 0.0),
+            |arena, _| {
+                (arena == 2).then_some(TextExtent {
+                    height: 10.0,
+                    from: -160.0,
+                    to: 100.0,
+                })
+            },
+            Size::new(800.0, 600.0),
+        );
+        assert_eq!(limits[1].1, 160.0);
+    }
+
+    #[test]
     fn a_scrollers_own_text_moves_with_its_offset() {
         let tree = BoxTree::new(
             node("page", vec![node("line", vec![])]),
@@ -4912,7 +5021,13 @@ mod tests {
             &tree.prepared,
             &mut geometry,
             |_| (0.0, 15.0),
-            |arena, _| (arena == 1).then_some(Size::new(100.0, 10.0)),
+            |arena, _| {
+                (arena == 1).then_some(TextExtent {
+                    height: 10.0,
+                    from: 0.0,
+                    to: 100.0,
+                })
+            },
             Size::new(800.0, 600.0),
         );
         assert_eq!(limits[1].1, 40.0);
