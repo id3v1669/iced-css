@@ -127,3 +127,14 @@ fn widget_cost_by_size() {
         );
     }
 }
+
+#[test]
+#[ignore = "a measurement"]
+fn parse_cost_by_sheet_size() {
+    for rules in [1000_usize, 4000, 16_000, 64_000] {
+        let css = "a{color:red}".repeat(rules);
+        let started = Instant::now();
+        BoxTree::new(node("page".to_owned(), vec![]), &css).unwrap();
+        println!("{rules:>6} rules: {:>10.2?}", started.elapsed());
+    }
+}

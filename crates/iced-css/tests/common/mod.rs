@@ -60,6 +60,12 @@ pub fn mount(view: fn() -> El) -> Sim {
 }
 
 pub fn mount_at(view: fn() -> El, width: f32, height: f32) -> Sim {
+    // The Vulkan loader's first driver scan is not safe to run from several threads: parallel
+    // tests crashed in it, inside `loader_scanned_icd_add`. Renderers are made one at a time.
+    static CREATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let one_at_a_time = CREATING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let settings = iced_test::core::Settings::default();
     let backend = std::env::var("ICED_TEST_BACKEND").ok();
     let mut renderer =
@@ -69,6 +75,7 @@ pub fn mount_at(view: fn() -> El, width: f32, height: f32) -> Sim {
             backend.as_deref(),
         ))
         .expect("create headless renderer");
+    drop(one_at_a_time);
 
     let size = Size::new(width, height);
     let ui = UserInterface::build(view(), size, Cache::default(), &mut renderer);

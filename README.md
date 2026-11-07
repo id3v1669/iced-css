@@ -83,6 +83,8 @@ sizing decorations by part; generated content and markers take it only from thei
 
 Measured on one machine in a release build (`tests/box_tree_scale.rs`): a cascade takes about 40 ms for 2,000 boxes and grows linearly; a layout with a fake shaper takes under 1 ms there. Rules multiply with boxes, with no selector index: 1,000 rules over 2,000 boxes take about 660 ms. The first hover of a box some `:hover` rule can select cascades the whole tree once and is then cached, up to 64 states: a class rule on every card means a stall per card on a large page.
 
+A cascade over more than 300 million box and rule pairs is refused with an error, which bounds what a hostile sheet can do to the UI thread to some tens of seconds per cascade.
+
 ## Status
 
 Under active development and not yet published. Conformance is not measured.

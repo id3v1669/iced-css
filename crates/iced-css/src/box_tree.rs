@@ -98,6 +98,10 @@ const WORK: usize = 200_000_000;
 /// For limits that multiply worst cases ahead of time (every number at its longest in every
 /// box), which would refuse a page of a few hundred boxes. `COUNT` and `BYTES` bound the input.
 const WORST_CASE: usize = usize::MAX >> 4;
+/// The one budget that counts real work: boxes times rules, the rule tests a cascade makes.
+/// At about 70 ns each (see `tests/box_tree_scale.rs`) this bounds a cascade to some tens of
+/// seconds, so a hostile sheet is refused rather than holding the UI thread indefinitely.
+const RULE_VISITS: usize = 300_000_000;
 
 fn big() -> NonZeroUsize {
     nz(COUNT)
@@ -139,7 +143,7 @@ fn per_target() -> RuleBatchLimits {
 fn facts() -> ClearanceBoxFactsLimits {
     ClearanceBoxFactsLimits {
         work: nz(WORST_CASE),
-        rule_visits: nz(WORST_CASE),
+        rule_visits: nz(RULE_VISITS),
         matching_work: nz(WORST_CASE),
         declaration_offers: nz(WORST_CASE),
         membership_work: nz(WORST_CASE),
@@ -173,11 +177,11 @@ fn parse(css: &str, order: u64) -> Result<OwnedStylesheetGraph, BoxTreeError> {
                     prefix_work: big(),
                 },
                 decode: DecodeLimits {
-                    entries: big(),
+                    entries: nz(BYTES),
                     retained_bytes: nz(BYTES),
                     work: nz(WORK),
                 },
-                charset_work: big(),
+                charset_work: nz(BYTES),
             },
             sheet: StylesheetLimits {
                 rules: RuleAssemblyLimits {
@@ -830,7 +834,7 @@ impl BoxTree {
                 nodes: big(),
                 retained_bytes: nz(BYTES),
                 work: nz(WORST_CASE),
-                rule_visits: nz(WORST_CASE),
+                rule_visits: nz(RULE_VISITS),
                 matching_work: nz(WORST_CASE),
                 declaration_offers: nz(WORST_CASE),
                 membership_work: nz(WORST_CASE),
@@ -4328,5 +4332,18 @@ mod tests {
         // No rule at all: nothing differs, and nothing cascades again.
         let shown = tree("#a { color:#ff0000; }");
         assert!(shown.same_variant((Some(a), Some(b), Some(a)), none));
+    }
+
+    #[test]
+    fn a_cascade_too_large_to_finish_is_refused() {
+        let children: Vec<_> = (0..20_000)
+            .map(|at| node(&format!("c{at}"), vec![]))
+            .collect();
+        let css = "a{color:red}".repeat(6_000);
+        let refused = BoxTree::new(node("page", children), &css).unwrap_err();
+        assert!(refused.to_string().contains("RuleVisits"), "{refused}");
+        // A sheet well past 100,000 characters is ordinary.
+        let css = "a{color:red}".repeat(20_000);
+        assert!(BoxTree::new(node("page", vec![]), &css).is_ok());
     }
 }
