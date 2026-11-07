@@ -85,6 +85,10 @@ Measured on one machine in a release build (`tests/box_tree_scale.rs`): a cascad
 
 A cascade over more than 100 million box and rule pairs is refused with an error; at that size simple selectors take about half a minute on the UI thread, and selectors built to backtrack can take many minutes, since total matching work is not metered: treat stylesheets as trusted input, like code. A selector that overruns its own matching budget refuses the whole cascade: at construction that is an error, and for a later interaction the previous style stays.
 
+## Coverage
+
+`tests/property_coverage.rs` applies each of the 81 CSS 2.2 longhands in a page where it should matter and checks the result changes: 75 do. The rest are `letter-spacing` and the five paged-media properties. That shows a property is read, not that every value is right; there is no conformance suite.
+
 ## Status
 
 Under active development and not yet published. Conformance is not measured.

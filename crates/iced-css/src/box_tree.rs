@@ -1850,7 +1850,15 @@ impl BoxTree {
             let mut stack = vec![*table];
             while let Some(arena) = stack.pop() {
                 inside.insert(prepared.positions[arena].0);
-                stack.extend(prepared.boxes[arena].children.iter().copied());
+                // A positioned box paints in its own layer, above the grid: a popup in a cell
+                // must cover the lines.
+                stack.extend(
+                    prepared.boxes[arena]
+                        .children
+                        .iter()
+                        .copied()
+                        .filter(|child| prepared.positions[*child].1 == Position::Static),
+                );
             }
             for (at, step) in steps.iter().enumerate() {
                 if let PaintStep::Box(index) = *step
@@ -5362,5 +5370,29 @@ mod tests {
             .position(|step| matches!(step, PaintStep::CellBorder(_)))
             .unwrap();
         assert!(first_border > kid_box, "{steps:?}");
+    }
+
+    #[test]
+    fn positioned_content_in_a_cell_stays_above_the_grid() {
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![node("r", vec![node("a", vec![node("pop", vec![])]), node("b", vec![])])],
+            ),
+            "#t { display:table; border-collapse:collapse; } #r { display:table-row; }
+             #a, #b { display:table-cell; width:40px; border:1px solid #000; }
+             #pop { position:absolute; z-index:10; width:200px; height:200px; background-color:#fff; }",
+        )
+        .unwrap();
+        let steps = tree.paint_steps(&BTreeSet::new());
+        let pop = steps
+            .iter()
+            .position(|step| *step == PaintStep::Box(3))
+            .unwrap();
+        let last_border = steps
+            .iter()
+            .rposition(|step| matches!(step, PaintStep::CellBorder(_)))
+            .unwrap();
+        assert!(last_border < pop, "{steps:?}");
     }
 }
