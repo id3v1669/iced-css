@@ -1420,3 +1420,115 @@ fn a_later_rows_background_stays_under_a_spanning_cell() {
     assert!(draw("", &name));
     assert!(draw("#r2 { background-color:white; }", &name));
 }
+
+#[test]
+fn a_columns_background_paints_under_its_cells() {
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "t",
+            vec![
+                node("c1", vec![]),
+                node("c2", vec![]),
+                node("r1", vec![node("a", vec![]), node("b", vec![])]),
+                node("r2", vec![node("c", vec![]), node("d", vec![])]),
+            ],
+        );
+        let sheet = format!(
+            "#t {{ display:table; background-color:white; }}
+             #c1, #c2 {{ display:table-column; }}
+             #r1, #r2 {{ display:table-row; }}
+             #a, #b, #c, #d {{ display:table-cell; width:40px; height:30px; }} {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("column-background-{}.png", std::process::id());
+    assert!(draw("#b, #d { background-color:#d9534f; }", &name));
+    assert!(draw("#c2 { background-color:#d9534f; }", &name));
+    // Under the cells: a cell's own background covers its column's.
+    let name = format!("column-under-{}.png", std::process::id());
+    assert!(draw("#b, #d { background-color:#2a4d69; }", &name));
+    assert!(draw(
+        "#c2 { background-color:#d9534f; } #b, #d { background-color:#2a4d69; }",
+        &name
+    ));
+}
+
+#[test]
+fn a_column_fills_an_anonymous_cell_not_its_content() {
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "t",
+            vec![
+                node("c1", vec![]),
+                node("r", vec![node("a", vec![]), node("b", vec![])]),
+            ],
+        );
+        let sheet = format!(
+            "#t {{ display:table; background-color:white; }}
+             #c1 {{ display:table-column; }}
+             #r {{ display:table-row; }}
+             #a {{ height:30px; }}
+             #b {{ display:table-cell; width:40px; height:30px; }} {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("column-anonymous-{}.png", std::process::id());
+    // `#a` sits in an anonymous cell 40px wide; the column covers that cell, margins and all.
+    assert!(draw("#a { width:40px; background-color:#d9534f; }", &name));
+    assert!(draw(
+        "#a { width:20px; margin:0 10px; } #c1 { background-color:#d9534f; }",
+        &name
+    ));
+}
+
+#[test]
+fn a_widget_in_an_empty_table_row_is_drawn_and_pressed() {
+    let view = |hosted: bool| -> Element<'static, u8> {
+        let root = node("t", vec![node("r", vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#t { display:table; width:100px; background-color:white; }
+             #r { display:table-row; height:40px; }",
+        )
+        .unwrap();
+        let mut interactive = tree.interactive();
+        if hosted {
+            interactive = interactive.widget(
+                "r",
+                iced::widget::button(iced::widget::text("go"))
+                    .on_press(7)
+                    .width(80)
+                    .height(30),
+            );
+        }
+        interactive.into()
+    };
+    let name = std::env::temp_dir().join(format!("empty-row-widget-{}.png", std::process::id()));
+    assert!(
+        simulator(view(false))
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&name)
+            .unwrap()
+    );
+    assert!(
+        !simulator(view(true))
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&name)
+            .unwrap()
+    );
+    assert_eq!(click(view(true), Point::new(10.0, 10.0)), vec![7]);
+}

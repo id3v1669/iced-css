@@ -451,6 +451,9 @@ pub struct PreparedTree {
     pub inline_parent: Vec<Option<usize>>,
     /// The box sides of each inline element, by projected index.
     pub inline_boxes: Vec<Option<InlineBoxSides>>,
+    /// Each table's direct `table-column` children in column order: table arena slot and the
+    /// column's projected index.
+    pub table_columns: Vec<(usize, usize)>,
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
@@ -521,6 +524,7 @@ pub fn prepare_captured_tree(
     let mut inline_element = vec![false; count];
     let mut inline_parent: Vec<Option<usize>> = vec![None; count];
     let mut inline_boxes: Vec<Option<InlineBoxSides>> = vec![None; count];
+    let mut table_columns: Vec<(usize, usize)> = Vec::new();
     // Whether the projected row is a block text leaf, whose generated runs join its own.
     let mut text_block = vec![false; count];
     let mut inline_rows: Vec<usize> = Vec::new();
@@ -655,6 +659,7 @@ pub fn prepare_captured_tree(
                     })?
                     .width;
                 build.boxes[table].column_widths.push(width);
+                table_columns.push((table, index));
             }
             continue;
         }
@@ -870,6 +875,7 @@ pub fn prepare_captured_tree(
         runs,
         inline_parent,
         inline_boxes,
+        table_columns,
         clipped,
         scrolls,
     })
@@ -937,6 +943,7 @@ impl PreparedTree {
             runs: _,
             inline_parent: _,
             inline_boxes: _,
+            table_columns: _,
             clipped: _,
             scrolls: _,
         } = self;

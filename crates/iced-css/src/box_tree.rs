@@ -1820,7 +1820,8 @@ impl BoxTree {
                 PaintStep::Text(_)
                 | PaintStep::Outline(_)
                 | PaintStep::Marker(_)
-                | PaintStep::CellBorder(_) => None,
+                | PaintStep::CellBorder(_)
+                | PaintStep::Column(_) => None,
             })
             .collect()
     }
@@ -1973,6 +1974,12 @@ impl BoxTree {
             // 17.5.1: a table paints in layers, its row groups then its rows under every
             // cell, so a later row's background cannot cover a cell spanning into it.
             if matches!(prepared.boxes[arena].table, Some(TableRole::Table { .. })) {
+                // Columns come between the table and its row groups.
+                for (at, &(table, _)) in prepared.table_columns.iter().enumerate() {
+                    if table == arena {
+                        steps.push(PaintStep::Column(at));
+                    }
+                }
                 let mut cells = Vec::new();
                 let mut rows = Vec::new();
                 for &child in &prepared.boxes[arena].children {
@@ -1986,6 +1993,9 @@ impl BoxTree {
                         ) => {
                             if !prepared.anonymous[child] {
                                 steps.push(PaintStep::Box(prepared.positions[child].0));
+                            }
+                            if self.texts[child].is_some() || embedded.contains(&child) {
+                                texts.push(child);
                             }
                             for &row in &prepared.boxes[child].children {
                                 if prepared.positions[row].1 != Position::Static {
@@ -2003,6 +2013,9 @@ impl BoxTree {
                 for &row in &rows {
                     if !prepared.anonymous[row] {
                         steps.push(PaintStep::Box(prepared.positions[row].0));
+                    }
+                    if self.texts[row].is_some() || embedded.contains(&row) {
+                        texts.push(row);
                     }
                     for &cell in &prepared.boxes[row].children {
                         if prepared.positions[cell].1 != Position::Static {
@@ -2173,6 +2186,7 @@ where
             measured: false,
             geometry: Vec::new(),
             slot_geometry: Vec::new(),
+            column_rects: Vec::new(),
             scroll_limits: Vec::new(),
             canvas_height: 0.0,
             canvas_width: 0.0,
@@ -2194,6 +2208,8 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaintStep {
+    /// A table column's background, by its place in `PreparedTree::table_columns`.
+    Column(usize),
     /// A collapsed table's cell, drawing only its borders.
     CellBorder(usize),
     /// A box's background and border, by projected index.
@@ -2625,6 +2641,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     geometry: Vec<Option<FlowGeometry>>,
     /// The same layout by arena slot, including anonymous blocks.
     slot_geometry: Vec<FlowGeometry>,
+    /// Each `PreparedTree::table_columns` entry's background area, from the last layout.
+    column_rects: Vec<Option<Rectangle>>,
     /// How far each arena slot can scroll, down and across.
     scroll_limits: Vec<(f32, f32)>,
     /// The widget's height at the last layout.
@@ -3174,7 +3192,7 @@ fn breaks_layer(tree: &BoxTree, step: PaintStep, next: PaintStep) -> bool {
             !matches!(next, PaintStep::Text(_) | PaintStep::Marker(_))
         }
         PaintStep::Box(index) => tree.backgrounds.contains_key(&index),
-        PaintStep::Outline(_) | PaintStep::CellBorder(_) => false,
+        PaintStep::Outline(_) | PaintStep::CellBorder(_) | PaintStep::Column(_) => false,
     }
 }
 
@@ -3265,6 +3283,86 @@ fn draw_outline<Renderer: renderer::Renderer>(
             );
         }
     }
+}
+
+/// 17.5.1: each recorded column's area, across the cells that sit only in that column and
+/// down the table's rows, from arena-slot geometry so anonymous cells count as cells.
+fn column_rects(prepared: &PreparedTree, slot_geometry: &[FlowGeometry]) -> Vec<Option<Rectangle>> {
+    use iced_css_core::formatting::block_flow::{table_grid, table_parts};
+    let mut rects = vec![None; prepared.table_columns.len()];
+    let mut done = vec![false; rects.len()];
+    for first in 0..rects.len() {
+        if done[first] {
+            continue;
+        }
+        let table = prepared.table_columns[first].0;
+        let (rows, _) = table_parts(&prepared.boxes, table);
+        let (placed, _) = table_grid(&prepared.boxes, &rows);
+        let (mut top, mut bottom) = (f32::INFINITY, f32::NEG_INFINITY);
+        for item in &placed {
+            if let Some(cell) = slot_geometry.get(item.cell) {
+                top = top.min(cell.border.top);
+                bottom = bottom.max(cell.border.bottom);
+            }
+        }
+        let mut column = 0;
+        for at in first..rects.len() {
+            if prepared.table_columns[at].0 != table {
+                continue;
+            }
+            done[at] = true;
+            let (mut left, mut right) = (f32::INFINITY, f32::NEG_INFINITY);
+            for item in placed
+                .iter()
+                .filter(|item| item.column == column && item.col_span == 1)
+            {
+                if let Some(cell) = slot_geometry.get(item.cell) {
+                    left = left.min(cell.border.left);
+                    right = right.max(cell.border.right);
+                }
+            }
+            column += 1;
+            if left < right && top < bottom {
+                rects[at] = Some(Rectangle {
+                    x: left,
+                    y: top,
+                    width: right - left,
+                    height: bottom - top,
+                });
+            }
+        }
+    }
+    rects
+}
+
+/// Draws a column's background color over its area from [`column_rects`].
+fn draw_column<Renderer: renderer::Renderer>(
+    tree: &BoxTree,
+    rects: &[Option<Rectangle>],
+    renderer: &mut Renderer,
+    origin: Point,
+    at: usize,
+) {
+    let Some(&(_, owner)) = tree.prepared.table_columns.get(at) else {
+        return;
+    };
+    let paint = tree.paints[owner];
+    let (Some(color), Some(Some(area))) =
+        (paint.background.filter(|_| paint.visible), rects.get(at))
+    else {
+        return;
+    };
+    renderer.fill_quad(
+        Quad {
+            bounds: Rectangle {
+                x: origin.x + area.x,
+                y: origin.y + area.y,
+                ..*area
+            },
+            ..Quad::default()
+        },
+        Color::from_rgb(color[0], color[1], color[2]),
+    );
 }
 
 /// Which of a box's quads to draw. An image goes between them.
@@ -3847,6 +3945,7 @@ where
         );
         self.geometry = self.tree.prepared.by_projected(&self.slot_geometry);
         self.clips = self.tree.clips(&self.geometry);
+        self.column_rects = column_rects(&self.tree.prepared, &self.slot_geometry);
         self.paragraphs.clear();
         self.rest_paragraphs.clear();
         for (arena, leaf) in self.tree.texts.iter().enumerate() {
@@ -4296,6 +4395,7 @@ where
                 | PaintStep::Marker(index)
                 | PaintStep::CellBorder(index) => prepared.slot[index],
                 PaintStep::Text(arena) => Some(arena),
+                PaintStep::Column(at) => prepared.table_columns.get(at).map(|entry| entry.0),
             };
             let mut clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
             // A box clips its own text as it clips its children.
@@ -4449,6 +4549,9 @@ where
                                     BoxParts::All,
                                 ),
                             }
+                        }
+                        PaintStep::Column(at) => {
+                            draw_column(&self.tree, &self.column_rects, renderer, origin, at);
                         }
                         PaintStep::CellBorder(index) => draw_box(
                             &self.tree,
