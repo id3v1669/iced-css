@@ -974,7 +974,7 @@ impl BoxTree {
             {
                 continue;
             }
-            resolve_collapsed_edges(&prepared, table, &mut paints);
+            resolve_collapsed_edges(&mut prepared, table, &mut paints);
             // 17.6.2: a collapsed table has no padding.
             prepared.boxes[table].padding = [Dim::Px(0.0); 4];
             let (mut across, mut down) = (0.0_f32, 0.0_f32);
@@ -1840,9 +1840,24 @@ impl BoxTree {
             if let PaintStep::Box(index) = *step
                 && let Some(table) = self.paints[index].collapsed_cell
             {
-                let entry = tables.entry(table).or_default();
-                entry.0 = at;
-                entry.1.push(index);
+                tables.entry(table).or_default().1.push(index);
+                tables.entry(table).or_default().0 = at;
+            }
+        }
+        // After the last box anywhere in the table, whose content could cover a band too.
+        for (table, group) in &mut tables {
+            let mut inside = BTreeSet::new();
+            let mut stack = vec![*table];
+            while let Some(arena) = stack.pop() {
+                inside.insert(prepared.positions[arena].0);
+                stack.extend(prepared.boxes[arena].children.iter().copied());
+            }
+            for (at, step) in steps.iter().enumerate() {
+                if let PaintStep::Box(index) = *step
+                    && inside.contains(&index)
+                {
+                    group.0 = group.0.max(at);
+                }
             }
         }
         let mut groups: Vec<_> = tables.into_values().collect();
@@ -2235,7 +2250,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
 /// 17.6.2.1: on an edge two cells of a collapsed table share, only the winner's border draws,
 /// and a `hidden` one draws neither. A cell that is not visible has no say. Only cells
 /// meeting along a whole edge are compared: a cell beside a taller one keeps its own part.
-fn resolve_collapsed_edges(prepared: &PreparedTree, table: usize, paints: &mut [BoxPaint]) {
+fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &mut [BoxPaint]) {
     use iced_css_core::formatting::{
         block_flow::{table_grid, table_parts},
         table_borders::{
@@ -2327,16 +2342,24 @@ fn resolve_collapsed_edges(prepared: &PreparedTree, table: usize, paints: &mut [
             CollapsedBorder::Winner { index, .. } => (index == 0, index == 1),
             CollapsedBorder::Absent | CollapsedBorder::Suppressed => (false, false),
         };
+        // A loser keeps the winner's width in layout, so its content clears the winner's band.
+        let width = match (keep_first, keep_second) {
+            (true, _) => one.width(),
+            (_, true) => two.width(),
+            // 17.6.2.1: `hidden` leaves no border at all, and none takes no room.
+            _ => 0.0,
+        };
         if !keep_first {
-            losers.push((first_owner, first_side));
+            losers.push((first.cell, first_owner, first_side, width));
         }
         if !keep_second {
-            losers.push((second_owner, second_side));
+            losers.push((second.cell, second_owner, second_side, width));
         }
     }
     // After every comparison, so one edge's outcome does not feed another's.
-    for (owner, side) in losers {
+    for (cell, owner, side, width) in losers {
         paints[owner].border[side] = None;
+        prepared.boxes[cell].border[side] = width;
     }
 }
 
@@ -5080,6 +5103,7 @@ mod tests {
         assert_eq!(edges("2px solid #f00", "2px dotted #00f"), (red, None));
         assert_eq!(edges("2px solid #f00", "2px solid #00f"), (red, None));
         assert_eq!(edges("2px hidden #f00", "4px solid #00f"), (None, None));
+        assert_eq!(edges("4px solid #00f", "2px hidden #f00"), (None, None));
         assert_eq!(edges("2px solid #f00", "none"), (red, None));
 
         // Above beats below on a tie, and outer edges have nothing to share.
@@ -5303,5 +5327,40 @@ mod tests {
         let band = Rectangle::new(Point::ORIGIN, Size::new(100.0, 0.4));
         assert_eq!(band_pieces(band, 0, "dotted", [0.5; 3]).len(), 1);
         assert_eq!(band_pieces(band, 0, "dashed", [0.5; 3]).len(), 1);
+    }
+
+    #[test]
+    fn a_collapsed_loser_clears_the_winners_band_and_children_paint_under_borders() {
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![node(
+                    "r",
+                    vec![node("a", vec![]), node("b", vec![node("kid", vec![])])],
+                )],
+            ),
+            "#t { display:table; border-collapse:collapse; } #r { display:table-row; }
+             #a, #b { display:table-cell; width:40px; border:1px solid #000; }
+             #a { border-right:10px solid #f00; }
+             #kid { height:9px; background-color:#fff; }",
+        )
+        .unwrap();
+        let geometry = tree.layout(800.0, None).unwrap();
+        let (a, b, kid) = (
+            geometry[2].as_ref().unwrap(),
+            geometry[3].as_ref().unwrap(),
+            geometry[4].as_ref().unwrap(),
+        );
+        assert!(kid.border.left >= a.border.right, "{kid:?} {a:?} {b:?}");
+        let steps = tree.paint_steps(&BTreeSet::new());
+        let kid_box = steps
+            .iter()
+            .position(|step| *step == PaintStep::Box(4))
+            .unwrap();
+        let first_border = steps
+            .iter()
+            .position(|step| matches!(step, PaintStep::CellBorder(_)))
+            .unwrap();
+        assert!(first_border > kid_box, "{steps:?}");
     }
 }
