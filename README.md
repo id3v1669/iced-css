@@ -41,7 +41,7 @@ capturing the tree again, which is enough to build hot reload on.
 - **Tables:** `display: table` and its parts, with spans from `colspan`/`rowspan` attributes,
   anonymous parts, `border-spacing`, captions and cell `vertical-align`.
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` with counters and
-  quotes, `visibility`, outlines and every border style (inline boxes draw solid; collapsed tables resolve edges between cells that meet along a whole edge, and share one width per axis), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
+  quotes, `visibility`, outlines and every border style (collapsed tables resolve edges between cells that meet along a whole edge, and share one width per axis), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
 - **Background images** (with the `image` Cargo feature): local files through `url()`, with `repeat`, `position` and
   `attachment`; relative paths resolve against `BoxTree::with_base`. Paths outside the base
@@ -63,7 +63,7 @@ offsets). A style change without a request applies at once. Time comes from lumi
 ## Known limits
 
 Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
-one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` uses the widest cell border per axis for spacing, and a cell beside a spanning one keeps its own part of the edge;
+one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` uses the widest cell border per axis for spacing, a cell beside a spanning one keeps its own part of the edge, and an anonymous table takes `border-collapse` from the cell it wraps;
 `justify` stretches lines to the widest line rather than the box, leaves a line split at a float's end unstretched, and is start-aligned in rtl;
 one line height and alignment per paragraph; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
@@ -73,8 +73,7 @@ scrolling list item's outside marker moves with the text, unclipped. Animations 
 inline backgrounds and border colors, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.
 
-Not read at all: `letter-spacing`, `word-spacing`, and URL cursors (their
-keyword fallback is used). `text-indent` is approximated by leading spaces, positive lengths only
+Not read at all: `letter-spacing` and `unicode-bidi`, the paged-media properties, and URL cursors (their keyword fallback is used). `word-spacing` adds stand-in spaces, positive values only. `text-indent` is approximated by leading spaces, positive lengths only
 (no percentages or hanging indents), a word too wide beside it moves to the next line, one wider than the block wraps into blank lines, and none applies when an inline-block opens the line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
 sizing decorations by part; generated content and markers take it only from their element.
 

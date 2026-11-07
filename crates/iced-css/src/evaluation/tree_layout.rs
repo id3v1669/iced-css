@@ -1664,6 +1664,8 @@ pub enum TextLineHeight {
 pub struct TextStyle {
     /// `font-variant: small-caps`.
     pub small_caps: bool,
+    /// `word-spacing` in pixels past the normal space; negative values are ignored.
+    pub word_spacing: f32,
     /// `text-indent` in pixels. A percentage has no width to resolve against here: 0.
     pub text_indent: f32,
     /// 100 to 900.
@@ -1970,6 +1972,7 @@ pub fn evaluate_tree_paint<'r>(
         };
         styles.push(TextStyle {
             small_caps,
+            word_spacing: 0.0,
             text_indent: 0.0,
             weight: weight.number(),
             italic,
@@ -2138,8 +2141,16 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => 0.0,
         };
+        let word_spacing = match defaulted("word-spacing")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Length(value)) => signed(value),
+            DefaultedValueRef::ParentComputed => {
+                parent_index.map_or(0.0, |parent: usize| styles[parent].word_spacing)
+            }
+            _ => 0.0,
+        };
         if let Some(style) = styles.last_mut() {
             style.text_indent = text_indent;
+            style.word_spacing = word_spacing;
         }
         let clip = match defaulted("clip")? {
             DefaultedValueRef::Compute(SpecifiedValue::ClipRect(sides)) => Some(

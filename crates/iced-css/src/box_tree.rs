@@ -268,6 +268,8 @@ pub struct TextRun {
     /// Spaces standing in for an indent or an inline box's side: they stay with the next or
     /// previous word when measuring its minimum width.
     pub spacer: bool,
+    /// The `border-*-style` of that side border.
+    pub edge_style: &'static str,
     /// A side border in this run's room: at its start (`true`) or end, its width and color.
     pub edge: Option<(bool, f32, [f32; 3])>,
     pub color: Option<[f32; 3]>,
@@ -1086,6 +1088,7 @@ impl BoxTree {
                         size,
                         line_size: None,
                         spacer: false,
+                        edge_style: "solid",
                         inline_boxes: Vec::new(),
                         edge: None,
                         color,
@@ -1180,10 +1183,18 @@ impl BoxTree {
             let mut tagged: Vec<(TextRun, usize)> = Vec::with_capacity(leaf.runs.len());
             for (run, &source) in leaf.runs.drain(..).zip(runs) {
                 let (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at)) = source;
-                let small_caps = match (source, generated_of(source)) {
-                    (_, Some(made)) => made.style.small_caps,
-                    (_, None) => styles[at].small_caps,
+                let style = match generated_of(source) {
+                    Some(made) => &made.style,
+                    None => &styles[at],
                 };
+                let small_caps = style.small_caps;
+                let mut run = run;
+                // 16.4: more room at each space, by the same stand-in spaces as an indent.
+                if style.word_spacing > 0.0
+                    && let Some(extra) = indent_run(&run, style.word_spacing)
+                {
+                    run.text = run.text.replace(' ', &format!(" {}", extra.text));
+                }
                 if small_caps {
                     tagged.extend(small_capitals(&run).into_iter().map(|part| (part, at)));
                 } else {
@@ -1221,6 +1232,10 @@ impl BoxTree {
                                 border: [
                                     (sides.border[0], colors[0]),
                                     (sides.border[2], colors[2]),
+                                ],
+                                border_style: [
+                                    raw_paints[element].border_style[0],
+                                    raw_paints[element].border_style[2],
                                 ],
                                 background: raw_paints[element].background,
                                 owner: projection.original_index(element).unwrap_or_default(),
@@ -1285,6 +1300,7 @@ impl BoxTree {
                             },
                             inline_boxes: decorations(&here[..=depth]),
                             edge,
+                            edge_style: raw_paints[element].border_style[across],
                             visible,
                             owner: owner_of(Some(element)),
                             ..spacer
@@ -1377,6 +1393,7 @@ impl BoxTree {
                             size: prepared.font_sizes[projected],
                             line_size: None,
                             spacer: false,
+                            edge_style: "solid",
                             inline_boxes: Vec::new(),
                             edge: None,
                             color: raw_paints[projected].color,
@@ -1626,6 +1643,12 @@ impl BoxTree {
     #[must_use]
     pub fn paints(&self) -> &[BoxPaint] {
         &self.paints
+    }
+
+    /// The list items that show an image for their marker, by projected index.
+    #[must_use]
+    pub fn list_images(&self) -> Vec<usize> {
+        self.marker_images.keys().copied().collect()
     }
 
     /// Projected box indices in 9.9 paint order: flow blocks, then floats, then
@@ -1959,6 +1982,8 @@ fn css_cursor(keyword: &str) -> Option<mouse::Interaction> {
 pub struct InlineDecoration {
     pub padding: [f32; 2],
     pub border: [(f32, Option<[f32; 3]>); 2],
+    /// The `border-top-style` and `border-bottom-style`.
+    pub border_style: [&'static str; 2],
     pub background: Option<[f32; 3]>,
     /// The source node of the box.
     pub owner: usize,
@@ -2512,17 +2537,20 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                     quad(renderer, bounds, background);
                 }
                 let edges = [
-                    (top - sides.border[0].0, sides.border[0]),
-                    (bottom, sides.border[1]),
+                    (top - sides.border[0].0, sides.border[0], 0),
+                    (bottom, sides.border[1], 2),
                 ];
-                for (at, (height, edge)) in edges {
+                for (at, (height, edge), side) in edges {
                     if let Some(edge) = edge.filter(|_| height > 0.0) {
                         let bounds = Rectangle {
                             y: at,
                             height,
                             ..area
                         };
-                        quad(renderer, bounds, edge);
+                        let style = sides.border_style[side / 2];
+                        for (piece, shade) in band_pieces(bounds, side, style, edge) {
+                            quad(renderer, piece, shade);
+                        }
                     }
                 }
             }
@@ -2550,7 +2578,10 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                     width,
                     height: bottom - top,
                 };
-                quad(renderer, bounds, edge);
+                let side = if start { 3 } else { 1 };
+                for (piece, shade) in band_pieces(bounds, side, run.edge_style, edge) {
+                    quad(renderer, piece, shade);
+                }
             }
             // Line boxes may be taller than the text: measure from their centre, by size.
             let line = |offset: f32| Rectangle {
@@ -4795,6 +4826,27 @@ mod tests {
         assert_eq!(
             child("#p { outline-style:none; } #c { outline:inherit; }"),
             None
+        );
+        // The color inherits with no outline drawn above it.
+        let red = Some((2.0, [1.0, 0.0, 0.0]));
+        assert_eq!(
+            child(
+                "#p { color:#000; outline-color:#ff0000; } #c { outline:2px solid; outline-color:inherit; }"
+            ),
+            red
+        );
+        assert_eq!(
+            child(
+                "#p { color:#000; outline:0 solid #ff0000; } #c { outline:2px solid; outline-color:inherit; }"
+            ),
+            red
+        );
+        // `invert` stays what it is: each box's own `color` stands in for it.
+        assert_eq!(
+            child(
+                "#p { color:#ff0000; outline:1px solid; } #c { color:#0000ff; outline:inherit; }"
+            ),
+            Some((1.0, [0.0, 0.0, 1.0]))
         );
     }
 
