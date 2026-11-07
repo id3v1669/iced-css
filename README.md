@@ -41,7 +41,7 @@ capturing the tree again, which is enough to build hot reload on.
 - **Tables:** `display: table` and its parts, with spans from `colspan`/`rowspan` attributes,
   anonymous parts, `border-spacing`, captions and cell `vertical-align`.
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` with counters and
-  quotes, `visibility`, outlines and every border style (except on inline boxes, whose borders are solid), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
+  quotes, `visibility`, outlines and every border style (inline boxes draw solid, and collapsed table edges paint both cells' styles rather than resolving a winner), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
 - **Background images** (with the `image` Cargo feature): local files through `url()`, with `repeat`, `position` and
   `attachment`; relative paths resolve against `BoxTree::with_base`. Paths outside the base
@@ -82,7 +82,7 @@ sizing decorations by part; generated content and markers take it only from thei
 
 Measured on one machine in a release build (`tests/box_tree_scale.rs`): a cascade takes about 40 ms for 2,000 boxes and grows linearly; a layout with a fake shaper takes under 1 ms there. Rules multiply with boxes, with no selector index: 1,000 rules over 2,000 boxes take about 660 ms. The first hover of a box some `:hover` rule can select cascades the whole tree once and is then cached, up to 64 states: a class rule on every card means a stall per card on a large page.
 
-A cascade over more than 300 million box and rule pairs is refused with an error, which bounds what a hostile sheet can do to the UI thread to some tens of seconds per cascade.
+A cascade over more than 100 million box and rule pairs is refused with an error; at that size simple selectors take about half a minute on the UI thread, and selectors built to backtrack can take longer. A selector that overruns its own matching budget refuses the whole cascade: at construction that is an error, and for a later interaction the previous style stays.
 
 ## Status
 

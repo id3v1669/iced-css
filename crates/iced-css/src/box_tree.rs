@@ -98,10 +98,14 @@ const WORK: usize = 200_000_000;
 /// For limits that multiply worst cases ahead of time (every number at its longest in every
 /// box), which would refuse a page of a few hundred boxes. `COUNT` and `BYTES` bound the input.
 const WORST_CASE: usize = usize::MAX >> 4;
-/// The one budget that counts real work: boxes times rules, the rule tests a cascade makes.
-/// At about 70 ns each (see `tests/box_tree_scale.rs`) this bounds a cascade to some tens of
-/// seconds, so a hostile sheet is refused rather than holding the UI thread indefinitely.
+/// The one budget that counts real work: three rule tests per box and rule, so 100 million
+/// box and rule pairs. Simple selectors take about 33 s there (see `tests/box_tree_scale.rs`).
+/// It bounds the number of tests, not what each costs: `MATCH_WORK` bounds that.
 const RULE_VISITS: usize = 300_000_000;
+/// One selector against one box. Descendant combinators backtrack, so `section div div div a`
+/// spends about C(depth, 3): ordinary deep pages must fit, and only a selector built to
+/// explode should not.
+const MATCH_WORK: usize = 1_000_000;
 
 fn big() -> NonZeroUsize {
     nz(COUNT)
@@ -134,7 +138,7 @@ fn per_target() -> RuleBatchLimits {
         per_rule: RuleCascadeLimits {
             declarations: big(),
             matching: MatchLimits {
-                work: nz(10_000),
+                work: nz(MATCH_WORK),
                 retained_bytes: big(),
             },
         },
@@ -449,6 +453,8 @@ struct Source {
     base: PathBuf,
     /// Restyles already cascaded. Pointerless, so nothing here keeps the source alive.
     variants: Mutex<BTreeMap<InteractionKey, Arc<Style>>>,
+    /// Keys whose restyle was refused: asking again would only cascade again, per frame.
+    refused: Mutex<BTreeSet<InteractionKey>>,
 }
 
 static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
@@ -561,6 +567,7 @@ impl BoxTree {
             sheets,
             base: base.to_owned(),
             variants: Mutex::new(BTreeMap::new()),
+            refused: Mutex::new(BTreeSet::new()),
         });
         Self::styled(&source, (None, None, None))
     }
@@ -581,6 +588,7 @@ impl BoxTree {
             sheets,
             base: self.source.base.clone(),
             variants: Mutex::new(BTreeMap::new()),
+            refused: Mutex::new(BTreeSet::new()),
         });
         Self::styled(&source, (None, None, None))
     }
@@ -606,11 +614,16 @@ impl BoxTree {
         if let Some(style) = cached {
             return Self::from_style((*style).clone(), Arc::clone(&self.source));
         }
+        if self.is_refused(key) {
+            return self.clone();
+        }
         let built = match Self::styled(&self.source, key) {
             Ok(built) => built,
             // This tree may carry a frame's presented values; those are not a style to keep.
-            Err(_) if self.presentation.is_some() => return self.clone(),
-            Err(_) => self.clone(),
+            Err(_) => {
+                self.refuse(key);
+                return self.clone();
+            }
         };
         let mut variants = self
             .source
@@ -623,6 +636,26 @@ impl BoxTree {
         variants.insert(key, Arc::new(built.style()));
         drop(variants);
         built
+    }
+
+    fn is_refused(&self, key: InteractionKey) -> bool {
+        self.source
+            .refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&key)
+    }
+
+    fn refuse(&self, key: InteractionKey) {
+        let mut refused = self
+            .source
+            .refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if refused.len() >= VARIANT_LIMIT {
+            refused.clear();
+        }
+        refused.insert(key);
     }
 
     /// The cascaded styling for a key, without copying it; `None` if it is refused.
@@ -638,7 +671,14 @@ impl BoxTree {
         if cached.is_some() {
             return cached;
         }
-        let style = Arc::new(Self::styled(&self.source, key).ok()?.style());
+        if self.is_refused(key) {
+            return None;
+        }
+        let Ok(built) = Self::styled(&self.source, key) else {
+            self.refuse(key);
+            return None;
+        };
+        let style = Arc::new(built.style());
         let mut variants = self
             .source
             .variants
@@ -1380,6 +1420,19 @@ impl BoxTree {
         // 17.6.1.1: `empty-cells: hide` draws no background or border on a cell with no
         // content but collapsed white space and out-of-flow boxes. It has no effect in a table
         // with collapsed borders, whose edges are shared.
+        // 17.6.3: with collapsed borders, inset draws like ridge and outset like groove.
+        for (arena, value) in prepared.boxes.iter().enumerate() {
+            let owner = prepared.positions[arena].0;
+            if value.table == Some(TableRole::Cell) && collapses[owner] {
+                for line in &mut paints[owner].border_style {
+                    *line = match *line {
+                        "inset" => "ridge",
+                        "outset" => "groove",
+                        other => other,
+                    };
+                }
+            }
+        }
         let blank = |arena: usize| texts[arena].as_ref().is_none_or(TextLeaf::is_empty);
         for (arena, value) in prepared.boxes.iter().enumerate() {
             let owner = prepared.positions[arena].0;
@@ -2560,8 +2613,18 @@ fn band_pieces(
     } else {
         (band.width, band.height)
     };
-    if thick <= 0.0 || long <= 0.0 {
+    if thick <= 0.0 || long <= 0.0 || matches!(style, "none" | "hidden") {
         return Vec::new();
+    }
+    // Under half a pixel a pattern cannot show, and an animation passes through such widths;
+    // past this many pieces it would only cost time. Both draw as a plain line.
+    const MOST_PIECES: f32 = 20_000.0;
+    let plain = thick < 0.5
+        || !long.is_finite()
+        || (style == "dotted" && long / (thick * 2.0) > MOST_PIECES)
+        || (style == "dashed" && long / (thick * 5.0) > MOST_PIECES);
+    if plain && matches!(style, "dotted" | "dashed") {
+        return vec![(band, color)];
     }
     // A piece at `along` on the side and `depth` in from its outer edge.
     let outer_first = side == 0 || side == 3;
@@ -2586,13 +2649,14 @@ fn band_pieces(
     let dark = color.map(|channel| channel * 0.6);
     let light = color.map(|channel| channel + (1.0 - channel) * 0.35);
     let repeat = |dash: f32, gap: f32| {
-        let mut found = Vec::new();
-        let mut along = 0.0;
-        while along < long {
-            found.push((piece(along, dash.min(long - along), 0.0, thick), color));
-            along += dash + gap;
-        }
-        found
+        // Counted, not stepped: adding a small step to a large coordinate can change nothing.
+        let step = dash + gap;
+        (0..(long / step).ceil() as usize)
+            .map(|at| {
+                let along = at as f32 * step;
+                (piece(along, dash.min(long - along), 0.0, thick), color)
+            })
+            .collect::<Vec<_>>()
     };
     let halves = |outside: [f32; 3], inside: [f32; 3]| {
         vec![
@@ -4485,5 +4549,69 @@ mod tests {
         // Nothing to cut.
         let none = Rectangle::new(Point::new(0.0, 0.0), Size::new(0.0, 3.0));
         assert!(band_pieces(none, 0, "dashed", color).is_empty());
+        assert!(band_pieces(top, 0, "none", color).is_empty());
+        assert!(band_pieces(top, 0, "hidden", color).is_empty());
+        // Too thin or too long for a pattern: one line, and no hang.
+        for (width, height) in [
+            (800.0, 0.00001),
+            (800.0, 0.0000001),
+            (40_000_000.0, 1.0),
+            (f32::INFINITY, 1.0),
+        ] {
+            let band = Rectangle::new(Point::ORIGIN, Size::new(width, height));
+            for style in ["dotted", "dashed"] {
+                assert_eq!(
+                    band_pieces(band, 0, style, color).len(),
+                    1,
+                    "{style} {width} {height}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn styles_inherit_and_collapsed_cells_map_inset_and_outset() {
+        let tree = BoxTree::new(
+            node("p", vec![node("c", vec![])]),
+            "#p { border:4px dashed #ff0000; outline:2px dotted #ff0000; }
+             #c { border:4px solid #ff0000; border-style:inherit;
+                  outline-style:inherit; outline-width:2px; }",
+        )
+        .unwrap();
+        let child = tree.paints[1];
+        assert_eq!(child.border_style, ["dashed"; 4]);
+        assert_eq!(child.outline_style, "dotted");
+        assert!(child.outline.is_some());
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+            ),
+            "#t { display:table; border-collapse:collapse; }
+             #r { display:table-row; }
+             #a { display:table-cell; border:4px inset #ff0000; }
+             #b { display:table-cell; border:4px outset #ff0000; }",
+        )
+        .unwrap();
+        assert_eq!(tree.paints[2].border_style, ["ridge"; 4]);
+        assert_eq!(tree.paints[3].border_style, ["groove"; 4]);
+    }
+
+    #[test]
+    fn a_refused_interaction_is_remembered_and_keeps_the_style() {
+        // Deep enough that this selector's backtracking overruns its budget, only on hover.
+        let mut deep = node("leaf", vec![]);
+        for at in 0..200 {
+            deep = node(&format!("n{at}"), vec![deep]);
+        }
+        let tree = BoxTree::new(
+            deep,
+            "#nope * * * * * *:hover { color:#ff0000; } #leaf { color:#00ff00; }",
+        )
+        .unwrap();
+        let key = (Some(tree.originals[tree.originals.len() - 1]), None, None);
+        let shown = tree.variant(key);
+        assert_eq!(shown.paints, tree.paints);
+        assert!(tree.is_refused(tree.source.normal_key(key)));
     }
 }

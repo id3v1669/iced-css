@@ -1872,27 +1872,32 @@ pub fn evaluate_tree_paint<'r>(
             DefaultedValueRef::ParentComputed => parent_index.and_then(|parent| z_indices[parent]),
             _ => None,
         };
-        let outline_width = match defaulted("outline-style")? {
-            DefaultedValueRef::Compute(SpecifiedValue::Keyword(style))
-                if !matches!(style.as_str(), "none" | "hidden") =>
-            {
-                match defaulted("outline-width")? {
-                    DefaultedValueRef::Compute(SpecifiedValue::Keyword(width)) => {
-                        Some(match width.as_str() {
-                            "thin" => 1.0,
-                            "thick" => 5.0,
-                            _ => 3.0,
-                        })
-                    }
-                    DefaultedValueRef::Compute(SpecifiedValue::Length(LengthTarget::Absolute(
-                        length,
-                    ))) => length
-                        .to_nonnegative_f32(limits.numeric)
-                        .ok()
-                        .map(|c| c.value),
-                    _ => Some(3.0),
-                }
+        let outlined = match defaulted("outline-style")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(style)) => {
+                !matches!(style.as_str(), "none" | "hidden")
             }
+            DefaultedValueRef::ParentComputed => parent_index.is_some_and(|parent: usize| {
+                !matches!(paints[parent].outline_style, "none" | "hidden")
+            }),
+            _ => false,
+        };
+        let outline_width = match outlined {
+            true => match defaulted("outline-width")? {
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(width)) => {
+                    Some(match width.as_str() {
+                        "thin" => 1.0,
+                        "thick" => 5.0,
+                        _ => 3.0,
+                    })
+                }
+                DefaultedValueRef::Compute(SpecifiedValue::Length(LengthTarget::Absolute(
+                    length,
+                ))) => length
+                    .to_nonnegative_f32(limits.numeric)
+                    .ok()
+                    .map(|c| c.value),
+                _ => Some(3.0),
+            },
             _ => None,
         }
         .filter(|width| *width > 0.0);
@@ -2083,19 +2088,25 @@ pub fn evaluate_tree_paint<'r>(
                 .map_or(0.0, |c| c.value),
             _ => 0.0,
         };
-        let line = |name: &'static str| -> Result<&'static str, E> {
-            Ok(match defaulted(name)? {
+        let line = |name: &'static str, inherited: Option<&'static str>| {
+            Ok::<_, E>(match defaulted(name)? {
                 DefaultedValueRef::Compute(SpecifiedValue::Keyword(style)) => style.as_str(),
-                _ => "solid",
+                DefaultedValueRef::ParentComputed => inherited.unwrap_or("none"),
+                _ => "none",
             })
         };
+        let parent_line =
+            |side: usize| parent_index.map(|parent: usize| paints[parent].border_style[side]);
         let lines = [
-            line("border-top-style")?,
-            line("border-right-style")?,
-            line("border-bottom-style")?,
-            line("border-left-style")?,
+            line("border-top-style", parent_line(0))?,
+            line("border-right-style", parent_line(1))?,
+            line("border-bottom-style", parent_line(2))?,
+            line("border-left-style", parent_line(3))?,
         ];
-        let outline_line = line("outline-style")?;
+        let outline_line = line(
+            "outline-style",
+            parent_index.map(|parent: usize| paints[parent].outline_style),
+        )?;
         if let Some(paint) = paints.last_mut() {
             paint.border_style = lines;
             paint.outline_style = outline_line;
