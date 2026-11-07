@@ -1818,3 +1818,69 @@ fn rtl_text_wider_than_its_scroller_can_be_scrolled_to() {
             .unwrap()
     );
 }
+
+#[test]
+fn an_rtl_scrollers_bar_starts_at_its_right_end() {
+    let draw = |direction: &str, scroll: f32, name: &str| {
+        let root = node("page", vec![node("box", vec![node("wide", vec![])])]);
+        let sheet = format!(
+            "#page {{ background:white; }}
+             #box {{ direction:{direction}; overflow:auto; width:100px; height:40px; }}
+             #wide {{ width:300px; height:40px; background-color:#2a4d69; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.point_at(Point::new(10.0, 10.0));
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+            delta: iced::mouse::ScrollDelta::Pixels { x: scroll, y: 0.0 },
+        })]);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // At its start an rtl box shows what an ltr one shows at its end, bar included.
+    let name = format!("rtl-bar-{}.png", std::process::id());
+    assert!(draw("ltr", -1000.0, &name));
+    assert!(draw("rtl", 0.0, &name));
+    assert!(!draw("ltr", 0.0, &name));
+}
+
+#[test]
+fn tab_scrolls_an_rtl_box_to_an_input_at_its_left_end() {
+    let root = node(
+        "page",
+        vec![node("box", vec![node("wide", vec![node("field", vec![])])])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background:white; }
+         #box { direction:rtl; overflow:auto; width:100px; height:40px; }
+         #wide { width:300px; height:40px; }
+         #field { width:60px; height:30px; margin-right:240px; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree
+        .interactive()
+        .widget(
+            "field",
+            iced::widget::text_input("", "here").on_input(|_| 1),
+        )
+        .into();
+    let mut ui = simulator(view);
+    let picture = std::env::temp_dir().join(format!("rtl-tab-{}.png", std::process::id()));
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+    let _ = ui.tap_key(iced::keyboard::key::Named::Tab);
+    assert!(
+        !ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&picture)
+            .unwrap()
+    );
+}

@@ -2553,10 +2553,6 @@ fn scrolling_descendants(prepared: &PreparedTree, root: usize, mut visit: impl F
     }
 }
 
-/// How far each scrolling box can scroll down and across, after moving its contents by
-/// its offsets. Parents come first in arena order, so nested scrollers measure moved
-/// contents. Across, a box scrolls toward its end: an ltr box's contents past its right,
-/// an rtl box's past its left (11.1.1). The offset counts from the start either way.
 /// Where a box's text reaches, from its place's top left: down, and across from `from` to
 /// `to`, which run past the place where the text is wider.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2566,6 +2562,10 @@ struct TextExtent {
     to: f32,
 }
 
+/// How far each scrolling box can scroll down and across, after moving its contents by
+/// its offsets. Parents come first in arena order, so nested scrollers measure moved
+/// contents. Across, a box scrolls toward its end: an ltr box's contents past its right,
+/// an rtl box's past its left (11.1.1). The offset counts from the start either way.
 fn apply_scrolling(
     prepared: &PreparedTree,
     geometry: &mut [FlowGeometry],

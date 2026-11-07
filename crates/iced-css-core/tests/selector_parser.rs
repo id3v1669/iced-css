@@ -42,7 +42,11 @@ fn grouping_is_atomic_and_newer_selector_forms_are_not_admitted() {
         "text,",
         ",text",
         "text, :unknown",
-        "text::before",
+        "text::hover",
+        "text::placeholder",
+        "text: :before",
+        "text:::before",
+        "text::lang(en)",
         ":not(.x)",
         "text~.x",
         "[a^=x]",
@@ -55,6 +59,21 @@ fn grouping_is_atomic_and_newer_selector_forms_are_not_admitted() {
         ":lang(en,fr)",
     ] {
         assert!(parse_selector_list(input, limits()).is_err(), "{input:?}");
+    }
+}
+#[test]
+fn two_colons_name_the_css2_pseudo_elements() {
+    for (two, one) in [
+        ("text::before", "text:before"),
+        ("text::AFTER", "text:after"),
+        (".x::first-line", ".x:first-line"),
+        ("::first-letter", ":first-letter"),
+    ] {
+        assert_eq!(
+            parse_selector_list(two, limits()).unwrap(),
+            parse_selector_list(one, limits()).unwrap(),
+            "{two:?}"
+        );
     }
 }
 #[test]

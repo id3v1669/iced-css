@@ -238,12 +238,24 @@ impl<'a> Parser<'a> {
         &mut self,
         target: &mut Option<PseudoElement>,
     ) -> Result<Option<SimpleSelector>, SyntaxError> {
-        let look = self.take()?;
+        let mut look = self.take()?;
         if look.space {
             return Err(SyntaxError {
                 offset: look.start,
                 fault: SyntaxFault::InvalidSelector,
             });
+        }
+        // Selectors Level 3 writes the CSS 2.2 pseudo-elements with two colons; only those
+        // four are admitted that way.
+        let double = look.token.kind == TokenKind::Colon;
+        if double {
+            look = self.take()?;
+            if look.space || look.token.kind != TokenKind::Ident {
+                return Err(SyntaxError {
+                    offset: look.start,
+                    fault: SyntaxFault::InvalidSelector,
+                });
+            }
         }
         if look.token.kind == TokenKind::Function {
             let name = self.name(
@@ -265,7 +277,9 @@ impl<'a> Parser<'a> {
             return Err(self.invalid());
         }
         let name = self.name(look.token.raw, look.start, true, false)?;
-        let pseudo = if name.eq_ignore_ascii_case("first-child") {
+        let pseudo = if double {
+            None
+        } else if name.eq_ignore_ascii_case("first-child") {
             Some(SimpleSelector::FirstChild)
         } else if name.eq_ignore_ascii_case("link") {
             Some(SimpleSelector::Link)
@@ -278,6 +292,9 @@ impl<'a> Parser<'a> {
         } else if name.eq_ignore_ascii_case("focus") {
             Some(SimpleSelector::Focus)
         } else {
+            None
+        };
+        if pseudo.is_none() {
             *target = if name.eq_ignore_ascii_case("before") {
                 Some(PseudoElement::Before)
             } else if name.eq_ignore_ascii_case("after") {
@@ -290,8 +307,7 @@ impl<'a> Parser<'a> {
                 self.release_name(name);
                 return Err(self.invalid());
             };
-            None
-        };
+        }
         self.release_name(name);
         Ok(pseudo)
     }
