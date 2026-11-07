@@ -1645,6 +1645,37 @@ impl BoxTree {
             let collapsed = table.is_some_and(|at| collapses[prepared.positions[at].0]);
             paints[owner].hidden_empty = empty && !collapsed;
         }
+        // 17.6.1.1: a row whose cells, spanning ones included, all hide with nothing visible
+        // takes no height, in the separated model.
+        use iced_css_core::formatting::block_flow::{table_grid, table_parts};
+        let mut hidden_rows = Vec::new();
+        for (table, value) in prepared.boxes.iter().enumerate() {
+            if !matches!(value.table, Some(TableRole::Table { .. }))
+                || collapses[prepared.positions[table].0]
+            {
+                continue;
+            }
+            let (rows, _) = table_parts(&prepared.boxes, table);
+            let (placed, _) = table_grid(&prepared.boxes, &rows);
+            for (index, &row) in rows.iter().enumerate() {
+                let mut covering = placed
+                    .iter()
+                    .filter(|item| item.row <= index && index < item.row + item.row_span)
+                    .peekable();
+                let hides = covering.peek().is_some()
+                    && covering.all(|item| {
+                        let paint = paints[prepared.positions[item.cell].0];
+                        !prepared.anonymous[item.cell]
+                            && (paint.hidden_empty || (paint.hide_empty && !paint.visible))
+                    });
+                if hides {
+                    hidden_rows.push(row);
+                }
+            }
+        }
+        for row in hidden_rows {
+            prepared.boxes[row].hidden_row = true;
+        }
         let ids = prepared
             .positions
             .iter()
@@ -1755,6 +1786,47 @@ impl BoxTree {
             },
             &mut |arena, narrow, until, wide| split(arena, narrow.ceil(), until, wide.ceil()),
         )
+    }
+
+    /// 17.6.1.1 counts a cell hosting a widget as empty, but the widget shows: the rows its
+    /// cell covers keep their height.
+    fn keep_rows_with_widgets(&mut self, slots: impl Iterator<Item = usize>) {
+        use iced_css_core::formatting::block_flow::{table_grid, table_parts};
+        let boxes = &self.prepared.boxes;
+        if !boxes.iter().any(|value| value.hidden_row) {
+            return;
+        }
+        let mut parent = vec![None; boxes.len()];
+        for (at, value) in boxes.iter().enumerate() {
+            for &child in &value.children {
+                parent[child] = Some(at);
+            }
+        }
+        let is_cell = |at: &usize| boxes[*at].table == Some(TableRole::Cell);
+        let mut kept = Vec::new();
+        for slot in slots {
+            let Some(cell) = Some(slot).filter(is_cell).or(parent[slot].filter(is_cell)) else {
+                continue;
+            };
+            let mut table = parent[cell];
+            while let Some(at) = table {
+                if matches!(boxes[at].table, Some(TableRole::Table { .. })) {
+                    break;
+                }
+                table = parent[at];
+            }
+            let Some(table) = table else {
+                continue;
+            };
+            let (rows, _) = table_parts(boxes, table);
+            let (placed, _) = table_grid(boxes, &rows);
+            if let Some(item) = placed.iter().find(|item| item.cell == cell) {
+                kept.extend_from_slice(&rows[item.row..item.row + item.row_span]);
+            }
+        }
+        for row in kept {
+            self.prepared.boxes[row].hidden_row = false;
+        }
     }
 
     /// Supplies each text leaf's (narrowest, longest) width for shrink-to-fit.
@@ -3944,6 +4016,8 @@ where
                 });
             }
         }
+        self.tree
+            .keep_rows_with_widgets(self.slots.iter().copied().flatten());
         // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
         let (elements, slots, children) = (&mut self.elements, &self.slots, &mut tree.children);
         let current = &self.tree;

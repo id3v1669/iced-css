@@ -1923,3 +1923,83 @@ fn tab_scrolls_an_rtl_box_to_an_input_at_its_left_end() {
             .unwrap()
     );
 }
+
+#[test]
+fn a_row_of_hidden_empty_cells_takes_no_height() {
+    let draw = |rows: &[&str], name: &str| {
+        let row = |id: &str| {
+            let cells = (0..2)
+                .map(|at| node(&format!("{id}{at}"), vec![]))
+                .collect();
+            node(id, cells)
+        };
+        let root = node("t", rows.iter().map(|id| row(id)).collect());
+        let sheet = "#t { display:table; border-spacing:10px; background-color:#2a4d69; }
+             #a, #b, #c, #d { display:table-row; }
+             #a0, #a1, #c0, #c1 { display:table-cell; width:40px; height:30px; background-color:white; }
+             #b0, #b1, #d0, #d1 { display:table-cell; width:26px; height:30px; padding:5px;
+                        border:2px solid red; empty-cells:hide; }";
+        let tree = BoxTree::new(root, sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let id = std::process::id();
+    // Its cells still size their columns (26px + padding + borders = 40px). Between rows,
+    // at the end, and alone: as if the row were not there, one spacing gone.
+    let name = format!("hidden-row-middle-{id}.png");
+    assert!(draw(&["a", "c"], &name));
+    assert!(draw(&["a", "b", "c"], &name));
+    let name = format!("hidden-row-last-{id}.png");
+    assert!(draw(&["a"], &name));
+    assert!(draw(&["a", "b"], &name));
+    assert!(draw(&["b", "a"], &name));
+    // Each hidden row takes one spacing, however many follow each other.
+    assert!(draw(&["a", "b", "d"], &name));
+    assert!(draw(&["b", "d", "a"], &name));
+    let name = format!("hidden-row-two-{id}.png");
+    assert!(draw(&["a", "c"], &name));
+    assert!(draw(&["a", "b", "d", "c"], &name));
+}
+
+#[test]
+fn a_hidden_empty_cell_hosting_a_widget_keeps_its_row() {
+    let draw = |hide: &str, name: &str| {
+        let root = node(
+            "t",
+            vec![
+                node("r", vec![node("w", vec![])]),
+                node("s", vec![node("x", vec![text("v", "below")])]),
+            ],
+        );
+        let sheet = format!(
+            "#t {{ display:table; border-spacing:10px; background-color:white; color:black; }}
+             #r, #s {{ display:table-row; }}
+             #w, #x {{ display:table-cell; }}
+             #w {{ border:2px solid red; empty-cells:{hide}; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree
+            .interactive()
+            .widget(
+                "w",
+                iced::widget::button(iced::widget::text("go"))
+                    .width(80)
+                    .height(30),
+            )
+            .into();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // A hosted widget's cell draws as if shown, and its row stays as tall as the widget,
+    // so the text below stays below it.
+    let name = format!("hidden-widget-row-{}.png", std::process::id());
+    assert!(draw("show", &name));
+    assert!(draw("hide", &name));
+}

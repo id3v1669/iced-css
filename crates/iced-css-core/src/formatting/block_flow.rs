@@ -98,6 +98,9 @@ pub struct FlowBox {
     pub caption_below: bool,
     /// `table-layout: fixed`: the first row alone sets the columns of a table with a width.
     pub fixed_table: bool,
+    /// 17.6.1.1: a row whose cells all hide and show nothing: no height, and vertical
+    /// spacing on one side only.
+    pub hidden_row: bool,
     /// The widths of a table's `table-column` children, in column order.
     pub column_widths: Vec<Dim>,
     /// An anonymous block whose children are inline-blocks, placed in wrapping lines
@@ -137,6 +140,7 @@ impl Default for FlowBox {
             line_align: RowAlign::Right,
             caption_below: false,
             fixed_table: false,
+            hidden_row: false,
             column_widths: Vec::new(),
             inline_row: None,
             out_of_flow: false,
@@ -928,7 +932,24 @@ impl Solver<'_> {
                 }
             }
         }
-        let row_gaps = track_gaps(&heights, spacing[1]);
+        let mut bottom_edge = edge[1];
+        for (index, &row) in rows.iter().enumerate() {
+            if self.boxes[row].hidden_row {
+                heights[index] = 0.0;
+            }
+        }
+        let mut row_gaps = track_gaps(&heights, spacing[1]);
+        for (index, &row) in rows.iter().enumerate() {
+            if !self.boxes[row].hidden_row {
+                continue;
+            }
+            // The spacing after it goes: the table's bottom edge after the last row.
+            if index < row_gaps.len() {
+                row_gaps[index] = 0.0;
+            } else {
+                bottom_edge = 0.0;
+            }
+        }
         let mut tops = Vec::with_capacity(rows.len());
         for (index, &height) in heights.iter().enumerate() {
             tops.push(y);
@@ -983,7 +1004,7 @@ impl Solver<'_> {
                 }
             }
         }
-        y += edge[1];
+        y += bottom_edge;
         for (index, &row) in rows.iter().enumerate() {
             let area = rect(
                 inner.left,
