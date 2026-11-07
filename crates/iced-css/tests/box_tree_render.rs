@@ -1353,6 +1353,10 @@ fn collapsed_lines_survive_cell_backgrounds() {
     assert!(draw("", &name));
     assert!(draw("#a, #b, #c, #d { background-color:white; }", &name));
     assert!(draw("#r1, #r2 { background-color:white; }", &name));
+    assert!(draw(
+        "#a { position:relative; background-color:white; }",
+        &name
+    ));
 }
 
 #[test]

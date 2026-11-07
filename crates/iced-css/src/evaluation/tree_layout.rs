@@ -1313,6 +1313,9 @@ pub struct BoxPaint {
     /// `clip: rect()` offsets from the border box's top left: top, right, bottom, left, with
     /// `None` for auto. It only matters on absolutely positioned boxes.
     pub clip: Option<[Option<f32>; 4]>,
+    /// The arena slot of the collapsed table this cell belongs to: it draws its borders after
+    /// the table's cell backgrounds, which would otherwise cover the shared edges.
+    pub collapsed_cell: Option<usize>,
     /// `empty-cells: hide`.
     pub hide_empty: bool,
     /// A cell `empty-cells: hide` keeps from drawing, unless it hosts a widget.
@@ -2073,6 +2076,7 @@ pub fn evaluate_tree_paint<'r>(
         paints.push(BoxPaint {
             cursor,
             clip: None,
+            collapsed_cell: None,
             hide_empty,
             hidden_empty: false,
             fixed_table,

@@ -65,7 +65,7 @@ offsets). A style change without a request applies at once. Time comes from lumi
 ## Known limits
 
 Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
-one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` uses the widest cell border per axis for spacing, a cell beside a spanning one keeps its own part of the edge, and an anonymous table takes `border-collapse` from the cell it wraps;
+one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` uses the widest cell border per axis for spacing, a cell beside a spanning one keeps its own part of the edge, a later row's background covers a cell spanning into it, and an anonymous table takes `border-collapse` from the cell it wraps;
 `justify` stretches lines to the widest line rather than the box, leaves a line split at a float's end unstretched, and is start-aligned in rtl;
 one line height and alignment per paragraph; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
@@ -75,7 +75,7 @@ scrolling list item's outside marker moves with the text, unclipped. Animations 
 inline backgrounds and border colors, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.
 
-Not read at all: `letter-spacing` (iced has no way to set it), the paged-media properties, and URL cursors (their keyword fallback is used). `word-spacing` adds stand-in spaces, positive values only, rounding like inline sides, and a wrapped line can start with some of them. `text-indent` is approximated by leading spaces, positive lengths only
+Not read at all: `letter-spacing` (iced has no way to set it), the paged-media properties, and URL cursors (their keyword fallback is used). `word-spacing` adds stand-in spaces, positive values only, rounding like inline sides, a wrapped line can start with some of them, and they let a no-break space wrap. `text-indent` is approximated by leading spaces, positive lengths only
 (no percentages or hanging indents), a word too wide beside it moves to the next line, one wider than the block wraps into blank lines, and none applies when an inline-block opens the line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
 sizing decorations by part; generated content and markers take it, `word-spacing`, `direction` and `unicode-bidi` only from their element.
 

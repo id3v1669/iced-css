@@ -3558,3 +3558,26 @@ fn word_spacing_reaches_no_break_spaces() {
     let tree = BoxTree::new(root, "#page { word-spacing:16px; font-size:16px; }").unwrap();
     assert_eq!(tree.text_leaves()[0].1.text(), "a\u{a0}\u{2003}b \u{2003}c");
 }
+
+#[test]
+fn line_ends_normalize_and_a_final_break_opens_no_line() {
+    let leaf = |words: &'static str| {
+        let root = node("page", vec![node("s", vec![text("w", words)])]);
+        let tree = BoxTree::new(
+            root,
+            "#page { white-space:pre; } #s { display:block; direction:rtl; } #w { display:inline; }",
+        )
+        .unwrap();
+        tree.text_leaves()[0].1.text()
+    };
+    assert_eq!(leaf("one\n"), "\u{200F}one\n");
+    assert_eq!(leaf("one\r\ntwo"), "\u{200F}one\n\u{200F}two");
+    assert_eq!(leaf("one\rtwo"), "\u{200F}one\n\u{200F}two");
+}
+
+#[test]
+fn ltr_text_holding_rtl_characters_keeps_its_base_direction() {
+    let root = node("page", vec![text("t", "\u{5d0} abc")]);
+    let tree = BoxTree::new(root, "").unwrap();
+    assert!(tree.text_leaves()[0].1.text().starts_with('\u{200E}'));
+}

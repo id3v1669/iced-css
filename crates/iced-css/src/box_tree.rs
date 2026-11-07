@@ -374,6 +374,12 @@ fn is_css_space(character: char) -> bool {
 
 /// 16.6.1: collapse white space across the runs of one block, by each run's own mode.
 fn collapse(texts: &mut [(String, &'static str)]) {
+    // 16.6: with no newline rules from a document language, CR and CRLF are one line feed.
+    for (text, _) in texts.iter_mut() {
+        if text.contains('\r') {
+            *text = text.replace("\r\n", "\n").replace('\r', "\n");
+        }
+    }
     let mut after_space = true;
     let mut last_collapsing = None;
     for (index, (text, mode)) in texts.iter_mut().enumerate() {
@@ -968,7 +974,7 @@ impl BoxTree {
             {
                 continue;
             }
-            resolve_collapsed_edges(&mut prepared, table, &mut paints);
+            resolve_collapsed_edges(&prepared, table, &mut paints);
             // 17.6.2: a collapsed table has no padding.
             prepared.boxes[table].padding = [Dim::Px(0.0); 4];
             let (mut across, mut down) = (0.0_f32, 0.0_f32);
@@ -1522,6 +1528,12 @@ impl BoxTree {
                     run.text = run.text.replace('\n', &format!("\n{mark}"));
                 }
             }
+            // After a final break there is no line for a mark to open.
+            if let Some(last) = leaf.runs.iter_mut().rev().find(|run| !run.text.is_empty())
+                && last.text.ends_with(&format!("\n{mark}"))
+            {
+                last.text.pop();
+            }
         }
         let marker_leaves = markers
             .into_iter()
@@ -1805,7 +1817,10 @@ impl BoxTree {
             .into_iter()
             .filter_map(|step| match step {
                 PaintStep::Box(index) => Some(index),
-                PaintStep::Text(_) | PaintStep::Outline(_) | PaintStep::Marker(_) => None,
+                PaintStep::Text(_)
+                | PaintStep::Outline(_)
+                | PaintStep::Marker(_)
+                | PaintStep::CellBorder(_) => None,
             })
             .collect()
     }
@@ -1818,6 +1833,23 @@ impl BoxTree {
         }
         self.stacking_context(0, embedded, &mut steps);
 
+        // 17.6.2: a collapsed table's cells draw their borders after all its cell backgrounds,
+        // wherever positioning put those: neighbours overlap along the shared edges.
+        let mut tables: BTreeMap<usize, (usize, Vec<usize>)> = BTreeMap::new();
+        for (at, step) in steps.iter().enumerate() {
+            if let PaintStep::Box(index) = *step
+                && let Some(table) = self.paints[index].collapsed_cell
+            {
+                let entry = tables.entry(table).or_default();
+                entry.0 = at;
+                entry.1.push(index);
+            }
+        }
+        let mut groups: Vec<_> = tables.into_values().collect();
+        groups.sort_unstable_by_key(|group| std::cmp::Reverse(group.0));
+        for (at, cells) in groups {
+            steps.splice(at + 1..at + 1, cells.into_iter().map(PaintStep::CellBorder));
+        }
         // 18.4: outlines may be drawn above everything else.
         for (projected, paint) in self.paints.iter().enumerate() {
             let boxed = prepared.slot[projected].is_some_and(|slot| !prepared.anonymous[slot]);
@@ -2080,6 +2112,8 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaintStep {
+    /// A collapsed table's cell, drawing only its borders.
+    CellBorder(usize),
     /// A box's background and border, by projected index.
     Box(usize),
     /// A text leaf or hosted widget, by arena slot.
@@ -2198,11 +2232,10 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
     })
 }
 
-/// 17.6.2.1: on an edge two cells of a collapsed table share, the winner's border draws, and
-/// a `hidden` one draws nothing. It draws as the cell that paints later, whose background
-/// would otherwise cover the band. Only cells meeting along a whole edge are compared: a
-/// cell beside a taller one keeps its own part of the edge.
-fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &mut [BoxPaint]) {
+/// 17.6.2.1: on an edge two cells of a collapsed table share, only the winner's border draws,
+/// and a `hidden` one draws neither. A cell that is not visible has no say. Only cells
+/// meeting along a whole edge are compared: a cell beside a taller one keeps its own part.
+fn resolve_collapsed_edges(prepared: &PreparedTree, table: usize, paints: &mut [BoxPaint]) {
     use iced_css_core::formatting::{
         block_flow::{table_grid, table_parts},
         table_borders::{
@@ -2254,10 +2287,22 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
         candidates: limit,
         work: limit,
     };
-    let mut changes = Vec::new();
+    for item in &placed {
+        if !prepared.anonymous[item.cell] {
+            paints[prepared.positions[item.cell].0].collapsed_cell = Some(table);
+        }
+    }
+    let mut losers = Vec::new();
     for (first, first_side, second, second_side) in meetings {
         // An anonymous cell's owner is the box it wraps, and that box's borders are its own.
         if prepared.anonymous[first.cell] || prepared.anonymous[second.cell] {
+            continue;
+        }
+        let (first_owner, second_owner) = (
+            prepared.positions[first.cell].0,
+            prepared.positions[second.cell].0,
+        );
+        if !paints[first_owner].visible || !paints[second_owner].visible {
             continue;
         }
         let candidate = |item: &iced_css_core::formatting::block_flow::GridCell, side: usize| {
@@ -2278,43 +2323,20 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
         let Ok(result) = resolve_collapsed_border(&[one, two], limits) else {
             continue;
         };
-        let winner = match result {
-            CollapsedBorder::Winner { index: 0, .. } => Some((first.cell, first_side)),
-            CollapsedBorder::Winner { .. } => Some((second.cell, second_side)),
-            CollapsedBorder::Absent | CollapsedBorder::Suppressed => None,
+        let (keep_first, keep_second) = match result {
+            CollapsedBorder::Winner { index, .. } => (index == 0, index == 1),
+            CollapsedBorder::Absent | CollapsedBorder::Suppressed => (false, false),
         };
-        // Tree order is paint order.
-        let (painter, painter_side, other, other_side) = if second.cell > first.cell {
-            (second.cell, second_side, first.cell, first_side)
-        } else {
-            (first.cell, first_side, second.cell, second_side)
-        };
-        changes.push((painter, painter_side, other, other_side, winner));
+        if !keep_first {
+            losers.push((first_owner, first_side));
+        }
+        if !keep_second {
+            losers.push((second_owner, second_side));
+        }
     }
     // After every comparison, so one edge's outcome does not feed another's.
-    let drawn: Vec<_> = changes
-        .iter()
-        .map(|&(_, _, _, _, winner)| {
-            winner.map(|(cell, side)| {
-                let paint = &paints[prepared.positions[cell].0];
-                (
-                    paint.border[side],
-                    paint.border_style[side],
-                    prepared.boxes[cell].border[side],
-                )
-            })
-        })
-        .collect();
-    for ((painter, painter_side, other, other_side, _), winner) in changes.into_iter().zip(drawn) {
-        paints[prepared.positions[other].0].border[other_side] = None;
-        let target = prepared.positions[painter].0;
-        if let Some((color, style, width)) = winner {
-            paints[target].border[painter_side] = color;
-            paints[target].border_style[painter_side] = style;
-            prepared.boxes[painter].border[painter_side] = width;
-        } else {
-            paints[target].border[painter_side] = None;
-        }
+    for (owner, side) in losers {
+        paints[owner].border[side] = None;
     }
 }
 
@@ -3062,7 +3084,7 @@ fn breaks_layer(tree: &BoxTree, step: PaintStep, next: PaintStep) -> bool {
             !matches!(next, PaintStep::Text(_) | PaintStep::Marker(_))
         }
         PaintStep::Box(index) => tree.backgrounds.contains_key(&index),
-        PaintStep::Outline(_) => false,
+        PaintStep::Outline(_) | PaintStep::CellBorder(_) => false,
     }
 }
 
@@ -3158,6 +3180,8 @@ fn draw_outline<Renderer: renderer::Renderer>(
 /// Which of a box's quads to draw. An image goes between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BoxParts {
+    /// The borders of a collapsed table's cell, in their later step.
+    CellBorder,
     All,
     Background,
     Border,
@@ -3194,6 +3218,12 @@ fn draw_box<Renderer: renderer::Renderer>(
     if !paint.visible {
         return;
     }
+    let parts = match (paint.collapsed_cell.is_some(), parts) {
+        (_, BoxParts::CellBorder) => BoxParts::Border,
+        (true, BoxParts::Border) => return,
+        (true, _) => BoxParts::Background,
+        (false, parts) => parts,
+    };
     let border = geometry.border;
     if let Some(color) = paint.background.filter(|_| parts != BoxParts::Border) {
         // 14.2: the background extends under the border.
@@ -4171,9 +4201,10 @@ where
         let prepared = &self.tree.prepared;
         let clip_of = |step: &PaintStep| -> Rectangle {
             let arena = match *step {
-                PaintStep::Box(index) | PaintStep::Outline(index) | PaintStep::Marker(index) => {
-                    prepared.slot[index]
-                }
+                PaintStep::Box(index)
+                | PaintStep::Outline(index)
+                | PaintStep::Marker(index)
+                | PaintStep::CellBorder(index) => prepared.slot[index],
                 PaintStep::Text(arena) => Some(arena),
             };
             let mut clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
@@ -4329,6 +4360,14 @@ where
                                 ),
                             }
                         }
+                        PaintStep::CellBorder(index) => draw_box(
+                            &self.tree,
+                            &self.geometry,
+                            renderer,
+                            origin,
+                            index,
+                            BoxParts::CellBorder,
+                        ),
                         PaintStep::Outline(index) => {
                             draw_outline(&self.tree, &self.geometry, renderer, origin, index);
                         }
@@ -5033,32 +5072,15 @@ mod tests {
                 ),
             )
             .unwrap();
-            (
-                tree.paints[2].border[1],
-                tree.paints[3].border[3],
-                tree.paints[3].border_style[3],
-            )
+            (tree.paints[2].border[1], tree.paints[3].border[3])
         };
-        // 17.6.2.1: wider first, then the style order, then the cell farther left. The later
-        // cell paints the result either way, over its own background.
-        assert_eq!(
-            edges("2px solid #f00", "4px dotted #00f"),
-            (None, blue, "dotted")
-        );
-        assert_eq!(
-            edges("2px dotted #f00", "2px solid #00f"),
-            (None, blue, "solid")
-        );
-        assert_eq!(
-            edges("2px solid #f00", "2px dotted #00f"),
-            (None, red, "solid")
-        );
-        assert_eq!(
-            edges("2px solid #f00", "2px solid #00f"),
-            (None, red, "solid")
-        );
-        assert_eq!(edges("2px hidden #f00", "4px solid #00f").1, None);
-        assert_eq!(edges("2px solid #f00", "none").1, red);
+        // 17.6.2.1: wider first, then the style order, then the cell farther left.
+        assert_eq!(edges("2px solid #f00", "4px dotted #00f"), (None, blue));
+        assert_eq!(edges("2px dotted #f00", "2px solid #00f"), (None, blue));
+        assert_eq!(edges("2px solid #f00", "2px dotted #00f"), (red, None));
+        assert_eq!(edges("2px solid #f00", "2px solid #00f"), (red, None));
+        assert_eq!(edges("2px hidden #f00", "4px solid #00f"), (None, None));
+        assert_eq!(edges("2px solid #f00", "none"), (red, None));
 
         // Above beats below on a tie, and outer edges have nothing to share.
         let stacked = |css: &str| {
@@ -5078,10 +5100,26 @@ mod tests {
             .unwrap()
         };
         let tree = stacked("#a { border:2px solid #f00; } #b { border:2px solid #00f; }");
-        assert_eq!(tree.paints[2].border[2], None);
-        assert_eq!(tree.paints[4].border[0], red);
+        assert_eq!(tree.paints[2].border[2], red);
+        assert_eq!(tree.paints[4].border[0], None);
         assert_eq!(tree.paints[2].border[0], red);
         assert_eq!(tree.paints[4].border[2], blue);
+        // A cell that is not visible has no say in its neighbour's edge.
+        let tree = stacked(
+            "#a { border:2px solid #f00; } #b { border:9px solid #00f; visibility:hidden; }",
+        );
+        assert_eq!(tree.paints[2].border[2], red);
+        // Every real cell draws its borders after the table's backgrounds.
+        let steps = tree.paint_steps(&BTreeSet::new());
+        let last_box = steps
+            .iter()
+            .rposition(|step| matches!(step, PaintStep::Box(_)))
+            .unwrap();
+        let first_border = steps
+            .iter()
+            .position(|step| matches!(step, PaintStep::CellBorder(_)))
+            .unwrap();
+        assert!(first_border > last_box, "{steps:?}");
 
         // In rtl the first column is on the right: the shared edge is its left side.
         let tree = BoxTree::new(
@@ -5103,11 +5141,11 @@ mod tests {
             tree.paints[3].border[3], blue,
             "the table's left edge stays"
         );
-        assert_eq!(tree.paints[2].border[3], None);
         assert_eq!(
-            tree.paints[3].border[1], red,
+            tree.paints[2].border[3], red,
             "the first column wins the tie"
         );
+        assert_eq!(tree.paints[3].border[1], None);
 
         // A separated table keeps both.
         let tree = BoxTree::new(
@@ -5120,6 +5158,7 @@ mod tests {
         )
         .unwrap();
         assert!(tree.paints[2].border[1].is_some() && tree.paints[3].border[3].is_some());
+        assert!(tree.paints[2].collapsed_cell.is_none());
 
         // A wrapped box's borders are its own.
         let tree = BoxTree::new(
