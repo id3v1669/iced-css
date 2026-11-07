@@ -1929,13 +1929,27 @@ fn a_row_of_hidden_empty_cells_takes_no_height() {
     let draw = |rows: &[&str], name: &str| {
         let row = |id: &str| {
             let cells = (0..2)
-                .map(|at| node(&format!("{id}{at}"), vec![]))
+                .map(|at| {
+                    let inner = if id == "v" {
+                        vec![text(&format!("{id}{at}x"), "x")]
+                    } else {
+                        vec![]
+                    };
+                    node(&format!("{id}{at}"), inner)
+                })
                 .collect();
             node(id, cells)
         };
-        let root = node("t", rows.iter().map(|id| row(id)).collect());
-        let sheet = "#t { display:table; border-spacing:10px; background-color:#2a4d69; }
-             #a, #b, #c, #d { display:table-row; }
+        // In a page, so the table's own height shows.
+        let root = node(
+            "page",
+            vec![node("t", rows.iter().map(|id| row(id)).collect())],
+        );
+        let sheet = "#page { background-color:white; }
+             #t { display:table; border-spacing:10px; background-color:#2a4d69; }
+             #a, #b, #c, #d, #v { display:table-row; }
+             #v0, #v1 { display:table-cell; width:26px; height:30px; padding:5px;
+                        border:2px solid red; empty-cells:hide; visibility:hidden; }
              #a0, #a1, #c0, #c1 { display:table-cell; width:40px; height:30px; background-color:white; }
              #b0, #b1, #d0, #d1 { display:table-cell; width:26px; height:30px; padding:5px;
                         border:2px solid red; empty-cells:hide; }";
@@ -1953,6 +1967,8 @@ fn a_row_of_hidden_empty_cells_takes_no_height() {
     let name = format!("hidden-row-middle-{id}.png");
     assert!(draw(&["a", "c"], &name));
     assert!(draw(&["a", "b", "c"], &name));
+    // Hidden cells with text show nothing either.
+    assert!(draw(&["a", "v", "c"], &name));
     let name = format!("hidden-row-last-{id}.png");
     assert!(draw(&["a"], &name));
     assert!(draw(&["a", "b"], &name));
@@ -1963,6 +1979,18 @@ fn a_row_of_hidden_empty_cells_takes_no_height() {
     let name = format!("hidden-row-two-{id}.png");
     assert!(draw(&["a", "c"], &name));
     assert!(draw(&["a", "b", "d", "c"], &name));
+    // A lone hidden row leaves one spacing: the table is 10px tall.
+    let lone = BoxTree::new(
+        node(
+            "t",
+            vec![node("b", vec![node("b0", vec![]), node("b1", vec![])])],
+        ),
+        "#t { display:table; border-spacing:10px; } #b { display:table-row; }
+         #b0, #b1 { display:table-cell; width:26px; height:30px; empty-cells:hide; }",
+    )
+    .unwrap();
+    let table = lone.layout(800.0, None).unwrap()[0].unwrap().border;
+    assert_eq!(table.bottom - table.top, 10.0);
 }
 
 #[test]
