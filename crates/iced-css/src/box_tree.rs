@@ -925,6 +925,7 @@ impl BoxTree {
             {
                 continue;
             }
+            resolve_collapsed_edges(&prepared, table, &mut paints);
             // 17.6.2: a collapsed table has no padding.
             prepared.boxes[table].padding = [Dim::Px(0.0); 4];
             let (mut across, mut down) = (0.0_f32, 0.0_f32);
@@ -2011,6 +2012,123 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         edge: None,
         ..first.clone()
     })
+}
+
+/// 17.6.2.1: on an edge two cells of a collapsed table share, only the winner's border draws,
+/// and a `hidden` one draws neither. Only cells meeting along their whole edge are compared:
+/// a cell beside a taller one keeps its own part of the edge.
+fn resolve_collapsed_edges(prepared: &PreparedTree, table: usize, paints: &mut [BoxPaint]) {
+    use iced_css_core::formatting::table_borders::{
+        BorderCandidate, BorderConflictLimits, BorderOrder, BorderOrigin, BorderStyle,
+        CollapsedBorder, resolve_collapsed_border,
+    };
+    let style_of = |keyword: &str| match keyword {
+        "hidden" => BorderStyle::Hidden,
+        "inset" => BorderStyle::Inset,
+        "groove" => BorderStyle::Groove,
+        "outset" => BorderStyle::Outset,
+        "ridge" => BorderStyle::Ridge,
+        "dotted" => BorderStyle::Dotted,
+        "dashed" => BorderStyle::Dashed,
+        "solid" => BorderStyle::Solid,
+        "double" => BorderStyle::Double,
+        _ => BorderStyle::None,
+    };
+    let is_row_part = |part: usize| {
+        matches!(
+            prepared.boxes[part].table,
+            Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
+        )
+    };
+    let mut rows = Vec::new();
+    for &part in &prepared.boxes[table].children {
+        if is_row_part(part) {
+            rows.extend(prepared.boxes[part].children.iter().copied());
+        } else {
+            rows.push(part);
+        }
+    }
+    // Which cell starts at each row and column, and how far each reaches.
+    let mut starts: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    let mut held: BTreeSet<(usize, usize)> = BTreeSet::new();
+    for (row, &row_box) in rows.iter().enumerate() {
+        if prepared.boxes[row_box].table != Some(TableRole::Row) {
+            continue;
+        }
+        let mut column = 0;
+        for &cell in &prepared.boxes[row_box].children {
+            while held.contains(&(row, column)) {
+                column += 1;
+            }
+            let (across, down) = (prepared.boxes[cell].col_span, prepared.boxes[cell].row_span);
+            starts.insert((row, column), cell);
+            for at in row..row + down {
+                for along in column..column + across {
+                    held.insert((at, along));
+                }
+            }
+            column += across;
+        }
+    }
+    let rtl = prepared.boxes[table].direction == Direction::Rtl;
+    let meetings: Vec<_> = starts
+        .iter()
+        .flat_map(|(&(row, column), &cell)| {
+            let value = &prepared.boxes[cell];
+            let beside = starts
+                .get(&(row, column + value.col_span))
+                .filter(|other| prepared.boxes[**other].row_span == value.row_span)
+                .map(|other| (*other, 1, 3, column + value.col_span, row));
+            let below = starts
+                .get(&(row + value.row_span, column))
+                .filter(|other| prepared.boxes[**other].col_span == value.col_span)
+                .map(|other| (*other, 2, 0, column, row + value.row_span));
+            [beside, below]
+                .into_iter()
+                .flatten()
+                .map(move |meeting| (cell, row, column, meeting))
+        })
+        .collect();
+    let limit = NonZeroUsize::new(2).expect("positive");
+    let limits = BorderConflictLimits {
+        candidates: limit,
+        work: limit,
+    };
+    for (cell, row, column, (other, side, other_side, other_column, other_row)) in meetings {
+        let rank = |at: usize| if rtl { usize::MAX - at } else { at };
+        let candidate = |part: usize, on: usize, at_column: usize, at_row: usize| {
+            let owner = prepared.positions[part].0;
+            BorderCandidate::new(
+                style_of(paints[owner].border_style[on]),
+                prepared.boxes[part].border[on],
+                BorderOrigin::Cell,
+                BorderOrder {
+                    inline_start: rank(at_column),
+                    block_start: at_row,
+                },
+            )
+        };
+        let (Ok(first), Ok(second)) = (
+            candidate(cell, side, column, row),
+            candidate(other, other_side, other_column, other_row),
+        ) else {
+            continue;
+        };
+        let Ok(result) = resolve_collapsed_border(&[first, second], limits) else {
+            continue;
+        };
+        let (first_owner, second_owner) = (prepared.positions[cell].0, prepared.positions[other].0);
+        let (keep_first, keep_second) = match result {
+            CollapsedBorder::Winner { index, .. } => (index == 0, index == 1),
+            CollapsedBorder::Absent | CollapsedBorder::Suppressed => (false, false),
+        };
+        if !keep_first {
+            paints[first_owner].border[side] = None;
+        }
+        if !keep_second {
+            paints[second_owner].border[other_side] = None;
+        }
+    }
 }
 
 /// A file under the base: no scheme, no absolute path, no `..`.
@@ -4678,5 +4796,64 @@ mod tests {
             child("#p { outline-style:none; } #c { outline:inherit; }"),
             None
         );
+    }
+
+    #[test]
+    fn collapsed_cells_resolve_their_shared_edges() {
+        let edges = |left: &str, right: &str| {
+            let tree = BoxTree::new(
+                node(
+                    "t",
+                    vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+                ),
+                &format!(
+                    "#t {{ display:table; border-collapse:collapse; }} #r {{ display:table-row; }}
+                     #a, #b {{ display:table-cell; width:20px; height:20px; }}
+                     #a {{ border-right:{left}; }} #b {{ border-left:{right}; }}"
+                ),
+            )
+            .unwrap();
+            (
+                tree.paints[2].border[1].is_some(),
+                tree.paints[3].border[3].is_some(),
+            )
+        };
+        // 17.6.2.1: wider first, then the style order, then the cell farther left.
+        assert_eq!(edges("2px solid #f00", "4px dotted #00f"), (false, true));
+        assert_eq!(edges("2px dotted #f00", "2px solid #00f"), (false, true));
+        assert_eq!(edges("2px solid #f00", "2px solid #00f"), (true, false));
+        assert_eq!(edges("2px hidden #f00", "4px solid #00f"), (false, false));
+        assert_eq!(edges("2px solid #f00", "none"), (true, false));
+
+        // Above beats below on a tie.
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![
+                    node("r1", vec![node("a", vec![])]),
+                    node("r2", vec![node("b", vec![])]),
+                ],
+            ),
+            "#t { display:table; border-collapse:collapse; } #r1, #r2 { display:table-row; }
+             #a, #b { display:table-cell; border:2px solid #f00; }",
+        )
+        .unwrap();
+        assert!(tree.paints[2].border[2].is_some());
+        assert!(tree.paints[4].border[0].is_none());
+        // Outer edges have nothing to share.
+        assert!(tree.paints[2].border[0].is_some());
+        assert!(tree.paints[4].border[2].is_some());
+
+        // A separated table keeps both.
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+            ),
+            "#t { display:table; } #r { display:table-row; }
+             #a, #b { display:table-cell; border:2px solid #f00; }",
+        )
+        .unwrap();
+        assert!(tree.paints[2].border[1].is_some() && tree.paints[3].border[3].is_some());
     }
 }

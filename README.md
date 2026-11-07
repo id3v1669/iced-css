@@ -41,7 +41,7 @@ capturing the tree again, which is enough to build hot reload on.
 - **Tables:** `display: table` and its parts, with spans from `colspan`/`rowspan` attributes,
   anonymous parts, `border-spacing`, captions and cell `vertical-align`.
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` with counters and
-  quotes, `visibility`, outlines and every border style (inline boxes draw solid, and collapsed table edges paint both cells' styles rather than resolving a winner), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
+  quotes, `visibility`, outlines and every border style (inline boxes draw solid; collapsed tables resolve edges between cells that meet along a whole edge, and share one width per axis), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
 - **Background images** (with the `image` Cargo feature): local files through `url()`, with `repeat`, `position` and
   `attachment`; relative paths resolve against `BoxTree::with_base`. Paths outside the base
@@ -63,8 +63,8 @@ offsets). A style change without a request applies at once. Time comes from lumi
 ## Known limits
 
 Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
-one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` shares each edge at the widest cell border, with
-the later cell on top rather than resolving conflicts per edge; `justify` stretches lines to the widest line rather than the box, leaves a line split at a float's end unstretched, and is start-aligned in rtl;
+one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` uses the widest cell border per axis for spacing, and a cell beside a spanning one keeps its own part of the edge;
+`justify` stretches lines to the widest line rather than the box, leaves a line split at a float's end unstretched, and is start-aligned in rtl;
 one line height and alignment per paragraph; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and
 text properties, not other box properties. `list-style-image` replaces outside markers only, and needs the `image` feature. Inline box sides take spaces across, so widths round to about a sixth of the font size, a percentage or negative margin is 0, a line can break between a side and its text, `justify` stretches them, right-to-left text keeps them in logical order, and an inline with no runs draws none; their height follows each run's font size. An rtl scroller does not scroll across. `table-layout: fixed` reads `table-column` widths but not column groups, ignores column elements past the cells, keeps a right-anchored absolute table's left edge when its columns grow it, and lets content pick collapsed-border overlaps. A row of hidden

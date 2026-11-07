@@ -1764,6 +1764,7 @@ pub fn evaluate_tree_paint<'r>(
     let mut vertical_aligns: Vec<Option<&'static str>> = Vec::with_capacity(projection.len());
     let mut important: Vec<Vec<PropertyId>> = Vec::with_capacity(projection.len());
     let mut marker_images: Vec<Option<String>> = Vec::with_capacity(projection.len());
+    let mut outline_colors: Vec<Option<[f32; 3]>> = Vec::with_capacity(projection.len());
     let mut outside_items: Vec<bool> = Vec::with_capacity(projection.len());
     let mut captions_below: Vec<bool> = Vec::with_capacity(projection.len());
     let mut collapses: Vec<bool> = Vec::with_capacity(projection.len());
@@ -2015,17 +2016,13 @@ pub fn evaluate_tree_paint<'r>(
         colors.push(row);
         let paint = |slot: usize| rgb(row[slot].value(), limits.numeric);
         // An outline's initial `invert` has no value without the backdrop: it uses `color`.
-        let inherited_outline = match defaulted("outline-color")? {
-            DefaultedValueRef::ParentComputed => parent_index
-                .and_then(|parent: usize| paints[parent].outline)
-                .map(|outline| outline.1),
-            _ => None,
-        };
-        let outline = outline_width.map(|width| {
-            if let Some(color) = inherited_outline {
-                return (width, color);
+        // Computed apart from any drawn outline: it inherits even where none shows, and `None`
+        // is `invert`, which follows each box's own `color` here.
+        let own_outline_color = match defaulted("outline-color")? {
+            DefaultedValueRef::ParentComputed => {
+                parent_index.and_then(|parent: usize| outline_colors[parent])
             }
-            let color = compute_color(
+            _ => compute_color(
                 &winners,
                 outline_color,
                 ColorComputationContext {
@@ -2035,10 +2032,14 @@ pub fn evaluate_tree_paint<'r>(
                 },
             )
             .ok()
-            .and_then(|color| rgb(color.value(), limits.numeric))
-            .or_else(|| paint(0))
-            .unwrap_or([0.0; 3]);
-            (width, color)
+            .and_then(|color| rgb(color.value(), limits.numeric)),
+        };
+        outline_colors.push(own_outline_color);
+        let outline = outline_width.map(|width| {
+            (
+                width,
+                own_outline_color.or_else(|| paint(0)).unwrap_or([0.0; 3]),
+            )
         });
         let cursor = match defaulted("cursor")? {
             DefaultedValueRef::Compute(SpecifiedValue::Cursor(value)) => value.fallback.as_str(),
