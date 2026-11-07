@@ -5468,4 +5468,21 @@ mod tests {
             assert!(first_border > kid, "{css}: {steps:?}");
         }
     }
+
+    #[test]
+    fn a_hidden_shared_edge_takes_no_room() {
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+            ),
+            "#t { display:table; border-collapse:collapse; } #r { display:table-row; }
+             #a, #b { display:table-cell; width:20px; height:20px; }
+             #a { border-right:4px solid #00f; } #b { border-left:2px hidden #f00; }",
+        )
+        .unwrap();
+        let geometry = tree.layout(800.0, None).unwrap();
+        let a = geometry[2].as_ref().unwrap();
+        assert_eq!(a.border.right, a.padding.right, "{a:?}");
+    }
 }
