@@ -935,6 +935,11 @@ impl BoxTree {
                 Some("bottom") => RowAlign::Right,
                 _ => RowAlign::Left,
             };
+            value.line_align = match vertical_aligns[owner].filter(|_| !prepared.anonymous[arena]) {
+                Some("top" | "text-top") => RowAlign::Left,
+                Some("middle") => RowAlign::Center,
+                _ => RowAlign::Right,
+            };
             value.caption_below = captions_below[owner];
             value.fixed_table = paints[owner].fixed_table && !prepared.anonymous[arena];
             if value.inline_row.is_some() {

@@ -91,6 +91,9 @@ pub struct FlowBox {
     pub row_span: usize,
     /// Where a cell's content sits in a taller row (17.5.3). A baseline is treated as top.
     pub cell_align: RowAlign,
+    /// Where an inline-block sits in its line: top, middle, or at the bottom, which also
+    /// stands in for the baseline.
+    pub line_align: RowAlign,
     /// A caption placed below the table (`caption-side: bottom`).
     pub caption_below: bool,
     /// `table-layout: fixed`: the first row alone sets the columns of a table with a width.
@@ -131,6 +134,7 @@ impl Default for FlowBox {
             col_span: 1,
             row_span: 1,
             cell_align: RowAlign::Left,
+            line_align: RowAlign::Right,
             caption_below: false,
             fixed_table: false,
             column_widths: Vec::new(),
@@ -1738,7 +1742,12 @@ impl Solver<'_> {
             };
             for index in order {
                 let item = &items[index];
-                self.translate(item.node, x + item.ml, y + line - item.height + item.mt);
+                let room_above = match self.boxes[item.node].line_align {
+                    RowAlign::Left => 0.0,
+                    RowAlign::Center => (line - item.height) / 2.0,
+                    RowAlign::Right => line - item.height,
+                };
+                self.translate(item.node, x + item.ml, y + room_above + item.mt);
                 self.geometry[item.node].margin = item.margin;
                 x += item.width;
             }

@@ -3487,3 +3487,24 @@ fn an_indent_takes_no_sides_from_the_box_it_precedes() {
     assert_eq!(indent.text, "\u{2003}");
     assert!(indent.inline_boxes.is_empty() && indent.edge.is_none());
 }
+
+#[test]
+fn vertical_align_places_inline_blocks_in_their_line() {
+    let top_of = |align: &str| {
+        let root = node("page", vec![node("tall", vec![]), node("chip", vec![])]);
+        let css = format!(
+            "#tall {{ display:inline-block; width:10px; height:40px; }}
+             #chip {{ display:inline-block; width:10px; height:10px; vertical-align:{align}; }}"
+        );
+        let geometry = BoxTree::new(root, &css)
+            .unwrap()
+            .layout(800.0, None)
+            .unwrap();
+        geometry[2].as_ref().unwrap().border.top
+    };
+    assert_eq!(top_of("baseline"), 30.0);
+    assert_eq!(top_of("bottom"), 30.0);
+    assert_eq!(top_of("middle"), 15.0);
+    assert_eq!(top_of("top"), 0.0);
+    assert_eq!(top_of("text-top"), 0.0);
+}
