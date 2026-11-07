@@ -147,7 +147,7 @@ impl<'a> Parser<'a> {
         }
     }
 }
-/// Parse the CSS2.2 <color> domain. Inherit and property-specific transparent or
+/// Parse the CSS2.2 `<color>` domain. Inherit and property-specific transparent or
 /// invert keywords belong to their property's grammar, not this primitive.
 /// System colors stay symbolic; integer and percentage RGB components stay exact.
 /// Syntax scans/decoding share one work budget; each of the three possible numeric

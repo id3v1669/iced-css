@@ -4,11 +4,11 @@ CSS 2.2 support for [iced](https://github.com/iced-rs/iced): write a stylesheet,
 tree of boxes, and get a laid-out, painted and interactive iced widget.
 
 ```rust
-use iced_css::{box_tree::{BoxTree, capture_limits}, capture::adapters};
+use iced_css::{box_tree::{BoxTree, attribute_limits, capture_limits}, capture::adapters};
 
 // Capture a tree. `style_id` gives each box an id for the stylesheet.
 let root = adapters::column_from_vec(children, capture_limits())?
-    .style_id("page", attribute_limits)?
+    .style_id("page", attribute_limits())?
     .erase();
 
 // Cascade once; the tree lays out again at any size.
@@ -22,6 +22,8 @@ let element = tree
     .on_press("card", Message::OpenCard)
     .into();
 ```
+
+The same example compiles and runs as a doctest in `crates/iced-css/src/box_tree.rs`.
 
 `BoxTree::restyled(&[sheet, ...])` swaps in edited or additional author sheets without
 capturing the tree again, which is enough to build hot reload on.

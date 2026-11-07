@@ -1,8 +1,37 @@
-//! A stylesheet-driven iced widget for captured box trees: real cascade, general block
+//! A stylesheet-driven iced widget for captured box trees.
+//!
+//! ```
+//! use iced_css::{
+//!     box_tree::{BoxTree, attribute_limits, capture_limits},
+//!     capture::adapters,
+//! };
+//!
+//! # fn demo() -> Result<(), Box<dyn std::error::Error>> {
+//! // Capture a tree. `style_id` names each box for the stylesheet.
+//! let card = adapters::column_from_vec::<u8, iced::Theme, iced::Renderer>(vec![], capture_limits())?
+//!     .style_id("card", attribute_limits())?
+//!     .erase();
+//! let root = adapters::column_from_vec(vec![card], capture_limits())?
+//!     .style_id("page", attribute_limits())?
+//!     .erase();
+//!
+//! // Cascade once; the tree lays out again at any size.
+//! let tree = BoxTree::new(root, "#page { padding:16px; } #card { height:40px; }")?;
+//! let boxes = tree.layout(800.0, None)?;
+//! assert_eq!(boxes[1].as_ref().map(|card| card.border.top), Some(16.0));
+//!
+//! // In a view: host iced widgets in leaf boxes, and press boxes by id.
+//! let _view: iced::Element<'_, u8> = tree.interactive().on_press("card", 1).into();
+//! # Ok(())
+//! # }
+//! # demo().unwrap();
+//! ```
+//!
+//! What it does: real cascade, general block
 //! flow, background colors and images and border paint, and inline text: consecutive inline siblings share
 //! one wrapped paragraph of styled runs. Runs carry size, color, weight, style, family,
 //! underline, strikethrough and background. One line height and alignment apply per
-//! paragraph. Inline boxes draw no border or padding. Native iced widgets can be placed
+//! paragraph. Inline boxes take their sides through stand-in spaces. Native iced widgets can be placed
 //! in leaf boxes by CSS id, where they receive input; boxes can publish a message on press;
 //! `:hover`, `:active` and `:focus` restyle the tree. Boxes with a press message or a
 //! `tabindex` attribute take focus by click and Tab; Enter and Space press the focused box. `overflow` other than visible clips, and
@@ -31,6 +60,7 @@ use iced::advanced::{
 use iced::{
     Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector, keyboard, mouse,
 };
+use iced_css_core::source::AttributeLimits;
 use iced_css_core::values::bidi::{ComputedDirection, ComputedUnicodeBidi};
 use iced_css_core::values::registry::PropertyId;
 use iced_css_core::{
@@ -251,6 +281,16 @@ pub fn capture_limits() -> CaptureLimits {
     CaptureLimits {
         nodes: nz(COUNT),
         depth: nz(2_000),
+        retained_bytes: nz(BYTES),
+        work: nz(WORK),
+    }
+}
+
+/// Limits for naming a box with `style_id` or `style_attribute`, ample for hand-written trees.
+#[must_use]
+pub fn attribute_limits() -> AttributeLimits {
+    AttributeLimits {
+        entries: big(),
         retained_bytes: nz(BYTES),
         work: nz(WORK),
     }

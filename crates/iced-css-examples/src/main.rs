@@ -3,14 +3,10 @@
 use iced::{Element, Theme};
 use iced_css::{
     animation::clock::AnimationTiming,
-    box_tree::{BoxTree, BoxTreeAnimations, Transition, capture_limits},
+    box_tree::{BoxTree, BoxTreeAnimations, Transition, attribute_limits, capture_limits},
     capture::{CapturedElement, adapters},
 };
-use iced_css_core::source::AttributeLimits;
-use std::{
-    num::NonZeroUsize,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 type Node = CapturedElement<'static, (), Theme, iced::Renderer>;
 
@@ -37,33 +33,17 @@ const CSS: &str = "
 const OPEN: &str = "#wide { width:100%; height:72px; background-color:#d9534f; }";
 
 fn node(id: &str, children: Vec<Node>) -> Node {
-    let bound = NonZeroUsize::new(1000).expect("positive");
     adapters::column_from_vec(children, capture_limits())
         .expect("capture")
-        .style_id(
-            id,
-            AttributeLimits {
-                entries: bound,
-                retained_bytes: bound,
-                work: bound,
-            },
-        )
+        .style_id(id, attribute_limits())
         .expect("style id")
         .erase()
 }
 
 fn text(id: &'static str, content: &'static str) -> Node {
-    let bound = NonZeroUsize::new(1000).expect("positive");
     adapters::text(content, capture_limits())
         .expect("capture")
-        .style_id(
-            id,
-            AttributeLimits {
-                entries: bound,
-                retained_bytes: bound,
-                work: bound,
-            },
-        )
+        .style_id(id, attribute_limits())
         .expect("style id")
         .erase()
 }

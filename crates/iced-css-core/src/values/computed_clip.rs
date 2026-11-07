@@ -44,7 +44,7 @@ impl ComputedClip {
         }
         Ok(Self::Rectangle(ClipSides(sides)))
     }
-    /// None is whole auto; Some([None;4]) is a rectangle with four auto sides.
+    /// None is whole auto; Some(`[None; 4]`) is a rectangle with four auto sides.
     pub fn sides(self) -> Option<[Option<f32>; 4]> {
         match self {
             Self::Auto => None,
