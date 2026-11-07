@@ -1233,3 +1233,33 @@ fn enter_in_a_hosted_input_presses_no_box_around_it() {
     };
     assert_eq!(run(true), run(false));
 }
+
+#[test]
+fn border_styles_draw() {
+    let root = node(
+        "page",
+        ["a", "b", "c", "d", "e", "f", "g"]
+            .into_iter()
+            .map(|id| node(id, vec![]))
+            .collect(),
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { background-color:white; padding:8px; }
+         #a, #b, #c, #d, #e, #f, #g { width:200px; height:24px; margin:8px;
+             border:6px solid #2a4d69; background-color:#e7eff6; }
+         #a { border-style:dashed; } #b { border-style:dotted; } #c { border-style:double; }
+         #d { border-style:groove; } #e { border-style:ridge; } #f { border-style:inset; }
+         #g { border-style:outset; outline:3px dashed #d9534f; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = simulator(view);
+    let name = format!("border-styles-{}.png", std::process::id());
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    );
+}

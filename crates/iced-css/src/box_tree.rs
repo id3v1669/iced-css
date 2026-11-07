@@ -387,7 +387,9 @@ impl PseudoReach {
             let text = sheet.to_ascii_lowercase();
             // An escape can spell the pseudo-class or a name in a way this does not read, and
             // a comment can sit between the colon and the name.
-            if text.contains('\\') || text.contains(":/*") {
+            // Nor does it read what decoding changes: a NUL becomes a replacement character in
+            // a name, and NULs mean the bytes are UTF-16 or UTF-32 under an `@charset`.
+            if text.contains(['\\', '\0']) || text.contains(":/*") {
                 reach.any = true;
                 continue;
             }
@@ -834,7 +836,9 @@ impl BoxTree {
                 nodes: big(),
                 retained_bytes: nz(BYTES),
                 work: nz(WORST_CASE),
-                rule_visits: nz(RULE_VISITS),
+                // This pass visits each box once and the later one three times: stop here, at
+                // the same size, before a cascade that could never finish starts at all.
+                rule_visits: nz(RULE_VISITS / 3),
                 matching_work: nz(WORST_CASE),
                 declaration_offers: nz(WORST_CASE),
                 membership_work: nz(WORST_CASE),
@@ -2537,6 +2541,76 @@ fn border_bands(border: FlowRect, padding: FlowRect) -> [Rectangle; 4] {
     ]
 }
 
+/// The rectangles that draw one side of a border or outline in its 8.5.3 style. The spec
+/// leaves the exact pattern and shades to the renderer. Side is top, right, bottom, left.
+fn band_pieces(
+    band: Rectangle,
+    side: usize,
+    style: &str,
+    color: [f32; 3],
+) -> Vec<(Rectangle, [f32; 3])> {
+    let across = side == 0 || side == 2;
+    let (thick, long) = if across {
+        (band.height, band.width)
+    } else {
+        (band.width, band.height)
+    };
+    if thick <= 0.0 || long <= 0.0 {
+        return Vec::new();
+    }
+    // A piece at `along` on the side and `depth` in from its outer edge.
+    let outer_first = side == 0 || side == 3;
+    let piece = |along: f32, length: f32, depth: f32, size: f32| {
+        let inset = if outer_first {
+            depth
+        } else {
+            thick - depth - size
+        };
+        if across {
+            Rectangle::new(
+                Point::new(band.x + along, band.y + inset),
+                Size::new(length, size),
+            )
+        } else {
+            Rectangle::new(
+                Point::new(band.x + inset, band.y + along),
+                Size::new(size, length),
+            )
+        }
+    };
+    let dark = color.map(|channel| channel * 0.6);
+    let light = color.map(|channel| channel + (1.0 - channel) * 0.35);
+    let repeat = |dash: f32, gap: f32| {
+        let mut found = Vec::new();
+        let mut along = 0.0;
+        while along < long {
+            found.push((piece(along, dash.min(long - along), 0.0, thick), color));
+            along += dash + gap;
+        }
+        found
+    };
+    let halves = |outside: [f32; 3], inside: [f32; 3]| {
+        vec![
+            (piece(0.0, long, 0.0, thick / 2.0), outside),
+            (piece(0.0, long, thick / 2.0, thick / 2.0), inside),
+        ]
+    };
+    match style {
+        "dashed" => repeat(thick * 3.0, thick * 2.0),
+        "dotted" => repeat(thick, thick),
+        // 8.5.3: two lines and the space between add up to the width.
+        "double" if thick >= 3.0 => vec![
+            (piece(0.0, long, 0.0, thick / 3.0), color),
+            (piece(0.0, long, thick * 2.0 / 3.0, thick / 3.0), color),
+        ],
+        "groove" => halves(dark, light),
+        "ridge" => halves(light, dark),
+        "inset" => vec![(band, if outer_first { dark } else { light })],
+        "outset" => vec![(band, if outer_first { light } else { dark })],
+        _ => vec![(band, color)],
+    }
+}
+
 /// What a renderer needs to draw background images. iced only provides this with its
 /// `image` feature, so without this crate's `image` or `image-without-codecs` feature they
 /// draw nothing.
@@ -2669,18 +2743,21 @@ fn draw_outline<Renderer: renderer::Renderer>(
         top: inner.top - width,
         bottom: inner.bottom + width,
     };
-    for band in border_bands(outer, inner) {
-        renderer.fill_quad(
-            Quad {
-                bounds: Rectangle {
-                    x: band.x + origin.x,
-                    y: band.y + origin.y,
-                    ..band
+    let style = tree.paints[index].outline_style;
+    for (side, band) in border_bands(outer, inner).into_iter().enumerate() {
+        for (piece, shade) in band_pieces(band, side, style, color) {
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle {
+                        x: piece.x + origin.x,
+                        y: piece.y + origin.y,
+                        ..piece
+                    },
+                    ..Quad::default()
                 },
-                ..Quad::default()
-            },
-            Color::from_rgb(color[0], color[1], color[2]),
-        );
+                Color::from_rgb(shade[0], shade[1], shade[2]),
+            );
+        }
     }
 }
 
@@ -2748,9 +2825,11 @@ fn draw_box<Renderer: renderer::Renderer>(
     }
     if parts != BoxParts::Background {
         let bands = border_bands(border, geometry.padding);
-        for (band, color) in bands.into_iter().zip(paint.border) {
+        for (side, (band, color)) in bands.into_iter().zip(paint.border).enumerate() {
             if let Some(color) = color {
-                quad(renderer, band, color);
+                for (piece, shade) in band_pieces(band, side, paint.border_style[side], color) {
+                    quad(renderer, piece, shade);
+                }
             }
         }
     }
@@ -4305,6 +4384,14 @@ mod tests {
                 "{css}"
             );
         }
+        // Text that decoding changes: a NUL in a name, or wide characters under `@charset`.
+        for css in [
+            "#a\0:hover { color:#ff0000; }",
+            "@\0c\0h\0a\0r\0s\0e\0t\0 \0\"\0U\0T\0F\0-\x001\x006\0L\0E\0\"\0;\0#\0a\0:\0h\0o\0v\0e\0r\0{\0c\0o\0l\0o\0r\0:\0r\0e\0d\0}\0",
+        ] {
+            let reach = PseudoReach::of(&[css.to_owned()], ":hover");
+            assert!(reach.any, "{css:?}");
+        }
         // A comment after the colon, and a name whose lowercase depends on its context.
         let shown = tree("#a:/**/hover { color:#ff0000; }");
         assert_eq!(
@@ -4343,7 +4430,55 @@ mod tests {
         let refused = BoxTree::new(node("page", children), &css).unwrap_err();
         assert!(refused.to_string().contains("RuleVisits"), "{refused}");
         // A sheet well past 100,000 characters is ordinary.
-        let css = "a{color:red}".repeat(20_000);
+        let css = "a{color:red}".repeat(10_000);
         assert!(BoxTree::new(node("page", vec![]), &css).is_ok());
+    }
+
+    #[test]
+    fn border_styles_cut_a_band_into_its_pattern() {
+        let top = Rectangle::new(Point::new(10.0, 20.0), Size::new(30.0, 3.0));
+        let left = Rectangle::new(Point::new(10.0, 20.0), Size::new(3.0, 30.0));
+        let bottom = Rectangle::new(Point::new(10.0, 20.0), Size::new(30.0, 4.0));
+        let color = [0.5; 3];
+        assert_eq!(band_pieces(top, 0, "solid", color), vec![(top, color)]);
+        // Three long dashes with gaps of two widths, the last cut to the band's end.
+        let dashes = band_pieces(top, 0, "dashed", color);
+        let spans: Vec<(f32, f32)> = dashes
+            .iter()
+            .map(|piece| (piece.0.x, piece.0.width))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![(10.0, 9.0), (25.0, 9.0), (40.0, 0.0)]
+                .into_iter()
+                .filter(|span| span.1 > 0.0)
+                .collect::<Vec<_>>()
+        );
+        let dots = band_pieces(left, 3, "dotted", color);
+        assert_eq!(dots.len(), 5);
+        assert_eq!(
+            dots[1].0,
+            Rectangle::new(Point::new(10.0, 26.0), Size::new(3.0, 3.0))
+        );
+        let double = band_pieces(top, 0, "double", color);
+        assert_eq!(double[0].0.y, 20.0);
+        assert_eq!(double[1].0.y, 22.0);
+        // Too thin for two lines and a space.
+        let thin = Rectangle::new(Point::new(0.0, 0.0), Size::new(30.0, 2.0));
+        assert_eq!(band_pieces(thin, 0, "double", color).len(), 1);
+        // The dark half is outside for a groove, at the far edge on a bottom side.
+        let groove = band_pieces(bottom, 2, "groove", color);
+        assert_eq!(groove[0].1, [0.3; 3]);
+        assert_eq!(groove[0].0.y, 22.0);
+        assert_eq!(groove[1].0.y, 20.0);
+        let ridge = band_pieces(bottom, 0, "ridge", color);
+        assert_eq!(ridge[1].1, [0.3; 3]);
+        assert_eq!(band_pieces(top, 0, "inset", color)[0].1, [0.3; 3]);
+        assert_ne!(band_pieces(bottom, 2, "inset", color)[0].1, [0.3; 3]);
+        assert_ne!(band_pieces(top, 0, "outset", color)[0].1, [0.3; 3]);
+        assert_eq!(band_pieces(bottom, 2, "outset", color)[0].1, [0.3; 3]);
+        // Nothing to cut.
+        let none = Rectangle::new(Point::new(0.0, 0.0), Size::new(0.0, 3.0));
+        assert!(band_pieces(none, 0, "dashed", color).is_empty());
     }
 }

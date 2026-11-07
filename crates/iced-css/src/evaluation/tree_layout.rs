@@ -1321,6 +1321,10 @@ pub struct BoxPaint {
     pub fixed_table: bool,
     /// Top, right, bottom, left.
     pub border: [Option<[f32; 3]>; 4],
+    /// The `border-*-style` keywords, in that order.
+    pub border_style: [&'static str; 4],
+    /// The `outline-style` keyword.
+    pub outline_style: &'static str,
 }
 
 fn rgb(color: &Color, numeric: NumericLimits) -> Option<[f32; 3]> {
@@ -2058,6 +2062,8 @@ pub fn evaluate_tree_paint<'r>(
             },
             background: paint(1),
             background_fade: None,
+            border_style: ["solid"; 4],
+            outline_style: "solid",
             border: [paint(2), paint(3), paint(4), paint(5)],
             visible,
             z_index,
@@ -2077,6 +2083,23 @@ pub fn evaluate_tree_paint<'r>(
                 .map_or(0.0, |c| c.value),
             _ => 0.0,
         };
+        let line = |name: &'static str| -> Result<&'static str, E> {
+            Ok(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(style)) => style.as_str(),
+                _ => "solid",
+            })
+        };
+        let lines = [
+            line("border-top-style")?,
+            line("border-right-style")?,
+            line("border-bottom-style")?,
+            line("border-left-style")?,
+        ];
+        let outline_line = line("outline-style")?;
+        if let Some(paint) = paints.last_mut() {
+            paint.border_style = lines;
+            paint.outline_style = outline_line;
+        }
         // 11.1.2: negative lengths are permitted here.
         let signed = |side: &LengthTarget| match side {
             LengthTarget::Absolute(value) => {
