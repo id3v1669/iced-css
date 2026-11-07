@@ -1857,10 +1857,20 @@ impl BoxTree {
                         .children
                         .iter()
                         .copied()
-                        // Cells, rows and groups stay the table's own, positioned or not.
+                        // Cells, rows and groups stay the table's own, positioned or not; a
+                        // positioned table or caption paints above the grid like any box.
                         .filter(|child| {
                             prepared.positions[*child].1 == Position::Static
-                                || prepared.boxes[*child].table.is_some()
+                                || matches!(
+                                    prepared.boxes[*child].table,
+                                    Some(
+                                        TableRole::Cell
+                                            | TableRole::Row
+                                            | TableRole::HeaderGroup
+                                            | TableRole::BodyGroup
+                                            | TableRole::FooterGroup
+                                    )
+                                )
                         }),
                 );
             }
@@ -5389,6 +5399,34 @@ mod tests {
         )
         .unwrap();
         let steps = tree.paint_steps(&BTreeSet::new());
+        let above = |steps: &[PaintStep], at: usize| {
+            let pop = steps
+                .iter()
+                .position(|step| *step == PaintStep::Box(at))
+                .unwrap();
+            let last = steps
+                .iter()
+                .rposition(|step| matches!(step, PaintStep::CellBorder(_)))
+                .unwrap();
+            last < pop
+        };
+        assert!(above(&steps, 3));
+        // A positioned table there is content too, not a part of this one.
+        let nested = BoxTree::new(
+            node(
+                "t",
+                vec![node(
+                    "r",
+                    vec![node("a", vec![node("pop", vec![])]), node("b", vec![])],
+                )],
+            ),
+            "#t { display:table; border-collapse:collapse; } #r { display:table-row; }
+             #a, #b { display:table-cell; width:40px; border:1px solid #000; }
+             #pop { display:table; position:absolute; z-index:10; width:200px; height:200px;
+                    background-color:#fff; }",
+        )
+        .unwrap();
+        assert!(above(&nested.paint_steps(&BTreeSet::new()), 3));
         let pop = steps
             .iter()
             .position(|step| *step == PaintStep::Box(3))
