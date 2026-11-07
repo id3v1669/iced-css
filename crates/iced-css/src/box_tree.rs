@@ -1857,7 +1857,11 @@ impl BoxTree {
                         .children
                         .iter()
                         .copied()
-                        .filter(|child| prepared.positions[*child].1 == Position::Static),
+                        // Cells, rows and groups stay the table's own, positioned or not.
+                        .filter(|child| {
+                            prepared.positions[*child].1 == Position::Static
+                                || prepared.boxes[*child].table.is_some()
+                        }),
                 );
             }
             for (at, step) in steps.iter().enumerate() {
@@ -5394,5 +5398,36 @@ mod tests {
             .rposition(|step| matches!(step, PaintStep::CellBorder(_)))
             .unwrap();
         assert!(last_border < pop, "{steps:?}");
+    }
+
+    #[test]
+    fn a_relative_cell_or_row_keeps_its_children_under_the_grid() {
+        for css in ["#b { position:relative; }", "#r { position:relative; }"] {
+            let tree = BoxTree::new(
+                node(
+                    "t",
+                    vec![node(
+                        "r",
+                        vec![node("a", vec![]), node("b", vec![node("kid", vec![])])],
+                    )],
+                ),
+                &format!(
+                    "#t {{ display:table; border-collapse:collapse; }} #r {{ display:table-row; }}
+                     #a, #b {{ display:table-cell; width:40px; border:1px solid #000; }}
+                     #kid {{ height:9px; background-color:#fff; }} {css}"
+                ),
+            )
+            .unwrap();
+            let steps = tree.paint_steps(&BTreeSet::new());
+            let kid = steps
+                .iter()
+                .position(|step| *step == PaintStep::Box(4))
+                .unwrap();
+            let first_border = steps
+                .iter()
+                .position(|step| matches!(step, PaintStep::CellBorder(_)))
+                .unwrap();
+            assert!(first_border > kid, "{css}: {steps:?}");
+        }
     }
 }
