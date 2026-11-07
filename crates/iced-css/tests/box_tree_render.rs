@@ -1323,3 +1323,55 @@ fn unicode_bidi_and_direction_reorder_text() {
     ));
     assert!(!draw("x", rtl, &name));
 }
+
+#[test]
+fn collapsed_lines_survive_cell_backgrounds() {
+    // White cells on a white page look like no backgrounds at all, if the lines stay on top.
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "t",
+            vec![
+                node("r1", vec![node("a", vec![]), node("b", vec![])]),
+                node("r2", vec![node("c", vec![]), node("d", vec![])]),
+            ],
+        );
+        let sheet = format!(
+            "#t {{ display:table; border-collapse:collapse; background-color:white; }}
+             #r1, #r2 {{ display:table-row; }}
+             #a, #b, #c, #d {{ display:table-cell; width:40px; height:40px; border:2px solid #000000; }}
+             {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("collapse-lines-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(draw("#a, #b, #c, #d { background-color:white; }", &name));
+    assert!(draw("#r1, #r2 { background-color:white; }", &name));
+}
+
+#[test]
+fn justified_right_to_left_text_starts_at_the_right() {
+    let draw = |css: &str, name: &str| {
+        let root = node("page", vec![node("s", vec![text("w", "word!")])]);
+        let sheet = format!(
+            "#page {{ background-color:white; color:black; width:300px; }}
+             #s {{ display:block; direction:rtl; }} #w {{ display:inline; }} {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("rtl-justify-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(draw("#s { text-align:justify; }", &name));
+}

@@ -352,12 +352,97 @@ const MAX_SPAN: usize = 1000;
 
 /// One cell's place in the table grid.
 #[derive(Debug, Clone, Copy)]
-struct GridCell {
-    cell: usize,
-    row: usize,
-    column: usize,
-    col_span: usize,
-    row_span: usize,
+pub struct GridCell {
+    pub cell: usize,
+    pub row: usize,
+    pub column: usize,
+    pub col_span: usize,
+    pub row_span: usize,
+}
+
+/// A table's rows in layout order (head, body, foot) and its captions.
+pub fn table_parts(boxes: &[FlowBox], table: usize) -> (Vec<usize>, Vec<usize>) {
+    let (mut head, mut body, mut foot, mut captions) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for &child in &boxes[table].children {
+        let inner = || boxes[child].children.iter().copied();
+        match boxes[child].table {
+            Some(TableRole::Row) => body.push(child),
+            Some(TableRole::HeaderGroup) => head.extend(inner()),
+            Some(TableRole::BodyGroup) => body.extend(inner()),
+            Some(TableRole::FooterGroup) => foot.extend(inner()),
+            Some(TableRole::Caption) => captions.push(child),
+            _ => {}
+        }
+    }
+    head.append(&mut body);
+    head.append(&mut foot);
+    (head, captions)
+}
+
+/// For each row, the index past the last row of its row group. Rows directly in the
+/// table form a group with their neighbours (17.2.1's anonymous group).
+fn group_ends(boxes: &[FlowBox], rows: &[usize]) -> Vec<usize> {
+    let mut group_of = vec![None; boxes.len()];
+    for (index, candidate) in boxes.iter().enumerate() {
+        if matches!(
+            candidate.table,
+            Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
+        ) {
+            for &row in &candidate.children {
+                group_of[row] = Some(index);
+            }
+        }
+    }
+    let mut ends = vec![rows.len(); rows.len()];
+    for index in (0..rows.len().saturating_sub(1)).rev() {
+        if group_of[rows[index]] == group_of[rows[index + 1]] {
+            ends[index] = ends[index + 1];
+        } else {
+            ends[index] = index + 1;
+        }
+    }
+    ends
+}
+
+/// 17.5: cells claim grid slots row by row, skipping slots a rowspan from above holds.
+pub fn table_grid(boxes: &[FlowBox], rows: &[usize]) -> (Vec<GridCell>, usize) {
+    let ends = group_ends(boxes, rows);
+    let mut held: Vec<usize> = Vec::new();
+    let mut placed = Vec::new();
+    let mut columns = 0;
+    for (row_index, &row) in rows.iter().enumerate() {
+        let mut column = 0;
+        for &cell in &boxes[row].children {
+            while held.get(column).is_some_and(|rest| *rest > 0) {
+                column += 1;
+            }
+            let value = &boxes[cell];
+            let col_span = value.col_span.clamp(1, MAX_SPAN);
+            // A rowspan stops at the end of its row group, or a span past any sane table
+            // at the limit of what can be represented.
+            let row_span = value.row_span.clamp(1, ends[row_index] - row_index);
+            if held.len() < column + col_span {
+                held.resize(column + col_span, 0);
+            }
+            for rest in &mut held[column..column + col_span] {
+                *rest = (*rest).max(row_span);
+            }
+            placed.push(GridCell {
+                cell,
+                row: row_index,
+                column,
+                col_span,
+                row_span,
+            });
+            column += col_span;
+            columns = columns.max(column);
+        }
+        for rest in &mut held {
+            *rest = rest.saturating_sub(1);
+        }
+    }
+    (placed, columns)
 }
 
 struct Solver<'a> {
@@ -577,87 +662,11 @@ impl Solver<'_> {
 
     /// The table's rows in display order (17.2: header, body, footer), and captions.
     fn table_parts(&self, table: usize) -> (Vec<usize>, Vec<usize>) {
-        let (mut head, mut body, mut foot, mut captions) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        for &child in &self.boxes[table].children {
-            let inner = || self.boxes[child].children.iter().copied();
-            match self.boxes[child].table {
-                Some(TableRole::Row) => body.push(child),
-                Some(TableRole::HeaderGroup) => head.extend(inner()),
-                Some(TableRole::BodyGroup) => body.extend(inner()),
-                Some(TableRole::FooterGroup) => foot.extend(inner()),
-                Some(TableRole::Caption) => captions.push(child),
-                _ => {}
-            }
-        }
-        head.append(&mut body);
-        head.append(&mut foot);
-        (head, captions)
+        table_parts(self.boxes, table)
     }
 
-    /// For each row, the index past the last row of its row group. Rows directly in the
-    /// table form a group with their neighbours (17.2.1's anonymous group).
-    fn group_ends(&self, rows: &[usize]) -> Vec<usize> {
-        let mut group_of = vec![None; self.boxes.len()];
-        for (index, candidate) in self.boxes.iter().enumerate() {
-            if matches!(
-                candidate.table,
-                Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
-            ) {
-                for &row in &candidate.children {
-                    group_of[row] = Some(index);
-                }
-            }
-        }
-        let mut ends = vec![rows.len(); rows.len()];
-        for index in (0..rows.len().saturating_sub(1)).rev() {
-            if group_of[rows[index]] == group_of[rows[index + 1]] {
-                ends[index] = ends[index + 1];
-            } else {
-                ends[index] = index + 1;
-            }
-        }
-        ends
-    }
-
-    /// 17.5: cells claim grid slots row by row, skipping slots a rowspan from above holds.
     fn table_grid(&self, rows: &[usize]) -> (Vec<GridCell>, usize) {
-        let ends = self.group_ends(rows);
-        let mut held: Vec<usize> = Vec::new();
-        let mut placed = Vec::new();
-        let mut columns = 0;
-        for (row_index, &row) in rows.iter().enumerate() {
-            let mut column = 0;
-            for &cell in &self.boxes[row].children {
-                while held.get(column).is_some_and(|rest| *rest > 0) {
-                    column += 1;
-                }
-                let value = &self.boxes[cell];
-                let col_span = value.col_span.clamp(1, MAX_SPAN);
-                // A rowspan stops at the end of its row group, or a span past any sane table
-                // at the limit of what can be represented.
-                let row_span = value.row_span.clamp(1, ends[row_index] - row_index);
-                if held.len() < column + col_span {
-                    held.resize(column + col_span, 0);
-                }
-                for rest in &mut held[column..column + col_span] {
-                    *rest = (*rest).max(row_span);
-                }
-                placed.push(GridCell {
-                    cell,
-                    row: row_index,
-                    column,
-                    col_span,
-                    row_span,
-                });
-                column += col_span;
-                columns = columns.max(column);
-            }
-            for rest in &mut held {
-                *rest = rest.saturating_sub(1);
-            }
-        }
-        (placed, columns)
+        table_grid(self.boxes, rows)
     }
 
     /// Each column's narrowest and preferred width (17.5.2.2): single-column cells first,

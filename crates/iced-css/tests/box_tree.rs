@@ -3508,3 +3508,53 @@ fn vertical_align_places_inline_blocks_in_their_line() {
     assert_eq!(top_of("top"), 0.0);
     assert_eq!(top_of("text-top"), 0.0);
 }
+
+#[test]
+fn bidi_controls_cover_blocks_and_breaks_and_leave_blank_text_blank() {
+    let root = node("page", vec![node("s", vec![text("w", "abc")])]);
+    let tree = BoxTree::new(
+        root,
+        "#s { display:block; direction:rtl; unicode-bidi:bidi-override; } #w { display:inline; }",
+    )
+    .unwrap();
+    assert!(
+        tree.text_leaves()[0].1.text().contains('\u{202E}'),
+        "a block's override reaches its text"
+    );
+
+    let root = node("page", vec![node("s", vec![text("w", "one\ntwo")])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { white-space:pre; } #s { display:block; direction:rtl; } #w { display:inline; }",
+    )
+    .unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "\u{200F}one\n\u{200F}two");
+
+    let root = node("page", vec![node("s", vec![text("w", "one\ntwo")])]);
+    let tree = BoxTree::new(
+        root,
+        "#page { white-space:pre; } #s { display:inline; direction:rtl; unicode-bidi:embed; }
+         #w { display:inline; }",
+    )
+    .unwrap();
+    assert_eq!(
+        tree.text_leaves()[0].1.text().matches('\u{202B}').count(),
+        2,
+        "an embedding reopens after a forced break"
+    );
+
+    let root = node("page", vec![node("s", vec![text("w", " ")])]);
+    let tree = BoxTree::new(root, "#s { display:inline; unicode-bidi:embed; }").unwrap();
+    assert!(
+        tree.text_leaves()
+            .iter()
+            .all(|(_, leaf)| !leaf.text().contains('\u{202A}'))
+    );
+}
+
+#[test]
+fn word_spacing_reaches_no_break_spaces() {
+    let root = node("page", vec![text("t", "a\u{a0}b c")]);
+    let tree = BoxTree::new(root, "#page { word-spacing:16px; font-size:16px; }").unwrap();
+    assert_eq!(tree.text_leaves()[0].1.text(), "a\u{a0}\u{2003}b \u{2003}c");
+}

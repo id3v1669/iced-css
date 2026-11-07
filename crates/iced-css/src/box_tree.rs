@@ -960,15 +960,15 @@ impl BoxTree {
         .map_err(failed)?;
         let mut collapse_spacing: Vec<Option<[f32; 2]>> = vec![None; prepared.boxes.len()];
         // 17.6.2: collapsed borders share one line: neighbouring cells overlap by the widest
-        // cell border on that axis, and the table's edge is the outer cells'. Where borders
-        // on a shared edge differ the later cell paints on top; the width is not per edge.
+        // cell border on that axis, and the table's edge is the outer cells'. The width is
+        // not per edge; `resolve_collapsed_edges` picks what each shared edge draws.
         for table in 0..prepared.boxes.len() {
             if !matches!(prepared.boxes[table].table, Some(TableRole::Table { .. }))
                 || !collapses[prepared.positions[table].0]
             {
                 continue;
             }
-            resolve_collapsed_edges(&prepared, table, &mut paints);
+            resolve_collapsed_edges(&mut prepared, table, &mut paints);
             // 17.6.2: a collapsed table has no padding.
             prepared.boxes[table].padding = [Dim::Px(0.0); 4];
             let (mut across, mut down) = (0.0_f32, 0.0_f32);
@@ -1234,7 +1234,9 @@ impl BoxTree {
                 if style.word_spacing > 0.0
                     && let Some(extra) = indent_run(&run, style.word_spacing)
                 {
-                    run.text = run.text.replace(' ', &format!(" {}", extra.text));
+                    let wide = format!(" {}", extra.text);
+                    let wide_fixed = format!("\u{a0}{}", extra.text);
+                    run.text = run.text.replace(' ', &wide).replace('\u{a0}', &wide_fixed);
                 }
                 if small_caps {
                     tagged.extend(small_capitals(&run).into_iter().map(|part| (part, at)));
@@ -1269,7 +1271,36 @@ impl BoxTree {
                 found.reverse();
                 found
             };
-            let bidi_chains: Vec<_> = tagged.iter().map(|(_, at)| bidi_chain(*at)).collect();
+            // A block's override reaches its inline content, not only its generated text.
+            let container = if prepared.anonymous[arena] {
+                container_of[arena]
+            } else {
+                prepared.positions[arena].0
+            };
+            let block_override = projection
+                .original_index(container)
+                .and_then(|original| display.bidi_style(original))
+                .filter(|style| style.unicode_bidi() == ComputedUnicodeBidi::BidiOverride)
+                .map(|style| {
+                    let rtl = style.direction() == ComputedDirection::RightToLeft;
+                    (container, if rtl { '\u{202E}' } else { '\u{202D}' })
+                });
+            let bidi_chains: Vec<Vec<(usize, char)>> = tagged
+                .iter()
+                .map(|(run, at)| {
+                    // Controls around nothing would make blank text a line.
+                    if run.text.is_empty() {
+                        return Vec::new();
+                    }
+                    let mut chain = bidi_chain(*at);
+                    if let Some(entry) = block_override
+                        && !chain.contains(&entry)
+                    {
+                        chain.insert(0, entry);
+                    }
+                    chain
+                })
+                .collect();
             for (index, (run, _)) in tagged.iter_mut().enumerate() {
                 let here = &bidi_chains[index];
                 let before = index
@@ -1282,6 +1313,12 @@ impl BoxTree {
                     .map(|entry| entry.1)
                     .collect();
                 let closing = here.iter().filter(|entry| !after.contains(entry)).count();
+                // A forced break ends a paragraph and every embedding with it (9.10).
+                if !here.is_empty() && run.text.contains('\n') {
+                    let reopen: String = here.iter().map(|entry| entry.1).collect();
+                    let close = "\u{202C}".repeat(here.len());
+                    run.text = run.text.replace('\n', &format!("{close}\n{reopen}"));
+                }
                 if !opening.is_empty() || closing > 0 {
                     run.text = format!("{opening}{}{}", run.text, "\u{202C}".repeat(closing));
                 }
@@ -1478,6 +1515,12 @@ impl BoxTree {
             };
             if let Some(first) = leaf.runs.iter_mut().find(|run| !run.text.is_empty()) {
                 first.text.insert(0, mark);
+            }
+            // Each line after a forced break is a paragraph of its own.
+            for run in &mut leaf.runs {
+                if run.text.contains('\n') {
+                    run.text = run.text.replace('\n', &format!("\n{mark}"));
+                }
             }
         }
         let marker_leaves = markers
@@ -2155,13 +2198,17 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
     })
 }
 
-/// 17.6.2.1: on an edge two cells of a collapsed table share, only the winner's border draws,
-/// and a `hidden` one draws neither. Only cells meeting along their whole edge are compared:
-/// a cell beside a taller one keeps its own part of the edge.
-fn resolve_collapsed_edges(prepared: &PreparedTree, table: usize, paints: &mut [BoxPaint]) {
-    use iced_css_core::formatting::table_borders::{
-        BorderCandidate, BorderConflictLimits, BorderOrder, BorderOrigin, BorderStyle,
-        CollapsedBorder, resolve_collapsed_border,
+/// 17.6.2.1: on an edge two cells of a collapsed table share, the winner's border draws, and
+/// a `hidden` one draws nothing. It draws as the cell that paints later, whose background
+/// would otherwise cover the band. Only cells meeting along a whole edge are compared: a
+/// cell beside a taller one keeps its own part of the edge.
+fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &mut [BoxPaint]) {
+    use iced_css_core::formatting::{
+        block_flow::{table_grid, table_parts},
+        table_borders::{
+            BorderCandidate, BorderConflictLimits, BorderOrder, BorderOrigin, BorderStyle,
+            CollapsedBorder, resolve_collapsed_border,
+        },
     };
     let style_of = |keyword: &str| match keyword {
         "hidden" => BorderStyle::Hidden,
@@ -2175,99 +2222,98 @@ fn resolve_collapsed_edges(prepared: &PreparedTree, table: usize, paints: &mut [
         "double" => BorderStyle::Double,
         _ => BorderStyle::None,
     };
-    let is_row_part = |part: usize| {
-        matches!(
-            prepared.boxes[part].table,
-            Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
-        )
-    };
-    let mut rows = Vec::new();
-    for &part in &prepared.boxes[table].children {
-        if is_row_part(part) {
-            rows.extend(prepared.boxes[part].children.iter().copied());
-        } else {
-            rows.push(part);
-        }
-    }
-    // Which cell starts at each row and column, and how far each reaches.
-    let mut starts: BTreeMap<(usize, usize), usize> = BTreeMap::new();
-    let mut held: BTreeSet<(usize, usize)> = BTreeSet::new();
-    for (row, &row_box) in rows.iter().enumerate() {
-        if prepared.boxes[row_box].table != Some(TableRole::Row) {
-            continue;
-        }
-        let mut column = 0;
-        for &cell in &prepared.boxes[row_box].children {
-            while held.contains(&(row, column)) {
-                column += 1;
-            }
-            let (across, down) = (prepared.boxes[cell].col_span, prepared.boxes[cell].row_span);
-            starts.insert((row, column), cell);
-            for at in row..row + down {
-                for along in column..column + across {
-                    held.insert((at, along));
-                }
-            }
-            column += across;
-        }
-    }
-    let rtl = prepared.boxes[table].direction == Direction::Rtl;
-    let meetings: Vec<_> = starts
+    let (rows, _) = table_parts(&prepared.boxes, table);
+    let (placed, _) = table_grid(&prepared.boxes, &rows);
+    let starts: BTreeMap<(usize, usize), usize> = placed
         .iter()
-        .flat_map(|(&(row, column), &cell)| {
-            let value = &prepared.boxes[cell];
-            let beside = starts
-                .get(&(row, column + value.col_span))
-                .filter(|other| prepared.boxes[**other].row_span == value.row_span)
-                .map(|other| (*other, 1, 3, column + value.col_span, row));
-            let below = starts
-                .get(&(row + value.row_span, column))
-                .filter(|other| prepared.boxes[**other].col_span == value.col_span)
-                .map(|other| (*other, 2, 0, column, row + value.row_span));
-            [beside, below]
-                .into_iter()
-                .flatten()
-                .map(move |meeting| (cell, row, column, meeting))
-        })
+        .enumerate()
+        .map(|(at, item)| ((item.row, item.column), at))
         .collect();
+    // In an rtl table the first column is on the right, so its far side is its left.
+    let rtl = prepared.boxes[table].direction == Direction::Rtl;
+    let (near, far) = if rtl { (3, 1) } else { (1, 3) };
+    let mut meetings = Vec::new();
+    for item in &placed {
+        let beside = starts
+            .get(&(item.row, item.column + item.col_span))
+            .map(|at| &placed[*at])
+            .filter(|other| other.row_span == item.row_span);
+        let below = starts
+            .get(&(item.row + item.row_span, item.column))
+            .map(|at| &placed[*at])
+            .filter(|other| other.col_span == item.col_span);
+        if let Some(other) = beside {
+            meetings.push((item, near, other, far));
+        }
+        if let Some(other) = below {
+            meetings.push((item, 2, other, 0));
+        }
+    }
     let limit = NonZeroUsize::new(2).expect("positive");
     let limits = BorderConflictLimits {
         candidates: limit,
         work: limit,
     };
-    for (cell, row, column, (other, side, other_side, other_column, other_row)) in meetings {
-        let rank = |at: usize| if rtl { usize::MAX - at } else { at };
-        let candidate = |part: usize, on: usize, at_column: usize, at_row: usize| {
-            let owner = prepared.positions[part].0;
+    let mut changes = Vec::new();
+    for (first, first_side, second, second_side) in meetings {
+        // An anonymous cell's owner is the box it wraps, and that box's borders are its own.
+        if prepared.anonymous[first.cell] || prepared.anonymous[second.cell] {
+            continue;
+        }
+        let candidate = |item: &iced_css_core::formatting::block_flow::GridCell, side: usize| {
             BorderCandidate::new(
-                style_of(paints[owner].border_style[on]),
-                prepared.boxes[part].border[on],
+                style_of(paints[prepared.positions[item.cell].0].border_style[side]),
+                prepared.boxes[item.cell].border[side],
                 BorderOrigin::Cell,
                 BorderOrder {
-                    inline_start: rank(at_column),
-                    block_start: at_row,
+                    inline_start: item.column,
+                    block_start: item.row,
                 },
             )
         };
-        let (Ok(first), Ok(second)) = (
-            candidate(cell, side, column, row),
-            candidate(other, other_side, other_column, other_row),
-        ) else {
+        let (Ok(one), Ok(two)) = (candidate(first, first_side), candidate(second, second_side))
+        else {
             continue;
         };
-        let Ok(result) = resolve_collapsed_border(&[first, second], limits) else {
+        let Ok(result) = resolve_collapsed_border(&[one, two], limits) else {
             continue;
         };
-        let (first_owner, second_owner) = (prepared.positions[cell].0, prepared.positions[other].0);
-        let (keep_first, keep_second) = match result {
-            CollapsedBorder::Winner { index, .. } => (index == 0, index == 1),
-            CollapsedBorder::Absent | CollapsedBorder::Suppressed => (false, false),
+        let winner = match result {
+            CollapsedBorder::Winner { index: 0, .. } => Some((first.cell, first_side)),
+            CollapsedBorder::Winner { .. } => Some((second.cell, second_side)),
+            CollapsedBorder::Absent | CollapsedBorder::Suppressed => None,
         };
-        if !keep_first {
-            paints[first_owner].border[side] = None;
-        }
-        if !keep_second {
-            paints[second_owner].border[other_side] = None;
+        // Tree order is paint order.
+        let (painter, painter_side, other, other_side) = if second.cell > first.cell {
+            (second.cell, second_side, first.cell, first_side)
+        } else {
+            (first.cell, first_side, second.cell, second_side)
+        };
+        changes.push((painter, painter_side, other, other_side, winner));
+    }
+    // After every comparison, so one edge's outcome does not feed another's.
+    let drawn: Vec<_> = changes
+        .iter()
+        .map(|&(_, _, _, _, winner)| {
+            winner.map(|(cell, side)| {
+                let paint = &paints[prepared.positions[cell].0];
+                (
+                    paint.border[side],
+                    paint.border_style[side],
+                    prepared.boxes[cell].border[side],
+                )
+            })
+        })
+        .collect();
+    for ((painter, painter_side, other, other_side, _), winner) in changes.into_iter().zip(drawn) {
+        paints[prepared.positions[other].0].border[other_side] = None;
+        let target = prepared.positions[painter].0;
+        if let Some((color, style, width)) = winner {
+            paints[target].border[painter_side] = color;
+            paints[target].border_style[painter_side] = style;
+            prepared.boxes[painter].border[painter_side] = width;
+        } else {
+            paints[target].border[painter_side] = None;
         }
     }
 }
@@ -4973,6 +5019,7 @@ mod tests {
 
     #[test]
     fn collapsed_cells_resolve_their_shared_edges() {
+        let (red, blue) = (Some([1.0, 0.0, 0.0]), Some([0.0, 0.0, 1.0]));
         let edges = |left: &str, right: &str| {
             let tree = BoxTree::new(
                 node(
@@ -4987,35 +5034,80 @@ mod tests {
             )
             .unwrap();
             (
-                tree.paints[2].border[1].is_some(),
-                tree.paints[3].border[3].is_some(),
+                tree.paints[2].border[1],
+                tree.paints[3].border[3],
+                tree.paints[3].border_style[3],
             )
         };
-        // 17.6.2.1: wider first, then the style order, then the cell farther left.
-        assert_eq!(edges("2px solid #f00", "4px dotted #00f"), (false, true));
-        assert_eq!(edges("2px dotted #f00", "2px solid #00f"), (false, true));
-        assert_eq!(edges("2px solid #f00", "2px solid #00f"), (true, false));
-        assert_eq!(edges("2px hidden #f00", "4px solid #00f"), (false, false));
-        assert_eq!(edges("2px solid #f00", "none"), (true, false));
+        // 17.6.2.1: wider first, then the style order, then the cell farther left. The later
+        // cell paints the result either way, over its own background.
+        assert_eq!(
+            edges("2px solid #f00", "4px dotted #00f"),
+            (None, blue, "dotted")
+        );
+        assert_eq!(
+            edges("2px dotted #f00", "2px solid #00f"),
+            (None, blue, "solid")
+        );
+        assert_eq!(
+            edges("2px solid #f00", "2px dotted #00f"),
+            (None, red, "solid")
+        );
+        assert_eq!(
+            edges("2px solid #f00", "2px solid #00f"),
+            (None, red, "solid")
+        );
+        assert_eq!(edges("2px hidden #f00", "4px solid #00f").1, None);
+        assert_eq!(edges("2px solid #f00", "none").1, red);
 
-        // Above beats below on a tie.
+        // Above beats below on a tie, and outer edges have nothing to share.
+        let stacked = |css: &str| {
+            BoxTree::new(
+                node(
+                    "t",
+                    vec![
+                        node("r1", vec![node("a", vec![])]),
+                        node("r2", vec![node("b", vec![])]),
+                    ],
+                ),
+                &format!(
+                    "#t {{ display:table; border-collapse:collapse; }} #r1, #r2 {{ display:table-row; }}
+                     #a, #b {{ display:table-cell; }} {css}"
+                ),
+            )
+            .unwrap()
+        };
+        let tree = stacked("#a { border:2px solid #f00; } #b { border:2px solid #00f; }");
+        assert_eq!(tree.paints[2].border[2], None);
+        assert_eq!(tree.paints[4].border[0], red);
+        assert_eq!(tree.paints[2].border[0], red);
+        assert_eq!(tree.paints[4].border[2], blue);
+
+        // In rtl the first column is on the right: the shared edge is its left side.
         let tree = BoxTree::new(
             node(
                 "t",
-                vec![
-                    node("r1", vec![node("a", vec![])]),
-                    node("r2", vec![node("b", vec![])]),
-                ],
+                vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
             ),
-            "#t { display:table; border-collapse:collapse; } #r1, #r2 { display:table-row; }
-             #a, #b { display:table-cell; border:2px solid #f00; }",
+            "#t { display:table; border-collapse:collapse; direction:rtl; }
+             #r { display:table-row; }
+             #a { display:table-cell; border:2px solid #f00; }
+             #b { display:table-cell; border:2px solid #00f; }",
         )
         .unwrap();
-        assert!(tree.paints[2].border[2].is_some());
-        assert!(tree.paints[4].border[0].is_none());
-        // Outer edges have nothing to share.
-        assert!(tree.paints[2].border[0].is_some());
-        assert!(tree.paints[4].border[2].is_some());
+        assert_eq!(
+            tree.paints[2].border[1], red,
+            "the table's right edge stays"
+        );
+        assert_eq!(
+            tree.paints[3].border[3], blue,
+            "the table's left edge stays"
+        );
+        assert_eq!(tree.paints[2].border[3], None);
+        assert_eq!(
+            tree.paints[3].border[1], red,
+            "the first column wins the tie"
+        );
 
         // A separated table keeps both.
         let tree = BoxTree::new(
@@ -5028,5 +5120,67 @@ mod tests {
         )
         .unwrap();
         assert!(tree.paints[2].border[1].is_some() && tree.paints[3].border[3].is_some());
+
+        // A wrapped box's borders are its own.
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![node("r", vec![node("a", vec![]), node("x", vec![])])],
+            ),
+            "#t { display:table; border-collapse:collapse; } #r { display:table-row; }
+             #a { display:table-cell; border:1px solid #f00; }
+             #x { border:2px solid #00f; }",
+        )
+        .unwrap();
+        assert_eq!(tree.paints[3].border[3], blue);
+    }
+
+    #[test]
+    fn collapsed_edges_take_spans_and_order_from_the_layouts_grid() {
+        // Huge and zero spans are clamped, not walked.
+        let bound = nz(1000);
+        let limits = AttributeLimits {
+            entries: bound,
+            retained_bytes: bound,
+            work: bound,
+        };
+        for span in ["0", "1000000000"] {
+            let tall = node("a", vec![])
+                .style_attribute("rowspan", span, limits)
+                .unwrap();
+            let wide = node("b", vec![])
+                .style_attribute("colspan", span, limits)
+                .unwrap();
+            BoxTree::new(
+                node("t", vec![node("r", vec![tall, wide])]),
+                "#t { display:table; border-collapse:collapse; } #r { display:table-row; }
+                 #a, #b { display:table-cell; border:1px solid #f00; }",
+            )
+            .unwrap();
+        }
+        // A foot written before the body still comes after it.
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![
+                    node("f", vec![node("fr", vec![node("c", vec![])])]),
+                    node("g", vec![node("gr", vec![node("d", vec![])])]),
+                ],
+            ),
+            "#t { display:table; border-collapse:collapse; }
+             #f { display:table-footer-group; } #g { display:table-row-group; }
+             #fr, #gr { display:table-row; }
+             #c, #d { display:table-cell; border:2px solid #f00; }",
+        )
+        .unwrap();
+        let (foot, body) = (3, 6);
+        assert!(
+            tree.paints[foot].border[2].is_some(),
+            "the table's bottom edge stays"
+        );
+        assert!(
+            tree.paints[body].border[0].is_some(),
+            "the table's top edge stays"
+        );
     }
 }

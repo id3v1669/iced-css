@@ -75,9 +75,9 @@ scrolling list item's outside marker moves with the text, unclipped. Animations 
 inline backgrounds and border colors, fonts or keyword values; those and `!important` targets apply at once. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.
 
-Not read at all: `letter-spacing` (iced has no way to set it), the paged-media properties, and URL cursors (their keyword fallback is used). `word-spacing` adds stand-in spaces, positive values only. `text-indent` is approximated by leading spaces, positive lengths only
+Not read at all: `letter-spacing` (iced has no way to set it), the paged-media properties, and URL cursors (their keyword fallback is used). `word-spacing` adds stand-in spaces, positive values only, rounding like inline sides, and a wrapped line can start with some of them. `text-indent` is approximated by leading spaces, positive lengths only
 (no percentages or hanging indents), a word too wide beside it moves to the next line, one wider than the block wraps into blank lines, and none applies when an inline-block opens the line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
-sizing decorations by part; generated content and markers take it only from their element.
+sizing decorations by part; generated content and markers take it, `word-spacing`, `direction` and `unicode-bidi` only from their element.
 
 ## Cost
 
