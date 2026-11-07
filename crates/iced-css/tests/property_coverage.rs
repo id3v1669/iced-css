@@ -104,9 +104,8 @@ const UNREAD: &[&str] = &[
     "page-break-before",
     "page-break-inside",
     "widows",
-    // iced has no spacing between letters, and paragraphs take their direction from the text.
+    // iced has no spacing between letters.
     "letter-spacing",
-    "unicode-bidi",
 ];
 
 /// Property, what it needs around it, and a declaration that should show.
@@ -304,7 +303,11 @@ const CASES: &[(&str, &str, &str)] = &[
     ("text-indent", "", "#b { text-indent:40px; }"),
     ("text-transform", "", "#b { text-transform:uppercase; }"),
     ("top", "#b { position:relative; }", "#b { top:5px; }"),
-    ("unicode-bidi", "", "#b { unicode-bidi:embed; }"),
+    (
+        "unicode-bidi",
+        "#t { direction:rtl; }",
+        "#t { unicode-bidi:bidi-override; }",
+    ),
     ("vertical-align", "", "#td1 { vertical-align:middle; }"),
     ("visibility", "", "#b { visibility:hidden; }"),
     ("white-space", "", "#b { white-space:nowrap; }"),

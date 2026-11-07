@@ -1263,3 +1263,63 @@ fn border_styles_draw() {
             .unwrap()
     );
 }
+
+#[test]
+fn unicode_bidi_and_direction_reorder_text() {
+    let draw = |words: &'static str, css: &str, name: &str| {
+        let root = node("page", vec![node("s", vec![text("w", words)])]);
+        let sheet = format!(
+            "#page {{ background-color:white; color:black; width:300px; }}
+             #s {{ display:inline; }} #w {{ display:inline; }} {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let pid = std::process::id();
+    // 9.10: an override sets the characters' direction: the letters come out reversed.
+    let name = format!("bidi-override-{pid}.png");
+    assert!(draw("cba", "", &name));
+    assert!(draw(
+        "abc",
+        "#s { direction:rtl; unicode-bidi:bidi-override; }",
+        &name
+    ));
+    assert!(!draw("abc", "", &name));
+    // A paragraph's base direction puts the neutral mark to the left of the word. On an inner
+    // block: a narrower box with `direction:rtl` also moves to its container's right.
+    let block = "#s { display:block; }";
+    let rtl = "#s { display:block; direction:rtl; }";
+    let name = format!("bidi-base-{pid}.png");
+    assert!(draw(
+        "!word",
+        &format!("{block} #s {{ text-align:right; }}"),
+        &name
+    ));
+    assert!(draw("word!", rtl, &name));
+    assert!(draw(
+        "word!",
+        &format!("{rtl} #s {{ text-align:right; }}"),
+        &name
+    ));
+    // Hebrew right-aligned used to vanish: a right-to-left paragraph draws wherever it is put.
+    let name = format!("bidi-left-{pid}.png");
+    assert!(draw("!word", block, &name));
+    assert!(draw(
+        "word!",
+        &format!("{rtl} #s {{ text-align:left; }}"),
+        &name
+    ));
+    let name = format!("bidi-hebrew-{pid}.png");
+    assert!(draw("\u{5d0}\u{5d1}\u{5d2}", rtl, &name));
+    assert!(draw(
+        "\u{5d0}\u{5d1}\u{5d2}",
+        &format!("{rtl} #s {{ text-align:right; }}"),
+        &name
+    ));
+    assert!(!draw("x", rtl, &name));
+}

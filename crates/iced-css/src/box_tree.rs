@@ -31,6 +31,7 @@ use iced::advanced::{
 use iced::{
     Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector, keyboard, mouse,
 };
+use iced_css_core::values::bidi::{ComputedDirection, ComputedUnicodeBidi};
 use iced_css_core::values::registry::PropertyId;
 use iced_css_core::{
     cascade::{
@@ -1201,6 +1202,50 @@ impl BoxTree {
                     tagged.push((run, at));
                 }
             }
+            // 9.10: `unicode-bidi` is exactly these control characters around the element's
+            // text, opened and closed within each paragraph.
+            let bidi_chain = |start: usize| {
+                let mut found = Vec::new();
+                let mut at = Some(start);
+                while let Some(here) = at {
+                    let inline = prepared.inline_boxes[here].is_some();
+                    let style = projection
+                        .original_index(here)
+                        .and_then(|original| display.bidi_style(original));
+                    if let Some(style) = style {
+                        let rtl = style.direction() == ComputedDirection::RightToLeft;
+                        match style.unicode_bidi() {
+                            ComputedUnicodeBidi::Embed if inline => {
+                                found.push((here, if rtl { '\u{202B}' } else { '\u{202A}' }));
+                            }
+                            ComputedUnicodeBidi::BidiOverride => {
+                                found.push((here, if rtl { '\u{202E}' } else { '\u{202D}' }));
+                            }
+                            _ => {}
+                        }
+                    }
+                    at = prepared.inline_parent[here];
+                }
+                found.reverse();
+                found
+            };
+            let bidi_chains: Vec<_> = tagged.iter().map(|(_, at)| bidi_chain(*at)).collect();
+            for (index, (run, _)) in tagged.iter_mut().enumerate() {
+                let here = &bidi_chains[index];
+                let before = index
+                    .checked_sub(1)
+                    .map_or(&[][..], |at| bidi_chains[at].as_slice());
+                let after = bidi_chains.get(index + 1).map_or(&[][..], Vec::as_slice);
+                let opening: String = here
+                    .iter()
+                    .filter(|entry| !before.contains(entry))
+                    .map(|entry| entry.1)
+                    .collect();
+                let closing = here.iter().filter(|entry| !after.contains(entry)).count();
+                if !opening.is_empty() || closing > 0 {
+                    run.text = format!("{opening}{}{}", run.text, "\u{202C}".repeat(closing));
+                }
+            }
             let chains: Vec<Vec<usize>> = tagged
                 .iter()
                 .map(|(_, at)| inline_chain(Some(*at)))
@@ -1376,6 +1421,23 @@ impl BoxTree {
                 // Blank space of the block, not of whatever the first word sits in.
                 spacer.owner = projection.original_index(owner).unwrap_or(spacer.owner);
                 leaf.runs.insert(0, spacer);
+            }
+        }
+        // 9.10: a paragraph's base direction is its block's, and the shaper would guess it from
+        // the first strong character: a mark at the start settles it. Left-to-right text needs
+        // one only if it holds right-to-left characters to mislead the guess.
+        for (arena, value) in prepared.boxes.iter().enumerate() {
+            let Some(leaf) = texts[arena].as_mut().filter(|leaf| !leaf.is_empty()) else {
+                continue;
+            };
+            let rtl = value.direction == Direction::Rtl;
+            let mark = match (rtl, leaf.runs.iter().any(|run| holds_rtl(&run.text))) {
+                (true, _) => '\u{200F}',
+                (false, true) => '\u{200E}',
+                (false, false) => continue,
+            };
+            if let Some(first) = leaf.runs.iter_mut().find(|run| !run.text.is_empty()) {
+                first.text.insert(0, mark);
             }
         }
         let marker_leaves = markers
@@ -1989,6 +2051,20 @@ pub struct InlineDecoration {
     pub owner: usize,
 }
 
+/// Whether text has characters of the right-to-left scripts.
+fn holds_rtl(text: &str) -> bool {
+    text.chars().any(|character| {
+        matches!(
+            character,
+            '\u{590}'..='\u{8FF}'
+                | '\u{FB1D}'..='\u{FDFF}'
+                | '\u{FE70}'..='\u{FEFF}'
+                | '\u{10800}'..='\u{10FFF}'
+                | '\u{1E800}'..='\u{1EFFF}'
+        )
+    })
+}
+
 /// A run in capitals, with what was lowercase at a smaller size.
 fn small_capitals(run: &TextRun) -> Vec<TextRun> {
     let mut parts: Vec<TextRun> = Vec::new();
@@ -2470,7 +2546,11 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
         size: Pixels(size),
         line_height: line_height_of(leaf),
         font: base,
+        // A right-to-left paragraph aligned right draws nothing in iced 0.14, and left shifts by
+        // the width; the default draws it at the corner the caller works out. Every such
+        // paragraph starts with the mark `styled` puts there.
         align_x: match leaf.align {
+            _ if leaf.text().starts_with('\u{200F}') => text::Alignment::Default,
             "center" => text::Alignment::Center,
             "right" => text::Alignment::Right,
             "justify" => text::Alignment::Justified,
@@ -2615,6 +2695,7 @@ fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
         matches!(
             character,
             '\n' | '\r' | '\x0B' | '\x0C' | '\u{85}' | '\u{2028}' | '\u{2029}'
+                | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}'
                 | '\u{590}'..='\u{8FF}'
                 | '\u{FB1D}'..='\u{FDFF}'
                 | '\u{FE70}'..='\u{FEFF}'
