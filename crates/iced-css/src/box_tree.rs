@@ -1821,7 +1821,8 @@ impl BoxTree {
                 | PaintStep::Outline(_)
                 | PaintStep::Marker(_)
                 | PaintStep::CellBorder(_)
-                | PaintStep::Column(_) => None,
+                | PaintStep::Column(_)
+                | PaintStep::ColumnGroup(_) => None,
             })
             .collect()
     }
@@ -1974,8 +1975,19 @@ impl BoxTree {
             // 17.5.1: a table paints in layers, its row groups then its rows under every
             // cell, so a later row's background cannot cover a cell spanning into it.
             if matches!(prepared.boxes[arena].table, Some(TableRole::Table { .. })) {
-                // Columns come between the table and its row groups.
-                for (at, &(table, _)) in prepared.table_columns.iter().enumerate() {
+                // Column groups, then columns, come between the table and its row groups.
+                // A group's columns are recorded together, so its first is where it changes.
+                let mut previous = None;
+                for (at, &(table, _, group)) in prepared.table_columns.iter().enumerate() {
+                    if table != arena {
+                        continue;
+                    }
+                    if group.is_some() && group != previous {
+                        steps.push(PaintStep::ColumnGroup(at));
+                    }
+                    previous = group;
+                }
+                for (at, &(table, ..)) in prepared.table_columns.iter().enumerate() {
                     if table == arena {
                         steps.push(PaintStep::Column(at));
                     }
@@ -2210,6 +2222,9 @@ where
 enum PaintStep {
     /// A table column's background, by its place in `PreparedTree::table_columns`.
     Column(usize),
+    /// A column group's background, by its first column's place in
+    /// `PreparedTree::table_columns`.
+    ColumnGroup(usize),
     /// A collapsed table's cell, drawing only its borders.
     CellBorder(usize),
     /// A box's background and border, by projected index.
@@ -2641,8 +2656,9 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     geometry: Vec<Option<FlowGeometry>>,
     /// The same layout by arena slot, including anonymous blocks.
     slot_geometry: Vec<FlowGeometry>,
-    /// Each `PreparedTree::table_columns` entry's background area, from the last layout.
-    column_rects: Vec<Option<Rectangle>>,
+    /// Each `PreparedTree::table_columns` entry's background area, and its group's, from the
+    /// last layout.
+    column_rects: Vec<(Option<Rectangle>, Option<Rectangle>)>,
     /// How far each arena slot can scroll, down and across.
     scroll_limits: Vec<(f32, f32)>,
     /// The widget's height at the last layout.
@@ -3192,7 +3208,10 @@ fn breaks_layer(tree: &BoxTree, step: PaintStep, next: PaintStep) -> bool {
             !matches!(next, PaintStep::Text(_) | PaintStep::Marker(_))
         }
         PaintStep::Box(index) => tree.backgrounds.contains_key(&index),
-        PaintStep::Outline(_) | PaintStep::CellBorder(_) | PaintStep::Column(_) => false,
+        PaintStep::Outline(_)
+        | PaintStep::CellBorder(_)
+        | PaintStep::Column(_)
+        | PaintStep::ColumnGroup(_) => false,
     }
 }
 
@@ -3285,17 +3304,22 @@ fn draw_outline<Renderer: renderer::Renderer>(
     }
 }
 
-/// 17.5.1: each recorded column's area, across the cells that sit only in that column and
-/// down the table's rows, from arena-slot geometry so anonymous cells count as cells.
-fn column_rects(prepared: &PreparedTree, slot_geometry: &[FlowGeometry]) -> Vec<Option<Rectangle>> {
+/// 17.5.1: each recorded column's area and its column group's, across the cells that sit
+/// wholly inside the column or group and down the table's rows. Arena-slot geometry, so
+/// anonymous cells count as cells.
+fn column_rects(
+    prepared: &PreparedTree,
+    slot_geometry: &[FlowGeometry],
+) -> Vec<(Option<Rectangle>, Option<Rectangle>)> {
     use iced_css_core::formatting::block_flow::{table_grid, table_parts};
-    let mut rects = vec![None; prepared.table_columns.len()];
-    let mut done = vec![false; rects.len()];
-    for first in 0..rects.len() {
+    let columns = &prepared.table_columns;
+    let mut rects = vec![(None, None); columns.len()];
+    let mut done = vec![false; columns.len()];
+    for first in 0..columns.len() {
         if done[first] {
             continue;
         }
-        let table = prepared.table_columns[first].0;
+        let table = columns[first].0;
         let (rows, _) = table_parts(&prepared.boxes, table);
         let (placed, _) = table_grid(&prepared.boxes, &rows);
         let (mut top, mut bottom) = (f32::INFINITY, f32::NEG_INFINITY);
@@ -3305,51 +3329,69 @@ fn column_rects(prepared: &PreparedTree, slot_geometry: &[FlowGeometry]) -> Vec<
                 bottom = bottom.max(cell.border.bottom);
             }
         }
-        let mut column = 0;
-        for at in first..rects.len() {
-            if prepared.table_columns[at].0 != table {
-                continue;
-            }
-            done[at] = true;
+        // The area across the cells wholly inside columns `start..end`.
+        let across = |start: usize, end: usize| {
             let (mut left, mut right) = (f32::INFINITY, f32::NEG_INFINITY);
             for item in placed
                 .iter()
-                .filter(|item| item.column == column && item.col_span == 1)
+                .filter(|item| item.column >= start && item.column + item.col_span <= end)
             {
                 if let Some(cell) = slot_geometry.get(item.cell) {
                     left = left.min(cell.border.left);
                     right = right.max(cell.border.right);
                 }
             }
-            column += 1;
-            if left < right && top < bottom {
-                rects[at] = Some(Rectangle {
-                    x: left,
-                    y: top,
-                    width: right - left,
-                    height: bottom - top,
-                });
-            }
+            (left < right && top < bottom).then_some(Rectangle {
+                x: left,
+                y: top,
+                width: right - left,
+                height: bottom - top,
+            })
+        };
+        let members: Vec<usize> = (first..columns.len())
+            .filter(|at| columns[*at].0 == table)
+            .collect();
+        for (column, &at) in members.iter().enumerate() {
+            done[at] = true;
+            let group = columns[at].2.map(|group| {
+                let start = members
+                    .iter()
+                    .position(|other| columns[*other].2 == Some(group))
+                    .unwrap_or(column);
+                let end = members
+                    .iter()
+                    .rposition(|other| columns[*other].2 == Some(group))
+                    .map_or(column + 1, |last| last + 1);
+                across(start, end)
+            });
+            rects[at] = (across(column, column + 1), group.flatten());
         }
     }
     rects
 }
 
-/// Draws a column's background color over its area from [`column_rects`].
+/// Draws a column's background color, or its group's, over its area from [`column_rects`].
 fn draw_column<Renderer: renderer::Renderer>(
     tree: &BoxTree,
-    rects: &[Option<Rectangle>],
+    rects: &[(Option<Rectangle>, Option<Rectangle>)],
     renderer: &mut Renderer,
     origin: Point,
     at: usize,
+    group: bool,
 ) {
-    let Some(&(_, owner)) = tree.prepared.table_columns.get(at) else {
+    let Some(&(_, column, group_owner)) = tree.prepared.table_columns.get(at) else {
         return;
     };
+    let (owner, area) = match (group, rects.get(at)) {
+        (false, Some((area, _))) => (column, area),
+        (true, Some((_, area))) => match group_owner {
+            Some(owner) => (owner, area),
+            None => return,
+        },
+        _ => return,
+    };
     let paint = tree.paints[owner];
-    let (Some(color), Some(Some(area))) =
-        (paint.background.filter(|_| paint.visible), rects.get(at))
-    else {
+    let (Some(color), Some(area)) = (paint.background.filter(|_| paint.visible), area) else {
         return;
     };
     renderer.fill_quad(
@@ -4395,7 +4437,9 @@ where
                 | PaintStep::Marker(index)
                 | PaintStep::CellBorder(index) => prepared.slot[index],
                 PaintStep::Text(arena) => Some(arena),
-                PaintStep::Column(at) => prepared.table_columns.get(at).map(|entry| entry.0),
+                PaintStep::Column(at) | PaintStep::ColumnGroup(at) => {
+                    prepared.table_columns.get(at).map(|entry| entry.0)
+                }
             };
             let mut clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
             // A box clips its own text as it clips its children.
@@ -4551,7 +4595,17 @@ where
                             }
                         }
                         PaintStep::Column(at) => {
-                            draw_column(&self.tree, &self.column_rects, renderer, origin, at);
+                            draw_column(
+                                &self.tree,
+                                &self.column_rects,
+                                renderer,
+                                origin,
+                                at,
+                                false,
+                            );
+                        }
+                        PaintStep::ColumnGroup(at) => {
+                            draw_column(&self.tree, &self.column_rects, renderer, origin, at, true);
                         }
                         PaintStep::CellBorder(index) => draw_box(
                             &self.tree,
@@ -5632,6 +5686,41 @@ mod tests {
         let geometry = tree.layout(800.0, None).unwrap();
         let a = geometry[2].as_ref().unwrap();
         assert_eq!(a.border.right, a.padding.right, "{a:?}");
+    }
+
+    #[test]
+    fn a_column_group_paints_once_before_its_columns() {
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![
+                    node("c0", vec![]),
+                    node("g", vec![node("c1", vec![]), node("c2", vec![])]),
+                    node("h", vec![node("c3", vec![])]),
+                    node("r", vec![node("a", vec![])]),
+                ],
+            ),
+            "#t { display:table; } #g, #h { display:table-column-group; }
+             #c0, #c1, #c2, #c3 { display:table-column; }
+             #r { display:table-row; } #a { display:table-cell; }",
+        )
+        .unwrap();
+        let steps: Vec<PaintStep> = tree
+            .paint_steps(&BTreeSet::new())
+            .into_iter()
+            .filter(|step| matches!(step, PaintStep::ColumnGroup(_) | PaintStep::Column(_)))
+            .collect();
+        assert_eq!(
+            steps,
+            vec![
+                PaintStep::ColumnGroup(1),
+                PaintStep::ColumnGroup(3),
+                PaintStep::Column(0),
+                PaintStep::Column(1),
+                PaintStep::Column(2),
+                PaintStep::Column(3),
+            ]
+        );
     }
 
     #[test]

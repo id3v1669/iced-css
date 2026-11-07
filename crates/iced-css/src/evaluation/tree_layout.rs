@@ -451,9 +451,9 @@ pub struct PreparedTree {
     pub inline_parent: Vec<Option<usize>>,
     /// The box sides of each inline element, by projected index.
     pub inline_boxes: Vec<Option<InlineBoxSides>>,
-    /// Each table's direct `table-column` children in column order: table arena slot and the
-    /// column's projected index.
-    pub table_columns: Vec<(usize, usize)>,
+    /// Each table's `table-column` boxes in column order, direct or in a direct column group:
+    /// table arena slot, the column's projected index, and its group's projected index.
+    pub table_columns: Vec<(usize, usize, Option<usize>)>,
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
@@ -524,7 +524,9 @@ pub fn prepare_captured_tree(
     let mut inline_element = vec![false; count];
     let mut inline_parent: Vec<Option<usize>> = vec![None; count];
     let mut inline_boxes: Vec<Option<InlineBoxSides>> = vec![None; count];
-    let mut table_columns: Vec<(usize, usize)> = Vec::new();
+    let mut table_columns: Vec<(usize, usize, Option<usize>)> = Vec::new();
+    // The table arena slot of each column group that sits directly in a table.
+    let mut group_table: Vec<Option<usize>> = vec![None; count];
     // Whether the projected row is a block text leaf, whose generated runs join its own.
     let mut text_block = vec![false; count];
     let mut inline_rows: Vec<usize> = Vec::new();
@@ -547,6 +549,12 @@ pub fn prepare_captured_tree(
             let parent_slot = match parent {
                 Some(parent) => match container[parent] {
                     Some(value) => Some(value),
+                    // A column group's own columns are read; nothing else in it is.
+                    None if group_table[parent].is_some()
+                        && resolution.display == Display::TableColumn =>
+                    {
+                        None
+                    }
                     None => continue,
                 },
                 None => None,
@@ -643,15 +651,24 @@ pub fn prepare_captured_tree(
             ancestors.push(index);
             continue;
         }
-        // 17.2: of columns, only a direct `table-column`'s width is read, by fixed tables.
+        // 17.2: a `table-column` directly in a table, or in a column group directly in one,
+        // gives its width to fixed tables and its background to its cells.
         if matches!(
             resolution.display,
             Display::TableColumn | Display::TableColumnGroup
         ) {
-            if resolution.display == Display::TableColumn
-                && let Some(table) = parent_slot
-                && matches!(build.boxes[table].table, Some(TableRole::Table { .. }))
-            {
+            let in_table = parent_slot
+                .filter(|table| matches!(build.boxes[*table].table, Some(TableRole::Table { .. })));
+            if resolution.display == Display::TableColumnGroup {
+                group_table[index] = in_table;
+                // Open while its columns are read, so they do not close its ancestors; it has
+                // no box, so closing it generates nothing.
+                if in_table.is_some() {
+                    ancestors.push(index);
+                }
+            } else if let Some((table, group)) = in_table.map(|table| (table, None)).or_else(|| {
+                parent.and_then(|group| group_table[group].map(|table| (table, Some(group))))
+            }) {
                 let width = flow_box(&rows[index], facts.numeric)
                     .map_err(|error| E::Percentage {
                         projected: index,
@@ -659,7 +676,7 @@ pub fn prepare_captured_tree(
                     })?
                     .width;
                 build.boxes[table].column_widths.push(width);
-                table_columns.push((table, index));
+                table_columns.push((table, index, group));
             }
             continue;
         }

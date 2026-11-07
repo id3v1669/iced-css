@@ -1613,3 +1613,126 @@ fn a_spanning_cell_does_not_widen_a_column_and_a_hidden_column_paints_nothing() 
     ));
     assert!(!draw("#c2 { background-color:#d9534f; }", &name));
 }
+
+#[test]
+fn a_column_group_paints_under_its_columns() {
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "t",
+            vec![
+                node("c1", vec![]),
+                node(
+                    "g",
+                    vec![node("c2", vec![]), node("c3", vec![]), node("x", vec![])],
+                ),
+                node(
+                    "r1",
+                    vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+                ),
+                node(
+                    "r2",
+                    vec![node("d", vec![]), node("e", vec![]), node("f", vec![])],
+                ),
+            ],
+        );
+        let sheet = format!(
+            "#t {{ display:table; background-color:white; }}
+             #c1, #c2, #c3 {{ display:table-column; }}
+             #g {{ display:table-column-group; }}
+             #x {{ display:block; height:500px; background-color:black; }}
+             #r1, #r2 {{ display:table-row; }}
+             #a, #b, #c, #d, #e, #f {{ display:table-cell; width:40px; height:30px; }} {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("column-group-{}.png", std::process::id());
+    assert!(draw("#b, #c, #e, #f { background-color:#d9534f; }", &name));
+    assert!(draw("#c2, #c3 { background-color:#d9534f; }", &name));
+    assert!(draw("#g { background-color:#d9534f; }", &name));
+    // Columns paint over their group, and a hidden group paints nothing.
+    let name = format!("column-over-group-{}.png", std::process::id());
+    assert!(draw(
+        "#c2 { background-color:#2a4d69; } #c3 { background-color:#d9534f; }",
+        &name
+    ));
+    assert!(draw(
+        "#g { background-color:#d9534f; } #c2 { background-color:#2a4d69; }",
+        &name
+    ));
+    let name = format!("column-group-hidden-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(draw(
+        "#g { background-color:#d9534f; visibility:hidden; }",
+        &name
+    ));
+}
+
+#[test]
+fn a_fixed_table_reads_widths_of_grouped_columns() {
+    let draw = |columns: Vec<Node>, css: &str, name: &str| {
+        let mut children = columns;
+        children.push(node("r", vec![node("a", vec![]), node("b", vec![])]));
+        let root = node("t", children);
+        let sheet = format!(
+            "#t {{ display:table; table-layout:fixed; width:200px; background-color:white; }}
+             #r {{ display:table-row; }}
+             #a, #b {{ display:table-cell; height:30px; }}
+             #a {{ background-color:#d9534f; }} {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("grouped-widths-{}.png", std::process::id());
+    let css = "#c1, #c2 { display:table-column; } #c1 { width:150px; } #g { display:table-column-group; }";
+    assert!(draw(
+        vec![node("c1", vec![]), node("c2", vec![])],
+        css,
+        &name
+    ));
+    assert!(draw(
+        vec![node("g", vec![node("c1", vec![]), node("c2", vec![])])],
+        css,
+        &name
+    ));
+    assert!(!draw(vec![], css, &name));
+}
+
+#[test]
+fn a_column_group_keeps_generated_content_after_the_table() {
+    let draw = |group: bool, name: &str| {
+        let mut parts = Vec::new();
+        if group {
+            parts.push(node("g", vec![node("c", vec![])]));
+        }
+        parts.push(node("r", vec![node("a", vec![text("x", "cell")])]));
+        let root = node(
+            "w",
+            vec![node("t", parts), node("p", vec![text("y", "tail")])],
+        );
+        let sheet = "#w { background-color:white; color:black; }
+             #t { display:table; } #g { display:table-column-group; } #c { display:table-column; }
+             #r { display:table-row; } #a { display:table-cell; }
+             #t:after { content:\"Y\"; } #w:after { content:\"Z\"; }";
+        let tree = BoxTree::new(root, sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("group-after-{}.png", std::process::id());
+    assert!(draw(false, &name));
+    assert!(draw(true, &name));
+}
