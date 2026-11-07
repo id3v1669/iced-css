@@ -1849,38 +1849,77 @@ fn an_rtl_scrollers_bar_starts_at_its_right_end() {
 
 #[test]
 fn tab_scrolls_an_rtl_box_to_an_input_at_its_left_end() {
-    let root = node(
-        "page",
-        vec![node("box", vec![node("wide", vec![node("field", vec![])])])],
-    );
-    let tree = BoxTree::new(
-        root,
-        "#page { background:white; }
-         #box { direction:rtl; overflow:auto; width:100px; height:40px; }
-         #wide { width:300px; height:40px; }
-         #field { width:60px; height:30px; margin-right:240px; }",
-    )
-    .unwrap();
-    let view: Element<'_, u8> = tree
-        .interactive()
-        .widget(
-            "field",
-            iced::widget::text_input("", "here").on_input(|_| 1),
+    let ui = |hosted: bool| {
+        let root = node(
+            "page",
+            vec![node("box", vec![node("wide", vec![node("field", vec![])])])],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#page { background:white; }
+             #box { direction:rtl; overflow:auto; width:100px; height:40px; }
+             #wide { width:300px; height:40px; }
+             #field { width:60px; height:30px; margin-right:240px; }",
         )
-        .into();
-    let mut ui = simulator(view);
-    let picture = std::env::temp_dir().join(format!("rtl-tab-{}.png", std::process::id()));
+        .unwrap();
+        let mut view = tree.interactive();
+        if hosted {
+            view = view.widget(
+                "field",
+                iced::widget::text_input("", "here").on_input(|_| 1),
+            );
+        }
+        simulator(view.into())
+    };
+    let wheel = |ui: &mut iced_test::Simulator<'_, u8>| {
+        ui.point_at(Point::new(10.0, 10.0));
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+            delta: iced::mouse::ScrollDelta::Pixels { x: 1000.0, y: 0.0 },
+        })]);
+    };
+    let id = std::process::id();
+    // The field starts out of view, past the box's left end.
+    let hidden = std::env::temp_dir().join(format!("rtl-tab-hidden-{id}.png"));
     assert!(
-        ui.snapshot(&Theme::Light)
+        ui(false)
+            .snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(&picture)
+            .matches_image(&hidden)
             .unwrap()
     );
-    let _ = ui.tap_key(iced::keyboard::key::Named::Tab);
     assert!(
-        !ui.snapshot(&Theme::Light)
+        ui(true)
+            .snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(&picture)
+            .matches_image(&hidden)
+            .unwrap()
+    );
+    // Tab scrolls exactly to it: the same as scrolling to the left end and then focusing it.
+    let shown = std::env::temp_dir().join(format!("rtl-tab-shown-{id}.png"));
+    let mut reference = ui(true);
+    wheel(&mut reference);
+    let _ = reference.tap_key(iced::keyboard::key::Named::Tab);
+    assert!(
+        reference
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&shown)
+            .unwrap()
+    );
+    let mut tabbed = ui(true);
+    let _ = tabbed.tap_key(iced::keyboard::key::Named::Tab);
+    assert!(
+        tabbed
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&shown)
+            .unwrap()
+    );
+    assert!(
+        !ui(true)
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(&shown)
             .unwrap()
     );
 }

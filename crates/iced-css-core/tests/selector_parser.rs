@@ -45,6 +45,7 @@ fn grouping_is_atomic_and_newer_selector_forms_are_not_admitted() {
         "text::hover",
         "text::placeholder",
         "text: :before",
+        "text:: before",
         "text:::before",
         "text::lang(en)",
         ":not(.x)",

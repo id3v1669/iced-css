@@ -246,7 +246,8 @@ impl<'a> Parser<'a> {
             });
         }
         // Selectors Level 3 writes the CSS 2.2 pseudo-elements with two colons; only those
-        // four are admitted that way.
+        // four are admitted that way. A comment between the colons is no separator, as in
+        // CSS Syntax.
         let double = look.token.kind == TokenKind::Colon;
         if double {
             look = self.take()?;
