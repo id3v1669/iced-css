@@ -5222,4 +5222,86 @@ mod tests {
             "the table's top edge stays"
         );
     }
+
+    #[test]
+    fn collapsed_cells_draw_backgrounds_and_borders_in_separate_steps() {
+        let tree = BoxTree::new(
+            node("t", vec![node("r", vec![node("a", vec![])])]),
+            "#t { display:table; border-collapse:collapse; } #r { display:table-row; }
+             #a { display:table-cell; width:20px; height:20px; border:2px solid #f00;
+                  background-color:#00f; }",
+        )
+        .unwrap();
+        let geometry = tree.layout(100.0, None).unwrap();
+        let drawn = |parts: BoxParts| {
+            let mut renderer = Recording::default();
+            draw_box(&tree, &geometry, &mut renderer, Point::ORIGIN, 2, parts);
+            renderer.0.len()
+        };
+        assert_eq!(drawn(BoxParts::All), 1, "the background alone");
+        assert_eq!(drawn(BoxParts::Background), 1);
+        assert_eq!(drawn(BoxParts::Border), 0);
+        assert_eq!(drawn(BoxParts::CellBorder), 4);
+    }
+
+    #[test]
+    fn cells_meeting_along_part_of_an_edge_keep_their_own_bands() {
+        let bound = nz(1000);
+        let limits = AttributeLimits {
+            entries: bound,
+            retained_bytes: bound,
+            work: bound,
+        };
+        let tall = node("a", vec![])
+            .style_attribute("rowspan", "2", limits)
+            .unwrap();
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![
+                    node("r1", vec![tall, node("b", vec![])]),
+                    node("r2", vec![node("c", vec![])]),
+                ],
+            ),
+            "#t { display:table; border-collapse:collapse; } #r1, #r2 { display:table-row; }
+             #a, #b, #c { display:table-cell; border:2px solid #f00; }",
+        )
+        .unwrap();
+        assert!(
+            tree.paints[3].border[3].is_some(),
+            "#b beside the taller #a"
+        );
+        assert!(
+            tree.paints[2].border[1].is_some(),
+            "#a beside the shorter #b"
+        );
+
+        let wide = node("a", vec![])
+            .style_attribute("colspan", "2", limits)
+            .unwrap();
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![
+                    node("r1", vec![wide]),
+                    node("r2", vec![node("b", vec![]), node("c", vec![])]),
+                ],
+            ),
+            "#t { display:table; border-collapse:collapse; } #r1, #r2 { display:table-row; }
+             #a, #b, #c { display:table-cell; border:2px solid #f00; }",
+        )
+        .unwrap();
+        assert!(tree.paints[4].border[0].is_some(), "#b below the wider #a");
+        assert!(
+            tree.paints[2].border[2].is_some(),
+            "#a above the narrower #b"
+        );
+    }
+
+    #[test]
+    fn a_band_too_thin_for_its_pattern_is_a_plain_line() {
+        let band = Rectangle::new(Point::ORIGIN, Size::new(100.0, 0.4));
+        assert_eq!(band_pieces(band, 0, "dotted", [0.5; 3]).len(), 1);
+        assert_eq!(band_pieces(band, 0, "dashed", [0.5; 3]).len(), 1);
+    }
 }

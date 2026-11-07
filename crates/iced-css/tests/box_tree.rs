@@ -3581,3 +3581,18 @@ fn ltr_text_holding_rtl_characters_keeps_its_base_direction() {
     let tree = BoxTree::new(root, "").unwrap();
     assert!(tree.text_leaves()[0].1.text().starts_with('\u{200E}'));
 }
+
+#[test]
+fn an_embedding_closes_where_its_element_ends() {
+    let root = node(
+        "page",
+        vec![node("s", vec![text("w", "a")]), text("after", "b")],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#s { display:inline; direction:rtl; unicode-bidi:embed; } #w, #after { display:inline; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    assert_eq!(leaves[0].1.text(), "\u{202B}a\u{202C}b");
+}

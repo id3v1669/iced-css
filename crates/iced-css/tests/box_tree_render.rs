@@ -924,6 +924,15 @@ fn inline_boxes_draw_their_sides_across_lines() {
     assert!(draw(boxed, &picture));
     assert!(draw(boxed, &picture));
     assert!(!draw("background-color:#adcbe3;", &picture));
+    // Styles reach an inline box's top, bottom and side borders alike.
+    let solid = "border-top:6px solid #2a4d69;";
+    let name = std::env::temp_dir().join(format!("inline-top-{}.png", std::process::id()));
+    assert!(draw(solid, &name));
+    assert!(!draw("border-top:6px dashed #2a4d69;", &name));
+    let solid = "border-left:12px solid #2a4d69;";
+    let name = std::env::temp_dir().join(format!("inline-side-{}.png", std::process::id()));
+    assert!(draw(solid, &name));
+    assert!(!draw("border-left:12px double #2a4d69;", &name));
     assert!(!draw("", &picture));
 }
 
