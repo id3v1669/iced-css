@@ -1896,6 +1896,9 @@ pub fn evaluate_tree_paint<'r>(
                     .to_nonnegative_f32(limits.numeric)
                     .ok()
                     .map(|c| c.value),
+                DefaultedValueRef::ParentComputed => parent_index
+                    .and_then(|parent: usize| paints[parent].outline)
+                    .map(|outline| outline.0),
                 _ => Some(3.0),
             },
             _ => None,
@@ -2012,7 +2015,16 @@ pub fn evaluate_tree_paint<'r>(
         colors.push(row);
         let paint = |slot: usize| rgb(row[slot].value(), limits.numeric);
         // An outline's initial `invert` has no value without the backdrop: it uses `color`.
+        let inherited_outline = match defaulted("outline-color")? {
+            DefaultedValueRef::ParentComputed => parent_index
+                .and_then(|parent: usize| paints[parent].outline)
+                .map(|outline| outline.1),
+            _ => None,
+        };
         let outline = outline_width.map(|width| {
+            if let Some(color) = inherited_outline {
+                return (width, color);
+            }
             let color = compute_color(
                 &winners,
                 outline_color,

@@ -103,8 +103,8 @@ const WORST_CASE: usize = usize::MAX >> 4;
 /// It bounds the number of tests, not what each costs: `MATCH_WORK` bounds that.
 const RULE_VISITS: usize = 300_000_000;
 /// One selector against one box. Descendant combinators backtrack, so `section div div div a`
-/// spends about C(depth, 3): ordinary deep pages must fit, and only a selector built to
-/// explode should not.
+/// spends several units per C(depth, 3): ordinary deep pages must fit, and only a selector
+/// built to explode should not. Nothing meters the total, so sheets are trusted input.
 const MATCH_WORK: usize = 1_000_000;
 
 fn big() -> NonZeroUsize {
@@ -1423,7 +1423,16 @@ impl BoxTree {
         // 17.6.3: with collapsed borders, inset draws like ridge and outset like groove.
         for (arena, value) in prepared.boxes.iter().enumerate() {
             let owner = prepared.positions[arena].0;
-            if value.table == Some(TableRole::Cell) && collapses[owner] {
+            // The table decides, and an anonymous cell's owner is the box it wraps.
+            let mut table = parent_of[arena];
+            while let Some(at) = table {
+                if matches!(prepared.boxes[at].table, Some(TableRole::Table { .. })) {
+                    break;
+                }
+                table = parent_of[at];
+            }
+            let collapsed = table.is_some_and(|at| collapses[prepared.positions[at].0]);
+            if value.table == Some(TableRole::Cell) && !prepared.anonymous[arena] && collapsed {
                 for line in &mut paints[owner].border_style {
                     *line = match *line {
                         "inset" => "ridge",
@@ -4613,5 +4622,61 @@ mod tests {
         let shown = tree.variant(key);
         assert_eq!(shown.paints, tree.paints);
         assert!(tree.is_refused(tree.source.normal_key(key)));
+    }
+
+    #[test]
+    fn collapsed_style_mapping_follows_the_table_and_real_cells_only() {
+        let styles = |css: &str, at: usize| {
+            let tree = BoxTree::new(
+                node("t", vec![node("r", vec![node("c", vec![])])]),
+                &format!(
+                    "#t {{ display:table; }} #r {{ display:table-row; }}
+                     #c {{ display:table-cell; border:4px inset #ff0000; }} {css}"
+                ),
+            )
+            .unwrap();
+            tree.paints[at].border_style[0]
+        };
+        assert_eq!(
+            styles(
+                "#t { border-collapse:separate; } #c { border-collapse:collapse; }",
+                2
+            ),
+            "inset"
+        );
+        assert_eq!(
+            styles(
+                "#t { border-collapse:collapse; } #c { border-collapse:separate; }",
+                2
+            ),
+            "ridge"
+        );
+        // A block wrapped in an anonymous cell keeps its own.
+        let tree = BoxTree::new(
+            node("t", vec![node("x", vec![])]),
+            "#t { display:table; border-collapse:collapse; } #x { border:4px inset #ff0000; }",
+        )
+        .unwrap();
+        assert_eq!(tree.paints[1].border_style[0], "inset");
+    }
+
+    #[test]
+    fn outline_inherits_width_and_color_with_its_style() {
+        let child = |css: &str| {
+            let tree = BoxTree::new(node("p", vec![node("c", vec![])]), css).unwrap();
+            tree.paints[1].outline
+        };
+        assert_eq!(
+            child("#p { outline:1px dotted #ff0000; } #c { outline:inherit; }"),
+            Some((1.0, [1.0, 0.0, 0.0]))
+        );
+        assert_eq!(
+            child("#p { outline:0 solid #ff0000; } #c { outline:inherit; }"),
+            None
+        );
+        assert_eq!(
+            child("#p { outline-style:none; } #c { outline:inherit; }"),
+            None
+        );
     }
 }
