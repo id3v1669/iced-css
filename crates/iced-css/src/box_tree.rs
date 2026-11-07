@@ -2177,20 +2177,11 @@ impl BoxTree {
         for arena in 0..count {
             let position = prepared.positions[arena].1;
             let owner = prepared.positions[arena].0;
-            // 11.1.2: `clip` cuts an absolutely positioned box and what is inside it.
-            let own = self.paints[owner]
-                .clip
-                .filter(|_| matches!(position, Position::Absolute | Position::Fixed))
-                .zip(geometry.get(owner).copied().flatten())
-                .map(|(sides, outer)| {
-                    let border = outer.border;
-                    FlowRect {
-                        top: sides[0].map_or(border.top, |side| border.top + side),
-                        right: sides[1].map_or(border.right, |side| border.left + side),
-                        bottom: sides[2].map_or(border.bottom, |side| border.top + side),
-                        left: sides[3].map_or(border.left, |side| border.left + side),
-                    }
-                });
+            let own = geometry
+                .get(owner)
+                .copied()
+                .flatten()
+                .and_then(|outer| own_clip(self.paints[owner].clip, position, outer.border));
             let above = parents[arena].and_then(|parent: usize| cut[parent]);
             cut[arena] = own.map_or(above, |own| meet(above, own));
             if position == Position::Fixed {
@@ -2625,6 +2616,21 @@ fn scrolling_descendants(prepared: &PreparedTree, root: usize, mut visit: impl F
     }
 }
 
+/// 11.1.2: the rectangle `clip` cuts an absolutely positioned box and its contents to.
+fn own_clip(
+    clip: Option<[Option<f32>; 4]>,
+    position: Position,
+    border: FlowRect,
+) -> Option<FlowRect> {
+    let sides = clip.filter(|_| matches!(position, Position::Absolute | Position::Fixed))?;
+    Some(FlowRect {
+        top: sides[0].map_or(border.top, |side| border.top + side),
+        right: sides[1].map_or(border.right, |side| border.left + side),
+        bottom: sides[2].map_or(border.bottom, |side| border.top + side),
+        left: sides[3].map_or(border.left, |side| border.left + side),
+    })
+}
+
 /// Where a box's text reaches, from its place's top left: down, and across from `from` to
 /// `to`, which run past the place where the text is wider.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2643,9 +2649,21 @@ fn apply_scrolling(
     geometry: &mut [FlowGeometry],
     scrolled: impl Fn(usize) -> (f32, f32),
     text_size: impl Fn(usize, &FlowGeometry) -> Option<TextExtent>,
+    cut: impl Fn(usize, &FlowGeometry) -> Option<FlowRect>,
     viewport: Size,
 ) -> Vec<(f32, f32)> {
     let mut limits = vec![(0.0_f32, 0.0_f32); prepared.boxes.len()];
+    // What `clip` cuts away scrolls nowhere: each box's reach stops at the clips between it
+    // and the scroller.
+    let any_cut = (0..geometry.len()).any(|arena| cut(arena, &geometry[arena]).is_some());
+    let mut parents = vec![None; if any_cut { prepared.boxes.len() } else { 0 }];
+    if any_cut {
+        for (arena, value) in prepared.boxes.iter().enumerate() {
+            for &child in &value.children {
+                parents[child] = Some(arena);
+            }
+        }
+    }
     for arena in 0..geometry.len() {
         if !prepared.scrolls[arena] {
             continue;
@@ -2668,20 +2686,56 @@ fn apply_scrolling(
             reach_x = reach_x.max(place.left + text.to);
             reach_left = reach_left.min(place.left + text.from);
         }
+        let scroller = arena;
         scrolling_descendants(prepared, arena, |child, reaches| {
             if reaches {
+                let mut bound: Option<FlowRect> = None;
+                let mut at = any_cut.then_some(child);
+                while let Some(here) = at.filter(|here| *here != scroller) {
+                    if let Some(own) = cut(here, &geometry[here]) {
+                        bound = Some(bound.map_or(own, |bound| FlowRect {
+                            left: bound.left.max(own.left),
+                            right: bound.right.min(own.right),
+                            top: bound.top.max(own.top),
+                            bottom: bound.bottom.min(own.bottom),
+                        }));
+                    }
+                    at = parents[here];
+                }
+                // Only what shows through every clip counts, and only as far as it shows.
+                let shows = |top: f32, right: f32, bottom: f32, left: f32| {
+                    // A true overlap: disjoint nested clips leave an inverted bound.
+                    bound.is_none_or(|bound| {
+                        bottom.min(bound.bottom) > top.max(bound.top)
+                            && right.min(bound.right) > left.max(bound.left)
+                    })
+                };
+                let (low, high, before) = bound
+                    .map_or((f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY), |bound| {
+                        (bound.bottom, bound.right, bound.left)
+                    });
                 let box_of = &geometry[child];
-                reach = reach.max(box_of.border.bottom);
-                reach_x = reach_x.max(box_of.border.right);
-                reach_left = reach_left.min(box_of.border.left);
+                let border = box_of.border;
+                if shows(border.top, border.right, border.bottom, border.left) {
+                    reach = reach.max(border.bottom.min(low));
+                    reach_x = reach_x.max(border.right.min(high));
+                    reach_left = reach_left.min(border.left.max(before));
+                }
                 // Text runs past a box too small for it, unless that box clips it.
                 if !prepared.clipped[child]
                     && let Some(text) = text_size(child, box_of)
                 {
                     let place = box_of.leaf_band.unwrap_or(box_of.content);
-                    reach = reach.max(place.top + text.height);
-                    reach_x = reach_x.max(place.left + text.to);
-                    reach_left = reach_left.min(place.left + text.from);
+                    let (bottom, right, left) = (
+                        place.top + text.height,
+                        place.left + text.to,
+                        place.left + text.from,
+                    );
+                    if shows(place.top, right, bottom, left) {
+                        reach = reach.max(bottom.min(low));
+                        reach_x = reach_x.max(right.min(high));
+                        reach_left = reach_left.min(left.max(before));
+                    }
                 }
             }
         });
@@ -4059,6 +4113,7 @@ where
         let positions = &self.tree.prepared.positions;
         let texts = &self.tree.texts;
         let boxes = &self.tree.prepared.boxes;
+        let paints = &self.tree.paints;
         self.scroll_limits = apply_scrolling(
             &self.tree.prepared,
             &mut self.slot_geometry,
@@ -4092,6 +4147,13 @@ where
                     from,
                     to,
                 })
+            },
+            |arena, outer| {
+                own_clip(
+                    paints[positions[arena].0].clip,
+                    positions[arena].1,
+                    outer.border,
+                )
             },
             available,
         );
@@ -5037,6 +5099,7 @@ mod tests {
             &mut geometry,
             |arena| (0.0, if arena == 1 { 30.0 } else { 0.0 }),
             |_, _| None,
+            |_, _| None,
             Size::new(800.0, 600.0),
         );
         // 300px of contents overflow the 105px padding box by 195px; its 5px end padding
@@ -5044,6 +5107,103 @@ mod tests {
         assert_eq!(limits[1].1, 200.0);
         assert_eq!(geometry[2].border.left, wide.left + 30.0);
         assert_eq!(geometry[2].border.right, wide.right + 30.0);
+    }
+
+    /// The scroll limits of `#box`, arena slot 1, under `css`.
+    fn clipped_limits(
+        children: Vec<CapturedElement<'static, (), Theme, Recording>>,
+        css: &str,
+    ) -> (f32, f32) {
+        let tree = BoxTree::new(node("page", vec![node("box", children)]), css).unwrap();
+        let mut geometry: Vec<FlowGeometry> = tree
+            .layout(800.0, Some(600.0))
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        let positions = &tree.prepared.positions;
+        apply_scrolling(
+            &tree.prepared,
+            &mut geometry,
+            |_| (0.0, 0.0),
+            |_, _| None,
+            |arena, outer| {
+                own_clip(
+                    tree.paints[positions[arena].0].clip,
+                    positions[arena].1,
+                    outer.border,
+                )
+            },
+            Size::new(800.0, 600.0),
+        )[1]
+    }
+
+    #[test]
+    fn clip_stops_what_a_scroller_can_reach() {
+        let scroller = "#box { overflow:auto; width:100px; height:40px; position:relative; }";
+        // Cut to 150 by 60 from 300 by 90: 50 across and 20 down past the 100 by 40 box.
+        let limits = clipped_limits(
+            vec![node("wide", vec![])],
+            &format!(
+                "{scroller} #wide {{ position:absolute; top:0; left:0; width:300px; height:90px;
+                 clip:rect(0px, 150px, 60px, 0px); }}"
+            ),
+        );
+        assert_eq!(limits, (20.0, 50.0));
+        // A descendant of the clipped box: cut by its clip, and nothing where it shows none.
+        let inner = |left: &str| {
+            clipped_limits(
+                vec![node("a", vec![node("b", vec![])])],
+                &format!(
+                    "{scroller} #a {{ position:absolute; top:0; left:0; width:50px; height:10px;
+                     clip:rect(0px, 50px, 300px, 0px); }}
+                     #b {{ position:absolute; top:0; left:{left}; width:100px; height:150px; }}"
+                ),
+            )
+        };
+        assert_eq!(inner("30px"), (110.0, 0.0));
+        assert_eq!(inner("500px"), (0.0, 0.0));
+        // Two disjoint clips leave nothing to show, though each side alone overlaps.
+        let limits = clipped_limits(
+            vec![node("a", vec![node("c", vec![])])],
+            &format!(
+                "{scroller} #a {{ position:absolute; top:0; left:0; width:200px; height:10px;
+                 clip:rect(0px, 50px, 300px, 0px); }}
+                 #c {{ position:absolute; top:0; left:0; width:200px; height:300px;
+                 clip:rect(0px, 200px, 300px, 100px); }}"
+            ),
+        );
+        assert_eq!(limits, (0.0, 0.0));
+        // The same one above the other, and two clips meeting at the nearer right side.
+        let nested = |outer: &str, inner: &str, width: &str| {
+            clipped_limits(
+                vec![node("a", vec![node("c", vec![])])],
+                &format!(
+                    "{scroller} #a {{ position:absolute; top:0; left:0; width:80px; height:10px;
+                     clip:rect({outer}); }}
+                     #c {{ position:absolute; top:0; left:0; width:{width}; height:300px;
+                     clip:rect({inner}); }}"
+                ),
+            )
+        };
+        assert_eq!(
+            nested("0px, 300px, 50px, 0px", "100px, 300px, 300px, 0px", "50px"),
+            (0.0, 0.0)
+        );
+        assert_eq!(
+            nested("0px, 150px, 30px, 0px", "0px, 80px, 30px, 0px", "200px"),
+            (0.0, 0.0)
+        );
+        // In rtl the clip's left side stops the reach leftward.
+        let limits = clipped_limits(
+            vec![node("wide", vec![])],
+            &format!(
+                "{scroller} #box {{ direction:rtl; }}
+                 #wide {{ position:absolute; top:0; right:0; width:300px; height:10px;
+                 clip:rect(0px, 300px, 10px, 150px); }}"
+            ),
+        );
+        assert_eq!(limits, (0.0, 50.0));
     }
 
     #[test]
@@ -5071,6 +5231,7 @@ mod tests {
                     to: 100.0,
                 })
             },
+            |_, _| None,
             Size::new(800.0, 600.0),
         );
         assert_eq!(limits[1].1, 160.0);
@@ -5102,6 +5263,7 @@ mod tests {
                     to: 100.0,
                 })
             },
+            |_, _| None,
             Size::new(800.0, 600.0),
         );
         assert_eq!(limits[1].1, 40.0);
