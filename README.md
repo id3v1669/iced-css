@@ -65,7 +65,7 @@ offsets). A style change without a request applies at once. Time comes from lumi
 ## Known limits
 
 Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
-one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` uses the widest cell border per axis for spacing, a cell beside a spanning one keeps its own part of the edge, and a positioned cell moves the whole table's borders to where it paints;
+one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` overlaps the cells on each grid line by that line's widest border, even where a cell's own border there is narrower, a cell beside a spanning one keeps its own part of the edge, and a positioned cell moves the whole table's borders to where it paints;
 `justify` stretches lines to the widest line rather than the box, leaves a line split at a float's end unstretched, and is start-aligned in rtl;
 one line height and alignment per paragraph; text widens past
 floats once per paragraph. Generated content takes `display`, `clear` and

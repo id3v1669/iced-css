@@ -3654,3 +3654,122 @@ fn a_rows_generated_content_shares_its_anonymous_cell_with_its_text() {
         assert_eq!(leaves, vec!["xy"], "{display}");
     }
 }
+
+#[test]
+fn each_collapsed_grid_line_overlaps_by_its_own_widest_border() {
+    let layout = |direction: &str| {
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![node(
+                    "r",
+                    vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+                )],
+            ),
+            &format!(
+                "#t {{ display:table; border-collapse:collapse; direction:{direction}; }}
+                 #r {{ display:table-row; }}
+                 #a, #b, #c {{ display:table-cell; width:40px; height:20px;
+                               border:1px solid black; }}
+                 #b {{ border-right:8px solid black; }} #c {{ border-left:8px solid black; }}"
+            ),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        [2, 3, 4].map(|at| geometry[at].unwrap().border)
+    };
+    // The 1px line overlaps 1px, the 8px line 8px, not the widest border everywhere.
+    let [a, b, c] = layout("ltr");
+    assert_eq!(a.right - b.left, 1.0);
+    assert_eq!(b.right - c.left, 8.0);
+    // In rtl the first column is on the right, so `#b`'s 8px right side is on the line it
+    // shares with `#a`, and the line to `#c` is 1px.
+    let [a, b, c] = layout("rtl");
+    assert_eq!(b.right - a.left, 8.0, "rtl a/b");
+    assert_eq!(c.right - b.left, 1.0, "rtl b/c");
+}
+
+#[test]
+fn collapsed_rows_spans_and_table_width_follow_each_lines_own_width() {
+    let attrs = AttributeLimits {
+        entries: NonZeroUsize::new(100).unwrap(),
+        retained_bytes: NonZeroUsize::new(100_000).unwrap(),
+        work: NonZeroUsize::new(100_000).unwrap(),
+    };
+    let wide = node("e", vec![])
+        .style_attribute("colspan", "2", attrs)
+        .unwrap();
+    let tree = BoxTree::new(
+        node(
+            "t",
+            vec![
+                node(
+                    "r1",
+                    vec![node("a", vec![]), node("b", vec![]), node("x", vec![])],
+                ),
+                node(
+                    "r2",
+                    vec![node("c", vec![]), node("d", vec![]), node("y", vec![])],
+                ),
+                node("r3", vec![wide, node("z", vec![])]),
+            ],
+        ),
+        "#t { display:table; border-collapse:collapse; }
+         #r1, #r2, #r3 { display:table-row; }
+         #a, #b, #x, #c, #d, #y, #e, #z { display:table-cell; width:40px; height:20px;
+                                          border:1px solid black; }
+         #b { border-right:8px solid black; }
+         #a, #b, #x { border-bottom:8px solid black; }",
+    )
+    .unwrap();
+    let geometry = tree.layout(400.0, None).unwrap();
+    let at = |index: usize| geometry[index].unwrap().border;
+    let (a, b, c, e) = (at(2), at(3), at(6), at(10));
+    // The table is measured with its own lines (1px and 8px across), so no slack reaches
+    // the columns: `#a` stays its 40px plus two 1px borders.
+    assert_eq!(a.right - a.left, 42.0);
+    // And the table box ends where its last column does.
+    assert_eq!(at(0).right, at(4).right);
+    assert_eq!(a.right - b.left, 1.0);
+    // Down: the 8px line under the first row, the 1px line under the second.
+    assert_eq!(a.bottom - c.top, 8.0);
+    assert_eq!(c.bottom - e.top, 1.0);
+    // The spanning cell covers both columns and the 1px line inside it.
+    assert_eq!((e.left, e.right), (a.left, b.right));
+}
+
+#[test]
+fn a_collapsed_span_measures_the_lines_inside_it_and_its_own_top_sets_its_line() {
+    let attrs = AttributeLimits {
+        entries: NonZeroUsize::new(100).unwrap(),
+        retained_bytes: NonZeroUsize::new(100_000).unwrap(),
+        work: NonZeroUsize::new(100_000).unwrap(),
+    };
+    let wide = node("e", vec![])
+        .style_attribute("colspan", "2", attrs)
+        .unwrap();
+    let tree = BoxTree::new(
+        node(
+            "t",
+            vec![
+                node("r1", vec![node("a", vec![]), node("b", vec![])]),
+                node("r2", vec![wide]),
+            ],
+        ),
+        "#t { display:table; border-collapse:collapse; }
+         #r1, #r2 { display:table-row; }
+         #a, #b, #e { display:table-cell; height:20px; border:1px solid black; }
+         #a, #b { width:40px; }
+         #e { width:150px; border-left:8px solid black; border-top:8px solid black; }",
+    )
+    .unwrap();
+    let geometry = tree.layout(400.0, None).unwrap();
+    let at = |index: usize| geometry[index].unwrap().border;
+    let (a, b, e) = (at(2), at(3), at(5));
+    // The columns grow just enough for `#e`: its 150px and borders, over the 1px line
+    // inside it, not the table's widest vertical border.
+    assert_eq!(e.right - e.left, 159.0);
+    assert_eq!((e.left, e.right), (a.left, b.right));
+    // `#e`'s own 8px top makes the line above its row 8px.
+    assert_eq!(a.bottom - e.top, 8.0);
+}

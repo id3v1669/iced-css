@@ -985,9 +985,10 @@ impl BoxTree {
             })
             .collect();
         let mut collapse_spacing: Vec<Option<[f32; 2]>> = vec![None; prepared.boxes.len()];
-        // 17.6.2: collapsed borders share one line: neighbouring cells overlap by the widest
-        // cell border on that axis, and the table's edge is the outer cells'. The width is
-        // not per edge; `resolve_collapsed_edges` picks what each shared edge draws.
+        // 17.6.2: collapsed borders share one line: the cells on each inner grid line overlap
+        // by the widest border on that line (`collapsed_gaps`), and the table's edge is the
+        // outer cells'. The widest on each axis is only the fallback spacing;
+        // `resolve_collapsed_edges` picks what each shared edge draws.
         for table in 0..prepared.boxes.len() {
             if !matches!(prepared.boxes[table].table, Some(TableRole::Table { .. }))
                 || !collapses[inherits[table]]
@@ -1011,6 +1012,37 @@ impl BoxTree {
                 }
             }
             if across > 0.0 || down > 0.0 {
+                // Each inner grid line overlaps its neighbours by its own widest border, in
+                // the table's logical order: in rtl a cell's start is its right side.
+                use iced_css_core::formatting::block_flow::{table_grid, table_parts};
+                let (rows, _) = table_parts(&prepared.boxes, table);
+                let (placed, columns) = table_grid(&prepared.boxes, &rows);
+                let (start, end) = if prepared.boxes[table].direction == Direction::Rtl {
+                    (1, 3)
+                } else {
+                    (3, 1)
+                };
+                let mut lines = [
+                    vec![0.0_f32; columns.saturating_sub(1)],
+                    vec![0.0_f32; rows.len().saturating_sub(1)],
+                ];
+                for item in &placed {
+                    let edges = prepared.boxes[item.cell].border;
+                    let after = item.column + item.col_span;
+                    let below = item.row + item.row_span;
+                    for (axis, line, width) in [
+                        (0, item.column.checked_sub(1), edges[start]),
+                        (0, (after < columns).then(|| after - 1), edges[end]),
+                        (1, item.row.checked_sub(1), edges[0]),
+                        (1, (below < rows.len()).then(|| below - 1), edges[2]),
+                    ] {
+                        if let Some(line) = line {
+                            lines[axis][line] = lines[axis][line].max(width);
+                        }
+                    }
+                }
+                prepared.boxes[table].collapsed_gaps =
+                    Some(lines.map(|line| line.into_iter().map(|width| -width).collect()));
                 prepared.boxes[table].border = [0.0; 4];
                 // An anonymous table's owner is a cell, whose paint is its own.
                 if !prepared.anonymous[table] {

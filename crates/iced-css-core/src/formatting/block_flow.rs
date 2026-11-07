@@ -101,6 +101,9 @@ pub struct FlowBox {
     /// 17.6.1.1: a row whose cells all hide and show nothing: no height, and vertical
     /// spacing on one side only.
     pub hidden_row: bool,
+    /// 17.6.2: a collapsed table's gap at each inner grid line, across then down: the
+    /// negative width of the widest border on that line. `None` uses `spacing` everywhere.
+    pub collapsed_gaps: Option<[Vec<f32>; 2]>,
     /// The widths of a table's `table-column` children, in column order.
     pub column_widths: Vec<Dim>,
     /// An anonymous block whose children are inline-blocks, placed in wrapping lines
@@ -141,6 +144,7 @@ impl Default for FlowBox {
             caption_below: false,
             fixed_table: false,
             hidden_row: false,
+            collapsed_gaps: None,
             column_widths: Vec::new(),
             inline_row: None,
             out_of_flow: false,
@@ -342,13 +346,53 @@ fn track_gaps(tracks: &[f32], spacing: f32) -> Vec<f32> {
         .collect()
 }
 
-/// The room spacing takes over these tracks: the gaps between them, and at the table's
-/// edges when the spacing is positive (once, with no tracks).
-fn table_gaps(spacing: f32, tracks: &[f32]) -> f32 {
-    if tracks.is_empty() {
-        return spacing.max(0.0);
+/// A table's spacing along one axis: `uniform`, or a collapsed table's own gap per inner
+/// grid line.
+#[derive(Debug, Clone)]
+struct Spacing {
+    uniform: f32,
+    lines: Option<Vec<f32>>,
+}
+
+impl Spacing {
+    /// The gap between each pair of neighbouring tracks. A negative gap overlaps only
+    /// tracks at least that wide, so an empty column or row is not overlapped past its
+    /// neighbour.
+    fn between(&self, tracks: &[f32]) -> Vec<f32> {
+        match &self.lines {
+            Some(lines) if lines.len() + 1 == tracks.len() => tracks
+                .windows(2)
+                .zip(lines)
+                .map(|(pair, &gap)| {
+                    if gap < 0.0 && (pair[0] < -gap || pair[1] < -gap) {
+                        0.0
+                    } else {
+                        gap
+                    }
+                })
+                .collect(),
+            _ => track_gaps(tracks, self.uniform),
+        }
     }
-    track_gaps(tracks, spacing).iter().sum::<f32>() + 2.0 * spacing.max(0.0)
+
+    /// The gaps inside a span of `count` tracks from `from`.
+    fn inside(&self, from: usize, count: usize) -> f32 {
+        match &self.lines {
+            Some(lines) if from + count <= lines.len() + 1 => {
+                lines[from..from + count - 1].iter().sum()
+            }
+            _ => self.uniform * (count - 1) as f32,
+        }
+    }
+
+    /// The room spacing takes over these tracks: the gaps between them, and at the
+    /// table's edges when the spacing is positive (once, with no tracks).
+    fn total(&self, tracks: &[f32]) -> f32 {
+        if tracks.is_empty() {
+            return self.uniform.max(0.0);
+        }
+        self.between(tracks).iter().sum::<f32>() + 2.0 * self.uniform.max(0.0)
+    }
 }
 
 /// The most columns one cell can span; HTML's own limit.
@@ -631,8 +675,9 @@ impl Solver<'_> {
         }
         if let Some(TableRole::Table { spacing }) = value.table {
             let (rows, captions) = self.table_parts(node);
-            let (mins, prefs) = self.table_columns(&rows, spacing[0]);
-            let gaps = table_gaps(spacing[0], &mins);
+            let across = self.spacing(node, 0, spacing[0]);
+            let (mins, prefs) = self.table_columns(&rows, &across);
+            let gaps = across.total(&mins);
             let mut minimum = (mins.iter().sum::<f32>() + gaps).max(0.0);
             let mut preferred = (prefs.iter().sum::<f32>() + gaps).max(minimum);
             for caption in captions {
@@ -673,9 +718,20 @@ impl Solver<'_> {
         table_grid(self.boxes, rows)
     }
 
+    /// A table's spacing along `axis` (0 across, 1 down), from its uniform value.
+    fn spacing(&self, node: usize, axis: usize, uniform: f32) -> Spacing {
+        Spacing {
+            uniform,
+            lines: self.boxes[node]
+                .collapsed_gaps
+                .as_ref()
+                .map(|lines| lines[axis].clone()),
+        }
+    }
+
     /// Each column's narrowest and preferred width (17.5.2.2): single-column cells first,
     /// then each spanning cell's shortfall shared evenly over its columns.
-    fn table_columns(&self, rows: &[usize], spacing: f32) -> (Vec<f32>, Vec<f32>) {
+    fn table_columns(&self, rows: &[usize], spacing: &Spacing) -> (Vec<f32>, Vec<f32>) {
         let (placed, columns) = self.table_grid(rows);
         let (mut mins, mut prefs) = (vec![0.0_f32; columns], vec![0.0_f32; columns]);
         for item in placed.iter().filter(|item| item.col_span == 1) {
@@ -688,7 +744,7 @@ impl Solver<'_> {
         for item in spanning {
             let range = item.column..item.column + item.col_span;
             // The gaps inside the span count toward the cell's room.
-            let gaps = spacing * (item.col_span - 1) as f32;
+            let gaps = spacing.inside(item.column, item.col_span);
             let (minimum, preferred) = self.outer_measure(item.cell);
             for (widths, wanted) in [(&mut mins, minimum), (&mut prefs, preferred)] {
                 let shortfall = wanted - gaps - widths[range.clone()].iter().sum::<f32>();
@@ -716,13 +772,14 @@ impl Solver<'_> {
             return None;
         }
         let (rows, _) = self.table_parts(node);
-        let (mins, _) = self.table_columns(&rows, spacing[0]);
-        let gaps = table_gaps(spacing[0], &mins);
+        let across = self.spacing(node, 0, spacing[0]);
+        let (mins, _) = self.table_columns(&rows, &across);
+        let gaps = across.total(&mins);
         let columns = self.fixed_columns(
             node,
             &rows,
             mins.len(),
-            spacing[0],
+            &across,
             (width - gaps).max(0.0),
             width,
         );
@@ -735,7 +792,7 @@ impl Solver<'_> {
         node: usize,
         rows: &[usize],
         count: usize,
-        spacing: f32,
+        spacing: &Spacing,
         basis: f32,
     ) -> Vec<Option<f32>> {
         let (placed, _) = self.table_grid(rows);
@@ -757,7 +814,7 @@ impl Solver<'_> {
             let side = |dims: [Dim; 4]| dims[1].zero_auto(basis) + dims[3].zero_auto(basis);
             let outer = wanted + side(value.padding) + value.border[1] + value.border[3];
             // The gaps inside a span count toward the cell's room.
-            let inner_gaps = spacing * (item.col_span - 1) as f32;
+            let inner_gaps = spacing.inside(item.column, item.col_span);
             let each = ((outer - inner_gaps) / item.col_span as f32).max(0.0);
             for width in &mut known[item.column..item.column + item.col_span] {
                 width.get_or_insert(each);
@@ -773,7 +830,7 @@ impl Solver<'_> {
         node: usize,
         rows: &[usize],
         count: usize,
-        spacing: f32,
+        spacing: &Spacing,
         available: f32,
         basis: f32,
     ) -> Vec<f32> {
@@ -802,9 +859,11 @@ impl Solver<'_> {
         content_top: f32,
     ) -> Result<f32, FlowError> {
         let (rows, captions) = self.table_parts(node);
-        let (mins, prefs) = self.table_columns(&rows, spacing[0]);
+        let across = self.spacing(node, 0, spacing[0]);
+        let down = self.spacing(node, 1, spacing[1]);
+        let (mins, prefs) = self.table_columns(&rows, &across);
         let count = mins.len();
-        let available = (inner.width - table_gaps(spacing[0], &mins)).max(0.0);
+        let available = (inner.width - across.total(&mins)).max(0.0);
         let edge = [spacing[0].max(0.0), spacing[1].max(0.0)];
         let (sum_min, sum_pref): (f32, f32) = (mins.iter().sum(), prefs.iter().sum());
         let fixed =
@@ -814,7 +873,7 @@ impl Solver<'_> {
                 // exactly their sum, which never falls as that width grows: search for it.
                 let known = |solver: &Self, basis: f32| {
                     solver
-                        .fixed_widths(node, &rows, count, spacing[0], basis)
+                        .fixed_widths(node, &rows, count, &across, basis)
                         .into_iter()
                         .flatten()
                         .sum::<f32>()
@@ -838,7 +897,7 @@ impl Solver<'_> {
                         }
                     }
                 };
-                self.fixed_columns(node, &rows, count, spacing[0], available, basis)
+                self.fixed_columns(node, &rows, count, &across, available, basis)
             });
         let widths: Vec<f32> = fixed.unwrap_or_else(|| {
             (0..count)
@@ -896,7 +955,7 @@ impl Solver<'_> {
             y += edge[1];
         }
         let (placed, _) = self.table_grid(&rows);
-        let column_gaps = track_gaps(&mins, spacing[0]);
+        let column_gaps = across.between(&mins);
         // First every cell at its width, which gives the rows their heights.
         let mut heights: Vec<f32> = rows
             .iter()
@@ -923,7 +982,7 @@ impl Solver<'_> {
             let item = placed[index];
             if item.row_span > 1 {
                 let range = item.row..item.row + item.row_span;
-                let gaps = track_gaps(&heights, spacing[1]);
+                let gaps = down.between(&heights);
                 let span = heights[range.clone()].iter().sum::<f32>()
                     + gaps[item.row..range.end - 1].iter().sum::<f32>();
                 let shortfall = measures[index].1 - span;
@@ -938,7 +997,7 @@ impl Solver<'_> {
                 heights[index] = 0.0;
             }
         }
-        let mut row_gaps = track_gaps(&heights, spacing[1]);
+        let mut row_gaps = down.between(&heights);
         for (index, &row) in rows.iter().enumerate() {
             if !self.boxes[row].hidden_row {
                 continue;
