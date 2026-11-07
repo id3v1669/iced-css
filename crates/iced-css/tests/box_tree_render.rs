@@ -1388,3 +1388,35 @@ fn justified_right_to_left_text_starts_at_the_right() {
     assert!(draw("", &name));
     assert!(draw("#s { text-align:justify; }", &name));
 }
+
+#[test]
+fn a_later_rows_background_stays_under_a_spanning_cell() {
+    let draw = |css: &str, name: &str| {
+        let tall = node("a", vec![])
+            .style_attribute("rowspan", "2", limits())
+            .unwrap();
+        let root = node(
+            "t",
+            vec![
+                node("r1", vec![tall, node("b", vec![])]),
+                node("r2", vec![node("c", vec![])]),
+            ],
+        );
+        let sheet = format!(
+            "#t {{ display:table; background-color:white; }} #r1, #r2 {{ display:table-row; }}
+             #a, #b, #c {{ display:table-cell; width:40px; height:30px; }}
+             #a {{ background-color:#d9534f; }} {css}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // A white row over a white table looks like none, if the red cell stays on top.
+    let name = format!("row-layer-{}.png", std::process::id());
+    assert!(draw("", &name));
+    assert!(draw("#r2 { background-color:white; }", &name));
+}

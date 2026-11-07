@@ -65,7 +65,7 @@ offsets). A style change without a request applies at once. Time comes from lumi
 ## Known limits
 
 Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
-one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` uses the widest cell border per axis for spacing, a cell beside a spanning one keeps its own part of the edge, a later row's background covers a cell spanning into it, a positioned cell moves the whole table's borders to where it paints, and an anonymous table takes `border-collapse` from the cell it wraps;
+one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` uses the widest cell border per axis for spacing, a cell beside a spanning one keeps its own part of the edge, a positioned cell moves the whole table's borders to where it paints, and an anonymous table takes `border-collapse` from the cell it wraps;
 `justify` stretches lines to the widest line rather than the box, leaves a line split at a float's end unstretched, and is start-aligned in rtl;
 one line height and alignment per paragraph; text widens past
 floats once per paragraph; `::before` (CSS 2.2 uses `:before`). Generated content takes `display`, `clear` and

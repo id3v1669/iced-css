@@ -1970,6 +1970,51 @@ impl BoxTree {
             if self.texts[arena].is_some() || embedded.contains(&arena) {
                 texts.push(arena);
             }
+            // 17.5.1: a table paints in layers, its row groups then its rows under every
+            // cell, so a later row's background cannot cover a cell spanning into it.
+            if matches!(prepared.boxes[arena].table, Some(TableRole::Table { .. })) {
+                let mut cells = Vec::new();
+                let mut rows = Vec::new();
+                for &child in &prepared.boxes[arena].children {
+                    if prepared.positions[child].1 != Position::Static {
+                        positioned.insert(child);
+                        continue;
+                    }
+                    match prepared.boxes[child].table {
+                        Some(
+                            TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup,
+                        ) => {
+                            if !prepared.anonymous[child] {
+                                steps.push(PaintStep::Box(prepared.positions[child].0));
+                            }
+                            for &row in &prepared.boxes[child].children {
+                                if prepared.positions[row].1 != Position::Static {
+                                    positioned.insert(row);
+                                } else {
+                                    rows.push(row);
+                                }
+                            }
+                        }
+                        Some(TableRole::Row) => rows.push(child),
+                        // Captions are blocks beside the grid.
+                        _ => cells.push(child),
+                    }
+                }
+                for &row in &rows {
+                    if !prepared.anonymous[row] {
+                        steps.push(PaintStep::Box(prepared.positions[row].0));
+                    }
+                    for &cell in &prepared.boxes[row].children {
+                        if prepared.positions[cell].1 != Position::Static {
+                            positioned.insert(cell);
+                        } else {
+                            cells.push(cell);
+                        }
+                    }
+                }
+                stack.extend(cells.into_iter().rev());
+                continue;
+            }
             for &child in prepared.boxes[arena].children.iter().rev() {
                 if prepared.positions[child].1 != Position::Static {
                     positioned.insert(child);
@@ -5484,5 +5529,37 @@ mod tests {
         let geometry = tree.layout(800.0, None).unwrap();
         let a = geometry[2].as_ref().unwrap();
         assert_eq!(a.border.right, a.padding.right, "{a:?}");
+    }
+
+    #[test]
+    fn rows_and_groups_paint_under_every_cell() {
+        let bound = nz(1000);
+        let limits = AttributeLimits {
+            entries: bound,
+            retained_bytes: bound,
+            work: bound,
+        };
+        let tall = node("a", vec![])
+            .style_attribute("rowspan", "2", limits)
+            .unwrap();
+        let tree = BoxTree::new(
+            node(
+                "t",
+                vec![node(
+                    "g",
+                    vec![
+                        node("r1", vec![tall, node("b", vec![])]),
+                        node("r2", vec![node("c", vec![])]),
+                    ],
+                )],
+            ),
+            "#t { display:table; } #g { display:table-row-group; }
+             #r1, #r2 { display:table-row; } #a, #b, #c { display:table-cell; }
+             #r2 { background-color:#fff; }",
+        )
+        .unwrap();
+        let order = tree.paint_order();
+        // t, g, r1, r2 first; then the cells a, b, c.
+        assert_eq!(order, vec![0, 1, 2, 5, 3, 4, 6]);
     }
 }
