@@ -3596,3 +3596,61 @@ fn an_embedding_closes_where_its_element_ends() {
     let leaves = tree.text_leaves();
     assert_eq!(leaves[0].1.text(), "\u{202B}a\u{202C}b");
 }
+
+#[test]
+fn cells_in_different_parents_get_different_anonymous_tables() {
+    let tree = BoxTree::new(
+        node(
+            "d",
+            vec![node("s", vec![node("a", vec![])]), node("b", vec![])],
+        ),
+        "#s { display:inline; } #a, #b { display:table-cell; width:40px; height:30px; }",
+    )
+    .unwrap();
+    let geometry = tree.layout(400.0, None).unwrap();
+    let (a, b) = (geometry[2].unwrap().border, geometry[3].unwrap().border);
+    // `#a` is wrapped inside the span, `#b` in the block: two tables, one under the other.
+    assert_eq!((a.left, a.top), (0.0, 0.0));
+    assert_eq!((b.left, b.top), (0.0, 30.0));
+    // Nested inline elements, and blank text after one, change nothing of that.
+    let tree = BoxTree::new(
+        node(
+            "d",
+            vec![
+                node("s", vec![node("t", vec![node("a", vec![])])]),
+                text("gap", " "),
+                node("b", vec![]),
+            ],
+        ),
+        "#s, #t { display:inline; } #a, #b { display:table-cell; width:40px; height:30px; }",
+    )
+    .unwrap();
+    let geometry = tree.layout(400.0, None).unwrap();
+    let (a, b) = (geometry[3].unwrap().border, geometry[5].unwrap().border);
+    assert_eq!((a.left, a.top, b.left, b.top), (0.0, 0.0, 0.0, 30.0));
+    // Siblings still share one.
+    let tree = BoxTree::new(
+        node("d", vec![node("a", vec![]), node("b", vec![])]),
+        "#a, #b { display:table-cell; width:40px; height:30px; }",
+    )
+    .unwrap();
+    let geometry = tree.layout(400.0, None).unwrap();
+    assert_eq!(geometry[2].unwrap().border.left, 40.0);
+}
+
+#[test]
+fn a_rows_generated_content_shares_its_anonymous_cell_with_its_text() {
+    for display in ["table-row", "table-row-group", "table"] {
+        let tree = BoxTree::new(
+            node("d", vec![node("r", vec![text("y", "y")])]),
+            &format!("#r {{ display:{display}; }} #r:before {{ content:\"x\"; }}"),
+        )
+        .unwrap();
+        let leaves: Vec<String> = tree
+            .text_leaves()
+            .iter()
+            .map(|(_, leaf)| leaf.text())
+            .collect();
+        assert_eq!(leaves, vec!["xy"], "{display}");
+    }
+}

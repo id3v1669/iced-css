@@ -525,6 +525,8 @@ pub fn prepare_captured_tree(
     let mut inline_parent: Vec<Option<usize>> = vec![None; count];
     let mut inline_boxes: Vec<Option<InlineBoxSides>> = vec![None; count];
     let mut table_columns: Vec<(usize, usize, Option<usize>)> = Vec::new();
+    // Each projected row's parent element, by projected index.
+    let mut source_parent: Vec<Option<usize>> = vec![None; count];
     // The table arena slot of each column group that sits directly in a table.
     let mut group_table: Vec<Option<usize>> = vec![None; count];
     // Whether the projected row is a block text leaf, whose generated runs join its own.
@@ -578,6 +580,19 @@ pub fn prepare_captured_tree(
         let Some((original, resolution, parent, parent_slot)) = resolved else {
             break;
         };
+        source_parent[index] = parent;
+        // 17.2.1: anonymous table parts wrap consecutive siblings only. One opened for an
+        // element in another parent, such as inside an inline element now closed, ends here;
+        // one the parent opened itself, for its `:before`, goes on with its children.
+        if let Some(target) = parent_slot
+            && let Some(open) = build.open[target]
+            && build.anonymous[open]
+            && build.boxes[open].table.is_some()
+            && Some(build.positions[open].0) != parent
+            && source_parent[build.positions[open].0] != parent
+        {
+            build.open[target] = None;
+        }
         let source_node = &projection.snapshot.construction().nodes()[original];
         let is_text = source_node.text().is_some() && projection.nodes[index].children.is_empty();
         if resolution.display == Display::Inline
