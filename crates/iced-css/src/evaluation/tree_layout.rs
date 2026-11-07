@@ -238,8 +238,19 @@ pub enum RunSource {
     After(usize),
 }
 
-/// One `::before` or `::after`, as text in its element. Box properties other than
-/// `display` and `clear` do not apply to it here.
+/// The box of a block-level `::before` or `::after`: its sizes, sides and paint.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeneratedFrame {
+    pub width: Dim,
+    pub height: Dim,
+    pub margin: [Dim; 4],
+    pub padding: [Dim; 4],
+    pub border: [f32; 4],
+    pub paint: BoxPaint,
+}
+
+/// One `::before` or `::after`, as text in its element. An inline one takes only text
+/// properties; a block-level one also its box (`frame`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeneratedRun {
     pub text: String,
@@ -251,6 +262,7 @@ pub struct GeneratedRun {
     /// `display` other than inline: the run gets a block of its own.
     pub block: bool,
     pub clear: ClearSide,
+    pub frame: Option<GeneratedFrame>,
 }
 
 /// The appended structure being built: arena slots and their per-slot records.
@@ -264,6 +276,8 @@ struct Build {
     runs: Vec<Vec<RunSource>>,
     /// The anonymous block still accepting inline siblings, per slot.
     open: Vec<Option<usize>>,
+    /// Block-level generated content's own boxes, by arena slot, in slot order.
+    generated_boxes: Vec<(usize, BoxPaint)>,
 }
 
 impl Build {
@@ -410,6 +424,15 @@ impl Build {
             self.open[target] = None;
             let arena = self.anonymous_box(target, owner, value.clear);
             self.runs[arena].push(run);
+            if let Some(frame) = value.frame {
+                let made = &mut self.boxes[arena];
+                made.width = frame.width;
+                made.height = frame.height;
+                made.margin = frame.margin;
+                made.padding = frame.padding;
+                made.border = frame.border;
+                self.generated_boxes.push((arena, frame.paint));
+            }
         } else {
             let group = self.inline_group(target, owner);
             let holder = if rows.contains(&group) {
@@ -454,6 +477,8 @@ pub struct PreparedTree {
     /// Each table's `table-column` boxes in column order, direct or in a direct column group:
     /// table arena slot, the column's projected index, and its group's projected index.
     pub table_columns: Vec<(usize, usize, Option<usize>)>,
+    /// Block-level generated content's own boxes and paint, by arena slot, in slot order.
+    pub generated_boxes: Vec<(usize, BoxPaint)>,
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
@@ -896,6 +921,7 @@ pub fn prepare_captured_tree(
         scrolls,
         runs,
         open: _,
+        generated_boxes,
     } = build;
     Ok(PreparedTree {
         boxes,
@@ -908,6 +934,7 @@ pub fn prepare_captured_tree(
         inline_parent,
         inline_boxes,
         table_columns,
+        generated_boxes,
         clipped,
         scrolls,
     })
@@ -976,6 +1003,7 @@ impl PreparedTree {
             inline_parent: _,
             inline_boxes: _,
             table_columns: _,
+            generated_boxes: _,
             clipped: _,
             scrolls: _,
         } = self;
@@ -2543,6 +2571,129 @@ pub fn evaluate_tree_paint<'r>(
             let text_transform = keyword_of("text-transform", owner.text_transform)?;
             let shown =
                 keyword_of("visibility", if visible { "visible" } else { "hidden" })? == "visible";
+            // A block-level one is a box of its own: lengths in its own font size.
+            let dim = |name: &'static str, initial: Dim| {
+                Ok::<_, TreeLayoutError>(match cascaded(name)? {
+                    DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => match target {
+                        LengthTarget::Absolute(value) => {
+                            Dim::Px(value.to_finite_f32(limits.numeric).map_or(0.0, |c| c.value))
+                        }
+                        LengthTarget::Relative(value, RelativeUnit::Em) => Dim::Px(
+                            value
+                                .scaled_finite_f32(size, limits.numeric)
+                                .map_or(0.0, |c| c.value),
+                        ),
+                        LengthTarget::Relative(value, RelativeUnit::Ex) => Dim::Px(
+                            value
+                                .scaled_finite_f32(size * 0.5, limits.numeric)
+                                .map_or(0.0, |c| c.value),
+                        ),
+                        LengthTarget::Percentage(value) => Dim::Percent(
+                            value
+                                .percentage_finite_f32(100.0, limits.numeric)
+                                .map_or(0.0, |c| c.value),
+                        ),
+                        LengthTarget::Auto => Dim::Auto,
+                    },
+                    _ => initial,
+                })
+            };
+            let frame = if block {
+                let mut border_style = ["none"; 4];
+                let mut border_width = [0.0_f32; 4];
+                let mut border_color = [None; 4];
+                for at in 0..4 {
+                    // `inherit` takes the element's style; unset, it is none.
+                    let name = [
+                        "border-top-style",
+                        "border-right-style",
+                        "border-bottom-style",
+                        "border-left-style",
+                    ][at];
+                    let style = match cascaded(name)? {
+                        DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                            keyword.as_str()
+                        }
+                        DefaultedValueRef::ParentComputed => paints[index].border_style[at],
+                        _ => "none",
+                    };
+                    border_style[at] = style;
+                    let width = match dim(
+                        [
+                            "border-top-width",
+                            "border-right-width",
+                            "border-bottom-width",
+                            "border-left-width",
+                        ][at],
+                        Dim::Px(3.0),
+                    )? {
+                        Dim::Px(width) => width.max(0.0),
+                        _ => 3.0,
+                    };
+                    let width = match keyword_of(
+                        [
+                            "border-top-width",
+                            "border-right-width",
+                            "border-bottom-width",
+                            "border-left-width",
+                        ][at],
+                        "",
+                    )? {
+                        "thin" => 1.0,
+                        "medium" => 3.0,
+                        "thick" => 5.0,
+                        _ => width,
+                    };
+                    border_width[at] = if matches!(style, "none" | "hidden") {
+                        0.0
+                    } else {
+                        width
+                    };
+                    let color = compute_color(
+                        &winners,
+                        border[at],
+                        ColorComputationContext {
+                            parent: Some(row[2 + at]),
+                            current_color: Some(pseudo_color),
+                            user_agent_color: Some(&BLACK),
+                        },
+                    )
+                    .map_err(|error| E::Color {
+                        projected: index,
+                        error,
+                    })?;
+                    border_color[at] = rgb(color.value(), limits.numeric);
+                }
+                let four = |names: [&'static str; 4]| -> Result<[Dim; 4], TreeLayoutError> {
+                    Ok([
+                        dim(names[0], Dim::Px(0.0))?,
+                        dim(names[1], Dim::Px(0.0))?,
+                        dim(names[2], Dim::Px(0.0))?,
+                        dim(names[3], Dim::Px(0.0))?,
+                    ])
+                };
+                Some(GeneratedFrame {
+                    width: dim("width", Dim::Auto)?,
+                    height: dim("height", Dim::Auto)?,
+                    margin: four(["margin-top", "margin-right", "margin-bottom", "margin-left"])?,
+                    padding: four([
+                        "padding-top",
+                        "padding-right",
+                        "padding-bottom",
+                        "padding-left",
+                    ])?,
+                    border: border_width,
+                    paint: BoxPaint {
+                        visible: shown,
+                        background: rgb(pseudo_background.value(), limits.numeric),
+                        border: border_color,
+                        border_style,
+                        ..BoxPaint::default()
+                    },
+                })
+            } else {
+                None
+            };
             pair[side] = Some(GeneratedRun {
                 text,
                 size,
@@ -2561,6 +2712,7 @@ pub fn evaluate_tree_paint<'r>(
                 },
                 block,
                 clear,
+                frame,
             });
         }
         generated.push(pair);

@@ -2081,3 +2081,106 @@ fn an_anonymous_table_in_an_inline_element_inherits_from_it() {
     assert!(draw("", &name));
     assert!(!draw("border-spacing:20px;", &name));
 }
+
+#[test]
+fn a_block_before_takes_its_own_box_like_an_element() {
+    let frame = "display:block; width:60px; height:20px; padding:5px 8px;
+                 margin:4px 0 10px 6px; border:3px solid #2a4d69;
+                 background-color:#d9534f; color:black;";
+    let draw = |generated: bool, extra: &str, name: &str| {
+        let mut children = vec![text("after", "text")];
+        if !generated {
+            children.insert(0, node("g", vec![text("gx", "x")]));
+        }
+        let root = node("p", children);
+        let sheet = if generated {
+            format!(
+                "#p {{ background-color:white; color:black; }} #p:before {{ content:\"x\"; {frame} {extra} }}"
+            )
+        } else {
+            format!("#p {{ background-color:white; color:black; }} #g {{ {frame} {extra} }}")
+        };
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("generated-box-{}.png", std::process::id());
+    assert!(draw(false, "", &name));
+    assert!(draw(true, "", &name));
+    // Lengths in its own font size, and a hidden one paints nothing but keeps its room.
+    let name = format!("generated-box-em-{}.png", std::process::id());
+    assert!(draw(false, "font-size:20px; padding-left:1em;", &name));
+    assert!(draw(true, "font-size:20px; padding-left:1em;", &name));
+    let name = format!("generated-box-hidden-{}.png", std::process::id());
+    assert!(draw(false, "visibility:hidden;", &name));
+    assert!(draw(true, "visibility:hidden;", &name));
+}
+
+#[test]
+fn generated_blocks_keep_the_right_background_in_text_and_inline_owners() {
+    let snap = |root: Node, sheet: &str, name: &str| {
+        let tree = BoxTree::new(root, sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let id = std::process::id();
+    // A text leaf element: block or inline, the generated text joins its runs, highlighted.
+    let leaf = |display: &str| {
+        (
+            node("w", vec![text("copy", "copy")]),
+            format!(
+                "#w {{ background-color:white; color:black; }} #copy {{ display:block; }}
+                 #copy:before {{ content:\">\"; display:{display}; background-color:#d9534f; }}"
+            ),
+        )
+    };
+    let name = format!("generated-leaf-{id}.png");
+    let (root, sheet) = leaf("inline");
+    assert!(snap(root, &sheet, &name));
+    let (root, sheet) = leaf("block");
+    assert!(snap(root, &sheet, &name));
+    // In an inline element, the block shows its own background, not the inline's.
+    let name = format!("generated-inline-owner-{id}.png");
+    let base = "#w { background-color:white; color:black; } #s { background-color:#f0ad4e; }";
+    let boxed = "display:block; width:40px; height:20px; background-color:#d9534f;";
+    assert!(snap(
+        node(
+            "w",
+            vec![node(
+                "s",
+                vec![node("g", vec![text("gx", "x")]), text("y", "after")]
+            )]
+        ),
+        &format!("{base} #g {{ {boxed} }}"),
+        &name,
+    ));
+    assert!(snap(
+        node("w", vec![node("s", vec![text("y", "after")])]),
+        &format!("{base} #s:before {{ content:\"x\"; {boxed} }}"),
+        &name,
+    ));
+    // `inherit` takes the element's border style; the width is still the initial medium.
+    let name = format!("generated-inherit-{id}.png");
+    let base = "#w { background-color:white; color:black; border:2px dashed #2a4d69; }";
+    assert!(snap(
+        node("w", vec![node("g", vec![text("gx", "x")])]),
+        &format!("{base} #g {{ display:block; border:3px dashed #2a4d69; }}"),
+        &name,
+    ));
+    assert!(snap(
+        node("w", vec![]),
+        &format!(
+            "{base} #w:before {{ content:\"x\"; display:block; border-style:inherit;
+             border-color:inherit; }}"
+        ),
+        &name,
+    ));
+}

@@ -1104,6 +1104,12 @@ impl BoxTree {
         };
         let build_leaf = |arena: usize| -> Option<TextLeaf> {
             let runs = &prepared.runs[arena];
+            // Block-level generated content in a box of its own: the box paints the
+            // background, so its text paints none, its own or an enclosing inline's.
+            let boxed = prepared
+                .generated_boxes
+                .binary_search_by_key(&arena, |entry| entry.0)
+                .is_ok();
             let first = *runs.first()?;
             let style_of = |run: RunSource| -> &TextStyle {
                 match (run, generated_of(run)) {
@@ -1143,8 +1149,8 @@ impl BoxTree {
                             let (RunSource::Node(at)
                             | RunSource::Before(at)
                             | RunSource::After(at)) = run_source;
-                            let mut owner = Some(at);
-                            let mut background = made.background.filter(|_| made.visible);
+                            let mut owner = (!boxed).then_some(at);
+                            let mut background = made.background.filter(|_| made.visible && !boxed);
                             while background.is_none() {
                                 let Some(here) = owner else { break };
                                 if prepared.slot[here].is_some_and(|slot| prepared.anonymous[slot])
@@ -1944,7 +1950,8 @@ impl BoxTree {
                 | PaintStep::Marker(_)
                 | PaintStep::CellBorder(_)
                 | PaintStep::Column(_)
-                | PaintStep::ColumnGroup(_) => None,
+                | PaintStep::ColumnGroup(_)
+                | PaintStep::Generated(_) => None,
             })
             .collect()
     }
@@ -2082,6 +2089,12 @@ impl BoxTree {
         let mut marks = Vec::new();
         let mut stack = vec![root];
         while let Some(arena) = stack.pop() {
+            if let Ok(at) = prepared
+                .generated_boxes
+                .binary_search_by_key(&arena, |entry| entry.0)
+            {
+                steps.push(PaintStep::Generated(at));
+            }
             if !prepared.anonymous[arena] {
                 let projected = prepared.positions[arena].0;
                 steps.push(PaintStep::Box(projected));
@@ -2338,6 +2351,8 @@ enum PaintStep {
     /// A column group's background, by its first column's place in
     /// `PreparedTree::table_columns`.
     ColumnGroup(usize),
+    /// Block-level generated content's box, by its place in `PreparedTree::generated_boxes`.
+    Generated(usize),
     /// A collapsed table's cell, drawing only its borders.
     CellBorder(usize),
     /// A box's background and border, by projected index.
@@ -3411,7 +3426,8 @@ fn breaks_layer(tree: &BoxTree, step: PaintStep, next: PaintStep) -> bool {
         PaintStep::Outline(_)
         | PaintStep::CellBorder(_)
         | PaintStep::Column(_)
-        | PaintStep::ColumnGroup(_) => false,
+        | PaintStep::ColumnGroup(_)
+        | PaintStep::Generated(_) => false,
     }
 }
 
@@ -3629,6 +3645,17 @@ fn draw_box<Renderer: renderer::Renderer>(
     let Some(Some(geometry)) = geometry.get(index) else {
         return;
     };
+    paint_box(renderer, origin, tree.paints[index], geometry, parts);
+}
+
+/// A box's background and border bands from its paint, offset to the layout origin.
+fn paint_box<Renderer: renderer::Renderer>(
+    renderer: &mut Renderer,
+    origin: Point,
+    paint: BoxPaint,
+    geometry: &FlowGeometry,
+    parts: BoxParts,
+) {
     let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
         if bounds.width > 0.0 && bounds.height > 0.0 {
             renderer.fill_quad(
@@ -3644,7 +3671,6 @@ fn draw_box<Renderer: renderer::Renderer>(
             );
         }
     };
-    let paint = tree.paints[index];
     if !paint.visible {
         return;
     }
@@ -4667,6 +4693,7 @@ where
                 PaintStep::Column(at) | PaintStep::ColumnGroup(at) => {
                     prepared.table_columns.get(at).map(|entry| entry.0)
                 }
+                PaintStep::Generated(at) => prepared.generated_boxes.get(at).map(|entry| entry.0),
             };
             let mut clip = arena.and_then(|arena| self.clips.get(arena).copied().flatten());
             // A box clips its own text as it clips its children.
@@ -4823,6 +4850,13 @@ where
                                     index,
                                     BoxParts::All,
                                 ),
+                            }
+                        }
+                        PaintStep::Generated(at) => {
+                            if let Some(&(arena, paint)) = prepared.generated_boxes.get(at)
+                                && let Some(geometry) = self.slot_geometry.get(arena)
+                            {
+                                paint_box(renderer, origin, paint, geometry, BoxParts::All);
                             }
                         }
                         PaintStep::Column(at) => {
