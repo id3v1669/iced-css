@@ -3268,6 +3268,144 @@ mod animation {
     }
 
     #[test]
+    fn visibility_shows_all_the_way_while_either_end_shows() {
+        // An inline with sides inside, text, and a child hidden in both stylings.
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "box",
+                    vec![
+                        text("t", "words"),
+                        node(
+                            "in",
+                            vec![text("i", "inline"), node("keep", vec![text("k", "kept")])],
+                        ),
+                        node("off", vec![text("o", "never")]),
+                    ],
+                )],
+            )
+        };
+        let css = |shown: &str| {
+            format!(
+                "#box {{ visibility:{shown}; }}
+                 #box:before {{ content:\"\u{203A}\"; visibility:visible; }}
+                 #box:after {{ content:\".\"; visibility:hidden; }}
+                 #in {{ display:inline; padding:0 4px; background-color:#ff0000;
+                        border-left:2px solid #000000; }}
+                 #keep {{ display:inline; visibility:visible; }}
+                 #in:after {{ content:\"\u{BB}\"; padding:0 4px; background-color:#00ff00;
+                              border-left:2px solid #000000; }}
+                 #off {{ visibility:hidden; }}"
+            )
+        };
+        let shown = BoxTree::new(source(), &css("visible")).unwrap();
+        let hidden = shown.restyled(&[&css("hidden")]).unwrap();
+        // What shows: the box, its text and inline, and the inline's box; never `#off`.
+        let state = |tree: &BoxTree| {
+            let runs: Vec<(String, bool, bool)> = tree
+                .text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .filter(|run| !run.text.trim().is_empty())
+                .map(|run| (run.text.clone(), run.visible, !run.inline_boxes.is_empty()))
+                .collect();
+            (tree.paints()[1].visible, tree.paints()[7].visible, runs)
+        };
+        let words = |shown: bool| ("words".to_owned(), shown, false);
+        let never = ("never".to_owned(), false, false);
+        // Fading out: still shown halfway, hidden at the end.
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let count = animations
+            .request(&shown, &hidden, "box", &["visibility"], second(), start)
+            .unwrap();
+        assert_eq!(count, 1);
+        animations.advance(start + Duration::from_millis(500), &hidden);
+        let (own, off, runs) = state(&animations.presented(&hidden));
+        assert!(own && !off);
+        assert!(
+            runs.contains(&words(true)) && runs.contains(&never),
+            "{runs:?}"
+        );
+        assert!(
+            runs.iter().any(|run| run.0 == "inline" && run.1),
+            "{runs:?}"
+        );
+        // Generated content with a visibility of its own keeps it: the dot stays hidden.
+        assert!(runs.contains(&(".".to_owned(), false, false)), "{runs:?}");
+        animations.advance(start + Duration::from_millis(1500), &hidden);
+        assert!(!animations.is_animating());
+        let (own, _, runs) = state(&animations.presented(&hidden));
+        assert!(!own && runs.contains(&words(false)));
+        // Fading in after a delay: hidden through the delay, its inline's box too.
+        let delayed = AnimationTiming::new(Duration::from_secs(1), Duration::from_secs(1));
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&hidden, &shown, "box", &["visibility"], delayed, start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &shown);
+        let waiting = animations.presented(&shown);
+        let (own, off, _) = state(&waiting);
+        assert!(!own && !off);
+        // Every run, side spaces too: no text, sides, bars or background; but the
+        // `:before` shown at both ends stays shown.
+        for (_, leaf) in waiting.text_leaves() {
+            for run in &leaf.runs {
+                if run.text.contains('\u{203A}') {
+                    assert!(run.visible);
+                    continue;
+                }
+                // Shown at both ends, inside the hidden inline: no box or background of it.
+                if run.text.contains("kept") {
+                    assert!(run.visible);
+                    assert!(run.inline_boxes.is_empty() && run.background.is_none());
+                    continue;
+                }
+                assert!(!run.visible, "{:?}", run.text);
+                assert!(
+                    run.inline_boxes.is_empty() && run.edge.is_none(),
+                    "{:?}",
+                    run.text
+                );
+                assert_eq!(run.background, None, "{:?}", run.text);
+            }
+        }
+        // Then shown as soon as it moves.
+        animations.advance(start + Duration::from_millis(1100), &shown);
+        let (own, _, runs) = state(&animations.presented(&shown));
+        assert!(own && runs.contains(&words(true)) && runs.contains(&never));
+        assert!(
+            runs.iter().any(|run| run.0 == "inline" && run.1 && run.2),
+            "{runs:?}"
+        );
+        // A descendant that changes on its own applies at once.
+        let css = |outer: &str, inner: &str| {
+            format!("#box {{ visibility:{outer}; }} #off {{ visibility:{inner}; }}")
+        };
+        let from = BoxTree::new(source(), &css("hidden", "visible")).unwrap();
+        let to = from.restyled(&[&css("visible", "hidden")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "box", &["visibility"], delayed, start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let waiting = animations.presented(&to);
+        assert!(!waiting.paints()[1].visible && !waiting.paints()[7].visible);
+        animations.advance(start + Duration::from_millis(1100), &to);
+        let moving = animations.presented(&to);
+        assert!(moving.paints()[1].visible && !moving.paints()[7].visible);
+        // Nothing to do when it does not change.
+        let mut animations = BoxTreeAnimations::new();
+        assert_eq!(
+            animations
+                .request(&shown, &shown, "box", &["visibility"], second(), start)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
     fn generated_runs_with_the_same_text_keep_their_own_ends() {
         let source = || node("page", vec![text("line", "words")]);
         let css = |color: &str| {

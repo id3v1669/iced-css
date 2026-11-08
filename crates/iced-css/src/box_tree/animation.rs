@@ -29,13 +29,15 @@ pub(super) enum Value {
     /// opacity 0.
     Fade([f32; 3], f32),
     Length(Dim),
+    /// `visibility`: shown or not; `collapse` shows as `hidden` does here.
+    Visible(bool),
 }
 
 fn rgba(value: Value) -> Option<([f32; 3], f32)> {
     match value {
         Value::Color(color) => Some((color, 1.0)),
         Value::Fade(color, alpha) => Some((color, alpha)),
-        Value::Length(_) => None,
+        Value::Length(_) | Value::Visible(_) => None,
     }
 }
 
@@ -57,6 +59,7 @@ pub(super) enum Field {
     Padding(usize),
     BorderWidth(usize),
     Offset(usize),
+    Visibility,
 }
 
 const SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
@@ -74,6 +77,7 @@ fn field(name: &str) -> Option<Field> {
         "height" => Field::Height,
         "min-height" => Field::MinHeight,
         "max-height" => Field::MaxHeight,
+        "visibility" => Field::Visibility,
         _ => {
             if let Some(rest) = name.strip_prefix("margin-") {
                 Field::Margin(side(rest)?)
@@ -118,11 +122,20 @@ fn mix(from: Value, to: Value, progress: f32) -> Option<Value> {
         (Value::Length(Dim::Percent(a)), Value::Length(Dim::Percent(b))) => {
             Some(Value::Length(Dim::Percent(along(a, b))))
         }
+        // CSS Transitions: shown all the way between, when either end is shown.
+        (Value::Visible(a), Value::Visible(b)) => Some(Value::Visible(if progress <= 0.0 {
+            a
+        } else if progress >= 1.0 {
+            b
+        } else {
+            a || b
+        })),
         _ => None,
     }
 }
 
-/// What in a descendant, or the element itself, takes its color from an animated `color`.
+/// What in a descendant, or the element itself, takes its color from an animated `color`;
+/// for `visibility`, only `node` counts.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Follower {
     node: usize,
@@ -141,7 +154,7 @@ pub(super) enum InlineSide {
     End,
 }
 
-/// Everything an animated `color` carries to, as of the request.
+/// Everything an animated `color` or `visibility` carries to, as of the request.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Followers {
     boxes: Vec<Follower>,
@@ -150,6 +163,12 @@ pub(super) struct Followers {
     runs: Vec<(usize, usize, usize)>,
     /// Inline box sides showing the color at both ends, by box and side.
     inline_sides: BTreeSet<(usize, InlineSide)>,
+    /// For `visibility`: runs, by owner and text, and block generated boxes, by owner and
+    /// order, that keep a visibility of their own: a `:before` or `:after` that sets one.
+    /// By content, not slot, so an interaction styling cannot shift them; another run of
+    /// the same owner and text keeps its own too.
+    fixed_runs: BTreeSet<(usize, String)>,
+    fixed_boxes: BTreeSet<(usize, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +219,7 @@ impl BoxTree {
             || own.and_then(|slot| self.prepared.boxes.get(slot).map(|value| (slot, value)));
         let length = |value: Dim| Some(Value::Length(value));
         match field {
+            Field::Visibility => Some(Value::Visible(paint.visible)),
             Field::Color => color(paint.color),
             Field::Background => own.map(|_| match (paint.background, paint.background_fade) {
                 (None, _) => Value::Fade([0.0; 3], 0.0),
@@ -248,6 +268,7 @@ impl BoxTree {
                 }
             }
             (Field::Color, Value::Color(value)) => paint.color = Some(value),
+            // `reveal` shows or hides the element with what follows it.
             (Field::Background, Value::Color(value)) => {
                 paint.background = Some(value);
                 paint.background_fade = None;
@@ -329,6 +350,11 @@ impl BoxTree {
             {
                 self.follow(&presented.followers, target, now);
             }
+            if let (Field::Visibility, Value::Visible(target), Value::Visible(now)) =
+                (presented.field, presented.target, presented.now)
+            {
+                self.reveal(&presented.followers, self.originals[projected], target, now);
+            }
             if let (Field::Background, Value::Color(_), Value::Color(now)) =
                 (presented.field, presented.target, presented.now)
                 && self.under_text(projected)
@@ -342,6 +368,166 @@ impl BoxTree {
                 self.inline_border(projected, side, now);
             }
         }
+    }
+
+    /// Shows or hides, with an animated `visibility`, the element and what follows it at
+    /// both ends (`followers`, by source node): their boxes, outside markers, block generated
+    /// boxes and text runs, found by owner whatever an interaction styling moved. Only
+    /// what still shows `target` changes. Hidden, their inline sides and backgrounds go
+    /// too; shown, those the styling hid at build stay hidden.
+    fn reveal(&mut self, followers: &Followers, root: usize, target: bool, now: bool) {
+        let mut nodes: BTreeSet<usize> = followers.boxes.iter().map(|f| f.node).collect();
+        nodes.insert(root);
+        let boxes: BTreeSet<usize> = self
+            .originals
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| nodes.contains(node))
+            .map(|(projected, _)| projected)
+            .collect();
+        for &projected in &boxes {
+            if self.paints[projected].visible == target {
+                self.paints[projected].visible = now;
+            }
+            if let Some(marker) = self.markers.get_mut(&projected) {
+                for run in marker.runs.iter_mut().filter(|run| run.visible == target) {
+                    run.visible = now;
+                }
+            }
+        }
+        let positions = &self.prepared.positions;
+        let originals = &self.originals;
+        let mut order: BTreeMap<usize, usize> = BTreeMap::new();
+        for (arena, paint) in &mut self.prepared.generated_boxes {
+            let owner = positions[*arena].0;
+            let place = order.entry(owner).or_default();
+            let fixed = followers.fixed_boxes.contains(&(originals[owner], *place));
+            *place += 1;
+            if boxes.contains(&owner) && !fixed && paint.visible == target {
+                paint.visible = now;
+            }
+        }
+        for run in self
+            .texts
+            .iter_mut()
+            .flatten()
+            .flat_map(|leaf| &mut leaf.runs)
+        {
+            let edge = run.edge.map(|_| edge_owner(run));
+            if nodes.contains(&run.owner)
+                && run.visible == target
+                && (followers.fixed_runs.is_empty()
+                    || !followers
+                        .fixed_runs
+                        .contains(&(run.owner, run.text.clone())))
+            {
+                run.visible = now;
+                if !now {
+                    // Its generated box's sides, and a background not of a box around it.
+                    run.inline_boxes.retain(|sides| sides.owner != usize::MAX);
+                    if edge == Some(usize::MAX) {
+                        run.edge = None;
+                    }
+                    if run.background_from.is_none_or(|from| nodes.contains(&from)) {
+                        run.background = None;
+                    }
+                }
+            }
+            if !now {
+                run.inline_boxes
+                    .retain(|sides| !nodes.contains(&sides.owner));
+                if edge.is_some_and(|owner| nodes.contains(&owner)) {
+                    run.edge = None;
+                }
+                if run
+                    .background_from
+                    .is_some_and(|from| nodes.contains(&from))
+                {
+                    run.background = None;
+                }
+            }
+        }
+    }
+
+    /// The descendants of `root` (by projected index in `to`) that follow its visibility at
+    /// both ends: shown as it is in this styling, and as it is in `to`. One that changes on
+    /// its own applies at once.
+    fn visibility_followers(
+        &self,
+        to: &Self,
+        root: usize,
+        committed: bool,
+        target: bool,
+    ) -> Followers {
+        let root = to.originals[root];
+        let before: BTreeMap<usize, usize> = self
+            .originals
+            .iter()
+            .enumerate()
+            .map(|(projected, node)| (*node, projected))
+            .collect();
+        let mut followers = Followers::default();
+        for (projected, &node) in to.originals.iter().enumerate() {
+            if node == root || to.paints[projected].visible != target || !to.within(node, root) {
+                continue;
+            }
+            if before
+                .get(&node)
+                .is_some_and(|at| self.paints[*at].visible == committed)
+            {
+                followers.boxes.push(Follower {
+                    node,
+                    borders: [false; 4],
+                    outline: false,
+                    marker: false,
+                });
+            }
+        }
+        let mut nodes: BTreeSet<usize> = followers.boxes.iter().map(|f| f.node).collect();
+        nodes.insert(root);
+        // A run shown as `target` that did not show as `committed` keeps its own.
+        for (arena, leaf) in to.texts.iter().enumerate() {
+            let Some(leaf) = leaf else { continue };
+            for (at, run) in leaf.runs.iter().enumerate() {
+                if !nodes.contains(&run.owner) || run.visible != target {
+                    continue;
+                }
+                let alike =
+                    |other: &&super::TextRun| other.owner == run.owner && other.text == run.text;
+                let occurrence = leaf.runs[..at].iter().filter(alike).count();
+                if self
+                    .texts
+                    .get(arena)
+                    .and_then(Option::as_ref)
+                    .and_then(|old| old.runs.iter().filter(alike).nth(occurrence))
+                    .is_some_and(|old| old.visible != committed)
+                {
+                    followers.fixed_runs.insert((run.owner, run.text.clone()));
+                }
+            }
+        }
+        // Block generated boxes likewise, by owner and order.
+        let boxes_of = |tree: &Self| {
+            let mut found: BTreeMap<usize, Vec<bool>> = BTreeMap::new();
+            for (arena, paint) in &tree.prepared.generated_boxes {
+                let node = tree.originals[tree.prepared.positions[*arena].0];
+                found.entry(node).or_default().push(paint.visible);
+            }
+            found
+        };
+        let (old, new) = (boxes_of(self), boxes_of(to));
+        for (node, shown) in &new {
+            for (place, visible) in shown.iter().enumerate() {
+                let kept = old.get(node).and_then(|old| old.get(place));
+                if nodes.contains(node)
+                    && *visible == target
+                    && kept.is_some_and(|v| *v != committed)
+                {
+                    followers.fixed_boxes.insert((*node, place));
+                }
+            }
+        }
+        followers
     }
 
     /// Carries an inline element's presented background to where it paints: the runs that
@@ -691,7 +877,10 @@ impl BoxTreeAnimations {
             let Some(field) = field(property.descriptor().name) else {
                 continue;
             };
-            if property.descriptor().animation != Some(AnimationRule::ByComputedValue) {
+            if !matches!(
+                property.descriptor().animation,
+                Some(AnimationRule::ByComputedValue | AnimationRule::Visibility)
+            ) {
                 continue;
             }
             let (Some(committed), Some(target)) = (from.read(before, field), to.read(after, field))
@@ -734,10 +923,15 @@ impl BoxTreeAnimations {
                 field,
                 start,
                 target,
-                followers: if field == Field::Color {
-                    from.followers(to, after, committed, target)
-                } else {
-                    Followers::default()
+                followers: match field {
+                    Field::Color => from.followers(to, after, committed, target),
+                    Field::Visibility => match (committed, target) {
+                        (Value::Visible(committed), Value::Visible(target)) => {
+                            from.visibility_followers(to, after, committed, target)
+                        }
+                        _ => Followers::default(),
+                    },
+                    _ => Followers::default(),
                 },
                 capture,
                 easing,

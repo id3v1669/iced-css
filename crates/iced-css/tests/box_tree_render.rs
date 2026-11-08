@@ -2585,6 +2585,80 @@ fn generated_inline_boxes_draw_as_inline_elements_do() {
 }
 
 #[test]
+fn a_box_fading_out_with_visibility_stays_drawn_until_the_end() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    // A block with text, an outside-marker item, a generated block, and a hidden one that
+    // never shows.
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "bar",
+                vec![
+                    text("line", "words"),
+                    node("li", vec![text("item", "item")]),
+                ],
+            )],
+        )
+    };
+    let css = |shown: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; }}
+             #bar {{ width:200px; background-color:#ff0000; color:#000000;
+                     border:4px solid #0000ff; visibility:{shown}; }}
+             #bar:before {{ content:\"x\"; display:block; height:10px;
+                            background-color:#00ff00; }}
+             #bar:after {{ content:\".\"; display:block; height:6px;
+                           background-color:#ff00ff; visibility:hidden; }}
+             #li {{ display:list-item; margin-left:30px; }}"
+        )
+    };
+    let shown = BoxTree::new(source(), &css("visible")).unwrap();
+    let hidden = shown.restyled(&[&css("hidden")]).unwrap();
+    let picture = |tree: &BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.clone().view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    assert!(picture(&shown, "visibility-shown"));
+    assert!(picture(&hidden, "visibility-hidden"));
+    assert!(!picture(&hidden, "visibility-shown"));
+    let start = Instant::now();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(&shown, &hidden, "bar", &["visibility"], timing, start)
+        .unwrap();
+    // Halfway it draws as shown: box, border, text, marker and generated block.
+    animations.advance(start + Duration::from_millis(500), &hidden);
+    assert!(picture(&animations.presented(&hidden), "visibility-shown"));
+    // Done, it is hidden.
+    animations.advance(start + Duration::from_millis(1500), &hidden);
+    assert!(picture(&animations.presented(&hidden), "visibility-hidden"));
+    // Coming back after a delay, it draws nothing until it moves.
+    let delayed = AnimationTiming::new(Duration::from_secs(1), Duration::from_secs(1));
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(&hidden, &shown, "bar", &["visibility"], delayed, start)
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &shown);
+    assert!(picture(&animations.presented(&shown), "visibility-hidden"));
+    animations.advance(start + Duration::from_millis(1100), &shown);
+    assert!(picture(&animations.presented(&shown), "visibility-shown"));
+    for name in ["visibility-shown", "visibility-hidden"] {
+        for renderer in ["wgpu", "tiny-skia"] {
+            let _ = std::fs::remove_file(
+                std::env::temp_dir().join(format!("{name}-{}-{renderer}.png", std::process::id())),
+            );
+        }
+    }
+}
+
+#[test]
 fn inline_percentage_sides_take_their_share_of_the_block() {
     let draw = |css: &str, name: &str| {
         let root = node(
