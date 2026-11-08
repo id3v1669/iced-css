@@ -452,6 +452,9 @@ pub struct InlineBoxSides {
     pub margin: [f32; 4],
     pub border: [f32; 4],
     pub padding: [f32; 4],
+    /// Percentage margins and paddings, of the containing block's width, sized at layout.
+    pub percent_margin: [f32; 4],
+    pub percent_padding: [f32; 4],
 }
 
 /// Width-independent box tree, ready to lay out at any viewport.
@@ -659,10 +662,18 @@ pub fn prepare_captured_tree(
                         _ => 0.0,
                     })
                 };
+                let percent = |dims: [Dim; 4]| {
+                    dims.map(|value| match value {
+                        Dim::Percent(percent) => percent.max(0.0),
+                        _ => 0.0,
+                    })
+                };
                 inline_boxes[index] = Some(InlineBoxSides {
                     margin: pixels(sides.margin),
                     border: sides.border,
                     padding: pixels(sides.padding),
+                    percent_margin: percent(sides.margin),
+                    percent_padding: percent(sides.padding),
                 });
             }
             if let Some(value) = pseudo(index, 0) {
@@ -696,6 +707,8 @@ pub fn prepare_captured_tree(
                     .iter()
                     .chain(&sides.border)
                     .chain(&sides.padding)
+                    .chain(&sides.percent_margin)
+                    .chain(&sides.percent_padding)
                     .any(|side| *side > 0.0)
             });
             if !is_text

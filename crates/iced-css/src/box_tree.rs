@@ -318,6 +318,9 @@ pub struct TextRun {
     /// The source node of the inline element whose background `background` is, for
     /// animating it; `None` for a run's own or no background.
     pub background_from: Option<usize>,
+    /// A side's stand-in spaces sized at layout: fixed pixels, a percentage of the
+    /// containing block's width, and whether they round up to keep a thin border's bar.
+    pub percent_room: Option<(f32, f32, bool)>,
     pub weight: u16,
     pub italic: bool,
     pub family: Option<String>,
@@ -1228,6 +1231,7 @@ impl BoxTree {
                         color,
                         background,
                         background_from,
+                        percent_room: None,
                         weight: style.weight,
                         italic: style.italic,
                         family: style.family.clone(),
@@ -1287,10 +1291,16 @@ impl BoxTree {
             let mut found = Vec::new();
             while let Some(here) = at {
                 let sided = prepared.inline_boxes[here].is_some_and(|sides| {
-                    [sides.margin, sides.border, sides.padding]
-                        .iter()
-                        .flatten()
-                        .any(|side| *side != 0.0)
+                    [
+                        sides.margin,
+                        sides.border,
+                        sides.padding,
+                        sides.percent_margin,
+                        sides.percent_padding,
+                    ]
+                    .iter()
+                    .flatten()
+                    .any(|side| *side != 0.0)
                 });
                 if sided {
                     found.push(here);
@@ -1437,6 +1447,8 @@ impl BoxTree {
                         margin: [0.0; 4],
                         border: [0.0; 4],
                         padding: [0.0; 4],
+                        percent_margin: [0.0; 4],
+                        percent_padding: [0.0; 4],
                     })
                 };
                 // 11.2: a hidden box paints nothing but keeps its room.
@@ -1485,10 +1497,26 @@ impl BoxTree {
                             .unwrap_or(run.owner)
                     };
 
-                    let margin = (sides.margin[across] > 0.0)
-                        .then(|| indent_run(run, sides.margin[across]))
+                    // A spacer whose room has a percentage is sized at layout; it starts
+                    // with its fixed part, or none.
+                    let spacer = |pixels: f32| {
+                        indent_run(run, pixels).or_else(|| {
+                            indent_run(run, run.size.max(1.0)).map(|spacer| TextRun {
+                                text: String::new(),
+                                ..spacer
+                            })
+                        })
+                    };
+                    let percent_margin = sides.percent_margin[across];
+                    let margin = (sides.margin[across] > 0.0 || percent_margin > 0.0)
+                        .then(|| spacer(sides.margin[across]))
                         .flatten()
                         .map(|spacer| TextRun {
+                            percent_room: (percent_margin > 0.0).then_some((
+                                sides.margin[across],
+                                percent_margin,
+                                false,
+                            )),
                             background: around(prepared.inline_parent[element]).0,
                             background_from: around(prepared.inline_parent[element]).1,
                             inline_boxes: decorations(&here[..depth]),
@@ -1510,10 +1538,16 @@ impl BoxTree {
                         .map(|color| (across == 3, bar, color));
                     // Up to the next space that fits: a thin border must keep its bar.
                     let step = run.size.max(1.0) / 6.0;
-                    let inner = (room > 0.0)
-                        .then(|| indent_run(run, (room / step).ceil() * step * 1.0001))
+                    let percent_padding = sides.percent_padding[across];
+                    let inner = (room > 0.0 || percent_padding > 0.0)
+                        .then(|| spacer((room / step).ceil() * step * 1.0001))
                         .flatten()
                         .map(|spacer| TextRun {
+                            percent_room: (percent_padding > 0.0).then_some((
+                                room,
+                                percent_padding,
+                                true,
+                            )),
                             // Its own background comes with its box, over its padding too.
                             background: if raw_paints[element].background.is_some() && visible {
                                 None
@@ -1675,6 +1709,7 @@ impl BoxTree {
                             color: raw_paints[projected].color,
                             background: None,
                             background_from: None,
+                            percent_room: None,
                             weight: style.weight,
                             italic: style.italic,
                             family: style.family.clone(),
@@ -1907,16 +1942,59 @@ impl BoxTree {
         )
     }
 
-    /// Sizes each percentage `text-indent` for the width its leaf laid out in, `geometry`
-    /// by arena slot. Returns whether any leaf changed, and so needs another layout.
+    /// Sizes each percentage `text-indent` and inline side for the width its leaf laid out
+    /// in, `geometry` by arena slot. Returns whether any leaf changed, and so needs another
+    /// layout.
     fn apply_percent_indents(&mut self, geometry: &[FlowGeometry]) -> bool {
         let mut changed = false;
+        // A piece of a line of inline-blocks is sized before any of this: a share of its own
+        // width would wrap it. Its percentage sides keep their fixed part only.
+        let mut in_row = vec![false; self.prepared.boxes.len()];
+        for value in &self.prepared.boxes {
+            if value.inline_row.is_some() {
+                for &child in &value.children {
+                    in_row[child] = self.prepared.anonymous[child];
+                }
+            }
+        }
         for (arena, leaf) in self.texts.iter_mut().enumerate() {
             let Some(leaf) = leaf.as_mut() else { continue };
-            let Some(mut indent) = leaf.percent_indent else {
+            let Some(place) = geometry.get(arena).map(|outer| outer.content) else {
                 continue;
             };
-            let Some(place) = geometry.get(arena).map(|outer| outer.content) else {
+            // Inline sides with a percentage: their stand-in spaces, in place.
+            let width = if in_row[arena] {
+                0.0
+            } else {
+                (place.right - place.left).max(0.0)
+            };
+            for run in &mut leaf.runs {
+                let Some((fixed, percent, rounded)) = run.percent_room else {
+                    continue;
+                };
+                let mut room = fixed + percent / 100.0 * width;
+                if rounded {
+                    let step = run.size.max(1.0) / 6.0;
+                    room = (room / step).ceil() * step * 1.0001;
+                }
+                let mut text = indent_run(run, room)
+                    .map(|spacer| spacer.text)
+                    .unwrap_or_default();
+                // A paragraph's direction mark, put on its first run, stays.
+                if let Some(mark) = run
+                    .text
+                    .chars()
+                    .next()
+                    .filter(|mark| matches!(mark, '\u{200E}' | '\u{200F}'))
+                {
+                    text.insert(0, mark);
+                }
+                if run.text != text {
+                    run.text = text;
+                    changed = true;
+                }
+            }
+            let Some(mut indent) = leaf.percent_indent else {
                 continue;
             };
             let old = indent.inserted.then(|| leaf.runs.remove(0));
@@ -2564,6 +2642,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         spacer: true,
         background: None,
         background_from: None,
+        percent_room: None,
         underline: false,
         line_through: false,
         inline_boxes: Vec::new(),
@@ -4349,8 +4428,8 @@ where
         }
         self.tree
             .keep_rows_with_widgets(self.slots.iter().copied().flatten());
-        // A percentage `text-indent` needs its block's width: a second layout gives its spacer
-        // room, when the first changed one.
+        // A percentage `text-indent` or inline side needs its block's width: a second layout
+        // gives its spacers room, when the first changed one.
         for pass in 0..2 {
             // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
             let (elements, slots, children) = (&mut self.elements, &self.slots, &mut tree.children);

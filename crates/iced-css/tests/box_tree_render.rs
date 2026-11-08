@@ -2335,3 +2335,120 @@ fn an_empty_inline_with_sides_still_draws_its_box() {
     // Its margin alone moves the text after it.
     assert!(!draw(Some("margin-left:20px;"), &name));
 }
+
+#[test]
+fn inline_percentage_sides_take_their_share_of_the_block() {
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "p",
+            vec![
+                text("a", "before "),
+                node("s", vec![text("b", "inside")]),
+                text("c", " after"),
+            ],
+        );
+        let sheet = format!(
+            "#p {{ width:300px; background-color:white; color:black; }}
+             #s {{ display:inline; background-color:#d9534f; {css} }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // A tenth of the 300px block is 30px, for padding and for margin.
+    let name = format!("inline-percent-padding-{}.png", std::process::id());
+    assert!(draw("padding-left:30px;", &name));
+    assert!(draw("padding-left:10%;", &name));
+    assert!(!draw("padding-left:20%;", &name));
+    let name = format!("inline-percent-margin-{}.png", std::process::id());
+    assert!(draw("margin-right:30px;", &name));
+    assert!(draw("margin-right:10%;", &name));
+    assert!(!draw("margin-right:20%;", &name));
+    // The opening margin and the closing padding too.
+    let name = format!("inline-percent-sides-{}.png", std::process::id());
+    assert!(draw("margin-left:30px; padding-right:15px;", &name));
+    assert!(draw("margin-left:10%; padding-right:5%;", &name));
+    // In rtl, with a border on its opening side, the paragraph keeps its direction.
+    let rtl = |css: &str, name: &str| {
+        let root = node(
+            "p",
+            vec![node("s", vec![text("b", "abc")]), text("c", " def")],
+        );
+        let sheet = format!(
+            "#p {{ width:300px; direction:rtl; background-color:white; color:black; }}
+             #s {{ display:inline; border-left:1px solid black; {css} }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("inline-percent-rtl-{}.png", std::process::id());
+    assert!(rtl("padding-left:30px;", &name));
+    assert!(rtl("padding-left:10%;", &name));
+    // Between inline-blocks it takes no share of a piece's own width.
+    let row = |css: &str, name: &str| {
+        let root = node(
+            "p",
+            vec![
+                node("ib", vec![text("x", "x")]),
+                text("a", " before "),
+                node("s", vec![text("b", "inside")]),
+                text("c", " after"),
+            ],
+        );
+        let sheet = format!(
+            "#p {{ width:300px; background-color:white; color:black; }}
+             #ib {{ display:inline-block; }} #s {{ display:inline; {css} }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("inline-percent-row-{}.png", std::process::id());
+    assert!(row("", &name));
+    assert!(row("padding-left:20%;", &name));
+    // Room that wraps a line grows the block, moving what follows: a second layout.
+    let wrapped = |css: &str, name: &str| {
+        let root = node(
+            "w",
+            vec![
+                node(
+                    "p",
+                    vec![
+                        node("s", vec![text("b", "inside words here")]),
+                        text("c", " after"),
+                    ],
+                ),
+                node("q", vec![]),
+            ],
+        );
+        let sheet = format!(
+            "#w {{ background-color:white; color:black; }} #p {{ width:300px; }}
+             #q {{ height:20px; background-color:#2a4d69; }}
+             #s {{ display:inline; {css} }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("inline-percent-wrap-{}.png", std::process::id());
+    assert!(wrapped("padding-left:240px;", &name));
+    assert!(wrapped("padding-left:80%;", &name));
+    assert!(!wrapped("", &name));
+}
