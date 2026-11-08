@@ -550,6 +550,42 @@ pub fn prepare_captured_tree(
             .get(projected)
             .and_then(|pair| pair[side].as_ref())
     };
+    // An inline element's sides, as its line runs take them.
+    let inline_sides = |at: usize| {
+        let sides = flow_box(&rows[at], facts.numeric).ok()?;
+        let pixels = |dims: [Dim; 4]| {
+            dims.map(|value| match value {
+                Dim::Px(pixels) => pixels,
+                _ => 0.0,
+            })
+        };
+        let percent = |dims: [Dim; 4]| {
+            dims.map(|value| match value {
+                Dim::Percent(percent) => percent.max(0.0),
+                _ => 0.0,
+            })
+        };
+        Some(InlineBoxSides {
+            margin: pixels(sides.margin),
+            border: sides.border,
+            padding: pixels(sides.padding),
+            percent_margin: percent(sides.margin),
+            percent_padding: percent(sides.padding),
+        })
+    };
+    // 10.8: whether those sides take any room.
+    let sided = |at: usize| {
+        inline_sides(at).is_some_and(|sides| {
+            sides
+                .margin
+                .iter()
+                .chain(&sides.border)
+                .chain(&sides.padding)
+                .chain(&sides.percent_margin)
+                .chain(&sides.percent_padding)
+                .any(|side| *side > 0.0)
+        })
+    };
     let mut offsets: Vec<(usize, [Dim; 4])> = Vec::new();
     let font_sizes: Vec<f32> = rows
         .iter()
@@ -664,27 +700,7 @@ pub fn prepare_captured_tree(
             container[index] = Some(target);
             inline_element[index] = true;
             inline_parent[index] = parent.filter(|&outer| inline_element[outer]);
-            if let Ok(sides) = flow_box(&rows[index], facts.numeric) {
-                let pixels = |dims: [Dim; 4]| {
-                    dims.map(|value| match value {
-                        Dim::Px(pixels) => pixels,
-                        _ => 0.0,
-                    })
-                };
-                let percent = |dims: [Dim; 4]| {
-                    dims.map(|value| match value {
-                        Dim::Percent(percent) => percent.max(0.0),
-                        _ => 0.0,
-                    })
-                };
-                inline_boxes[index] = Some(InlineBoxSides {
-                    margin: pixels(sides.margin),
-                    border: sides.border,
-                    padding: pixels(sides.padding),
-                    percent_margin: percent(sides.margin),
-                    percent_padding: percent(sides.padding),
-                });
-            }
+            inline_boxes[index] = inline_sides(index);
             if let Some(value) = pseudo(index, 0) {
                 build.generated(&inline_rows, target, index, RunSource::Before(index), value);
             }
@@ -710,35 +726,49 @@ pub fn prepare_captured_tree(
             }
             // 10.8: an inline element with no content but padding, a border or a margin
             // still makes a box. A zero-width run holds its place, for its sides to wrap.
-            let has_sides = inline_boxes[index].is_some_and(|sides| {
-                sides
-                    .margin
-                    .iter()
-                    .chain(&sides.border)
-                    .chain(&sides.padding)
-                    .chain(&sides.percent_margin)
-                    .chain(&sides.percent_padding)
-                    .any(|side| *side > 0.0)
-            });
-            // No content: no children, or only white space, which collapses away (16.6.1).
-            // Its children follow it in projection order, which is the source's pre-order.
+            let has_sides = sided(index);
+            // No content: no children, only white space, which collapses away (16.6.1), or
+            // only inline elements with none either, no sides and no generated content.
+            // Children follow their parent in projection order, the source's pre-order.
             let blank = || {
                 let source_nodes = projection.snapshot.construction().nodes();
-                let wanted = projection.nodes[index].children.len();
-                (index + 1..projection.original.len())
-                    .filter(|&at| source_nodes[projection.original[at]].parent() == Some(original))
-                    .take(wanted)
-                    // Only text has text: an element child is content.
-                    .all(|at| {
-                        source_nodes[projection.original[at]]
-                            .text()
+                let mut open = vec![index];
+                while let Some(node) = open.pop() {
+                    let node_original = projection.original[node];
+                    let wanted = projection.nodes[node].children.len();
+                    for at in (node + 1..projection.original.len())
+                        .filter(|&at| {
+                            source_nodes[projection.original[at]].parent() == Some(node_original)
+                        })
+                        .take(wanted)
+                    {
+                        if let Some(text) = source_nodes[projection.original[at]].text() {
                             // CSS white space only: a no-break space is content.
-                            .is_some_and(|text| {
-                                text.chars().all(|character| {
-                                    matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{C}')
-                                })
-                            })
-                    })
+                            if !text.chars().all(|character| {
+                                matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{C}')
+                            }) {
+                                return false;
+                            }
+                            continue;
+                        }
+                        match display
+                            .resolution(projection.original[at])
+                            .map(|value| value.display)
+                        {
+                            Some(Display::None) => {}
+                            // One with sides holds a place of its own: content here.
+                            Some(Display::Inline)
+                                if !sided(at)
+                                    && pseudo(at, 0).is_none()
+                                    && pseudo(at, 1).is_none() =>
+                            {
+                                open.push(at);
+                            }
+                            _ => return false,
+                        }
+                    }
+                }
+                true
             };
             if !is_text
                 && has_sides

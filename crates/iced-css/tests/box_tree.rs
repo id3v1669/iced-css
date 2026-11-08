@@ -3842,10 +3842,68 @@ fn an_inline_box_opens_and_closes_around_its_runs_once() {
             .iter()
             .any(|(_, leaf)| leaf.text().contains('\u{200B}'))
     };
-    // Two blanks are still blank; a no-break space or an element inside is content.
+    // Two blanks are still blank, and so is an empty inline; a no-break space is content.
     assert!(placed(vec![text("b", " "), text("c", "\n\t")]));
     assert!(!placed(vec![text("b", "\u{A0}")]));
-    assert!(!placed(vec![text("b", " "), node("e", vec![])]));
+    assert!(placed(vec![text("b", " "), node("e", vec![])]));
+    // A block inside is content.
+    assert!(!placed(vec![node("block", vec![])]));
+}
+
+#[test]
+fn an_inline_holding_only_empty_inlines_holds_one_place() {
+    // How many zero-width places the leaves hold, and whether each wears `#span`'s box.
+    let places = |children: Vec<Element>, css: &str| {
+        let tree = BoxTree::new(
+            node("page", vec![node("span", children)]),
+            &format!(
+                "#span {{ display:inline; padding:8px; background-color:#00ff00; }}
+                 #e, #f, #g {{ display:inline; }} {css}"
+            ),
+        )
+        .unwrap();
+        let leaves = tree.text_leaves();
+        let runs = leaves.iter().flat_map(|(_, leaf)| leaf.runs.iter());
+        (
+            leaves
+                .iter()
+                .map(|(_, leaf)| leaf.text().matches('\u{200B}').count())
+                .sum::<usize>(),
+            runs.filter(|run| run.text.contains('\u{200B}'))
+                .all(|run| !run.inline_boxes.is_empty()),
+        )
+    };
+    let nested = |inner: Vec<Element>| vec![node("e", vec![node("f", inner)])];
+    // Empty all the way down, through white space and hidden children: one place, boxed.
+    assert_eq!(places(nested(vec![]), ""), (1, true));
+    assert_eq!(places(nested(vec![text("w", " \n")]), ""), (1, true));
+    assert_eq!(
+        places(
+            nested(vec![node("g", vec![text("x", "x")])]),
+            "#g { display:none; }"
+        ),
+        (1, true)
+    );
+    // Content anywhere inside makes none.
+    assert_eq!(places(nested(vec![text("x", "x")]), ""), (0, true));
+    // Every child counts, not just the first.
+    assert_eq!(
+        places(nested(vec![node("g", vec![]), text("x", "x")]), ""),
+        (0, true)
+    );
+    assert_eq!(
+        places(nested(vec![]), "#f:before { content:\"x\"; }"),
+        (0, true)
+    );
+    assert_eq!(
+        places(nested(vec![]), "#f:after { content:\"x\"; }"),
+        (0, true)
+    );
+    // An inner box with sides holds the place itself, and the outer box wraps it.
+    assert_eq!(places(nested(vec![]), "#f { padding:2px; }"), (1, true));
+    // An inline-block inside is content, of a line of its own.
+    let (count, _) = places(nested(vec![]), "#f { display:inline-block; }");
+    assert_eq!(count, 0);
 }
 
 #[test]

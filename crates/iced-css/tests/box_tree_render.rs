@@ -2486,6 +2486,55 @@ fn an_empty_inline_with_sides_still_draws_its_box() {
 }
 
 #[test]
+fn an_inline_holding_only_an_empty_inline_draws_its_box() {
+    let draw = |inner: bool, name: &str| {
+        let inside = if inner {
+            vec![node("e", vec![node("f", vec![])])]
+        } else {
+            vec![]
+        };
+        let root = node(
+            "p",
+            vec![text("a", "before "), node("s", inside), text("c", " after")],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#p { width:300px; background-color:white; color:black; }
+             #s { display:inline; padding:0 8px; border:2px solid #2a4d69;
+                  background-color:#d9534f; }
+             #e, #f { display:inline; }",
+        )
+        .unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("nested-empty-inline-{}.png", std::process::id());
+    let blank = format!("nested-empty-none-{}.png", std::process::id());
+    // The same box as an empty one, not the bare text either side.
+    assert!(draw(false, &name));
+    assert!(draw(true, &name));
+    let root = node("p", vec![text("a", "before "), text("c", " after")]);
+    let tree = BoxTree::new(
+        root,
+        "#p { width:300px; background-color:white; color:black; }",
+    )
+    .unwrap();
+    let view: Element<'_, u8> = tree.view();
+    let mut ui = simulator(view);
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(&blank))
+            .unwrap()
+    );
+    assert!(!draw(true, &blank));
+}
+
+#[test]
 fn inline_percentage_sides_take_their_share_of_the_block() {
     let draw = |css: &str, name: &str| {
         let root = node(
