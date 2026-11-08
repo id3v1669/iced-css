@@ -2539,7 +2539,7 @@ mod animation {
     }
 
     #[test]
-    fn an_inline_element_animates_no_box_of_its_own() {
+    fn an_inline_element_animates_its_background_but_no_box_of_its_own() {
         let source = || node("page", vec![node("span", vec![text("line", "words")])]);
         let from = BoxTree::new(
             source(),
@@ -2550,6 +2550,7 @@ mod animation {
             .restyled(&["#span { display:inline; background-color:#ffffff; margin-left:5px; }"])
             .unwrap();
         let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
         let count = animations
             .request(
                 &from,
@@ -2557,11 +2558,67 @@ mod animation {
                 "span",
                 &["background-color", "margin-left"],
                 second(),
-                Instant::now(),
+                start,
             )
             .unwrap();
+        // The background runs under the text; the inline has no box for its margin.
+        assert_eq!(count, 1);
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let under = |tree: &BoxTree| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.contains("words"))
+                .and_then(|run| run.background)
+        };
+        assert!(
+            near(under(&shown).unwrap(), [0.5, 0.5, 0.5]),
+            "{:?}",
+            under(&shown)
+        );
+        assert_eq!(under(&to), Some([1.0, 1.0, 1.0]));
+        // Its paint carries the presented color too.
+        let paint = shown.paints()[1];
+        assert!(near(
+            paint.under_text.or(paint.background).unwrap(),
+            [0.5, 0.5, 0.5]
+        ));
+        // Its padded box's own sides take the same color.
+        let padded = |color: &str| {
+            format!("#span {{ display:inline; padding:3px; background-color:{color}; }}")
+        };
+        let dark = BoxTree::new(source(), &padded("#000000")).unwrap();
+        let light = dark.restyled(&[&padded("#ffffff")]).unwrap();
+        let mut padding = BoxTreeAnimations::new();
+        padding
+            .request(
+                &dark,
+                &light,
+                "span",
+                &["background-color"],
+                second(),
+                start,
+            )
+            .unwrap();
+        padding.advance(start + Duration::from_millis(500), &light);
+        let sides = |tree: &BoxTree| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .flat_map(|run| run.inline_boxes.iter())
+                .find_map(|sides| sides.background)
+        };
+        assert!(near(
+            sides(&padding.presented(&light)).unwrap(),
+            [0.5, 0.5, 0.5]
+        ));
+        // From transparent there is no in-between under text: it applies at once.
+        let bare = BoxTree::new(source(), "#span { display:inline; }").unwrap();
+        let count = animations
+            .request(&bare, &to, "span", &["background-color"], second(), start)
+            .unwrap();
         assert_eq!(count, 0);
-        assert!(!animations.is_animating());
     }
 
     #[test]
@@ -2620,7 +2677,7 @@ mod animation {
     }
 
     #[test]
-    fn a_later_inline_sibling_starts_nothing_either() {
+    fn a_later_inline_sibling_animates_only_its_background() {
         let source = || {
             node(
                 "page",
@@ -2638,6 +2695,7 @@ mod animation {
         let from = BoxTree::new(source(), &css("#000000")).unwrap();
         let to = from.restyled(&[&css("#ffffff")]).unwrap();
         let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
         let count = animations
             .request(
                 &from,
@@ -2645,10 +2703,196 @@ mod animation {
                 "span",
                 &["background-color", "outline-color", "border-color"],
                 second(),
-                Instant::now(),
+                start,
+            )
+            .unwrap();
+        // Its background lies under its text; its outline and borders have no box here.
+        assert_eq!(count, 1);
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let under = |text: &str| {
+            shown
+                .text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.contains(text))
+                .and_then(|run| run.background)
+        };
+        assert!(near(under("two").unwrap(), [0.5, 0.5, 0.5]));
+        assert_eq!(under("one"), None);
+    }
+
+    /// Runs whose text contains `text`, and their backgrounds, in `tree`.
+    fn shown_under(tree: &BoxTree, text: &str) -> Vec<Option<[f32; 3]>> {
+        tree.text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.text.contains(text))
+            .map(|run| run.background)
+            .collect()
+    }
+
+    #[test]
+    fn only_the_runs_showing_an_inlines_background_follow_it() {
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "a",
+                    vec![text("x", "outer"), node("b", vec![text("y", "inner")])],
+                )],
+            )
+        };
+        let css = |a: &str, b: &str| {
+            format!(
+                "#a, #b {{ display:inline; }} #a {{ background-color:{a}; }}
+                 #b {{ background-color:{b}; }}
+                 #a:before {{ content:\"own\"; background-color:#ffffff; }}"
+            )
+        };
+        // `#b` keeps its own white, the color `#a` goes to: it must not move with `#a`, and
+        // neither must `#a`'s generated text with its own white.
+        let from = BoxTree::new(source(), &css("#000000", "#ffffff")).unwrap();
+        let to = from.restyled(&[&css("#ffffff", "#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "a", &["background-color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        assert!(near(
+            shown_under(&shown, "outer")[0].unwrap(),
+            [0.5, 0.5, 0.5]
+        ));
+        assert_eq!(shown_under(&shown, "inner"), vec![Some([1.0, 1.0, 1.0])]);
+        assert_eq!(shown_under(&shown, "own"), vec![Some([1.0, 1.0, 1.0])]);
+        // Both animating to the same color, in either order of request: each shows its own.
+        for order in [["a", "b"], ["b", "a"]] {
+            let from = BoxTree::new(source(), &css("#000000", "#ff0000")).unwrap();
+            let to = from.restyled(&[&css("#ffffff", "#ffffff")]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            for id in order {
+                animations
+                    .request(&from, &to, id, &["background-color"], second(), start)
+                    .unwrap();
+            }
+            animations.advance(start + Duration::from_millis(500), &to);
+            let shown = animations.presented(&to);
+            assert!(
+                near(shown_under(&shown, "outer")[0].unwrap(), [0.5, 0.5, 0.5]),
+                "{order:?}"
+            );
+            assert!(
+                near(shown_under(&shown, "inner")[0].unwrap(), [1.0, 0.5, 0.5]),
+                "{order:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generated_text_follows_and_a_nested_inlines_sides_stay() {
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "a",
+                    vec![text("x", "outer"), node("b", vec![text("y", "inner")])],
+                )],
+            )
+        };
+        let css = |a: &str| {
+            format!(
+                "#a, #b {{ display:inline; }} #a {{ background-color:{a}; }}
+                 #b {{ padding:3px; background-color:#ffffff; }}
+                 #a:before {{ content:\"gen\"; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("#000000")).unwrap();
+        let to = from.restyled(&[&css("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "a", &["background-color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        // Generated text with no background of its own shows `#a`'s, and moves with it.
+        assert!(near(
+            shown_under(&shown, "gen")[0].unwrap(),
+            [0.5, 0.5, 0.5]
+        ));
+        // `#b`'s padded box keeps its own white sides.
+        let sides: Vec<Option<[f32; 3]>> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .flat_map(|run| run.inline_boxes.iter())
+            .map(|sides| sides.background)
+            .collect();
+        assert!(!sides.is_empty());
+        assert!(
+            sides.iter().all(|color| *color == Some([1.0, 1.0, 1.0])),
+            "{sides:?}"
+        );
+    }
+
+    #[test]
+    fn a_box_and_an_inline_have_no_in_between_fade() {
+        let source = || node("page", vec![node("s", vec![text("x", "words")])]);
+        let to_inline = |from: &str| {
+            let from = BoxTree::new(source(), from).unwrap();
+            let to = from
+                .restyled(&["#s { display:inline; background-color:#ffffff; }"])
+                .unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            animations
+                .request(
+                    &from,
+                    &to,
+                    "s",
+                    &["background-color"],
+                    second(),
+                    Instant::now(),
+                )
+                .unwrap()
+        };
+        // From a transparent box, a fade, which text cannot show: it applies at once.
+        assert_eq!(to_inline("#s { display:block; }"), 0);
+        // From an opaque one, a color to a color.
+        assert_eq!(
+            to_inline("#s { display:block; background-color:#000000; }"),
+            1
+        );
+        // A box mid-fade that becomes an inline starts from a fade: that applies at once too.
+        let bare = BoxTree::new(source(), "#s { display:block; }").unwrap();
+        let white = bare
+            .restyled(&["#s { display:block; background-color:#ffffff; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        assert_eq!(
+            animations
+                .request(&bare, &white, "s", &["background-color"], second(), start)
+                .unwrap(),
+            1
+        );
+        animations.advance(start + Duration::from_millis(500), &white);
+        let inline = white
+            .restyled(&["#s { display:inline; background-color:#000000; }"])
+            .unwrap();
+        let count = animations
+            .request(
+                &white,
+                &inline,
+                "s",
+                &["background-color"],
+                second(),
+                start + Duration::from_millis(500),
             )
             .unwrap();
         assert_eq!(count, 0);
+        assert!(!animations.is_animating());
     }
 
     #[test]

@@ -170,10 +170,21 @@ impl BoxTree {
             .position(|node| nodes[*node].metadata().css_id() == Some(id))
     }
 
+    /// An inline element: no box of its own, its slot the anonymous block of its line.
+    fn under_text(&self, projected: usize) -> bool {
+        self.prepared.inline_boxes[projected].is_some()
+            && self.prepared.slot[projected].is_some_and(|slot| self.prepared.anonymous[slot])
+    }
+
     fn read(&self, projected: usize, field: Field) -> Option<Value> {
+        let paint = &self.paints[projected];
+        // An inline element's background lies under its text, which has no opacity: it runs
+        // from one color to another, and a transparent end applies at once.
+        if field == Field::Background && self.under_text(projected) {
+            return paint.under_text.or(paint.background).map(Value::Color);
+        }
         // Display none shows nothing to come from or go to.
         self.prepared.slot[projected]?;
-        let paint = &self.paints[projected];
         let color = |value: Option<[f32; 3]>| value.map(Value::Color);
         // An inline element's slot is its paragraph's box, which is not this element's.
         let own = self.prepared.slot[projected].filter(|slot| !self.prepared.anonymous[*slot]);
@@ -211,8 +222,16 @@ impl BoxTree {
 
     fn write(&mut self, projected: usize, field: Field, value: Value) {
         let slot = self.prepared.slot[projected];
+        let under_text = self.under_text(projected);
         let paint = &mut self.paints[projected];
         match (field, value) {
+            (Field::Background, Value::Color(value)) if under_text => {
+                if paint.under_text.is_some() {
+                    paint.under_text = Some(value);
+                } else {
+                    paint.background = Some(value);
+                }
+            }
             (Field::Color, Value::Color(value)) => paint.color = Some(value),
             (Field::Background, Value::Color(value)) => {
                 paint.background = Some(value);
@@ -294,6 +313,31 @@ impl BoxTree {
                 (presented.field, presented.target, presented.now)
             {
                 self.follow(&presented.followers, target, now);
+            }
+            if let (Field::Background, Value::Color(_), Value::Color(now)) =
+                (presented.field, presented.target, presented.now)
+                && self.under_text(projected)
+            {
+                self.inline_background(projected, now);
+            }
+        }
+    }
+
+    /// Carries an inline element's presented background to where it paints: the runs that
+    /// show it, its own and its inline descendants' without one of their own, and its own
+    /// inline box sides. Runs and sides name their source node.
+    fn inline_background(&mut self, projected: usize, now: [f32; 3]) {
+        let root = self.originals[projected];
+        for leaf in self.texts.iter_mut().flatten() {
+            for run in &mut leaf.runs {
+                if run.background_from == Some(root) {
+                    run.background = Some(now);
+                }
+                for sides in &mut run.inline_boxes {
+                    if sides.owner == root && sides.background.is_some() {
+                        sides.background = Some(now);
+                    }
+                }
             }
         }
     }
@@ -598,6 +642,15 @@ impl BoxTreeAnimations {
             if committed == target {
                 continue;
             }
+            // Under text there is no opacity: a fade between a box and an inline has no
+            // in-between there.
+            if field == Field::Background
+                && (from.under_text(before) || to.under_text(after))
+                && !matches!((committed, target), (Value::Color(_), Value::Color(_)))
+            {
+                dropped.push(property);
+                continue;
+            }
             // Section 13: an important target holds without a temporary override.
             if mix(committed, target, 0.0).is_none() || to.important[after].contains(&property) {
                 dropped.push(property);
@@ -607,6 +660,14 @@ impl BoxTreeAnimations {
                 .current(id, property)
                 .filter(|(track, _)| track.target == committed && track.capture == capture)
                 .map_or(committed, |(_, value)| value);
+            // A box still fading when it becomes an inline starts from a fade, too.
+            if field == Field::Background
+                && to.under_text(after)
+                && !matches!(start, Value::Color(_))
+            {
+                dropped.push(property);
+                continue;
+            }
             started.push(Track {
                 id: id.to_owned(),
                 property,

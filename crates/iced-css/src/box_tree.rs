@@ -315,6 +315,9 @@ pub struct TextRun {
     pub edge: Option<(bool, f32, [f32; 3])>,
     pub color: Option<[f32; 3]>,
     pub background: Option<[f32; 3]>,
+    /// The source node of the inline element whose background `background` is, for
+    /// animating it; `None` for a run's own or no background.
+    pub background_from: Option<usize>,
     pub weight: u16,
     pub italic: bool,
     pub family: Option<String>,
@@ -1143,6 +1146,7 @@ impl BoxTree {
                 .zip(texts)
                 .map(|(&run, (text, _))| {
                     let style = style_of(run);
+                    let mut background_from = None;
                     let (size, color, background, visible) = match (run, generated_of(run)) {
                         (run_source, Some(made)) => {
                             // Generated text keeps an enclosing inline's background.
@@ -1158,6 +1162,9 @@ impl BoxTree {
                                     background = raw_paints[here]
                                         .background
                                         .filter(|_| raw_paints[here].visible);
+                                    if background.is_some() {
+                                        background_from = projection.original_index(here);
+                                    }
                                 }
                                 owner = prepared.inline_parent[here];
                             }
@@ -1176,6 +1183,7 @@ impl BoxTree {
                                     .background
                                     .filter(|_| raw_paints[here].visible);
                                 if background.is_some() {
+                                    background_from = projection.original_index(here);
                                     break;
                                 }
                                 owner = prepared.inline_parent[here];
@@ -1198,6 +1206,7 @@ impl BoxTree {
                         edge: None,
                         color,
                         background,
+                        background_from,
                         weight: style.weight,
                         italic: style.italic,
                         family: style.family.clone(),
@@ -1234,6 +1243,7 @@ impl BoxTree {
         for (arena, &(projected, _)) in prepared.positions.iter().enumerate() {
             if prepared.anonymous[arena] {
                 if prepared.slot[projected] == Some(arena) {
+                    paints[projected].under_text = paints[projected].background;
                     paints[projected].background = None;
                     paints[projected].border = [None; 4];
                 }
@@ -1241,6 +1251,7 @@ impl BoxTree {
                 for (run, source) in leaf.runs.iter_mut().zip(&prepared.runs[arena]) {
                     if matches!(source, RunSource::Node(_)) {
                         run.background = None;
+                        run.background_from = None;
                     }
                 }
             }
@@ -1431,17 +1442,18 @@ impl BoxTree {
                 };
                 // A margin lies in the boxes around this one, and border and padding in this
                 // one as well, as one space holding an exact border bar.
+                // The background an inline shows from around it, and whose it is.
                 let around = |mut at: Option<usize>| {
                     while let Some(here) = at {
                         if let Some(color) = raw_paints[here]
                             .background
                             .filter(|_| raw_paints[here].visible)
                         {
-                            return Some(color);
+                            return (Some(color), projection.original_index(here));
                         }
                         at = prepared.inline_parent[here];
                     }
-                    None
+                    (None, None)
                 };
                 let side = |element: usize, across: usize, run: &TextRun, depth: usize| {
                     let sides = sides_of(element);
@@ -1454,7 +1466,8 @@ impl BoxTree {
                         .then(|| indent_run(run, sides.margin[across]))
                         .flatten()
                         .map(|spacer| TextRun {
-                            background: around(prepared.inline_parent[element]),
+                            background: around(prepared.inline_parent[element]).0,
+                            background_from: around(prepared.inline_parent[element]).1,
                             inline_boxes: decorations(&here[..depth]),
                             // Nothing hidden answers input: the nearest box around that shows.
                             owner: owner_of(
@@ -1482,7 +1495,13 @@ impl BoxTree {
                             background: if raw_paints[element].background.is_some() && visible {
                                 None
                             } else {
-                                around(prepared.inline_parent[element])
+                                around(prepared.inline_parent[element]).0
+                            },
+                            background_from: if raw_paints[element].background.is_some() && visible
+                            {
+                                None
+                            } else {
+                                around(prepared.inline_parent[element]).1
                             },
                             inline_boxes: decorations(&here[..=depth]),
                             edge,
@@ -1613,6 +1632,7 @@ impl BoxTree {
                             edge: None,
                             color: raw_paints[projected].color,
                             background: None,
+                            background_from: None,
                             weight: style.weight,
                             italic: style.italic,
                             family: style.family.clone(),
@@ -2465,6 +2485,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         text,
         spacer: true,
         background: None,
+        background_from: None,
         underline: false,
         line_through: false,
         inline_boxes: Vec::new(),

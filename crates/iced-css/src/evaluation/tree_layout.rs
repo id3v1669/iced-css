@@ -1375,6 +1375,8 @@ pub struct BoxPaint {
     pub background: Option<[f32; 3]>,
     /// The background's opacity while an animation fades it; `None` is opaque.
     pub background_fade: Option<f32>,
+    /// An inline element's background, which its text paints instead of a box.
+    pub under_text: Option<[f32; 3]>,
     /// The computed `cursor` keyword; a URL list uses its fallback.
     pub cursor: &'static str,
     /// `clip: rect()` offsets from the border box's top left: top, right, bottom, left, with
@@ -2154,6 +2156,7 @@ pub fn evaluate_tree_paint<'r>(
             },
             background: paint(1),
             background_fade: None,
+            under_text: None,
             border_style: ["solid"; 4],
             outline_style: "solid",
             border: [paint(2), paint(3), paint(4), paint(5)],
