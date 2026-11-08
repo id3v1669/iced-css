@@ -43,7 +43,7 @@ capturing the tree again, which is enough to build hot reload on.
 - **Tables:** `display: table` and its parts, with spans from `colspan`/`rowspan` attributes,
   anonymous parts, `border-spacing`, captions and cell `vertical-align`.
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` (also with `::`) with counters and
-  quotes, `visibility`, outlines and every border style (collapsed tables resolve edges between cells that meet along a whole edge, and each grid line takes its widest border; an inline element's outline goes around each of its pieces on a line), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
+  quotes, `visibility`, outlines and every border style (collapsed tables resolve each stretch of edge between the cells that meet there, where lines cross the later cell's border shows, and each grid line takes its widest border; an inline element's outline goes around each of its pieces on a line), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
 - **Background images** (with the `image` Cargo feature): local files through `url()`, with `repeat`, `position` and
   `attachment`; relative paths resolve against `BoxTree::with_base`. Paths outside the base
@@ -65,7 +65,7 @@ offsets). A style change without a request applies at once. Time comes from lumi
 ## Known limits
 
 Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
-one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` overlaps the cells on each grid line by that line's widest border, even where a cell's own border there is narrower, a cell beside a spanning one keeps its own part of the edge, and a positioned cell moves the whole table's borders to where it paints;
+one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` overlaps the cells on each grid line by that line's widest border, even where a cell's own border there is narrower, and a positioned cell moves the whole table's borders to where it paints;
 `justify` stretches lines to the widest line rather than the box (iced 0.14 lays justified text out at its widest line's width), leaves a line split at a float's end unstretched, and is start-aligned in rtl;
 one line height and alignment per paragraph; text widens past
 floats once per paragraph. Inline generated content takes `display`, `clear` and

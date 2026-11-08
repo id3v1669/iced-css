@@ -1021,6 +1021,9 @@ impl BoxTree {
                 continue;
             }
             resolve_collapsed_edges(&mut prepared, table, &mut paints);
+            // By cell, for drawing to find a box's own by search.
+            prepared.border_cuts.sort_unstable_by_key(|cut| cut.0);
+            prepared.thin_sides.sort_unstable_by_key(|thin| thin.0);
             // 17.6.2: a collapsed table has no padding.
             prepared.boxes[table].padding = [Dim::Px(0.0); 4];
             let (mut across, mut down) = (0.0_f32, 0.0_f32);
@@ -2652,8 +2655,9 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
 }
 
 /// 17.6.2.1: on an edge two cells of a collapsed table share, only the winner's border draws,
-/// and a `hidden` one draws neither. A cell that is not visible has no say. Only cells
-/// meeting along a whole edge are compared: a cell beside a taller one keeps its own part.
+/// and a `hidden` one draws neither. A cell that is not visible has no say. Cells that span
+/// the edge alike settle all of it; a cell beside a taller or wider one settles the stretch
+/// they share, and a loser leaves out only that stretch (`border_cuts`).
 fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &mut [BoxPaint]) {
     use iced_css_core::formatting::{
         block_flow::{table_grid, table_parts},
@@ -2676,29 +2680,46 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
     };
     let (rows, _) = table_parts(&prepared.boxes, table);
     let (placed, _) = table_grid(&prepared.boxes, &rows);
-    let starts: BTreeMap<(usize, usize), usize> = placed
-        .iter()
-        .enumerate()
-        .map(|(at, item)| ((item.row, item.column), at))
-        .collect();
     // In an rtl table the first column is on the right, so its far side is its left.
     let rtl = prepared.boxes[table].direction == Direction::Rtl;
     let (near, far) = if rtl { (3, 1) } else { (1, 3) };
+    // The cells that start each column of a row, and each row of a column: all a scan
+    // across or down reads, in time along each cell's span rather than its area.
+    let mut first_column: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    let mut first_row: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    for (at, item) in placed.iter().enumerate() {
+        for row in item.row..item.row + item.row_span {
+            first_column.insert((row, item.column), at);
+        }
+        for column in item.column..item.column + item.col_span {
+            first_row.insert((item.row, column), at);
+        }
+    }
+    // Each pair of cells that share some edge, once: across to the end side, and down. A
+    // pair that spans the edge alike shares all of it; others share a stretch.
     let mut meetings = Vec::new();
     for item in &placed {
-        let beside = starts
-            .get(&(item.row, item.column + item.col_span))
-            .map(|at| &placed[*at])
-            .filter(|other| other.row_span == item.row_span);
-        let below = starts
-            .get(&(item.row + item.row_span, item.column))
-            .map(|at| &placed[*at])
-            .filter(|other| other.col_span == item.col_span);
-        if let Some(other) = beside {
-            meetings.push((item, near, other, far));
+        let mut seen = Vec::new();
+        for row in item.row..item.row + item.row_span {
+            if let Some(&at) = first_column.get(&(row, item.column + item.col_span))
+                && !seen.contains(&at)
+            {
+                seen.push(at);
+                let other = &placed[at];
+                let whole = other.row == item.row && other.row_span == item.row_span;
+                meetings.push((item, near, other, far, whole));
+            }
         }
-        if let Some(other) = below {
-            meetings.push((item, 2, other, 0));
+        let mut seen = Vec::new();
+        for column in item.column..item.column + item.col_span {
+            if let Some(&at) = first_row.get(&(item.row + item.row_span, column))
+                && !seen.contains(&at)
+            {
+                seen.push(at);
+                let other = &placed[at];
+                let whole = other.column == item.column && other.col_span == item.col_span;
+                meetings.push((item, 2, other, 0, whole));
+            }
         }
     }
     let limit = NonZeroUsize::new(2).expect("positive");
@@ -2712,7 +2733,8 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
         }
     }
     let mut losers = Vec::new();
-    for (first, first_side, second, second_side) in meetings {
+    let mut cuts = Vec::new();
+    for (first, first_side, second, second_side, whole) in meetings {
         // An anonymous cell's owner is the box it wraps, and that box's borders are its own.
         if prepared.anonymous[first.cell] || prepared.anonymous[second.cell] {
             continue;
@@ -2746,6 +2768,25 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
             CollapsedBorder::Winner { index, .. } => (index == 0, index == 1),
             CollapsedBorder::Absent | CollapsedBorder::Suppressed => (false, false),
         };
+        // Along a stretch, a loser only gives way there, and in layout clears the wider of
+        // its own border and the winner's.
+        if !whole {
+            match result {
+                CollapsedBorder::Winner { .. } if keep_first => {
+                    cuts.push((second.cell, second_side, first.cell, one.width()));
+                }
+                CollapsedBorder::Winner { .. } => {
+                    cuts.push((first.cell, first_side, second.cell, two.width()));
+                }
+                // `hidden` there: neither draws along the other, and neither takes room.
+                CollapsedBorder::Suppressed => {
+                    cuts.push((first.cell, first_side, second.cell, 0.0));
+                    cuts.push((second.cell, second_side, first.cell, 0.0));
+                }
+                CollapsedBorder::Absent => {}
+            }
+            continue;
+        }
         // A loser keeps the winner's width in layout, so its content clears the winner's band.
         let width = match (keep_first, keep_second) {
             (true, _) => one.width(),
@@ -2765,6 +2806,16 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
         paints[owner].border[side] = None;
         prepared.boxes[cell].border[side] = width;
     }
+    let mut thin: Vec<(usize, usize, f32)> = Vec::new();
+    for &(cell, side, winner, width) in &cuts {
+        let own = prepared.boxes[cell].border[side];
+        if width > own && !thin.iter().any(|entry| (entry.0, entry.1) == (cell, side)) {
+            thin.push((cell, side, own));
+        }
+        prepared.boxes[cell].border[side] = own.max(width);
+        prepared.border_cuts.push((cell, side, winner));
+    }
+    prepared.thin_sides.extend(thin);
 }
 
 /// A file under the base: no scheme, no absolute path, no `..`.
@@ -3820,10 +3871,46 @@ fn draw_box<Renderer: renderer::Renderer>(
     index: usize,
     parts: BoxParts,
 ) {
-    let Some(Some(geometry)) = geometry.get(index) else {
+    let Some(Some(here)) = geometry.get(index) else {
         return;
     };
-    paint_box(renderer, origin, tree.paints[index], geometry, parts);
+    // The stretches of its sides a neighbour's border won.
+    let prepared = &tree.prepared;
+    let arena = prepared.slot[index];
+    let own = |cell: usize| Some(cell) == arena;
+    let from = prepared
+        .border_cuts
+        .partition_point(|cut| arena.is_some_and(|arena| cut.0 < arena));
+    let cuts: Vec<(usize, f32, f32)> = prepared.border_cuts[from..]
+        .iter()
+        .take_while(|cut| own(cut.0))
+        .filter_map(|&(_, side, winner)| {
+            let border = geometry.get(prepared.positions[winner].0)?.as_ref()?.border;
+            Some(if side == 0 || side == 2 {
+                (side, border.left, border.right)
+            } else {
+                (side, border.top, border.bottom)
+            })
+        })
+        .collect();
+    // A side widened to clear a neighbour draws its own width, at its outer edge.
+    let mut here = *here;
+    let from = prepared
+        .thin_sides
+        .partition_point(|thin| arena.is_some_and(|arena| thin.0 < arena));
+    for &(_, side, width) in prepared.thin_sides[from..]
+        .iter()
+        .take_while(|thin| own(thin.0))
+    {
+        let (border, padding) = (here.border, &mut here.padding);
+        match side {
+            0 => padding.top = border.top + width,
+            1 => padding.right = border.right - width,
+            2 => padding.bottom = border.bottom - width,
+            _ => padding.left = border.left + width,
+        }
+    }
+    paint_box(renderer, origin, tree.paints[index], &here, parts, &cuts);
 }
 
 /// A box's background and border bands from its paint, offset to the layout origin.
@@ -3833,6 +3920,7 @@ fn paint_box<Renderer: renderer::Renderer>(
     paint: BoxPaint,
     geometry: &FlowGeometry,
     parts: BoxParts,
+    cuts: &[(usize, f32, f32)],
 ) {
     let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
         if bounds.width > 0.0 && bounds.height > 0.0 {
@@ -3884,8 +3972,40 @@ fn paint_box<Renderer: renderer::Renderer>(
     if parts != BoxParts::Background {
         let bands = border_bands(border, geometry.padding);
         for (side, (band, color)) in bands.into_iter().zip(paint.border).enumerate() {
-            if let Some(color) = color {
-                for (piece, shade) in band_pieces(band, side, paint.border_style[side], color) {
+            let Some(color) = color else { continue };
+            // What a neighbour won is left out, along the band's length.
+            let across = side == 0 || side == 2;
+            let (start, end) = if across {
+                (band.x, band.x + band.width)
+            } else {
+                (band.y, band.y + band.height)
+            };
+            let mut spans = vec![(start, end)];
+            for &(_, from, to) in cuts.iter().filter(|cut| cut.0 == side) {
+                spans = spans
+                    .into_iter()
+                    .flat_map(|(low, high)| {
+                        [(low, high.min(from)), (low.max(to), high)]
+                            .into_iter()
+                            .filter(|(low, high)| high > low)
+                    })
+                    .collect();
+            }
+            for (low, high) in spans {
+                let part = if across {
+                    Rectangle {
+                        x: low,
+                        width: high - low,
+                        ..band
+                    }
+                } else {
+                    Rectangle {
+                        y: low,
+                        height: high - low,
+                        ..band
+                    }
+                };
+                for (piece, shade) in band_pieces(part, side, paint.border_style[side], color) {
                     quad(renderer, piece, shade);
                 }
             }
@@ -5144,7 +5264,7 @@ where
                             if let Some(&(arena, paint)) = prepared.generated_boxes.get(at)
                                 && let Some(geometry) = self.slot_geometry.get(arena)
                             {
-                                paint_box(renderer, origin, paint, geometry, BoxParts::All);
+                                paint_box(renderer, origin, paint, geometry, BoxParts::All, &[]);
                             }
                         }
                         PaintStep::Column(at) => {

@@ -2452,3 +2452,142 @@ fn inline_percentage_sides_take_their_share_of_the_block() {
     assert!(wrapped("padding-left:80%;", &name));
     assert!(!wrapped("", &name));
 }
+
+#[test]
+fn a_spanning_cells_edge_is_resolved_per_stretch() {
+    let draw = |spanned: bool, name: &str| {
+        let tall = node("a", vec![])
+            .style_attribute("rowspan", "2", limits())
+            .unwrap();
+        let root = if spanned {
+            node(
+                "t",
+                vec![
+                    node("r1", vec![tall, node("b", vec![])]),
+                    node("r2", vec![node("c", vec![])]),
+                ],
+            )
+        } else {
+            node(
+                "t",
+                vec![
+                    node("r1", vec![node("a1", vec![]), node("b", vec![])]),
+                    node("r2", vec![node("a2", vec![]), node("c", vec![])]),
+                ],
+            )
+        };
+        let sheet = "#t { display:table; border-collapse:collapse; background-color:white; }
+             #r1, #r2 { display:table-row; }
+             #a, #a1, #a2, #b, #c { display:table-cell; width:40px; height:30px; }
+             #a, #a1, #a2 { border:1px solid #d9534f; }
+             #a1 { border-bottom:none; } #a2 { border-top:none; }
+             #b, #c { border:1px solid black; }
+             #b { border-left:6px solid #2a4d69; border-bottom:none; }
+             #c { border-left:1px solid #5cb85c; border-top:none; }";
+        let tree = BoxTree::new(root, sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // Blue beats the spanning cell's red beside the first row; red keeps the second, where
+    // it meets a like border further left: as two cells stacked without a line between.
+    // (No line between the rows on the right either: where lines cross is left open.)
+    let name = format!("span-stretch-{}.png", std::process::id());
+    assert!(draw(false, &name));
+    assert!(draw(true, &name));
+}
+
+#[test]
+fn a_spanning_loser_after_its_winners_and_a_hidden_edge_settle_per_stretch() {
+    let draw = |spanned: bool, sheet: &str, name: &str| {
+        let tall = node("a", vec![])
+            .style_attribute("rowspan", "2", limits())
+            .unwrap();
+        let root = if spanned {
+            node(
+                "t",
+                vec![
+                    node("r1", vec![node("b", vec![]), tall]),
+                    node("r2", vec![node("c", vec![])]),
+                ],
+            )
+        } else {
+            node(
+                "t",
+                vec![
+                    node("r1", vec![node("b", vec![]), node("a1", vec![])]),
+                    node("r2", vec![node("c", vec![]), node("a2", vec![])]),
+                ],
+            )
+        };
+        let sheet = format!(
+            "#t {{ display:table; border-collapse:collapse; background-color:white; }}
+             #r1, #r2 {{ display:table-row; }}
+             #a, #a1, #a2, #b, #c {{ display:table-cell; width:40px; height:30px; }}
+             {sheet}
+             #a1 {{ border-bottom:none; }} #a2 {{ border-top:none; }}
+             #b {{ border-bottom:none; }} #c {{ border-top:none; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let id = std::process::id();
+    // The spanning cell, painted after both, loses each stretch to its left neighbour.
+    // Only the shared edge has borders: where lines cross is left open.
+    let losing = "#a, #a1, #a2 { border-left:1px solid #d9534f; }
+         #b { border-right:6px solid #2a4d69; } #c { border-right:1px solid #5cb85c; }";
+    let name = format!("span-loser-{id}.png");
+    assert!(draw(false, losing, &name));
+    assert!(draw(true, losing, &name));
+    // `hidden` beside it hides the neighbours' part too.
+    let hidden = "#a, #a1, #a2 { border-left:hidden; } #b, #c { border-right:2px solid #2a4d69; }";
+    let name = format!("span-hidden-{id}.png");
+    assert!(draw(false, hidden, &name));
+    assert!(draw(true, hidden, &name));
+}
+
+#[test]
+fn a_column_spanning_cells_edge_is_resolved_per_stretch() {
+    let draw = |spanned: bool, name: &str| {
+        let wide = node("a", vec![])
+            .style_attribute("colspan", "2", limits())
+            .unwrap();
+        let first = if spanned {
+            node("r1", vec![wide])
+        } else {
+            node("r1", vec![node("a1", vec![]), node("a2", vec![])])
+        };
+        let root = node(
+            "t",
+            vec![
+                first,
+                node("r2", vec![node("b", vec![]), node("c", vec![])]),
+            ],
+        );
+        let sheet = "#t { display:table; border-collapse:collapse; background-color:white; }
+             #r1, #r2 { display:table-row; }
+             #a, #a1, #a2, #b, #c { display:table-cell; height:30px; }
+             #b, #c { width:40px; }
+             #a, #a1, #a2 { border-bottom:1px solid #d9534f; }
+             #b { border-top:6px solid #2a4d69; } #c { border-top:1px solid #5cb85c; }";
+        let tree = BoxTree::new(root, sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // Blue beats the wide cell's red over the first column; red keeps the second.
+    let name = format!("span-columns-{}.png", std::process::id());
+    assert!(draw(false, &name));
+    assert!(draw(true, &name));
+}

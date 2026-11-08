@@ -482,6 +482,13 @@ pub struct PreparedTree {
     pub table_columns: Vec<(usize, usize, Option<usize>)>,
     /// Block-level generated content's own boxes and paint, by arena slot, in slot order.
     pub generated_boxes: Vec<(usize, BoxPaint)>,
+    /// 17.6.2.1 per stretch of edge: a collapsed cell's side that loses the stretch it
+    /// shares with a neighbour spanning differently, as (cell, side, winning neighbour),
+    /// by arena slot. The side is not drawn along the winner.
+    pub border_cuts: Vec<(usize, usize, usize)>,
+    /// A cell's side that clears a wider neighbour in layout but draws its own width there,
+    /// as (cell, side, width), by arena slot.
+    pub thin_sides: Vec<(usize, usize, f32)>,
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
@@ -993,6 +1000,8 @@ pub fn prepare_captured_tree(
         inline_boxes,
         table_columns,
         generated_boxes,
+        border_cuts: Vec::new(),
+        thin_sides: Vec::new(),
         clipped,
         scrolls,
     })
@@ -1062,6 +1071,8 @@ impl PreparedTree {
             inline_boxes: _,
             table_columns: _,
             generated_boxes: _,
+            border_cuts: _,
+            thin_sides: _,
             clipped: _,
             scrolls: _,
         } = self;
