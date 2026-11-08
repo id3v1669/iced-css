@@ -4204,3 +4204,54 @@ fn a_collapsed_span_measures_the_lines_inside_it_and_its_own_top_sets_its_line()
     // `#e`'s own 8px top makes the line above its row 8px.
     assert_eq!(a.bottom - e.top, 8.0);
 }
+
+#[test]
+fn an_empty_inline_with_sides_holds_a_zero_width_place() {
+    let leaves = |root: Element, css: &str| -> Vec<String> {
+        BoxTree::new(root, css)
+            .unwrap()
+            .text_leaves()
+            .iter()
+            .map(|(_, leaf)| leaf.text())
+            .collect()
+    };
+    let spaced = || {
+        node(
+            "p",
+            vec![text("a", "before "), node("s", vec![]), text("c", " after")],
+        )
+    };
+    // Spaces collapse across it, as across any inline (16.6.1): one space before it, its
+    // border's stand-in spaces around it, none after.
+    assert_eq!(
+        leaves(spaced(), "#s { display:inline; border:2px solid black; }"),
+        vec!["before \u{2006}\u{200B}\u{2006}after".to_owned()]
+    );
+    // Without sides it is nothing at all.
+    assert_eq!(
+        leaves(spaced(), "#s { display:inline; }"),
+        vec!["before after".to_owned()]
+    );
+    // Its side bars wrap that place.
+    let tree = BoxTree::new(spaced(), "#s { display:inline; border:2px solid black; }").unwrap();
+    let bars = tree
+        .text_leaves()
+        .iter()
+        .flat_map(|(_, leaf)| leaf.runs.iter())
+        .filter(|run| run.edge.is_some())
+        .count();
+    assert_eq!(bars, 2);
+    // Before an inline-block it stays, in the line the inline-block opens.
+    let row = node(
+        "p",
+        vec![node("s", vec![]), node("ib", vec![text("x", "X")])],
+    );
+    let texts = leaves(
+        row,
+        "#s { display:inline; border:2px solid black; } #ib { display:inline-block; }",
+    );
+    assert!(
+        texts.iter().any(|text| text.contains('\u{200B}')),
+        "{texts:?}"
+    );
+}

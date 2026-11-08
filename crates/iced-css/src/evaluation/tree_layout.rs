@@ -688,6 +688,30 @@ pub fn prepare_captured_tree(
                     build.runs[group].push(RunSource::Node(index));
                 }
             }
+            // 10.8: an empty inline element with padding, a border or a margin still makes a
+            // box. A zero-width run holds its place, for its sides to wrap.
+            let has_sides = inline_boxes[index].is_some_and(|sides| {
+                sides
+                    .margin
+                    .iter()
+                    .chain(&sides.border)
+                    .chain(&sides.padding)
+                    .any(|side| *side > 0.0)
+            });
+            if !is_text
+                && has_sides
+                && projection.nodes[index].children.is_empty()
+                && pseudo(index, 0).is_none()
+                && pseudo(index, 1).is_none()
+            {
+                let group = build.inline_group(target, index);
+                if inline_rows.contains(&group) {
+                    let piece = build.row_text(group, index);
+                    build.runs[piece].push(RunSource::Node(index));
+                } else {
+                    build.runs[group].push(RunSource::Node(index));
+                }
+            }
             ancestors.push(index);
             continue;
         }
@@ -739,9 +763,10 @@ pub fn prepare_captured_tree(
             let mut earlier = Vec::new();
             if let Some(group) = build.open[target] {
                 let has_content = build.runs[group].iter().any(|run| match run {
+                    // An element's own run is an empty inline's box: content too.
                     RunSource::Node(at) => source_nodes[projection.original[*at]]
                         .text()
-                        .is_some_and(|text| !text.trim().is_empty()),
+                        .is_none_or(|text| !text.trim().is_empty()),
                     _ => true,
                 });
                 earlier = std::mem::take(&mut build.runs[group]);

@@ -2302,3 +2302,36 @@ fn an_inline_outline_draws_around_its_pieces() {
     assert!(draw("visibility:hidden;", &name));
     assert!(draw("visibility:hidden; outline:2px solid #d9534f;", &name));
 }
+
+#[test]
+fn an_empty_inline_with_sides_still_draws_its_box() {
+    let draw = |span: Option<&str>, name: &str| {
+        let mut children = vec![text("a", "before ")];
+        if span.is_some() {
+            children.push(node("s", vec![]));
+        }
+        children.push(text("c", " after"));
+        let sheet = format!(
+            "#p {{ width:300px; background-color:white; color:black; }}
+             #s {{ display:inline; {} }}",
+            span.unwrap_or("")
+        );
+        let tree = BoxTree::new(node("p", children), &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("empty-inline-{}.png", std::process::id());
+    assert!(draw(None, &name));
+    // Without sides it is nothing; with them its padding, border and background show.
+    assert!(draw(Some("background-color:#d9534f;"), &name));
+    assert!(!draw(
+        Some("padding:0 8px; border:2px solid #2a4d69; background-color:#d9534f;"),
+        &name
+    ));
+    // Its margin alone moves the text after it.
+    assert!(!draw(Some("margin-left:20px;"), &name));
+}

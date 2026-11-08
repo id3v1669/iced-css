@@ -387,6 +387,9 @@ fn is_css_space(character: char) -> bool {
     matches!(character, ' ' | '\t' | '\n' | '\r' | '\x0C')
 }
 
+/// The white-space mode that marks an empty inline's zero-width placeholder run.
+const PLACEHOLDER: &str = "placeholder";
+
 /// 16.6.1: collapse white space across the runs of one block, by each run's own mode.
 fn collapse(texts: &mut [(String, &'static str)]) {
     // 16.6: with no newline rules from a document language, CR and CRLF are one line feed.
@@ -398,6 +401,10 @@ fn collapse(texts: &mut [(String, &'static str)]) {
     let mut after_space = true;
     let mut last_collapsing = None;
     for (index, (text, mode)) in texts.iter_mut().enumerate() {
+        // An empty inline's placeholder is no text: spaces collapse across it.
+        if *mode == PLACEHOLDER {
+            continue;
+        }
         if matches!(*mode, "pre" | "pre-wrap") {
             after_space = text.ends_with(is_css_space);
             last_collapsing = None;
@@ -1138,18 +1145,20 @@ impl BoxTree {
                 .iter()
                 .map(|&run| {
                     let content = match (run, generated_of(run)) {
-                        (_, Some(made)) => made.text.as_str(),
+                        (_, Some(made)) => Some(made.text.as_str()),
                         (RunSource::Node(at), None) => projection
                             .original_index(at)
-                            .and_then(|original| nodes[original].text())
-                            .unwrap_or_default(),
-                        _ => "",
+                            .and_then(|original| nodes[original].text()),
+                        _ => Some(""),
                     };
                     let style = style_of(run);
-                    (
-                        transformed(content, style.text_transform),
-                        style.white_space,
-                    )
+                    // An element's own run is an empty inline's placeholder: zero width.
+                    content.map_or(("\u{200B}".to_owned(), PLACEHOLDER), |content| {
+                        (
+                            transformed(content, style.text_transform),
+                            style.white_space,
+                        )
+                    })
                 })
                 .collect();
             collapse(&mut texts);
