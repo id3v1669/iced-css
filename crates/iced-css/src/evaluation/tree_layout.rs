@@ -699,8 +699,8 @@ pub fn prepare_captured_tree(
                     build.runs[group].push(RunSource::Node(index));
                 }
             }
-            // 10.8: an empty inline element with padding, a border or a margin still makes a
-            // box. A zero-width run holds its place, for its sides to wrap.
+            // 10.8: an inline element with no content but padding, a border or a margin
+            // still makes a box. A zero-width run holds its place, for its sides to wrap.
             let has_sides = inline_boxes[index].is_some_and(|sides| {
                 sides
                     .margin
@@ -711,11 +711,31 @@ pub fn prepare_captured_tree(
                     .chain(&sides.percent_padding)
                     .any(|side| *side > 0.0)
             });
+            // No content: no children, or only white space, which collapses away (16.6.1).
+            // Its children follow it in projection order, which is the source's pre-order.
+            let blank = || {
+                let source_nodes = projection.snapshot.construction().nodes();
+                let wanted = projection.nodes[index].children.len();
+                (index + 1..projection.original.len())
+                    .filter(|&at| source_nodes[projection.original[at]].parent() == Some(original))
+                    .take(wanted)
+                    // Only text has text: an element child is content.
+                    .all(|at| {
+                        source_nodes[projection.original[at]]
+                            .text()
+                            // CSS white space only: a no-break space is content.
+                            .is_some_and(|text| {
+                                text.chars().all(|character| {
+                                    matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{C}')
+                                })
+                            })
+                    })
+            };
             if !is_text
                 && has_sides
-                && projection.nodes[index].children.is_empty()
                 && pseudo(index, 0).is_none()
                 && pseudo(index, 1).is_none()
+                && blank()
             {
                 let group = build.inline_group(target, index);
                 if inline_rows.contains(&group) {

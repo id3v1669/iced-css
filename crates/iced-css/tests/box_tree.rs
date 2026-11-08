@@ -3746,14 +3746,52 @@ fn an_inline_box_opens_and_closes_around_its_runs_once() {
         runs[1].inline_boxes.is_empty(),
         "a margin is outside the box"
     );
-    // Blank content opens nothing.
+    // Blank content collapses away, but a padded box stays (10.8): a zero-width place.
     let root = node("page", vec![node("span", vec![text("b", " ")])]);
     let tree = BoxTree::new(root, "#span { display:inline; padding:8px; }").unwrap();
+    let leaves = tree.text_leaves();
     assert!(
+        leaves
+            .iter()
+            .any(|(_, leaf)| leaf.text().contains('\u{200B}'))
+    );
+    assert!(
+        leaves
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .any(|run| !run.inline_boxes.is_empty())
+    );
+    // Between words, its blank collapses with theirs: one space in all.
+    let root = node(
+        "page",
+        vec![
+            text("a", "before "),
+            node("span", vec![text("b", " ")]),
+            text("c", " after"),
+        ],
+    );
+    let tree = BoxTree::new(root, "#span { display:inline; padding:0 8px; }").unwrap();
+    let joined: String = tree
+        .text_leaves()
+        .iter()
+        .map(|(_, leaf)| leaf.text())
+        .collect();
+    assert_eq!(joined.matches(' ').count(), 1, "{joined:?}");
+    assert!(joined.contains('\u{200B}'));
+    let placed = |children: Vec<Element>| {
+        let tree = BoxTree::new(
+            node("page", vec![node("span", children)]),
+            "#span { display:inline; padding:8px; } #e { display:inline; }",
+        )
+        .unwrap();
         tree.text_leaves()
             .iter()
-            .all(|(_, leaf)| leaf.text().trim().is_empty())
-    );
+            .any(|(_, leaf)| leaf.text().contains('\u{200B}'))
+    };
+    // Two blanks are still blank; a no-break space or an element inside is content.
+    assert!(placed(vec![text("b", " "), text("c", "\n\t")]));
+    assert!(!placed(vec![text("b", "\u{A0}")]));
+    assert!(!placed(vec![text("b", " "), node("e", vec![])]));
 }
 
 #[test]
