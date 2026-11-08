@@ -43,7 +43,7 @@ capturing the tree again, which is enough to build hot reload on.
 - **Tables:** `display: table` and its parts, with spans from `colspan`/`rowspan` attributes,
   anonymous parts, `border-spacing`, captions and cell `vertical-align`.
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` (also with `::`) with counters and
-  quotes, `visibility`, outlines and every border style (collapsed tables resolve edges between cells that meet along a whole edge, and share one width per axis), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
+  quotes, `visibility`, outlines and every border style (collapsed tables resolve edges between cells that meet along a whole edge, and each grid line takes its widest border; an inline element draws no outline), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
 - **Background images** (with the `image` Cargo feature): local files through `url()`, with `repeat`, `position` and
   `attachment`; relative paths resolve against `BoxTree::with_base`. Paths outside the base
