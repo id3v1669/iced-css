@@ -44,9 +44,9 @@ use crate::{
         display_rules::{BundleLimits, DisplayRuleBundle, GraphBinding, GraphOrigin},
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
-            BackgroundImage, BackgroundOffset, BoxPaint, GeneratedRun, InlineBoxSides,
-            PreparedTree, RunSource, TextLineHeight, TextStyle, TreeLayoutError, TreePaint,
-            evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
+            BackgroundImage, BackgroundOffset, BoxPaint, GeneratedFrame, GeneratedRun,
+            InlineBoxSides, PreparedTree, RunSource, TextLineHeight, TextStyle, TreeLayoutError,
+            TreePaint, evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
         },
     },
     host::source_publication::{InitialSourceHost, PublicationLimits},
@@ -1163,6 +1163,27 @@ impl BoxTree {
                 .iter()
                 .map(|&run| {
                     let content = match (run, generated_of(run)) {
+                        // `content:""` with sides holds a place for them, as an empty
+                        // inline element does (10.8).
+                        (_, Some(made))
+                            if made.text.is_empty()
+                                && !made.block
+                                && made.frame.as_ref().is_some_and(|frame| {
+                                    let sides = frame_sides(frame);
+                                    [
+                                        sides.margin,
+                                        sides.border,
+                                        sides.padding,
+                                        sides.percent_margin,
+                                        sides.percent_padding,
+                                    ]
+                                    .iter()
+                                    .flatten()
+                                    .any(|side| *side > 0.0)
+                                }) =>
+                        {
+                            None
+                        }
                         (_, Some(made)) => Some(made.text.as_str()),
                         (RunSource::Node(at), None) => projection
                             .original_index(at)
@@ -1302,11 +1323,35 @@ impl BoxTree {
         // 15.6: small capitals are simulated by scaling capital letters. 8.6: an inline box's
         // sides open before its first run and close after its last, whatever lines it breaks
         // across; spaces take the room across, as for `text-indent`.
-        // The inline boxes around a projected index, outermost first.
+        // 10.8: an inline `:before` or `:after` is a box inside its element, numbered past
+        // the projected indices: `count + 2 * element + side`.
+        let count = prepared.inline_boxes.len();
+        let pseudo_box = |source: RunSource| match source {
+            // A block one's entry has no sides, so its chain is its element's.
+            RunSource::Before(at) | RunSource::After(at) => generated_of(source)
+                .map(|_| count + 2 * at + usize::from(matches!(source, RunSource::After(_)))),
+            RunSource::Node(_) => None,
+        };
+        let element_of = |id: usize| if id >= count { (id - count) / 2 } else { id };
+        let mut box_sides = prepared.inline_boxes.clone();
+        let mut box_parent = prepared.inline_parent.clone();
+        let mut box_paints = raw_paints.clone();
+        for (at, pair) in generated.iter().enumerate().take(count) {
+            for made in pair {
+                let frame = made
+                    .as_ref()
+                    .filter(|made| !made.block)
+                    .and_then(|made| made.frame.as_ref());
+                box_sides.push(frame.map(frame_sides));
+                box_parent.push(prepared.inline_boxes[at].is_some().then_some(at));
+                box_paints.push(frame.map_or_else(BoxPaint::default, |frame| frame.paint));
+            }
+        }
+        // The inline boxes around a box, outermost first.
         let inline_chain = |mut at: Option<usize>| {
             let mut found = Vec::new();
             while let Some(here) = at {
-                let sided = prepared.inline_boxes[here].is_some_and(|sides| {
+                let sided = box_sides[here].is_some_and(|sides| {
                     [
                         sides.margin,
                         sides.border,
@@ -1321,7 +1366,7 @@ impl BoxTree {
                 if sided {
                     found.push(here);
                 }
-                at = prepared.inline_parent[here];
+                at = box_parent[here];
             }
             found.reverse();
             found
@@ -1334,7 +1379,7 @@ impl BoxTree {
             }
             for &source in runs {
                 let (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at)) = source;
-                for element in inline_chain(Some(at)) {
+                for element in inline_chain(Some(pseudo_box(source).unwrap_or(at))) {
                     last_leaf.insert(element, arena);
                 }
             }
@@ -1350,7 +1395,8 @@ impl BoxTree {
                 continue;
             };
             let boxed = !leaf.is_empty();
-            let mut tagged: Vec<(TextRun, usize)> = Vec::with_capacity(leaf.runs.len());
+            // Each run, its element, and the innermost box it sits in.
+            let mut tagged: Vec<(TextRun, usize, usize)> = Vec::with_capacity(leaf.runs.len());
             for (mut run, &source) in leaf.runs.drain(..).zip(runs) {
                 let (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at)) = source;
                 let style = match generated_of(source) {
@@ -1358,32 +1404,49 @@ impl BoxTree {
                     None => &styles[at],
                 };
                 let small_caps = style.small_caps;
-                // 12.5.1: an inside marker's image takes a run of its own, the marker's text.
-                let image = match source {
-                    RunSource::Before(owner) => generated_of(source)
+                let start = pseudo_box(source).unwrap_or(at);
+                // Whether the run is in a `:before` or `:after` box with sides of its own.
+                let in_box = start != at && inline_chain(Some(start)).last() == Some(&start);
+                // 12.5.1: an inside marker takes a run of its own, the marker's text, when it
+                // has an image or the `:before` it leads has a box: the marker is outside it.
+                let marker = match source {
+                    RunSource::Before(_) => generated_of(source)
                         .and_then(|made| made.marker)
-                        .filter(|length| run.text.is_char_boundary(*length))
-                        .zip(inside_image(owner)),
+                        .filter(|length| run.text.is_char_boundary(*length)),
                     _ => None,
                 };
+                let image = marker.and_then(|_| inside_image(at));
                 let mut pieces = Vec::with_capacity(2);
-                if let Some((length, handle)) = image {
-                    let rest = run.text.split_off(length);
-                    pieces.push(TextRun {
-                        marker_image: Some(MarkerImage {
-                            handle,
-                            fallback: None,
-                            shown: None,
-                        }),
-                        ..run.clone()
-                    });
-                    if !rest.is_empty() {
-                        pieces.push(TextRun { text: rest, ..run });
+                match marker.filter(|_| image.is_some() || in_box) {
+                    Some(length) => {
+                        let rest = run.text.split_off(length);
+                        pieces.push((
+                            TextRun {
+                                marker_image: image.map(|handle| MarkerImage {
+                                    handle,
+                                    fallback: None,
+                                    shown: None,
+                                }),
+                                // Outside the box, the marker shows none of its background.
+                                background: if in_box { None } else { run.background },
+                                background_from: if in_box { None } else { run.background_from },
+                                ..run.clone()
+                            },
+                            at,
+                        ));
+                        // An empty `content` keeps a place for its box's sides.
+                        if !rest.is_empty() || in_box {
+                            let text = if rest.is_empty() {
+                                "\u{200B}".to_owned()
+                            } else {
+                                rest
+                            };
+                            pieces.push((TextRun { text, ..run }, start));
+                        }
                     }
-                } else {
-                    pieces.push(run);
+                    None => pieces.push((run, start)),
                 }
-                for mut run in pieces {
+                for (mut run, start) in pieces {
                     // 16.4: more room at each space, by the same stand-in spaces as an indent.
                     if style.word_spacing > 0.0
                         && let Some(extra) = indent_run(&run, style.word_spacing)
@@ -1393,9 +1456,13 @@ impl BoxTree {
                         run.text = run.text.replace(' ', &wide).replace('\u{a0}', &wide_fixed);
                     }
                     if small_caps && run.marker_image.is_none() {
-                        tagged.extend(small_capitals(&run).into_iter().map(|part| (part, at)));
+                        tagged.extend(
+                            small_capitals(&run)
+                                .into_iter()
+                                .map(|part| (part, at, start)),
+                        );
                     } else {
-                        tagged.push((run, at));
+                        tagged.push((run, at, start));
                     }
                 }
             }
@@ -1442,7 +1509,7 @@ impl BoxTree {
                 });
             let bidi_chains: Vec<Vec<(usize, char)>> = tagged
                 .iter()
-                .map(|(run, at)| {
+                .map(|(run, at, _)| {
                     // Controls around nothing would make blank text a line.
                     if run.text.is_empty() {
                         return Vec::new();
@@ -1456,7 +1523,7 @@ impl BoxTree {
                     chain
                 })
                 .collect();
-            for (index, (run, _)) in tagged.iter_mut().enumerate() {
+            for (index, (run, _, _)) in tagged.iter_mut().enumerate() {
                 let here = &bidi_chains[index];
                 let before = index
                     .checked_sub(1)
@@ -1480,17 +1547,17 @@ impl BoxTree {
             }
             let chains: Vec<Vec<usize>> = tagged
                 .iter()
-                .map(|(_, at)| inline_chain(Some(*at)))
+                .map(|(_, _, start)| inline_chain(Some(*start)))
                 .collect();
             let mut placed = Vec::with_capacity(tagged.len());
-            for (index, (mut run, _)) in tagged.into_iter().enumerate() {
+            for (index, (mut run, _, _)) in tagged.into_iter().enumerate() {
                 let here = &chains[index];
                 if !boxed {
                     placed.push(run);
                     continue;
                 }
                 let sides_of = |element: usize| {
-                    prepared.inline_boxes[element].unwrap_or(InlineBoxSides {
+                    box_sides[element].unwrap_or(InlineBoxSides {
                         margin: [0.0; 4],
                         border: [0.0; 4],
                         padding: [0.0; 4],
@@ -1502,10 +1569,10 @@ impl BoxTree {
                 let decorations = |elements: &[usize]| -> Vec<InlineDecoration> {
                     elements
                         .iter()
-                        .filter(|element| raw_paints[**element].visible)
+                        .filter(|element| box_paints[**element].visible)
                         .map(|&element| {
                             let sides = sides_of(element);
-                            let colors = raw_paints[element].border;
+                            let colors = box_paints[element].border;
                             InlineDecoration {
                                 padding: [sides.padding[0], sides.padding[2]],
                                 border: [
@@ -1513,11 +1580,17 @@ impl BoxTree {
                                     (sides.border[2], colors[2]),
                                 ],
                                 border_style: [
-                                    raw_paints[element].border_style[0],
-                                    raw_paints[element].border_style[2],
+                                    box_paints[element].border_style[0],
+                                    box_paints[element].border_style[2],
                                 ],
-                                background: raw_paints[element].background,
-                                owner: projection.original_index(element).unwrap_or_default(),
+                                background: box_paints[element].background,
+                                // A generated box answers to no source node: no element's
+                                // animation or outline is its.
+                                owner: if element < count {
+                                    projection.original_index(element).unwrap_or_default()
+                                } else {
+                                    usize::MAX
+                                },
                             }
                         })
                         .collect()
@@ -1527,20 +1600,23 @@ impl BoxTree {
                 // The background an inline shows from around it, and whose it is.
                 let around = |mut at: Option<usize>| {
                     while let Some(here) = at {
-                        if let Some(color) = raw_paints[here]
+                        if let Some(color) = box_paints[here]
                             .background
-                            .filter(|_| raw_paints[here].visible)
+                            .filter(|_| box_paints[here].visible)
                         {
-                            return (Some(color), projection.original_index(here));
+                            let from = (here < count)
+                                .then(|| projection.original_index(here))
+                                .flatten();
+                            return (Some(color), from);
                         }
-                        at = prepared.inline_parent[here];
+                        at = box_parent[here];
                     }
                     (None, None)
                 };
                 let side = |element: usize, across: usize, run: &TextRun, depth: usize| {
                     let sides = sides_of(element);
                     let owner_of = |at: Option<usize>| {
-                        at.and_then(|at| projection.original_index(at))
+                        at.and_then(|at| projection.original_index(element_of(at)))
                             .unwrap_or(run.owner)
                     };
 
@@ -1564,23 +1640,21 @@ impl BoxTree {
                                 percent_margin,
                                 false,
                             )),
-                            background: around(prepared.inline_parent[element]).0,
-                            background_from: around(prepared.inline_parent[element]).1,
+                            background: around(box_parent[element]).0,
+                            background_from: around(box_parent[element]).1,
                             inline_boxes: decorations(&here[..depth]),
                             // Nothing hidden answers input: the nearest box around that shows.
                             owner: owner_of(
-                                std::iter::successors(prepared.inline_parent[element], |at| {
-                                    prepared.inline_parent[*at]
-                                })
-                                .find(|at| raw_paints[*at].visible)
-                                .or(Some(container_of[arena])),
+                                std::iter::successors(box_parent[element], |at| box_parent[*at])
+                                    .find(|at| box_paints[*at].visible)
+                                    .or(Some(container_of[arena])),
                             ),
                             ..spacer
                         });
                     let bar = sides.border[across];
                     let room = bar + sides.padding[across];
-                    let visible = raw_paints[element].visible;
-                    let edge = raw_paints[element].border[across]
+                    let visible = box_paints[element].visible;
+                    let edge = box_paints[element].border[across]
                         .filter(|_| bar > 0.0 && visible)
                         .map(|color| (across == 3, bar, color));
                     // Up to the next space that fits: a thin border must keep its bar.
@@ -1596,20 +1670,20 @@ impl BoxTree {
                                 true,
                             )),
                             // Its own background comes with its box, over its padding too.
-                            background: if raw_paints[element].background.is_some() && visible {
+                            background: if box_paints[element].background.is_some() && visible {
                                 None
                             } else {
-                                around(prepared.inline_parent[element]).0
+                                around(box_parent[element]).0
                             },
-                            background_from: if raw_paints[element].background.is_some() && visible
+                            background_from: if box_paints[element].background.is_some() && visible
                             {
                                 None
                             } else {
-                                around(prepared.inline_parent[element]).1
+                                around(box_parent[element]).1
                             },
                             inline_boxes: decorations(&here[..=depth]),
                             edge,
-                            edge_style: raw_paints[element].border_style[across],
+                            edge_style: box_paints[element].border_style[across],
                             visible,
                             owner: owner_of(Some(element)),
                             ..spacer
@@ -2705,7 +2779,8 @@ pub struct InlineDecoration {
     /// The `border-top-style` and `border-bottom-style`.
     pub border_style: [&'static str; 2],
     pub background: Option<[f32; 3]>,
-    /// The source node of the box.
+    /// The source node of the box; `usize::MAX` for a `:before` or `:after` box, which
+    /// is no source node's.
     pub owner: usize,
 }
 
@@ -2743,6 +2818,29 @@ fn small_capitals(run: &TextRun) -> Vec<TextRun> {
         }
     }
     parts
+}
+
+/// An inline `:before` or `:after`'s sides, from its frame, as an inline element's.
+fn frame_sides(frame: &GeneratedFrame) -> InlineBoxSides {
+    let pixels = |dims: [Dim; 4]| {
+        dims.map(|value| match value {
+            Dim::Px(pixels) => pixels,
+            _ => 0.0,
+        })
+    };
+    let percent = |dims: [Dim; 4]| {
+        dims.map(|value| match value {
+            Dim::Percent(percent) => percent.max(0.0),
+            _ => 0.0,
+        })
+    };
+    InlineBoxSides {
+        margin: pixels(frame.margin),
+        border: frame.border,
+        padding: pixels(frame.padding),
+        percent_margin: percent(frame.margin),
+        percent_padding: percent(frame.padding),
+    }
 }
 
 /// Invisible spaces about `indent` wide at `first`'s font, or `None` when too small to show.

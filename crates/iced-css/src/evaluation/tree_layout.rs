@@ -249,8 +249,8 @@ pub struct GeneratedFrame {
     pub paint: BoxPaint,
 }
 
-/// One `::before` or `::after`, as text in its element. An inline one takes only text
-/// properties; a block-level one also its box (`frame`).
+/// One `::before` or `::after`, as text in its element. A block-level one has a box of
+/// its own (`frame`); an inline one takes the frame's sides around its text.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeneratedRun {
     pub text: String,
@@ -2583,6 +2583,8 @@ pub fn evaluate_tree_paint<'r>(
             if content.is_none() && marker_text.is_none() {
                 continue;
             }
+            // With no content of its own there is no box, only an inside marker.
+            let has_content = content.is_some();
             // A `display: none` pseudo affects no counter (12.4.3); an inside marker stays.
             pending_pair[side] = Some(PendingContent {
                 marker: marker_text,
@@ -2721,7 +2723,8 @@ pub fn evaluate_tree_paint<'r>(
                     _ => initial,
                 })
             };
-            let frame = if block {
+            // An inline one's sides wrap its text as an inline element's do (10.8).
+            let frame = if block || has_content {
                 let mut border_style = ["none"; 4];
                 let mut border_width = [0.0_f32; 4];
                 let mut border_color = [None; 4];
@@ -2821,7 +2824,8 @@ pub fn evaluate_tree_paint<'r>(
                 text,
                 size,
                 color: rgb(pseudo_color.value(), limits.numeric),
-                background: rgb(pseudo_background.value(), limits.numeric),
+                // Only a box paints a background; an inside marker alone has none.
+                background: rgb(pseudo_background.value(), limits.numeric).filter(|_| has_content),
                 visible: shown,
                 style: TextStyle {
                     weight,

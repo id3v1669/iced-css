@@ -304,7 +304,7 @@ impl BoxTree {
             if node == ancestor {
                 return true;
             }
-            match nodes[node].parent() {
+            match nodes.get(node).and_then(|value| value.parent()) {
                 Some(parent) => node = parent,
                 None => return false,
             }
@@ -382,7 +382,7 @@ impl BoxTree {
                         *band = Some(now);
                     }
                 }
-                if run.owner == root
+                if edge_owner(run) == root
                     && let Some((left, _, color)) = &mut run.edge
                     && (side == 3) == *left
                     && matches!(side, 1 | 3)
@@ -431,7 +431,7 @@ impl BoxTree {
             |node: usize, side: InlineSide| followers.inline_sides.contains(&(node, side));
         for leaf in self.texts.iter_mut().flatten() {
             for run in &mut leaf.runs {
-                let owner = run.owner;
+                let owner = edge_owner(run);
                 for sides in &mut run.inline_boxes {
                     if follows(sides.owner, InlineSide::Top) {
                         swap(&mut sides.border[0].1);
@@ -530,6 +530,7 @@ impl BoxTree {
     fn inline_side_colors(&self) -> BTreeMap<(usize, InlineSide), [f32; 3]> {
         let mut found = BTreeMap::new();
         for run in self.texts.iter().flatten().flat_map(|leaf| &leaf.runs) {
+            // A generated box's sides key as `usize::MAX`, inside no element.
             for sides in &run.inline_boxes {
                 if let (width, Some(color)) = sides.border[0]
                     && width > 0.0
@@ -548,11 +549,19 @@ impl BoxTree {
                 } else {
                     InlineSide::End
                 };
-                found.insert((run.owner, side), color);
+                found.insert((edge_owner(run), side), color);
             }
         }
         found
     }
+}
+
+/// The box a run's side bar belongs to: the innermost box it wears, which a side spacer's
+/// own box is; a generated box's is `usize::MAX`.
+fn edge_owner(run: &super::TextRun) -> usize {
+    run.inline_boxes
+        .last()
+        .map_or(run.owner, |sides| sides.owner)
 }
 
 /// When an animation runs and how it moves. Plain `AnimationTiming` is linear.

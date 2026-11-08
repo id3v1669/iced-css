@@ -3218,6 +3218,56 @@ mod animation {
     }
 
     #[test]
+    fn a_generated_box_keeps_its_own_sides_while_its_element_animates() {
+        let source = || node("page", vec![node("s", vec![text("x", "x")])]);
+        let blue = [0.0, 0.0, 1.0];
+        // The element's border follows its color, or has one of its own that moves.
+        for (own, properties) in [(false, "color"), (true, "border-color")] {
+            let css = |color: &str| {
+                let border = if own { color } else { "" };
+                format!(
+                    "#s {{ display:inline; color:{color}; border:2px solid {border}; }}
+                     #s:before {{ content:\"a\"; border:2px solid #0000ff; }}"
+                )
+            };
+            let from = BoxTree::new(source(), &css("#000000")).unwrap();
+            let to = from.restyled(&[&css("#ffffff")]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            let start = Instant::now();
+            animations
+                .request(&from, &to, "s", &[properties], second(), start)
+                .unwrap();
+            animations.advance(start + Duration::from_millis(500), &to);
+            let shown = animations.presented(&to);
+            let leaves = shown.text_leaves();
+            let (mut moved, mut kept) = (0, 0);
+            for run in &leaves[0].1.runs {
+                for sides in &run.inline_boxes {
+                    let band = sides.border[0].1.unwrap();
+                    if sides.owner == usize::MAX {
+                        assert_eq!(band, blue, "{properties}");
+                        kept += 1;
+                    } else {
+                        assert!(near(band, [0.5; 3]), "{properties} {band:?}");
+                        moved += 1;
+                    }
+                }
+                if let Some((_, _, edge)) = run.edge {
+                    if run.inline_boxes.last().unwrap().owner == usize::MAX {
+                        assert_eq!(edge, blue, "{properties}");
+                        kept += 1;
+                    } else {
+                        assert!(near(edge, [0.5; 3]), "{properties} {edge:?}");
+                        moved += 1;
+                    }
+                }
+            }
+            // Both bars of each box, and each box's band on its runs.
+            assert!(moved > 2 && kept > 2, "{properties} {moved} {kept}");
+        }
+    }
+
+    #[test]
     fn generated_runs_with_the_same_text_keep_their_own_ends() {
         let source = || node("page", vec![text("line", "words")]);
         let css = |color: &str| {
@@ -3904,6 +3954,94 @@ fn an_inline_holding_only_empty_inlines_holds_one_place() {
     // An inline-block inside is content, of a line of its own.
     let (count, _) = places(nested(vec![]), "#f { display:inline-block; }");
     assert_eq!(count, 0);
+}
+
+#[test]
+fn an_inline_generated_box_takes_its_sides_and_answers_to_no_element() {
+    let runs_of = |css: &str| {
+        let tree = BoxTree::new(
+            node("page", vec![node("s", vec![text("x", "text")])]),
+            &format!("#s {{ display:inline; }} #s:before {{ {css} }}"),
+        )
+        .unwrap();
+        tree.text_leaves()[0].1.runs.clone()
+    };
+    // `content:""` with sides: a zero-width place between its side spaces, boxed.
+    let runs = runs_of("content:\"\"; padding:0 8px; background-color:#ff0000;");
+    let place = runs.iter().position(|run| run.text == "\u{200B}").unwrap();
+    assert!(runs[..place].iter().any(|run| run.spacer));
+    assert!(runs[place + 1..].iter().any(|run| run.spacer));
+    let own = &runs[place].inline_boxes;
+    assert_eq!(own.len(), 1);
+    assert_eq!(own[0].background, Some([1.0, 0.0, 0.0]));
+    assert_eq!(own[0].owner, usize::MAX);
+    // Its text after it has no box of its.
+    assert!(runs.last().unwrap().inline_boxes.is_empty());
+    // Text content gets the same, and a border its bars.
+    let runs = runs_of("content:\"ab\"; border:2px solid #0000ff;");
+    assert_eq!(runs.iter().filter(|run| run.edge.is_some()).count(), 2);
+    let ab = runs.iter().find(|run| run.text == "ab").unwrap();
+    assert_eq!(ab.inline_boxes[0].border[0].0, 2.0);
+    // Without sides, nothing changes: no place, no box.
+    let runs = runs_of("content:\"\";");
+    assert!(runs.iter().all(|run| !run.text.contains('\u{200B}')));
+    assert!(runs.iter().all(|run| run.inline_boxes.is_empty()));
+    // Inside a padded inline, it sits within that box too, innermost.
+    let tree = BoxTree::new(
+        node("page", vec![node("s", vec![text("x", "text")])]),
+        "#s { display:inline; padding:0 4px; }
+         #s:after { content:\"\"; padding:0 8px; background-color:#ff0000; }",
+    )
+    .unwrap();
+    let runs = &tree.text_leaves()[0].1.runs;
+    let place = runs.iter().find(|run| run.text == "\u{200B}").unwrap();
+    assert_eq!(place.inline_boxes.len(), 2);
+    assert_eq!(place.inline_boxes[1].owner, usize::MAX);
+    assert_ne!(place.inline_boxes[0].owner, usize::MAX);
+}
+
+#[test]
+fn an_inside_marker_stays_outside_its_before_box() {
+    let runs_of = |css: &str| {
+        let tree = BoxTree::new(
+            node("page", vec![node("li", vec![text("x", "item")])]),
+            &format!(
+                "#li {{ display:list-item; list-style:inside decimal; }}
+                 #li:before {{ padding:0 8px; background-color:#ff0000; {css} }}"
+            ),
+        )
+        .unwrap();
+        tree.text_leaves()[0]
+            .1
+            .runs
+            .iter()
+            .map(|run| {
+                // A run outside the box shows none of its background either.
+                if run.inline_boxes.is_empty() {
+                    assert_eq!(run.background, None, "{:?}", run.text);
+                }
+                (run.text.clone(), !run.inline_boxes.is_empty())
+            })
+            .collect::<Vec<_>>()
+    };
+    // The marker comes first, outside the box its `:before` content makes.
+    let runs = runs_of("content:\"x\";");
+    assert_eq!(runs[0], ("1.\u{a0}".to_owned(), false), "{runs:?}");
+    assert!(runs.contains(&("x".to_owned(), true)), "{runs:?}");
+    assert_eq!(runs.last().unwrap(), &("item".to_owned(), false));
+    // An empty one still holds its place after the marker.
+    let runs = runs_of("content:\"\";");
+    assert_eq!(runs[0], ("1.\u{a0}".to_owned(), false), "{runs:?}");
+    assert!(runs.contains(&("\u{200B}".to_owned(), true)), "{runs:?}");
+    // With no content there is no box: the marker alone, as before.
+    let runs = runs_of("");
+    assert!(runs.iter().all(|(_, boxed)| !boxed), "{runs:?}");
+    assert_eq!(
+        runs.iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<String>(),
+        "1.\u{a0}item"
+    );
 }
 
 #[test]

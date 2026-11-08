@@ -2535,6 +2535,56 @@ fn an_inline_holding_only_an_empty_inline_draws_its_box() {
 }
 
 #[test]
+fn generated_inline_boxes_draw_as_inline_elements_do() {
+    // The `:before` with `css`, or an element with it first in its place.
+    let draw = |css: &str, content: &str, element: bool, name: &str| {
+        let mut inside = vec![text("x", "text")];
+        if element {
+            let made = if content.is_empty() {
+                vec![]
+            } else {
+                vec![text("m", "ab")]
+            };
+            inside.insert(0, node("i", made));
+        }
+        let root = node(
+            "p",
+            vec![text("a", "before "), node("s", inside), text("c", " after")],
+        );
+        let rule = if element { "#i" } else { "#s:before" };
+        let made = if element {
+            String::new()
+        } else {
+            format!("content:\"{content}\";")
+        };
+        let sheet = format!(
+            "#p {{ width:300px; background-color:white; color:black; }}
+             #s {{ display:inline; }}
+             {rule} {{ display:inline; {made} {css} }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let boxed = "padding:0 8px; border:2px solid #2a4d69; background-color:#d9534f;";
+    for (content, tag) in [("", "empty"), ("ab", "text")] {
+        let name = format!("generated-box-{tag}-{}.png", std::process::id());
+        assert!(draw(boxed, content, true, &name));
+        assert!(draw(boxed, content, false, &name), "{content:?}");
+        // Without its sides it is not that box.
+        assert!(!draw("", content, false, &name));
+    }
+    // A margin alone moves what follows.
+    let name = format!("generated-margin-{}.png", std::process::id());
+    assert!(draw("margin-left:20px;", "", true, &name));
+    assert!(draw("margin-left:20px;", "", false, &name));
+}
+
+#[test]
 fn inline_percentage_sides_take_their_share_of_the_block() {
     let draw = |css: &str, name: &str| {
         let root = node(
