@@ -75,8 +75,8 @@ scrolling list item's outside marker moves with the text, unclipped. Animations 
 inline outline colors, an inline background or border color to or from transparent or a fading box, fonts or keyword values; those and `!important` targets apply at once. An inline element's background and border colors run from one color to another on its line. A descendant or border whose own color has the same two ends as the
 animated `color` moves with it.
 
-Not read at all: `letter-spacing` (iced has no way to set it), the paged-media properties, and URL cursors (their keyword fallback is used). `word-spacing` adds stand-in spaces, positive values only, rounding like inline sides, a wrapped line can start with some of them, and they let a no-break space wrap. `text-indent` is approximated by leading spaces, positive lengths only
-(no percentages or hanging indents), a word too wide beside it moves to the next line, one wider than the block wraps into blank lines, and none applies when an inline-block opens the line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
+Not read at all: `letter-spacing` (iced has no way to set it), the paged-media properties, and URL cursors (their keyword fallback is used). `word-spacing` adds stand-in spaces, positive values only, rounding like inline sides, a wrapped line can start with some of them, and they let a no-break space wrap. `text-indent` is approximated by leading spaces, positive values only
+(no hanging indents). A percentage is of the block's own content width, not its containing block's; a shrink-to-fit box fits its text without it, so its first word can wrap; it applies only in the widget (`BoxTree::layout_text` reads none) and not on the text between inline-blocks. A word too wide beside it moves to the next line, one wider than the block wraps into blank lines, and none applies when an inline-block opens the line. `font-variant: small-caps` scales capitals, splitting combining marks from their letters and
 sizing decorations by part; generated content and markers take it, `word-spacing`, `direction` and `unicode-bidi` only from their element.
 
 ## Cost

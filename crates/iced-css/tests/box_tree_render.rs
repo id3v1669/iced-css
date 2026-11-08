@@ -2184,3 +2184,50 @@ fn generated_blocks_keep_the_right_background_in_text_and_inline_owners() {
         &name,
     ));
 }
+
+#[test]
+fn a_percentage_text_indent_takes_its_share_of_the_width() {
+    let draw = |indent: &str, name: &str| {
+        let root = node("p", vec![text("t", "indented words")]);
+        let sheet = format!(
+            "#p {{ width:200px; background-color:white; color:black; text-indent:{indent}; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // A quarter of the 200px it lays out in is 50px.
+    let name = format!("indent-percent-{}.png", std::process::id());
+    assert!(draw("50px", &name));
+    assert!(draw("25%", &name));
+    assert!(!draw("50%", &name));
+    // On a line of inline-blocks it takes none, rather than a share of a piece's own width.
+    let row = |indent: &str, name: &str| {
+        let root = node(
+            "p",
+            vec![
+                text("a", "Hello there my good friends and "),
+                node("b", vec![text("bx", "X")]),
+                text("c", " world"),
+            ],
+        );
+        let sheet = format!(
+            "#p {{ width:400px; background-color:white; color:black; text-indent:{indent}; }}
+             #b {{ display:inline-block; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("indent-percent-row-{}.png", std::process::id());
+    assert!(row("0", &name));
+    assert!(row("25%", &name));
+}

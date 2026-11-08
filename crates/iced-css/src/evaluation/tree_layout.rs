@@ -1740,8 +1740,10 @@ pub struct TextStyle {
     pub small_caps: bool,
     /// `word-spacing` in pixels past the normal space; negative values are ignored.
     pub word_spacing: f32,
-    /// `text-indent` in pixels. A percentage has no width to resolve against here: 0.
+    /// `text-indent` in pixels; a percentage is 0 here and in `text_indent_percent`.
     pub text_indent: f32,
+    /// A percentage `text-indent`, of the width the block's text lays out in.
+    pub text_indent_percent: f32,
     /// 100 to 900.
     pub weight: u16,
     pub italic: bool,
@@ -2048,6 +2050,7 @@ pub fn evaluate_tree_paint<'r>(
             small_caps,
             word_spacing: 0.0,
             text_indent: 0.0,
+            text_indent_percent: 0.0,
             weight: weight.number(),
             italic,
             line_height,
@@ -2218,6 +2221,18 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => 0.0,
         };
+        // A percentage keeps its computed value, a percentage, for the width at layout.
+        let text_indent_percent = match defaulted("text-indent")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Length(LengthTarget::Percentage(value))) => {
+                value
+                    .percentage_finite_f32(100.0, limits.numeric)
+                    .map_or(0.0, |c| c.value)
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.map_or(0.0, |parent: usize| styles[parent].text_indent_percent)
+            }
+            _ => 0.0,
+        };
         let word_spacing = match defaulted("word-spacing")? {
             DefaultedValueRef::Compute(SpecifiedValue::Length(value)) => signed(value),
             DefaultedValueRef::ParentComputed => {
@@ -2227,6 +2242,7 @@ pub fn evaluate_tree_paint<'r>(
         };
         if let Some(style) = styles.last_mut() {
             style.text_indent = text_indent;
+            style.text_indent_percent = text_indent_percent;
             style.word_spacing = word_spacing;
         }
         let clip = match defaulted("clip")? {

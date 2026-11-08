@@ -336,6 +336,18 @@ pub struct TextLeaf {
     pub align: &'static str,
     pub wraps: bool,
     pub line_height: TextLineHeight,
+    /// A percentage `text-indent` this leaf's first line takes once its width is known.
+    pub percent_indent: Option<PercentIndent>,
+}
+
+/// A percentage `text-indent`, resolved against the width the leaf lays out in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PercentIndent {
+    pub percent: f32,
+    /// The source node of the block the indent belongs to.
+    pub owner: usize,
+    /// Whether the leaf's first run is the spacer this indent last made.
+    pub inserted: bool,
 }
 
 impl TextLeaf {
@@ -1233,6 +1245,7 @@ impl BoxTree {
                 },
                 wraps: !matches!(lead.white_space, "pre" | "nowrap"),
                 line_height: lead.line_height,
+                percent_indent: None,
             })
         };
         let texts: Vec<Option<TextLeaf>> = (0..prepared.boxes.len()).map(build_leaf).collect();
@@ -1552,9 +1565,10 @@ impl BoxTree {
                 prepared.positions[arena].0
             };
             let indent = styles[owner].text_indent;
+            let percent = styles[owner].text_indent_percent;
             let Some(leaf) = texts[arena]
                 .as_mut()
-                .filter(|leaf| indent > 0.0 && !leaf.is_empty())
+                .filter(|leaf| (indent > 0.0 || percent > 0.0) && !leaf.is_empty())
             else {
                 continue;
             };
@@ -1575,6 +1589,24 @@ impl BoxTree {
                 })
                 .is_none_or(leads);
             if !leads(arena) || !line_leads {
+                continue;
+            }
+            if percent > 0.0 {
+                // A piece of a line of inline-blocks is sized before any indent: a share of
+                // its width would wrap its first word. It takes none.
+                let in_row = prepared.anonymous[arena]
+                    && parent_of[arena]
+                        .is_some_and(|parent| prepared.boxes[parent].inline_row.is_some());
+                if in_row {
+                    continue;
+                }
+                // Its width is known only at layout: the widget sizes it there.
+                let fallback = leaf.runs.first().map_or(0, |run| run.owner);
+                leaf.percent_indent = Some(PercentIndent {
+                    percent,
+                    owner: projection.original_index(owner).unwrap_or(fallback),
+                    inserted: false,
+                });
                 continue;
             }
             let lead = leaf.runs.iter().find(|run| !run.text.is_empty());
@@ -1645,6 +1677,7 @@ impl BoxTree {
                         align: "right",
                         wraps: false,
                         line_height: style.line_height,
+                        percent_indent: None,
                     },
                 ))
             })
@@ -1863,6 +1896,39 @@ impl BoxTree {
             },
             &mut |arena, narrow, until, wide| split(arena, narrow.ceil(), until, wide.ceil()),
         )
+    }
+
+    /// Sizes each percentage `text-indent` for the width its leaf laid out in, `geometry`
+    /// by arena slot. Returns whether any leaf changed, and so needs another layout.
+    fn apply_percent_indents(&mut self, geometry: &[FlowGeometry]) -> bool {
+        let mut changed = false;
+        for (arena, leaf) in self.texts.iter_mut().enumerate() {
+            let Some(leaf) = leaf.as_mut() else { continue };
+            let Some(mut indent) = leaf.percent_indent else {
+                continue;
+            };
+            let Some(place) = geometry.get(arena).map(|outer| outer.content) else {
+                continue;
+            };
+            let old = indent.inserted.then(|| leaf.runs.remove(0));
+            let width = indent.percent / 100.0 * (place.right - place.left).max(0.0);
+            let spacer = leaf
+                .runs
+                .iter()
+                .find(|run| !run.text.is_empty())
+                .and_then(|first| indent_run(first, width))
+                .map(|mut spacer| {
+                    spacer.owner = indent.owner;
+                    spacer
+                });
+            changed |= old.as_ref().map(|run| &run.text) != spacer.as_ref().map(|run| &run.text);
+            indent.inserted = spacer.is_some();
+            if let Some(spacer) = spacer {
+                leaf.runs.insert(0, spacer);
+            }
+            leaf.percent_indent = Some(indent);
+        }
+        changed
     }
 
     /// 17.6.1.1 counts a cell hosting a widget as empty, but the widget shows: the rows its
@@ -4170,41 +4236,49 @@ where
         }
         self.tree
             .keep_rows_with_widgets(self.slots.iter().copied().flatten());
-        // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
-        let (elements, slots, children) = (&mut self.elements, &self.slots, &mut tree.children);
-        let current = &self.tree;
-        self.slot_geometry = current
-            .layout_arena(
-                available.width,
-                Some(available.height),
-                &mut |arena, width| {
-                    if let Some(index) = slots.iter().position(|slot| *slot == Some(arena)) {
-                        // A Fill-height widget takes what the box has, and asks for nothing.
-                        if elements[index].as_widget().size().height.is_fill() {
-                            return Some(0.0);
+        // A percentage `text-indent` needs its block's width: a second layout gives its spacer
+        // room, when the first changed one.
+        for pass in 0..2 {
+            // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
+            let (elements, slots, children) = (&mut self.elements, &self.slots, &mut tree.children);
+            let current = &self.tree;
+            self.slot_geometry = current
+                .layout_arena(
+                    available.width,
+                    Some(available.height),
+                    &mut |arena, width| {
+                        if let Some(index) = slots.iter().position(|slot| *slot == Some(arena)) {
+                            // A Fill-height widget takes what the box has, and asks for nothing.
+                            if elements[index].as_widget().size().height.is_fill() {
+                                return Some(0.0);
+                            }
+                            let limits =
+                                layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
+                            return Some(
+                                elements[index]
+                                    .as_widget_mut()
+                                    .layout(&mut children[index], renderer, &limits)
+                                    .size()
+                                    .height,
+                            );
                         }
-                        let limits =
-                            layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
-                        return Some(
-                            elements[index]
-                                .as_widget_mut()
-                                .layout(&mut children[index], renderer, &limits)
-                                .size()
-                                .height,
-                        );
-                    }
-                    current.texts[arena]
-                        .as_ref()
-                        .map(|leaf| paragraph(renderer, leaf, width).min_bounds().height)
-                },
-                &mut |arena, narrow, until, wide| {
-                    let leaf = current.texts[arena].as_ref()?;
-                    let (_, second, first_height) = split_leaf(renderer, leaf, narrow, until)?;
-                    let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
-                    Some(first_height + rest.min_bounds().height)
-                },
-            )
-            .unwrap_or_default();
+                        current.texts[arena]
+                            .as_ref()
+                            .map(|leaf| paragraph(renderer, leaf, width).min_bounds().height)
+                    },
+                    &mut |arena, narrow, until, wide| {
+                        let leaf = current.texts[arena].as_ref()?;
+                        let (_, second, first_height) = split_leaf(renderer, leaf, narrow, until)?;
+                        let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
+                        Some(first_height + rest.min_bounds().height)
+                    },
+                )
+                .unwrap_or_default();
+            if pass == 1 || !self.tree.apply_percent_indents(&self.slot_geometry) {
+                break;
+            }
+        }
+        let slots = &self.slots;
         self.canvas_height = available.height;
         self.canvas_width = available.width;
         let originals = &self.tree.originals;
@@ -5242,6 +5316,30 @@ mod tests {
             },
             Size::new(800.0, 600.0),
         )[1]
+    }
+
+    #[test]
+    fn a_percentage_indent_replaces_its_spacer_on_every_layout() {
+        let mut tree = BoxTree::new(
+            node("p", vec![]),
+            "#p { width:200px; text-indent:25%; } #p:before { content:\"words\"; }",
+        )
+        .unwrap();
+        let geometry = tree
+            .layout_arena(800.0, None, &mut |_, _| Some(20.0), &mut |_, _, _, _| None)
+            .unwrap();
+        let spacers = |tree: &BoxTree| {
+            tree.texts
+                .iter()
+                .flatten()
+                .map(|leaf| leaf.runs.iter().filter(|run| run.spacer).count())
+                .sum::<usize>()
+        };
+        assert!(tree.apply_percent_indents(&geometry));
+        assert_eq!(spacers(&tree), 1);
+        // The same width again: the same spacer, not a second one.
+        assert!(!tree.apply_percent_indents(&geometry));
+        assert_eq!(spacers(&tree), 1);
     }
 
     #[test]
