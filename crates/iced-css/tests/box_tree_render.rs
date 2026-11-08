@@ -2231,3 +2231,74 @@ fn a_percentage_text_indent_takes_its_share_of_the_width() {
     assert!(row("0", &name));
     assert!(row("25%", &name));
 }
+
+#[test]
+fn an_inline_outline_draws_around_its_pieces() {
+    let draw = |css: &str, name: &str| {
+        let root = node(
+            "p",
+            vec![
+                text("a", "before "),
+                node(
+                    "s",
+                    vec![text("b", "outlined words that wrap onto a second line")],
+                ),
+                text("c", " after"),
+            ],
+        );
+        let sheet = format!(
+            "#p {{ width:220px; background-color:white; color:black; }}
+             #s {{ display:inline; {css} }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("inline-outline-{}.png", std::process::id());
+    assert!(draw("", &name));
+    // It draws, and takes no room: a hidden one draws nothing and moves nothing.
+    assert!(!draw("outline:2px solid #d9534f;", &name));
+    // Its vertical padding takes no room in the line, but the outline goes around it.
+    let name = format!("inline-outline-padded-{}.png", std::process::id());
+    assert!(draw("outline:2px solid #d9534f;", &name));
+    assert!(!draw("outline:2px solid #d9534f; padding:6px 0;", &name));
+    // A positioned box or a float inside it has a box of its own: no outline there, the
+    // same as beside it.
+    for (kind, css) in [
+        ("abs", "position:absolute; top:60px; left:10px;"),
+        ("float", "float:right;"),
+    ] {
+        let outlined = |inside: bool, name: &str| {
+            let other = node("o", vec![text("ot", "elsewhere")]);
+            let mut span = vec![text("b", "outlined")];
+            let mut row = vec![text("a", "before ")];
+            if inside {
+                span.push(other);
+            } else {
+                row.push(other);
+            }
+            row.push(node("s", span));
+            let sheet = format!(
+                "#p {{ width:220px; height:100px; background-color:white; color:black; }}
+                 #s {{ display:inline; outline:2px solid #d9534f; }} #o {{ {css} }}"
+            );
+            let tree = BoxTree::new(node("p", row), &sheet).unwrap();
+            let view: Element<'_, u8> = tree.view();
+            let mut ui = simulator(view);
+            ui.snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(std::env::temp_dir().join(name))
+                .unwrap()
+        };
+        let name = format!("inline-outline-{kind}-{}.png", std::process::id());
+        assert!(outlined(false, &name));
+        assert!(outlined(true, &name), "{kind}");
+    }
+    let name = format!("inline-outline-hidden-{}.png", std::process::id());
+    assert!(draw("visibility:hidden;", &name));
+    assert!(draw("visibility:hidden; outline:2px solid #d9534f;", &name));
+}

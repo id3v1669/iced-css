@@ -2105,10 +2105,12 @@ impl BoxTree {
         for (at, cells) in groups {
             steps.splice(at + 1..at + 1, cells.into_iter().map(PaintStep::CellBorder));
         }
-        // 18.4: outlines may be drawn above everything else.
+        // 18.4: outlines may be drawn above everything else; an inline element's around
+        // each of its line's pieces.
         for (projected, paint) in self.paints.iter().enumerate() {
             let boxed = prepared.slot[projected].is_some_and(|slot| !prepared.anonymous[slot]);
-            if paint.visible && paint.outline.is_some() && boxed {
+            let inline = prepared.inline_boxes[projected].is_some();
+            if paint.visible && paint.outline.is_some() && (boxed || inline) {
                 steps.push(PaintStep::Outline(projected));
             }
         }
@@ -4143,6 +4145,108 @@ where
             .flatten()
     }
 
+    /// 18.4: an inline element's outline goes around each piece of it on a line: the
+    /// runs within it, as tall as its padding and border reach above and below their text.
+    fn draw_inline_outline(&self, renderer: &mut Renderer, origin: Point, projected: usize) {
+        let paint = self.tree.paints[projected];
+        // Its step is pushed only for a visible element.
+        let Some((width, color)) = paint.outline else {
+            return;
+        };
+        // Its own inline content only: what reaches it through inline parents. A float, an
+        // absolute box or an inline-block inside it starts boxes of its own.
+        let prepared = &self.tree.prepared;
+        let nodes = self.tree.source.construction.nodes().len();
+        let mut projected_of = vec![None; nodes];
+        for (at, &node) in self.tree.originals.iter().enumerate() {
+            if let Some(slot) = projected_of.get_mut(node) {
+                *slot = Some(at);
+            }
+        }
+        let inside = |owner: usize| {
+            let mut at = projected_of.get(owner).copied().flatten();
+            while let Some(here) = at {
+                if here == projected {
+                    return true;
+                }
+                at = prepared.inline_parent[here];
+            }
+            false
+        };
+        let root = self.tree.originals[projected];
+        // One piece per line, keyed by the line's top, which every span on it shares.
+        let mut pieces: Vec<(f32, Rectangle)> = Vec::new();
+        let shaped = self
+            .paragraphs
+            .iter()
+            .filter_map(|(arena, (shaped, corner, _))| {
+                Some((self.tree.texts[*arena].as_ref()?, shaped, *corner))
+            })
+            .chain(
+                self.rest_paragraphs
+                    .values()
+                    .map(|(shaped, corner, leaf)| (leaf, shaped, *corner)),
+            );
+        for (leaf, shaped, corner) in shaped {
+            for (index, run) in leaf.runs.iter().enumerate() {
+                if !inside(run.owner) {
+                    continue;
+                }
+                let own = run.inline_boxes.iter().find(|sides| sides.owner == root);
+                for area in shaped.span_bounds(index) {
+                    // As for inline sides: the font's content area, then padding and border.
+                    let height = area.height.min(run.line_size.unwrap_or(run.size) * 1.3);
+                    let top = area.y + (area.height - height) / 2.0;
+                    let (above, below) = own.map_or((0.0, 0.0), |sides| {
+                        (
+                            sides.padding[0] + sides.border[0].0,
+                            sides.padding[1] + sides.border[1].0,
+                        )
+                    });
+                    let piece = Rectangle {
+                        x: origin.x + corner.x + area.x,
+                        y: origin.y + corner.y + top - above,
+                        width: area.width,
+                        height: height + above + below,
+                    };
+                    let line = corner.y + area.y;
+                    match pieces
+                        .iter_mut()
+                        .find(|(other, _)| (other - line).abs() < 0.5)
+                    {
+                        Some((_, other)) => *other = other.union(&piece),
+                        None => pieces.push((line, piece)),
+                    }
+                }
+            }
+        }
+        for (_, piece) in pieces {
+            let inner = FlowRect {
+                left: piece.x,
+                right: piece.x + piece.width,
+                top: piece.y,
+                bottom: piece.y + piece.height,
+            };
+            let outer = FlowRect {
+                left: inner.left - width,
+                right: inner.right + width,
+                top: inner.top - width,
+                bottom: inner.bottom + width,
+            };
+            for (side, band) in border_bands(outer, inner).into_iter().enumerate() {
+                for (part, shade) in band_pieces(band, side, paint.outline_style, color) {
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: part,
+                            ..Quad::default()
+                        },
+                        Color::from_rgb(shade[0], shade[1], shade[2]),
+                    );
+                }
+            }
+        }
+    }
+
     fn embedded(&self) -> BTreeSet<usize> {
         self.slots.iter().copied().flatten().collect()
     }
@@ -4977,7 +5081,13 @@ where
                             BoxParts::CellBorder,
                         ),
                         PaintStep::Outline(index) => {
-                            draw_outline(&self.tree, &self.geometry, renderer, origin, index);
+                            let inline =
+                                prepared.slot[index].is_none_or(|slot| prepared.anonymous[slot]);
+                            if inline {
+                                self.draw_inline_outline(renderer, origin, index);
+                            } else {
+                                draw_outline(&self.tree, &self.geometry, renderer, origin, index);
+                            }
                         }
                         PaintStep::Marker(index) => {
                             if let Some((handle, geometry)) = self

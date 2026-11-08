@@ -298,7 +298,7 @@ impl BoxTree {
     }
 
     /// Whether `node` is `ancestor` or lies inside it.
-    fn within(&self, mut node: usize, ancestor: usize) -> bool {
+    pub(super) fn within(&self, mut node: usize, ancestor: usize) -> bool {
         let nodes = self.source.construction.nodes();
         loop {
             if node == ancestor {
