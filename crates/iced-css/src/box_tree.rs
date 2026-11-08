@@ -322,8 +322,9 @@ pub struct TextRun {
     /// (a `:before` or `:after` box's `generated_owner`), and whether the box shows.
     /// `background` is the first that shows; an animated `visibility` picks again.
     pub backgrounds: Vec<([f32; 3], usize, bool)>,
-    /// A side's stand-in spaces sized at layout: fixed pixels, a percentage of the
-    /// containing block's width, and whether they round up to keep a thin border's bar.
+    /// A side's stand-in spaces sized at layout, at the run's font size: fixed pixels, a
+    /// percentage of the containing block's width, and whether they round up to keep a
+    /// thin border's bar.
     pub percent_room: Option<(f32, f32, bool)>,
     /// An inside list marker's image: once it loads, the run is spaces as wide as it.
     pub marker_image: Option<MarkerImage>,
@@ -1691,11 +1692,9 @@ impl BoxTree {
                         .then(|| spacer(sides.margin[across]))
                         .flatten()
                         .map(|spacer| TextRun {
-                            percent_room: (percent_margin > 0.0).then_some((
-                                sides.margin[across],
-                                percent_margin,
-                                false,
-                            )),
+                            // Sized again at layout: for a share of the width, or a font size
+                            // an animation moves.
+                            percent_room: Some((sides.margin[across], percent_margin, false)),
                             background: around(box_parent[element]).0,
                             background_from: around(box_parent[element]).1,
                             backgrounds: chain_around(box_parent[element]),
@@ -1721,11 +1720,7 @@ impl BoxTree {
                         .then(|| spacer((room / step).ceil() * step * 1.0001))
                         .flatten()
                         .map(|spacer| TextRun {
-                            percent_room: (percent_padding > 0.0).then_some((
-                                room,
-                                percent_padding,
-                                true,
-                            )),
+                            percent_room: Some((room, percent_padding, true)),
                             // Its own background comes with its box, over its padding too.
                             background: if box_paints[element].background.is_some() && visible {
                                 None
@@ -1836,6 +1831,8 @@ impl BoxTree {
             if let Some(mut spacer) = lead.and_then(|first| indent_run(first, indent)) {
                 // Blank space of the block, not of whatever the first word sits in.
                 spacer.owner = projection.original_index(owner).unwrap_or(spacer.owner);
+                // Its room, for a font size an animation moves.
+                spacer.percent_room = Some((indent, 0.0, false));
                 leaf.runs.insert(0, spacer);
             }
         }
@@ -2156,26 +2153,9 @@ impl BoxTree {
                 (place.right - place.left).max(0.0)
             };
             for run in &mut leaf.runs {
-                let Some((fixed, percent, rounded)) = run.percent_room else {
+                let Some(text) = room_text(run, width) else {
                     continue;
                 };
-                let mut room = fixed + percent / 100.0 * width;
-                if rounded {
-                    let step = run.size.max(1.0) / 6.0;
-                    room = (room / step).ceil() * step * 1.0001;
-                }
-                let mut text = indent_run(run, room)
-                    .map(|spacer| spacer.text)
-                    .unwrap_or_default();
-                // A paragraph's direction mark, put on its first run, stays.
-                if let Some(mark) = run
-                    .text
-                    .chars()
-                    .next()
-                    .filter(|mark| matches!(mark, '\u{200E}' | '\u{200F}'))
-                {
-                    text.insert(0, mark);
-                }
                 if run.text != text {
                     run.text = text;
                     changed = true;
@@ -2919,10 +2899,10 @@ fn frame_sides(frame: &GeneratedFrame) -> InlineBoxSides {
     }
 }
 
-/// Invisible spaces about `indent` wide at `first`'s font, or `None` when too small to show.
-fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
+/// Invisible spaces about `indent` wide at a font of `size`, empty when too small to show.
+fn spaces(size: f32, indent: f32) -> String {
     // No line is this wide: more only costs shaping, and text past it is off the box anyway.
-    let mut left = (indent / first.size.max(1.0)).min(512.0);
+    let mut left = (indent / size.max(1.0)).min(512.0);
     let mut text = String::new();
     for (width, space) in [
         (1.0, '\u{2003}'),
@@ -2935,6 +2915,33 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         text.extend(std::iter::repeat_n(space, count as usize));
         left -= count * width;
     }
+    text
+}
+
+/// A side's or indent's spaces for its room (`TextRun::percent_room`) at the run's size,
+/// with `width` the block's content width; a paragraph's direction mark on it stays.
+fn room_text(run: &TextRun, width: f32) -> Option<String> {
+    let (fixed, percent, rounded) = run.percent_room?;
+    let mut room = fixed + percent / 100.0 * width;
+    if rounded {
+        let step = run.size.max(1.0) / 6.0;
+        room = (room / step).ceil() * step * 1.0001;
+    }
+    let mut text = spaces(run.size, room);
+    if let Some(mark) = run
+        .text
+        .chars()
+        .next()
+        .filter(|mark| matches!(mark, '\u{200E}' | '\u{200F}'))
+    {
+        text.insert(0, mark);
+    }
+    Some(text)
+}
+
+/// Invisible spaces about `indent` wide at `first`'s font, or `None` when too small to show.
+fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
+    let text = spaces(first.size, indent);
     (!text.is_empty()).then(|| TextRun {
         text,
         spacer: true,

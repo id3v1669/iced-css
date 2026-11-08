@@ -3413,6 +3413,151 @@ mod animation {
     }
 
     #[test]
+    fn font_size_scales_what_keeps_its_share_of_it() {
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "box",
+                    vec![
+                        text("t", "words"),
+                        node("half", vec![text("h", "half")]),
+                        node("fixed", vec![text("f", "fixed")]),
+                    ],
+                )],
+            )
+        };
+        let css = |size: &str| {
+            format!(
+                "#box {{ font-size:{size}; }}
+                 #half {{ display:inline; font-size:0.5em; }}
+                 #fixed {{ display:inline; font-size:10px; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("16px")).unwrap();
+        let to = from.restyled(&[&css("32px")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let count = animations
+            .request(&from, &to, "box", &["font-size"], second(), start)
+            .unwrap();
+        assert_eq!(count, 1);
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let size_of = |text: &str| {
+            shown
+                .text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.trim() == text)
+                .map(|run| run.size)
+        };
+        // Halfway from 16 to 32: 24, its half 12, and a size of its own stays.
+        assert_eq!(size_of("words"), Some(24.0));
+        assert_eq!(size_of("half"), Some(12.0));
+        assert_eq!(size_of("fixed"), Some(10.0));
+        animations.advance(start + Duration::from_millis(1500), &to);
+        assert!(!animations.is_animating());
+        let done = animations.presented(&to);
+        let leaves = done.text_leaves();
+        let words = leaves
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .find(|run| run.text.trim() == "words")
+            .unwrap();
+        assert_eq!(words.size, 32.0);
+        // A follower that moves on without a request keeps its new size.
+        let changed = to
+            .restyled(&[&css("32px"), "#half { font-size:20px; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "box", &["font-size"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &changed);
+        let shown = animations.presented(&changed);
+        let half = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .find(|run| run.text.trim() == "half")
+            .map(|run| run.size);
+        assert_eq!(half, Some(20.0));
+    }
+
+    #[test]
+    fn a_font_size_to_zero_keeps_sizes_finite() {
+        let source = || node("page", vec![node("box", vec![text("t", "words")])]);
+        let from = BoxTree::new(source(), "#box { font-size:16px; }").unwrap();
+        let to = from.restyled(&["#box { font-size:0px; }"]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["font-size"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        for (_, leaf) in shown.text_leaves() {
+            for run in &leaf.runs {
+                assert!(run.size.is_finite(), "{:?}", run.size);
+            }
+        }
+    }
+
+    #[test]
+    fn nested_font_size_requests_scale_once() {
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "parent",
+                    vec![node("child", vec![text("c", "child")])],
+                )],
+            )
+        };
+        let css = |size: &str| {
+            format!(
+                "#parent {{ font-size:{size}; }}
+                 #child {{ font-size:0.5em; }}
+                 #parent:before {{ content:\"*\"; font-size:12px; }}
+                 #parent:after {{ content:\"*\"; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("16px")).unwrap();
+        let to = from.restyled(&[&css("32px")]).unwrap();
+        let start = Instant::now();
+        let sizes = |order: [&str; 2]| {
+            let mut animations = BoxTreeAnimations::new();
+            for id in order {
+                animations
+                    .request(&from, &to, id, &["font-size"], second(), start)
+                    .unwrap();
+            }
+            animations.advance(start + Duration::from_millis(500), &to);
+            let shown = animations.presented(&to);
+            let leaves = shown.text_leaves();
+            let runs: Vec<(String, f32)> = leaves
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .filter(|run| !run.spacer)
+                .map(|run| (run.text.clone(), run.size))
+                .collect();
+            runs
+        };
+        // The child halfway from 8 to 16 is 12, whichever request came first; the `:before`
+        // keeps its 12 pixels, the `:after` with the same text follows to 24.
+        for order in [["child", "parent"], ["parent", "child"]] {
+            let runs = sizes(order);
+            assert!(
+                runs.contains(&("child".to_owned(), 12.0)),
+                "{order:?} {runs:?}"
+            );
+            assert!(runs.contains(&("*".to_owned(), 12.0)), "{order:?} {runs:?}");
+            assert!(runs.contains(&("*".to_owned(), 24.0)), "{order:?} {runs:?}");
+        }
+    }
+
+    #[test]
     fn generated_runs_with_the_same_text_keep_their_own_ends() {
         let source = || node("page", vec![text("line", "words")]);
         let css = |color: &str| {

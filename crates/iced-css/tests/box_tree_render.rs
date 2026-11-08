@@ -2754,6 +2754,213 @@ fn a_fading_block_keeps_its_image_under_generated_text() {
 }
 
 #[test]
+fn font_size_halfway_lays_out_as_its_size_then() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    // Text that wraps, a list item's marker, and an inline with sides in pixels.
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "box",
+                vec![
+                    text("t", "words that wrap across the box "),
+                    node("in", vec![text("i", "inline")]),
+                    node("li", vec![text("l", "item")]),
+                ],
+            )],
+        )
+    };
+    let css = |size: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #box {{ width:160px; font-size:{size}; background-color:#ddeeff; }}
+             #in {{ display:inline; padding:0 4px; background-color:#ffff00; }}
+             #li {{ display:list-item; margin-left:30px; font-size:0.75em; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let from = BoxTree::new(source(), &css("16px")).unwrap();
+    let to = from.restyled(&[&css("32px")]).unwrap();
+    let between = BoxTree::new(source(), &css("24px")).unwrap();
+    assert!(picture(between, "font-between"));
+    assert!(!picture(to.clone(), "font-between"));
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &from,
+            &to,
+            "box",
+            &["font-size"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "font-between"));
+    for renderer in ["wgpu", "tiny-skia"] {
+        let _ = std::fs::remove_file(std::env::temp_dir().join(format!(
+            "font-between-{}-{renderer}.png",
+            std::process::id()
+        )));
+    }
+    // A float that shrinks to fit, with an indent and an inline's sides in pixels, and an
+    // inline animated itself, with a margin: halfway, as at 24 pixels.
+    let source = || {
+        node(
+            "page",
+            vec![
+                node(
+                    "float",
+                    vec![
+                        text("t", "words beside "),
+                        node("pad", vec![text("p", "padded")]),
+                        node("fixed", vec![text("f", "fixed")]),
+                    ],
+                ),
+                node(
+                    "line",
+                    vec![
+                        text("a", "before "),
+                        node("span", vec![text("s", "span")]),
+                        text("b", " after"),
+                    ],
+                ),
+            ],
+        )
+    };
+    let css = |float: &str, span: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #float {{ float:left; font-size:{float}; text-indent:20px;
+                       background-color:#ddeeff; }}
+             #pad {{ display:inline; padding:0 20px; background-color:#ffff00; }}
+             #fixed {{ display:inline; font-size:10px; padding:0 6px;
+                       background-color:#ff8800; }}
+             #line {{ clear:both; }}
+             #span {{ display:inline; font-size:{span}; margin:0 8px;
+                      background-color:#ffcc00; }}"
+        )
+    };
+    let from = BoxTree::new(source(), &css("16px", "16px")).unwrap();
+    let to = from.restyled(&[&css("32px", "32px")]).unwrap();
+    let between = BoxTree::new(source(), &css("24px", "24px")).unwrap();
+    assert!(picture(between, "font-between-2"));
+    let mut animations = BoxTreeAnimations::new();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    for id in ["float", "span"] {
+        animations
+            .request(&from, &to, id, &["font-size"], timing, start)
+            .unwrap();
+    }
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "font-between-2"));
+    for renderer in ["wgpu", "tiny-skia"] {
+        let _ = std::fs::remove_file(std::env::temp_dir().join(format!(
+            "font-between-2-{}-{renderer}.png",
+            std::process::id()
+        )));
+    }
+    // With visibility at once: a `:before` hidden of its own, with sides, stays hidden;
+    // 5 pixels make other spaces at 24 pixels than at 32.
+    let source = || node("page", vec![node("box", vec![text("t", "words")])]);
+    let css = |size: &str, shown: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #box {{ font-size:{size}; visibility:{shown}; }}
+             #box:before {{ content:\"x\"; visibility:hidden; padding:0 5px;
+                            background-color:#ffff00; }}"
+        )
+    };
+    let from = BoxTree::new(source(), &css("16px", "visible")).unwrap();
+    let to = from.restyled(&[&css("32px", "hidden")]).unwrap();
+    let between = BoxTree::new(source(), &css("24px", "visible")).unwrap();
+    assert!(picture(between, "font-between-3"));
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &from,
+            &to,
+            "box",
+            &["font-size", "visibility"],
+            timing,
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "font-between-3"));
+    for renderer in ["wgpu", "tiny-skia"] {
+        let _ = std::fs::remove_file(std::env::temp_dir().join(format!(
+            "font-between-3-{}-{renderer}.png",
+            std::process::id()
+        )));
+    }
+}
+
+#[cfg(feature = "image")]
+#[test]
+fn a_list_image_keeps_its_gap_with_an_animated_font_size() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let path = std::env::temp_dir().join(format!("iced-css-font-image-{}", std::process::id()));
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("dot.png"), checker_png(8)).unwrap();
+    let source = || {
+        node(
+            "page",
+            vec![node("box", vec![node("li", vec![text("t", "item")])])],
+        )
+    };
+    let css = |size: &str, item: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px 60px; color:#000000; }}
+             #box {{ font-size:{size}; }}
+             #li {{ display:list-item; font-size:{item}; list-style-image:url(dot.png); }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(path.join(name))
+            .unwrap()
+    };
+    let from = BoxTree::with_base(source(), &css("16px", "1em"), &path).unwrap();
+    let to = from.restyled(&[&css("32px", "1em")]).unwrap();
+    let start = Instant::now();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    // Halfway its gap is half of 24 pixels.
+    assert!(picture(
+        BoxTree::with_base(source(), &css("24px", "1em"), &path).unwrap(),
+        "between.png"
+    ));
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(&from, &to, "box", &["font-size"], timing, start)
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "between.png"));
+    // An item that moves on to 20 pixels without a request keeps them.
+    let changed = to.restyled(&[&css("32px", "20px")]).unwrap();
+    assert!(picture(
+        BoxTree::with_base(source(), &css("24px", "20px"), &path).unwrap(),
+        "changed.png"
+    ));
+    animations.advance(start + Duration::from_millis(500), &changed);
+    assert!(picture(animations.presented(&changed), "changed.png"));
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

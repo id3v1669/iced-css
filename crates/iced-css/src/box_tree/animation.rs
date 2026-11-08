@@ -60,6 +60,7 @@ pub(super) enum Field {
     BorderWidth(usize),
     Offset(usize),
     Visibility,
+    FontSize,
 }
 
 const SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
@@ -78,6 +79,7 @@ fn field(name: &str) -> Option<Field> {
         "min-height" => Field::MinHeight,
         "max-height" => Field::MaxHeight,
         "visibility" => Field::Visibility,
+        "font-size" => Field::FontSize,
         _ => {
             if let Some(rest) = name.strip_prefix("margin-") {
                 Field::Margin(side(rest)?)
@@ -168,8 +170,13 @@ pub(super) struct Followers {
     /// that sets one.
     /// By content, not slot, so an interaction styling cannot shift them; another run of
     /// the same owner and text keeps its own too.
-    fixed_runs: BTreeSet<(usize, String, Option<usize>)>,
+    fixed_runs: BTreeSet<RunKey>,
     fixed_boxes: BTreeSet<(usize, usize)>,
+    /// For `font-size`: the text runs, by `run_key` and target size, and the descendants,
+    /// by source node with their target size, that keep their size's share of the
+    /// element's at both ends. Only what still has its target size scales.
+    sized_runs: BTreeSet<(RunKey, u32)>,
+    sized_nodes: BTreeMap<usize, f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -221,6 +228,7 @@ impl BoxTree {
         let length = |value: Dim| Some(Value::Length(value));
         match field {
             Field::Visibility => Some(Value::Visible(paint.visible)),
+            Field::FontSize => Some(Value::Length(Dim::Px(self.prepared.font_sizes[projected]))),
             Field::Color => color(paint.color),
             Field::Background => own.map(|_| match (paint.background, paint.background_fade) {
                 (None, _) => Value::Fade([0.0; 3], 0.0),
@@ -338,7 +346,11 @@ impl BoxTree {
         let Some(presentation) = self.presentation.clone() else {
             return;
         };
-        for presented in presentation.iter() {
+        // Sizes last: scaling rewrites side spaces, which other followers know by text.
+        let (sizes, rest): (Vec<_>, Vec<_>) = presentation
+            .iter()
+            .partition(|presented| presented.field == Field::FontSize);
+        for presented in rest.into_iter().chain(sizes) {
             let Some(projected) = self.element(&presented.id) else {
                 continue;
             };
@@ -350,6 +362,16 @@ impl BoxTree {
                 (presented.field, presented.target, presented.now)
             {
                 self.follow(&presented.followers, target, now);
+            }
+            if let (Field::FontSize, Value::Length(Dim::Px(target)), Value::Length(Dim::Px(now))) =
+                (presented.field, presented.target, presented.now)
+                && target > 0.0
+            {
+                self.resize(
+                    &presented.followers,
+                    self.originals[projected],
+                    now / target,
+                );
             }
             if let (Field::Visibility, Value::Visible(target), Value::Visible(now)) =
                 (presented.field, presented.target, presented.now)
@@ -457,6 +479,123 @@ impl BoxTree {
         }
     }
 
+    /// Scales, with an animated `font-size`, the element and what keeps its size's share of
+    /// it (`followers`) and still has its target size: computed sizes, outside markers, text
+    /// runs, and the spaces made from them for sides and indents, which keep their room.
+    /// Lengths in `em` keep their target's.
+    fn resize(&mut self, followers: &Followers, root: usize, factor: f32) {
+        for (projected, node) in self.originals.iter().enumerate() {
+            let target = followers.sized_nodes.get(node);
+            if *node != root && target != Some(&self.prepared.font_sizes[projected]) {
+                continue;
+            }
+            self.prepared.font_sizes[projected] *= factor;
+            if let Some(marker) = self.markers.get_mut(&projected) {
+                for run in &mut marker.runs {
+                    run.size *= factor;
+                    run.line_size = run.line_size.map(|size| size * factor);
+                }
+            }
+        }
+        let owners: BTreeSet<usize> = followers.sized_runs.iter().map(|(key, _)| key.0).collect();
+        for leaf in self.texts.iter_mut().flatten() {
+            let scaled: Vec<bool> = leaf
+                .runs
+                .iter()
+                .map(|run| {
+                    !run.spacer
+                        && owners.contains(&run.owner)
+                        && followers
+                            .sized_runs
+                            .contains(&(run_key(run), run.size.to_bits()))
+                })
+                .collect();
+            // Spaces for sides and indents are made from the text they open or close, at
+            // its size: they scale with it, the nearest text after them, or else before.
+            let follows_text = |at: usize| {
+                let size = leaf.runs[at].size;
+                let text = |other: &usize| !leaf.runs[*other].spacer;
+                let after = (at + 1..leaf.runs.len()).find(text);
+                let before = (0..at).rev().find(text);
+                [after, before]
+                    .into_iter()
+                    .flatten()
+                    .any(|other| scaled[other] && leaf.runs[other].size == size)
+            };
+            let spaces: Vec<bool> = (0..leaf.runs.len())
+                .map(|at| leaf.runs[at].spacer && follows_text(at))
+                .collect();
+            for (at, run) in leaf.runs.iter_mut().enumerate() {
+                if !(scaled[at] || spaces[at]) {
+                    continue;
+                }
+                run.size *= factor;
+                run.line_size = run.line_size.map(|size| size * factor);
+                // Their room stays: spaces again at the new size, as layout makes them.
+                if spaces[at]
+                    && run.percent_room.is_some_and(|room| room.1 == 0.0)
+                    && let Some(text) = super::room_text(run, 0.0)
+                {
+                    run.text = text;
+                }
+            }
+        }
+    }
+
+    /// What follows an animated `font-size` from `committed` to `target` pixels: the
+    /// descendants of `root` (by projected index in `to`) and the text runs inside it whose
+    /// size is the same share of the element's at both ends, as inherited, `em` and `%` sizes
+    /// are. A size of its own in pixels applies at once.
+    fn size_followers(&self, to: &Self, root: usize, committed: f32, target: f32) -> Followers {
+        let root = to.originals[root];
+        let mut followers = Followers::default();
+        if committed <= 0.0 || target <= 0.0 {
+            return followers;
+        }
+        let same = |from: f32, to: f32| (from / committed - to / target).abs() < 1e-3;
+        let before: BTreeMap<usize, usize> = self
+            .originals
+            .iter()
+            .enumerate()
+            .map(|(projected, node)| (*node, projected))
+            .collect();
+        for (projected, &node) in to.originals.iter().enumerate() {
+            if node == root || !to.within(node, root) {
+                continue;
+            }
+            let size = to.prepared.font_sizes[projected];
+            if before
+                .get(&node)
+                .is_some_and(|at| same(self.prepared.font_sizes[*at], size))
+            {
+                followers.sized_nodes.insert(node, size);
+            }
+        }
+        for (arena, leaf) in to.texts.iter().enumerate() {
+            let Some(leaf) = leaf else { continue };
+            for (at, run) in leaf.runs.iter().enumerate() {
+                if run.spacer || !to.within(run.owner, root) {
+                    continue;
+                }
+                let alike =
+                    |other: &&super::TextRun| other.owner == run.owner && other.text == run.text;
+                let occurrence = leaf.runs[..at].iter().filter(alike).count();
+                if self
+                    .texts
+                    .get(arena)
+                    .and_then(Option::as_ref)
+                    .and_then(|old| old.runs.iter().filter(alike).nth(occurrence))
+                    .is_some_and(|old| same(old.size, run.size))
+                {
+                    followers
+                        .sized_runs
+                        .insert((run_key(run), run.size.to_bits()));
+                }
+            }
+        }
+        followers
+    }
+
     /// The descendants of `root` (by projected index in `to`) that follow its visibility at
     /// both ends: shown as it is in this styling, and as it is in `to`. One that changes on
     /// its own applies at once.
@@ -500,8 +639,16 @@ impl BoxTree {
                 if !nodes.contains(&run.owner) || run.visible != target {
                     continue;
                 }
-                let alike =
-                    |other: &&super::TextRun| other.owner == run.owner && other.text == run.text;
+                // Side spaces by their box: a font size that changes too sizes them anew.
+                let innermost = |run: &super::TextRun| run.inline_boxes.last().map(|d| d.owner);
+                let alike = |other: &&super::TextRun| {
+                    other.owner == run.owner
+                        && if run.spacer {
+                            other.spacer && innermost(other) == innermost(run)
+                        } else {
+                            other.text == run.text
+                        }
+                };
                 let occurrence = leaf.runs[..at].iter().filter(alike).count();
                 if self
                     .texts
@@ -750,9 +897,12 @@ impl BoxTree {
     }
 }
 
+/// A run's owner, text and innermost box (`run_key`).
+type RunKey = (usize, String, Option<usize>);
+
 /// A run told apart by content, not slot: its owner, text, and innermost box, which keeps
 /// a box's side spaces apart from its `:before`'s.
-fn run_key(run: &super::TextRun) -> (usize, String, Option<usize>) {
+fn run_key(run: &super::TextRun) -> RunKey {
     (
         run.owner,
         run.text.clone(),
@@ -943,6 +1093,12 @@ impl BoxTreeAnimations {
                 target,
                 followers: match field {
                     Field::Color => from.followers(to, after, committed, target),
+                    Field::FontSize => match (committed, target) {
+                        (Value::Length(Dim::Px(committed)), Value::Length(Dim::Px(target))) => {
+                            from.size_followers(to, after, committed, target)
+                        }
+                        _ => Followers::default(),
+                    },
                     Field::Visibility => match (committed, target) {
                         (Value::Visible(committed), Value::Visible(target)) => {
                             from.visibility_followers(to, after, committed, target)
