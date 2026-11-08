@@ -1244,6 +1244,7 @@ impl BoxTree {
             if prepared.anonymous[arena] {
                 if prepared.slot[projected] == Some(arena) {
                     paints[projected].under_text = paints[projected].background;
+                    paints[projected].under_text_border = paints[projected].border;
                     paints[projected].background = None;
                     paints[projected].border = [None; 4];
                 }

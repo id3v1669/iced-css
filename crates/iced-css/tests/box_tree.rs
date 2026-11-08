@@ -2677,7 +2677,7 @@ mod animation {
     }
 
     #[test]
-    fn a_later_inline_sibling_animates_only_its_background() {
+    fn a_later_inline_sibling_animates_its_background_and_border_colors() {
         let source = || {
             node(
                 "page",
@@ -2706,8 +2706,8 @@ mod animation {
                 start,
             )
             .unwrap();
-        // Its background lies under its text; its outline and borders have no box here.
-        assert_eq!(count, 1);
+        // Its background and border colors paint on its line; its outline has no box here.
+        assert_eq!(count, 5);
         animations.advance(start + Duration::from_millis(500), &to);
         let shown = animations.presented(&to);
         let under = |text: &str| {
@@ -2720,6 +2720,14 @@ mod animation {
         };
         assert!(near(under("two").unwrap(), [0.5, 0.5, 0.5]));
         assert_eq!(under("one"), None);
+        // Its border bars, through its own paint rather than a saved one, move too.
+        let bars: Vec<[f32; 3]> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter_map(|run| run.edge.map(|edge| edge.2))
+            .collect();
+        assert!(!bars.is_empty() && bars.iter().all(|color| near(*color, [0.5, 0.5, 0.5])));
     }
 
     /// Runs whose text contains `text`, and their backgrounds, in `tree`.
@@ -2834,6 +2842,185 @@ mod animation {
         assert!(
             sides.iter().all(|color| *color == Some([1.0, 1.0, 1.0])),
             "{sides:?}"
+        );
+    }
+
+    #[test]
+    fn an_inline_elements_border_colors_animate_on_its_line() {
+        let source = || node("page", vec![node("s", vec![text("x", "words")])]);
+        let css = |color: &str| format!("#s {{ display:inline; border:2px solid {color}; }}");
+        let from = BoxTree::new(source(), &css("#000000")).unwrap();
+        let to = from.restyled(&[&css("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let count = animations
+            .request(&from, &to, "s", &["border-color"], second(), start)
+            .unwrap();
+        assert_eq!(count, 4);
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let runs: Vec<&iced_css::box_tree::TextRun> = shown
+            .text_leaves()
+            .into_iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .collect();
+        let mid = [0.5, 0.5, 0.5];
+        // Top and bottom on its inline box's bands, left and right on its runs' bars.
+        let bands: Vec<[f32; 3]> = runs
+            .iter()
+            .flat_map(|run| run.inline_boxes.iter())
+            .flat_map(|sides| sides.border.iter().filter_map(|band| band.1))
+            .collect();
+        assert!(
+            !bands.is_empty() && bands.iter().all(|color| near(*color, mid)),
+            "{bands:?}"
+        );
+        let bars: Vec<(bool, [f32; 3])> = runs
+            .iter()
+            .filter_map(|run| run.edge.map(|(left, _, color)| (left, color)))
+            .collect();
+        assert_eq!(bars.len(), 2);
+        assert!(bars.iter().all(|(_, color)| near(*color, mid)), "{bars:?}");
+        // Its paint carries the presented colors too.
+        let paint = shown.paints()[1];
+        assert!(near(
+            paint.under_text_border[0].or(paint.border[0]).unwrap(),
+            mid
+        ));
+    }
+
+    #[test]
+    fn one_inline_border_side_animates_alone() {
+        let source = || node("page", vec![node("s", vec![text("x", "words")])]);
+        let css = |left: &str, top: &str| {
+            format!(
+                "#s {{ display:inline; border:2px solid #ff0000; border-left-color:{left};
+                       border-top-color:{top}; border-bottom-color:#0000ff; }}"
+            )
+        };
+        let shown = |from: &str, to: &str, property: &str| {
+            let first = BoxTree::new(source(), from).unwrap();
+            let later = first.restyled(&[to]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            let start = Instant::now();
+            assert_eq!(
+                animations
+                    .request(&first, &later, "s", &[property], second(), start)
+                    .unwrap(),
+                1
+            );
+            animations.advance(start + Duration::from_millis(500), &later);
+            animations.presented(&later)
+        };
+        let runs = |tree: &BoxTree| -> Vec<iced_css::box_tree::TextRun> {
+            tree.text_leaves()
+                .into_iter()
+                .flat_map(|(_, leaf)| leaf.runs.clone())
+                .collect()
+        };
+        let (mid, red, blue, black) = ([0.5; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]);
+        // The left bar moves; the right bar and both bands stay.
+        let tree = shown(
+            &css("#000000", "#000000"),
+            &css("#ffffff", "#000000"),
+            "border-left-color",
+        );
+        let runs_now = runs(&tree);
+        let bar = |left: bool| {
+            runs_now
+                .iter()
+                .find_map(|run| run.edge.filter(|edge| edge.0 == left).map(|edge| edge.2))
+                .unwrap()
+        };
+        assert!(near(bar(true), mid));
+        assert!(near(bar(false), red));
+        let bands: Vec<[f32; 3]> = runs_now
+            .iter()
+            .flat_map(|run| run.inline_boxes.iter())
+            .flat_map(|sides| [sides.border[0].1.unwrap(), sides.border[1].1.unwrap()])
+            .collect();
+        assert!(
+            bands
+                .chunks(2)
+                .all(|pair| near(pair[0], black) && near(pair[1], blue))
+        );
+        // The top band moves; the bottom band and both bars stay.
+        let tree = shown(
+            &css("#000000", "#000000"),
+            &css("#000000", "#ffffff"),
+            "border-top-color",
+        );
+        let runs_now = runs(&tree);
+        for sides in runs_now.iter().flat_map(|run| run.inline_boxes.iter()) {
+            assert!(near(sides.border[0].1.unwrap(), mid));
+            assert!(near(sides.border[1].1.unwrap(), blue));
+        }
+        assert!(
+            runs_now
+                .iter()
+                .filter_map(|run| run.edge)
+                .all(|edge| near(edge.2, if edge.0 { black } else { red }))
+        );
+    }
+
+    #[test]
+    fn a_nested_inlines_own_borders_stay_while_its_parents_move() {
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "s",
+                    vec![text("x", "outer"), node("t", vec![text("y", "inner")])],
+                )],
+            )
+        };
+        let css = |color: &str| {
+            format!(
+                "#s, #t {{ display:inline; }} #s {{ border:2px solid {color}; }}
+                 #t {{ border:2px solid #ff0000; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("#000000")).unwrap();
+        let to = from.restyled(&[&css("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "s", &["border-color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let red = [1.0, 0.0, 0.0];
+        let mut reds = 0;
+        for run in shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+        {
+            for sides in &run.inline_boxes {
+                for band in sides.border.iter().filter_map(|band| band.1) {
+                    assert!(near(band, red) || near(band, [0.5; 3]), "{band:?}");
+                    reds += usize::from(near(band, red));
+                }
+            }
+            if let Some(edge) = run.edge {
+                assert!(near(edge.2, red) || near(edge.2, [0.5; 3]), "{edge:?}");
+                reds += usize::from(near(edge.2, red));
+            }
+        }
+        // `#t`'s own bands kept their red.
+        assert!(reds >= 2, "{reds}");
+        // Each has two bars: `#t`'s stay red, `#s`'s move.
+        let bars: Vec<[f32; 3]> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter_map(|run| run.edge.map(|edge| edge.2))
+            .collect();
+        assert_eq!(bars.len(), 4);
+        assert_eq!(
+            bars.iter().filter(|color| near(**color, red)).count(),
+            2,
+            "{bars:?}"
         );
     }
 

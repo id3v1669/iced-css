@@ -183,6 +183,14 @@ impl BoxTree {
         if field == Field::Background && self.under_text(projected) {
             return paint.under_text.or(paint.background).map(Value::Color);
         }
+        // Its border colors likewise paint on its line's sides.
+        if let Field::BorderColor(side) = field
+            && self.under_text(projected)
+        {
+            return paint.under_text_border[side]
+                .or(paint.border[side])
+                .map(Value::Color);
+        }
         // Display none shows nothing to come from or go to.
         self.prepared.slot[projected]?;
         let color = |value: Option<[f32; 3]>| value.map(Value::Color);
@@ -230,6 +238,13 @@ impl BoxTree {
                     paint.under_text = Some(value);
                 } else {
                     paint.background = Some(value);
+                }
+            }
+            (Field::BorderColor(side), Value::Color(value)) if under_text => {
+                if paint.under_text_border[side].is_some() {
+                    paint.under_text_border[side] = Some(value);
+                } else {
+                    paint.border[side] = Some(value);
                 }
             }
             (Field::Color, Value::Color(value)) => paint.color = Some(value),
@@ -320,6 +335,12 @@ impl BoxTree {
             {
                 self.inline_background(projected, now);
             }
+            if let (Field::BorderColor(side), Value::Color(_), Value::Color(now)) =
+                (presented.field, presented.target, presented.now)
+                && self.under_text(projected)
+            {
+                self.inline_border(projected, side, now);
+            }
         }
     }
 
@@ -337,6 +358,36 @@ impl BoxTree {
                     if sides.owner == root && sides.background.is_some() {
                         sides.background = Some(now);
                     }
+                }
+            }
+        }
+    }
+
+    /// Carries an inline element's presented border color to its line's sides: the top and
+    /// bottom bands of its own inline box, and the left or right bar in its runs.
+    fn inline_border(&mut self, projected: usize, side: usize, now: [f32; 3]) {
+        let root = self.originals[projected];
+        for leaf in self.texts.iter_mut().flatten() {
+            for run in &mut leaf.runs {
+                for sides in &mut run.inline_boxes {
+                    if sides.owner != root {
+                        continue;
+                    }
+                    let band = match side {
+                        0 => &mut sides.border[0].1,
+                        2 => &mut sides.border[1].1,
+                        _ => continue,
+                    };
+                    if band.is_some() {
+                        *band = Some(now);
+                    }
+                }
+                if run.owner == root
+                    && let Some((left, _, color)) = &mut run.edge
+                    && (side == 3) == *left
+                    && matches!(side, 1 | 3)
+                {
+                    *color = now;
                 }
             }
         }
