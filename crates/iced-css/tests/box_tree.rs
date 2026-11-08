@@ -1592,6 +1592,60 @@ fn block_text_leaf_keeps_generated_runs_inside_and_its_own_paint() {
 }
 
 #[test]
+fn inside_marker_images_take_a_run_of_their_own() {
+    let leaf_of = |css: &str| {
+        let root = node("page", vec![node("one", vec![text("a", "item")])]);
+        let sheet = format!("#one {{ display:list-item; list-style-position:inside; {css} }}");
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let leaves = tree.text_leaves();
+        assert_eq!(leaves.len(), 1);
+        leaves[0]
+            .1
+            .runs
+            .iter()
+            .map(|run| (run.text.clone(), run.marker_image.is_some()))
+            .collect::<Vec<_>>()
+    };
+    let plain = |text: &str| (text.to_owned(), false);
+    let marker = |text: &str| (text.to_owned(), true);
+    assert_eq!(leaf_of(""), vec![plain("\u{2022}\u{a0}"), plain("item")]);
+    assert_eq!(
+        leaf_of("list-style-image:url(dot.png);"),
+        vec![marker("\u{2022}\u{a0}"), plain("item")]
+    );
+    // The marker's own run, apart from the `:before` content after it.
+    let root = node("page", vec![node("one", vec![text("a", "item")])]);
+    let tree = BoxTree::new(
+        root,
+        "#one { display:list-item; list-style:inside lower-roman url(dot.png);
+                font-variant:small-caps; }
+         #one:before { content:\"x\"; }",
+    )
+    .unwrap();
+    let runs = &tree.text_leaves()[0].1.runs;
+    // Small capitals leave the marker as it is, in one run.
+    assert_eq!(runs[0].text, "i.\u{a0}");
+    assert!(runs[0].marker_image.is_some());
+    assert!(runs[1..].iter().all(|run| run.marker_image.is_none()));
+    assert_eq!(tree.text_leaves()[0].1.text(), "i.\u{a0}XITEM");
+    // With no marker type the image still has a run, empty until it loads.
+    assert_eq!(
+        leaf_of("list-style-type:none; list-style-image:url(dot.png);"),
+        vec![marker(""), plain("item")]
+    );
+    assert_eq!(leaf_of("list-style-type:none;"), vec![plain("item")]);
+    // Only a local file can load; outside markers draw on their own.
+    assert_eq!(
+        leaf_of("list-style-image:url(http://example.com/dot.png);"),
+        vec![plain("\u{2022}\u{a0}"), plain("item")]
+    );
+    assert_eq!(
+        leaf_of("list-style-position:outside; list-style-image:url(dot.png);"),
+        vec![plain("item")]
+    );
+}
+
+#[test]
 fn list_items_get_outside_markers_by_type_and_ordinal() {
     let root = node(
         "page",

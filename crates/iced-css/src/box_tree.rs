@@ -321,6 +321,8 @@ pub struct TextRun {
     /// A side's stand-in spaces sized at layout: fixed pixels, a percentage of the
     /// containing block's width, and whether they round up to keep a thin border's bar.
     pub percent_room: Option<(f32, f32, bool)>,
+    /// An inside list marker's image: once it loads, the run is spaces as wide as it.
+    pub marker_image: Option<MarkerImage>,
     pub weight: u16,
     pub italic: bool,
     pub family: Option<String>,
@@ -330,6 +332,16 @@ pub struct TextRun {
     pub visible: bool,
     /// The source node this run belongs to, for hit testing.
     pub owner: usize,
+}
+
+/// The image of an inside list marker, drawn over its run's spaces.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarkerImage {
+    handle: image::Handle,
+    /// The marker's text, shown while the image does not load.
+    fallback: Option<String>,
+    /// The image's size, once loaded.
+    shown: Option<Size>,
 }
 
 /// The inline content of one block: its runs, after white space and text-transform.
@@ -1235,6 +1247,7 @@ impl BoxTree {
                         background,
                         background_from,
                         percent_room: None,
+                        marker_image: None,
                         weight: style.weight,
                         italic: style.italic,
                         family: style.family.clone(),
@@ -1327,32 +1340,63 @@ impl BoxTree {
             }
         }
         let mut opened = BTreeSet::new();
+        let inside_image = |at: usize| {
+            marker_images[at]
+                .as_deref()
+                .and_then(|uri| local_image(&source.base, uri))
+        };
         for (arena, runs) in prepared.runs.iter().enumerate() {
             let Some(leaf) = &mut texts[arena] else {
                 continue;
             };
             let boxed = !leaf.is_empty();
             let mut tagged: Vec<(TextRun, usize)> = Vec::with_capacity(leaf.runs.len());
-            for (run, &source) in leaf.runs.drain(..).zip(runs) {
+            for (mut run, &source) in leaf.runs.drain(..).zip(runs) {
                 let (RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at)) = source;
                 let style = match generated_of(source) {
                     Some(made) => &made.style,
                     None => &styles[at],
                 };
                 let small_caps = style.small_caps;
-                let mut run = run;
-                // 16.4: more room at each space, by the same stand-in spaces as an indent.
-                if style.word_spacing > 0.0
-                    && let Some(extra) = indent_run(&run, style.word_spacing)
-                {
-                    let wide = format!(" {}", extra.text);
-                    let wide_fixed = format!("\u{a0}{}", extra.text);
-                    run.text = run.text.replace(' ', &wide).replace('\u{a0}', &wide_fixed);
-                }
-                if small_caps {
-                    tagged.extend(small_capitals(&run).into_iter().map(|part| (part, at)));
+                // 12.5.1: an inside marker's image takes a run of its own, the marker's text.
+                let image = match source {
+                    RunSource::Before(owner) => generated_of(source)
+                        .and_then(|made| made.marker)
+                        .filter(|length| run.text.is_char_boundary(*length))
+                        .zip(inside_image(owner)),
+                    _ => None,
+                };
+                let mut pieces = Vec::with_capacity(2);
+                if let Some((length, handle)) = image {
+                    let rest = run.text.split_off(length);
+                    pieces.push(TextRun {
+                        marker_image: Some(MarkerImage {
+                            handle,
+                            fallback: None,
+                            shown: None,
+                        }),
+                        ..run.clone()
+                    });
+                    if !rest.is_empty() {
+                        pieces.push(TextRun { text: rest, ..run });
+                    }
                 } else {
-                    tagged.push((run, at));
+                    pieces.push(run);
+                }
+                for mut run in pieces {
+                    // 16.4: more room at each space, by the same stand-in spaces as an indent.
+                    if style.word_spacing > 0.0
+                        && let Some(extra) = indent_run(&run, style.word_spacing)
+                    {
+                        let wide = format!(" {}", extra.text);
+                        let wide_fixed = format!("\u{a0}{}", extra.text);
+                        run.text = run.text.replace(' ', &wide).replace('\u{a0}', &wide_fixed);
+                    }
+                    if small_caps && run.marker_image.is_none() {
+                        tagged.extend(small_capitals(&run).into_iter().map(|part| (part, at)));
+                    } else {
+                        tagged.push((run, at));
+                    }
                 }
             }
             // 9.10: `unicode-bidi` is exactly these control characters around the element's
@@ -1675,7 +1719,12 @@ impl BoxTree {
                 (false, true) => '\u{200E}',
                 (false, false) => continue,
             };
-            if let Some(first) = leaf.runs.iter_mut().find(|run| !run.text.is_empty()) {
+            // An inside marker's image comes first, however empty its run is now.
+            if let Some(first) = leaf
+                .runs
+                .iter_mut()
+                .find(|run| !run.text.is_empty() || run.marker_image.is_some())
+            {
                 first.text.insert(0, mark);
             }
             // Each line after a forced break is a paragraph of its own.
@@ -1713,6 +1762,7 @@ impl BoxTree {
                             background: None,
                             background_from: None,
                             percent_room: None,
+                            marker_image: None,
                             weight: style.weight,
                             italic: style.italic,
                             family: style.family.clone(),
@@ -2000,15 +2050,35 @@ impl BoxTree {
             let Some(mut indent) = leaf.percent_indent else {
                 continue;
             };
+            let is_mark = |mark: &char| matches!(mark, '\u{200E}' | '\u{200F}');
             let old = indent.inserted.then(|| leaf.runs.remove(0));
+            // The paragraph's direction mark goes back where `styled` put it...
+            if let Some(mark) = old.as_ref().and_then(|run| run.text.chars().next())
+                && is_mark(&mark)
+                && let Some(first) = leaf
+                    .runs
+                    .iter_mut()
+                    .find(|run| !run.text.is_empty() || run.marker_image.is_some())
+            {
+                first.text.insert(0, mark);
+            }
             let width = indent.percent / 100.0 * (place.right - place.left).max(0.0);
-            let spacer = leaf
-                .runs
-                .iter()
-                .find(|run| !run.text.is_empty())
-                .and_then(|first| indent_run(first, width))
+            let lead = leaf.runs.iter().position(|run| !run.text.is_empty());
+            let spacer = lead
+                .and_then(|at| indent_run(&leaf.runs[at], width))
                 .map(|mut spacer| {
                     spacer.owner = indent.owner;
+                    // ...and moves to the spaces opening the paragraph, to settle its direction.
+                    if let Some(at) = lead
+                        && leaf.runs[at]
+                            .text
+                            .chars()
+                            .next()
+                            .is_some_and(|c| is_mark(&c))
+                    {
+                        let mark = leaf.runs[at].text.remove(0);
+                        spacer.text.insert(0, mark);
+                    }
                     spacer
                 });
             changed |= old.as_ref().map(|run| &run.text) != spacer.as_ref().map(|run| &run.text);
@@ -2059,6 +2129,57 @@ impl BoxTree {
         }
         for row in kept {
             self.prepared.boxes[row].hidden_row = false;
+        }
+    }
+
+    /// Loads each inside marker's image with `load`, which gives its size, and puts spaces
+    /// that wide, and half an em for the gap, in place of the marker's text. One that does
+    /// not load keeps its text. A paragraph's direction marks around it stay, and in a
+    /// right-to-left one its spaces open with a mark, which marks where their room ends.
+    fn apply_marker_images(&mut self, mut load: impl FnMut(&image::Handle) -> Option<Size>) {
+        let control = |mark: &char| {
+            matches!(
+                mark,
+                '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+            )
+        };
+        for (arena, leaf) in self.texts.iter_mut().enumerate() {
+            let Some(leaf) = leaf else { continue };
+            // The block's direction: a percentage indent's spaces can come before the mark.
+            let rtl = self.prepared.boxes[arena].direction == Direction::Rtl;
+            for run in &mut leaf.runs {
+                let Some(mut marker) = run.marker_image.take() else {
+                    continue;
+                };
+                let fallback = marker
+                    .fallback
+                    .get_or_insert_with(|| run.text.clone())
+                    .clone();
+                marker.shown = load(&marker.handle);
+                run.spacer = marker.shown.is_some();
+                run.text = match marker.shown {
+                    Some(size) => {
+                        let mut lead: String = fallback.chars().take_while(control).collect();
+                        let body = &fallback[lead.len()..];
+                        // Its own, as a percentage indent takes the paragraph's mark.
+                        if rtl {
+                            lead.push('\u{200F}');
+                        }
+                        let trail: usize = body
+                            .chars()
+                            .rev()
+                            .take_while(control)
+                            .map(char::len_utf8)
+                            .sum();
+                        let spaces = indent_run(run, size.width + run.size * 0.5)
+                            .map(|spacer| spacer.text)
+                            .unwrap_or_default();
+                        format!("{lead}{spaces}{}", &body[body.len() - trail..])
+                    }
+                    None => fallback,
+                };
+                run.marker_image = Some(marker);
+            }
         }
     }
 
@@ -2646,6 +2767,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         background: None,
         background_from: None,
         percent_room: None,
+        marker_image: None,
         underline: false,
         line_through: false,
         inline_boxes: Vec::new(),
@@ -3242,6 +3364,44 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
     })
 }
 
+/// Inside list markers' images, each at the start of its run's room (its end in a
+/// right-to-left paragraph), centered on the line.
+fn draw_marker_images<Renderer: text::Renderer<Font = iced::Font> + BackgroundRenderer>(
+    leaf: &TextLeaf,
+    shaped: &Renderer::Paragraph,
+    renderer: &mut Renderer,
+    corner: Point,
+    clip: Rectangle,
+    rtl: bool,
+) {
+    for (index, run) in leaf.runs.iter().enumerate() {
+        let Some((handle, size)) = run
+            .marker_image
+            .as_ref()
+            .filter(|_| run.visible)
+            .and_then(|marker| Some((&marker.handle, marker.shown?)))
+        else {
+            continue;
+        };
+        let Some(area) = shaped.span_bounds(index).into_iter().next() else {
+            continue;
+        };
+        // A run's bounds start at its first glyph, in a right-to-left one the zero-width mark
+        // `apply_marker_images` leaves at its right end.
+        let left = if rtl { area.x - size.width } else { area.x };
+        renderer.draw_background(
+            handle,
+            Rectangle {
+                x: corner.x + left,
+                y: corner.y + area.y + (area.height - size.height) / 2.0,
+                width: size.width,
+                height: size.height,
+            },
+            clip,
+        );
+    }
+}
+
 /// Inline backgrounds and text decorations. A paragraph only draws glyphs: these sit in
 /// its run rectangles. `corner` is where the paragraph is drawn.
 fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
@@ -3648,6 +3808,15 @@ fn moved_rectangle(rect: FlowRect, origin: Point) -> Rectangle {
 fn breaks_layer(tree: &BoxTree, step: PaintStep, next: PaintStep) -> bool {
     match step {
         PaintStep::Marker(index) if tree.marker_images.contains_key(&index) => true,
+        PaintStep::Text(arena)
+            if tree.texts[arena].as_ref().is_some_and(|leaf| {
+                leaf.runs
+                    .iter()
+                    .any(|run| run.marker_image.as_ref().is_some_and(|m| m.shown.is_some()))
+            }) =>
+        {
+            true
+        }
         PaintStep::Text(_) | PaintStep::Marker(_) => {
             !matches!(next, PaintStep::Text(_) | PaintStep::Marker(_))
         }
@@ -4522,6 +4691,13 @@ where
                     self.loaded_markers.insert(*projected);
                 }
             }
+            let mut allocations = Vec::new();
+            self.tree.apply_marker_images(|handle| {
+                allocations.push(renderer.load_background(handle)?);
+                let (width, height) = renderer.background_size(handle)?;
+                Some(Size::new(width, height))
+            });
+            self.allocations.extend(allocations);
             self.tree.set_text_widths(|leaf| {
                 let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
                 (narrowest_width(renderer, leaf), longest)
@@ -5342,6 +5518,9 @@ where
                                 let corner = Point::new(origin.x + corner.x, origin.y + corner.y);
                                 if let Some(leaf) = self.tree.texts[arena].as_ref() {
                                     draw_run_decorations(leaf, shaped, renderer, corner);
+                                    let rtl = self.tree.prepared.boxes[arena].direction
+                                        == iced_css_core::formatting::block::Direction::Rtl;
+                                    draw_marker_images(leaf, shaped, renderer, corner, clip, rtl);
                                 }
                                 renderer.fill_paragraph(shaped, corner, *color, clip);
                             }

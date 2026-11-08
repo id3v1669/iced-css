@@ -263,6 +263,8 @@ pub struct GeneratedRun {
     pub block: bool,
     pub clear: ClearSide,
     pub frame: Option<GeneratedFrame>,
+    /// The byte length of an inside list marker at the start of `text`.
+    pub marker: Option<usize>,
 }
 
 /// The appended structure being built: arena slots and their per-slot records.
@@ -1615,7 +1617,7 @@ struct CounterActions {
 /// One pending `content` value, and the marker text that precedes it.
 #[derive(Clone)]
 struct PendingContent {
-    marker: String,
+    marker: Option<String>,
     items: Vec<ContentItem>,
     actions: CounterActions,
     /// The computed `quotes` pairs; `None` is the initial value's curly marks.
@@ -1684,7 +1686,7 @@ impl CounterWalk<'_> {
 
     fn content(&mut self, at: usize, pending: &PendingContent) -> String {
         self.apply(at, at, &pending.actions);
-        let mut text = pending.marker.clone();
+        let mut text = pending.marker.clone().unwrap_or_default();
         for item in &pending.items {
             match item {
                 ContentItem::Text(value) => text.push_str(value),
@@ -2452,14 +2454,14 @@ pub fn evaluate_tree_paint<'r>(
             _ => false,
         };
         marker_inside.push(inside);
-        outside_items.push(
-            !inside
-                && display
-                    .resolution(original)
-                    .is_some_and(|value| value.display == Display::ListItem),
-        );
+        let list_item = display
+            .resolution(original)
+            .is_some_and(|value| value.display == Display::ListItem);
+        outside_items.push(!inside && list_item);
         let (marker, outside) = if inside {
-            (marker, None)
+            // An image takes the marker's place even with no marker text to show.
+            let imaged = list_item && marker_images.last().is_some_and(Option::is_some);
+            (marker.or_else(|| imaged.then(String::new)), None)
         } else {
             (None, marker)
         };
@@ -2553,7 +2555,7 @@ pub fn evaluate_tree_paint<'r>(
             }
             // A `display: none` pseudo affects no counter (12.4.3); an inside marker stays.
             pending_pair[side] = Some(PendingContent {
-                marker: marker_text.unwrap_or_default(),
+                marker: marker_text,
                 items: content.unwrap_or_default(),
                 actions: if hide_display {
                     CounterActions::default()
@@ -2804,6 +2806,7 @@ pub fn evaluate_tree_paint<'r>(
                 block,
                 clear,
                 frame,
+                marker: None,
             });
         }
         generated.push(pair);
@@ -2848,6 +2851,10 @@ pub fn evaluate_tree_paint<'r>(
         for (side, text) in texts.into_iter().enumerate() {
             if let (Some(made), Some(text)) = (&mut generated[index][side], text) {
                 made.text = text;
+                made.marker = pending[index][side]
+                    .as_ref()
+                    .and_then(|content| content.marker.as_ref())
+                    .map(String::len);
             }
         }
     }

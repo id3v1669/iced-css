@@ -833,6 +833,155 @@ fn list_style_images_replace_outside_markers_and_fall_back_to_text() {
     ));
 }
 
+#[cfg(feature = "image")]
+#[test]
+fn inside_marker_images_take_room_in_the_line_and_fall_back_to_text() {
+    let path = std::env::temp_dir().join(format!("iced-css-inside-{}", std::process::id()));
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("dot.png"), checker_png(16)).unwrap();
+    let matches_in = |page: &str, css: &str, name: &str| {
+        let root = node("page", vec![node("one", vec![text("a", "item")])]);
+        let sheet = format!(
+            "#page {{ background-color:white; color:black; padding:30px; {page} }}
+             #one {{ display:list-item; list-style-position:inside; {css} }}"
+        );
+        let tree = BoxTree::with_base(root, &sheet, &path).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(path.join(name))
+            .unwrap()
+    };
+    let matches = |css: &str, name: &str| matches_in("", css, name);
+    assert!(matches("", "bullet.png"));
+    assert!(matches("list-style-image:url(gone.png);", "bullet.png"));
+    assert!(!matches("list-style-image:url(dot.png);", "bullet.png"));
+    // The image replaces the marker type's text, whatever it is.
+    assert!(matches("list-style-image:url(dot.png);", "image.png"));
+    assert!(matches(
+        "list-style-type:upper-roman; list-style-image:url(dot.png);",
+        "image.png"
+    ));
+    assert!(matches(
+        "list-style-type:none; list-style-image:url(dot.png);",
+        "image.png"
+    ));
+    // The text after it moves past the image and half an em: 16 + 8 pixels.
+    assert!(matches(
+        "list-style-type:none; list-style-image:url(dot.png); line-height:16px;",
+        "room.png"
+    ));
+    assert!(matches(
+        "list-style-type:none; line-height:16px; text-indent:24px; background-image:url(dot.png);
+         background-repeat:no-repeat;",
+        "room.png"
+    ));
+    // Right to left, the image sits at the line's right end.
+    assert!(matches(
+        "direction:rtl; list-style-type:none; list-style-image:url(dot.png);
+         line-height:16px;",
+        "rtl-room.png"
+    ));
+    assert!(matches(
+        "direction:rtl; list-style-type:none; line-height:16px; text-indent:24px;
+         background-image:url(dot.png); background-repeat:no-repeat;
+         background-position:right top;",
+        "rtl-room.png"
+    ));
+    // A percentage indent's spaces come before the marker's, and the mark after them.
+    assert!(matches(
+        "direction:rtl; list-style-type:none; list-style-image:url(dot.png); line-height:16px;
+         text-indent:10%;",
+        "rtl-indent.png"
+    ));
+    // 10% of the 964 pixels across, as a fixed indent draws it.
+    assert!(matches(
+        "direction:rtl; list-style-type:none; list-style-image:url(dot.png); line-height:16px;
+         text-indent:96.4px;",
+        "rtl-indent.png"
+    ));
+    assert!(!matches(
+        "direction:rtl; list-style-type:none; list-style-image:url(dot.png); line-height:16px;
+         text-indent:20%;",
+        "rtl-indent.png"
+    ));
+    // Measured to the right: the image's right edge 96 pixels in, the text 24 past it.
+    assert!(matches(
+        "direction:rtl; list-style-type:none; line-height:16px; text-indent:120px;
+         background-image:url(dot.png); background-repeat:no-repeat;
+         background-position:852px 0;",
+        "rtl-indent.png"
+    ));
+    // Centered on a taller line: 20.8 pixels, so 2.4 above the image.
+    assert!(matches(
+        "list-style-type:none; list-style-image:url(dot.png);",
+        "centered.png"
+    ));
+    assert!(matches(
+        "list-style-type:none; text-indent:24px; background-image:url(dot.png);
+         background-repeat:no-repeat; background-position:0 2.4px;",
+        "centered.png"
+    ));
+    // Its room stays with the word after it when a float shrinks to fit.
+    let narrow = "width:20px;";
+    assert!(matches_in(
+        narrow,
+        "float:left; list-style-type:none; list-style-image:url(dot.png); line-height:16px;",
+        "narrow.png"
+    ));
+    assert!(matches_in(
+        narrow,
+        "float:left; list-style-type:none; line-height:16px; text-indent:24px;
+         background-image:url(dot.png); background-repeat:no-repeat;",
+        "narrow.png"
+    ));
+    // Hidden, it keeps its room and draws nothing.
+    assert!(matches(
+        "visibility:hidden; list-style-image:url(dot.png);",
+        "hidden.png"
+    ));
+    assert!(matches("visibility:hidden;", "hidden.png"));
+}
+
+#[test]
+fn right_to_left_text_keeps_a_percentage_indent_through_a_new_layout() {
+    let picture = |css: &str| {
+        let root = node(
+            "page",
+            vec![node(
+                "box",
+                vec![node("one", vec![text("a", "item")]), node("tall", vec![])],
+            )],
+        );
+        let sheet = format!(
+            "#page {{ background-color:white; color:black; }}
+             #box {{ height:100px; overflow:auto; direction:rtl; }}
+             #one {{ text-indent:10%; {css} }} #tall {{ height:400px; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        let before = ui.snapshot(&Theme::Light).unwrap();
+        // Down and back: two layouts of the same tree.
+        ui.point_at(Point::new(10.0, 10.0));
+        for y in [-40.0, 40.0] {
+            let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y },
+            })]);
+        }
+        (before, ui.snapshot(&Theme::Light).unwrap())
+    };
+    let path = std::env::temp_dir().join(format!("iced-css-rtl-indent-{}", std::process::id()));
+    std::fs::create_dir_all(&path).unwrap();
+    let (blank, _) = picture("color:white;");
+    assert!(blank.matches_image(path.join("blank.png")).unwrap());
+    let (before, after) = picture("");
+    assert!(before.matches_image(path.join("text.png")).unwrap());
+    assert!(!before.matches_image(path.join("blank.png")).unwrap());
+    assert!(after.matches_image(path.join("text.png")).unwrap());
+}
+
 #[test]
 fn keys_in_a_hosted_input_stay_its_own() {
     use iced::keyboard::key::Named;
