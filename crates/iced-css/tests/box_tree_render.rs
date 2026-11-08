@@ -2588,15 +2588,18 @@ fn generated_inline_boxes_draw_as_inline_elements_do() {
 fn a_box_fading_out_with_visibility_stays_drawn_until_the_end() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};
-    // A block with text, an outside-marker item, a generated block, and a hidden one that
-    // never shows.
+    // A block with text, inline boxes (sided, generated and plain), an outside-marker item,
+    // a generated block, and a hidden one that never shows.
     let source = || {
         node(
             "page",
             vec![node(
                 "bar",
                 vec![
-                    text("line", "words"),
+                    text("line", "words "),
+                    node("in", vec![text("i", "boxed")]),
+                    text("gap", " "),
+                    node("plain", vec![text("p", "plain")]),
                     node("li", vec![text("item", "item")]),
                 ],
             )],
@@ -2611,6 +2614,11 @@ fn a_box_fading_out_with_visibility_stays_drawn_until_the_end() {
                             background-color:#00ff00; }}
              #bar:after {{ content:\".\"; display:block; height:6px;
                            background-color:#ff00ff; visibility:hidden; }}
+             #in {{ display:inline; padding:0 4px; border:2px solid #000000;
+                    background-color:#00ffff; }}
+             #in:after {{ content:\"y\"; padding:0 6px; background-color:#ffff00;
+                          border-left:3px solid #000000; }}
+             #plain {{ display:inline; background-color:#ff8800; }}
              #li {{ display:list-item; margin-left:30px; }}"
         )
     };
@@ -2633,7 +2641,8 @@ fn a_box_fading_out_with_visibility_stays_drawn_until_the_end() {
     animations
         .request(&shown, &hidden, "bar", &["visibility"], timing, start)
         .unwrap();
-    // Halfway it draws as shown: box, border, text, marker and generated block.
+    // Halfway it draws as shown: box, border, text, inline boxes, marker and generated
+    // block.
     animations.advance(start + Duration::from_millis(500), &hidden);
     assert!(picture(&animations.presented(&hidden), "visibility-shown"));
     // Done, it is hidden.
@@ -2656,6 +2665,222 @@ fn a_box_fading_out_with_visibility_stays_drawn_until_the_end() {
             );
         }
     }
+}
+
+#[test]
+fn a_hidden_inline_box_keeps_only_its_room() {
+    // Hidden, a padded inline with a background draws nothing of its own, not even its
+    // bands above and below, and its shown child draws as in no inline box, its background
+    // the whole tall line: as between empty spans whose margins make the same room.
+    let draw = |hidden: bool, name: &str| {
+        let child = || node("c", vec![text("x", "child")]);
+        let middle = if hidden {
+            vec![node("s", vec![child()])]
+        } else {
+            vec![node("l", vec![]), child(), node("r", vec![])]
+        };
+        let mut children = vec![text("a", "before ")];
+        children.extend(middle);
+        children.push(text("b", " after"));
+        let tree = BoxTree::new(
+            node("p", children),
+            "#p { width:300px; background-color:white; color:black; line-height:40px; }
+             #s { display:inline; visibility:hidden; padding:6px 8px;
+                  background-color:#0000ff; }
+             #l { display:inline; margin-right:8px; }
+             #r { display:inline; margin-left:8px; }
+             #c { display:inline; visibility:visible; background-color:#ffff00; }",
+        )
+        .unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("hidden-room-{}.png", std::process::id());
+    assert!(draw(false, &name));
+    assert!(draw(true, &name));
+    let _ = std::fs::remove_file(
+        std::env::temp_dir().join(format!("hidden-room-{}-wgpu.png", std::process::id())),
+    );
+}
+
+#[cfg(feature = "image")]
+#[test]
+fn a_fading_block_keeps_its_image_under_generated_text() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let path = std::env::temp_dir().join(format!("iced-css-fade-image-{}", std::process::id()));
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("dot.png"), checker_png(16)).unwrap();
+    let css = |shown: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #bar {{ width:200px; background-color:#ff0000; background-image:url(dot.png);
+                     background-repeat:no-repeat; visibility:{shown}; }}
+             #bar:before {{ content:\"x\"; }}"
+        )
+    };
+    let root = || node("page", vec![node("bar", vec![text("t", "words")])]);
+    let shown = BoxTree::with_base(root(), &css("visible"), &path).unwrap();
+    let hidden = shown.restyled(&[&css("hidden")]).unwrap();
+    let picture = |tree: &BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.clone().view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(path.join(name))
+            .unwrap()
+    };
+    assert!(picture(&shown, "shown.png"));
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &shown,
+            &hidden,
+            "bar",
+            &["visibility"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &hidden);
+    // The text over the image paints no block background of its own.
+    assert!(picture(&animations.presented(&hidden), "shown.png"));
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn every_inline_box_fades_as_it_shows() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let picture = |tree: &BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.clone().view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    // `id` fades out, then after a delay back in: halfway out it draws as shown, through the
+    // delay as hidden, then as shown again.
+    let fade = |source: &dyn Fn() -> Node, css: &dyn Fn(&str) -> String, id: &str, tag: &str| {
+        let shown = BoxTree::new(source(), &css("visible")).unwrap();
+        let hidden = shown.restyled(&[&css("hidden")]).unwrap();
+        let (on, off) = (format!("fade-{tag}-shown"), format!("fade-{tag}-hidden"));
+        assert!(picture(&shown, &on));
+        assert!(picture(&hidden, &off));
+        assert!(!picture(&hidden, &on), "{tag}");
+        let start = Instant::now();
+        let second = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&shown, &hidden, id, &["visibility"], second, start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &hidden);
+        assert!(
+            picture(&animations.presented(&hidden), &on),
+            "{tag} halfway out"
+        );
+        let delayed = AnimationTiming::new(Duration::from_secs(1), Duration::from_secs(1));
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&hidden, &shown, id, &["visibility"], delayed, start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &shown);
+        assert!(
+            picture(&animations.presented(&shown), &off),
+            "{tag} delayed"
+        );
+        animations.advance(start + Duration::from_millis(1100), &shown);
+        assert!(
+            picture(&animations.presented(&shown), &on),
+            "{tag} coming in"
+        );
+        for name in [on, off] {
+            for renderer in ["wgpu", "tiny-skia"] {
+                let _ = std::fs::remove_file(
+                    std::env::temp_dir()
+                        .join(format!("{name}-{}-{renderer}.png", std::process::id())),
+                );
+            }
+        }
+    };
+    // A block: an inline box with a `:before` hidden of its own and a hidden box around a
+    // shown one inside it, and a plain inline background around a child with sides.
+    let block = || {
+        node(
+            "page",
+            vec![node(
+                "bar",
+                vec![
+                    node(
+                        "in",
+                        vec![
+                            text("i", "boxed "),
+                            node("d", vec![node("c", vec![text("cc", "kept")])]),
+                        ],
+                    ),
+                    text("gap", " "),
+                    node("plain", vec![node("x", vec![text("xx", "x")])]),
+                ],
+            )],
+        )
+    };
+    let block_css = |shown: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #bar {{ width:300px; visibility:{shown}; }}
+             #in {{ display:inline; padding:0 4px; border:2px solid #000000;
+                    background-color:#00ffff; }}
+             #in:before {{ content:\"z\"; visibility:hidden; background-color:#ff00ff; }}
+             #d {{ display:inline; visibility:hidden; background-color:#0000aa; }}
+             #c {{ display:inline; visibility:visible; }}
+             #plain {{ display:inline; background-color:#ff8800; }}
+             #x {{ display:inline; margin:0 10px; padding:0 4px; }}"
+        )
+    };
+    fade(&block, &block_css, "bar", "block");
+    // An inline in a shown inline's background, with a `:before` hidden of its own whose
+    // side spaces match its own, and an `:after` with sides of its own that follows it.
+    let inline = || {
+        node(
+            "page",
+            vec![node(
+                "o",
+                vec![
+                    text("a", "outer "),
+                    node("in2", vec![text("b", "inner")]),
+                    text("c", " end"),
+                ],
+            )],
+        )
+    };
+    let inline_css = |shown: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #o {{ display:inline; background-color:#ff0000; }}
+             #in2 {{ display:inline; padding:0 4px; border:2px solid #000000;
+                     visibility:{shown}; }}
+             #in2:before {{ content:\"q\"; visibility:hidden; padding:0 4px;
+                            border-left:2px solid #000000; }}
+             #in2:after {{ content:\"w\"; padding:0 6px; background-color:#ffff00; }}"
+        )
+    };
+    fade(&inline, &inline_css, "in2", "inline");
+    // An inside marker stays outside its `:before`'s box and background.
+    let item = || node("page", vec![node("li", vec![text("t", "item")])]);
+    let item_css = |shown: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #li {{ display:list-item; list-style-position:inside; visibility:{shown}; }}
+             #li:before {{ content:\"x\"; padding:0 4px; background-color:#ffff00; }}"
+        )
+    };
+    fade(&item, &item_css, "li", "marker");
 }
 
 #[test]

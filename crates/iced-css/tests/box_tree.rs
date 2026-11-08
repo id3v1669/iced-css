@@ -3244,7 +3244,7 @@ mod animation {
             for run in &leaves[0].1.runs {
                 for sides in &run.inline_boxes {
                     let band = sides.border[0].1.unwrap();
-                    if sides.owner == usize::MAX {
+                    if sides.owner > usize::MAX / 2 {
                         assert_eq!(band, blue, "{properties}");
                         kept += 1;
                     } else {
@@ -3253,7 +3253,7 @@ mod animation {
                     }
                 }
                 if let Some((_, _, edge)) = run.edge {
-                    if run.inline_boxes.last().unwrap().owner == usize::MAX {
+                    if run.inline_boxes.last().unwrap().owner > usize::MAX / 2 {
                         assert_eq!(edge, blue, "{properties}");
                         kept += 1;
                     } else {
@@ -3308,7 +3308,13 @@ mod animation {
                 .iter()
                 .flat_map(|(_, leaf)| leaf.runs.iter())
                 .filter(|run| !run.text.trim().is_empty())
-                .map(|run| (run.text.clone(), run.visible, !run.inline_boxes.is_empty()))
+                .map(|run| {
+                    (
+                        run.text.clone(),
+                        run.visible,
+                        run.inline_boxes.iter().any(|sides| sides.visible),
+                    )
+                })
                 .collect();
             (tree.paints()[1].visible, tree.paints()[7].visible, runs)
         };
@@ -3359,12 +3365,13 @@ mod animation {
                 // Shown at both ends, inside the hidden inline: no box or background of it.
                 if run.text.contains("kept") {
                     assert!(run.visible);
-                    assert!(run.inline_boxes.is_empty() && run.background.is_none());
+                    assert!(run.inline_boxes.iter().all(|sides| !sides.visible));
+                    assert!(run.background.is_none());
                     continue;
                 }
                 assert!(!run.visible, "{:?}", run.text);
                 assert!(
-                    run.inline_boxes.is_empty() && run.edge.is_none(),
+                    run.inline_boxes.iter().all(|sides| !sides.visible),
                     "{:?}",
                     run.text
                 );
@@ -4112,7 +4119,7 @@ fn an_inline_generated_box_takes_its_sides_and_answers_to_no_element() {
     let own = &runs[place].inline_boxes;
     assert_eq!(own.len(), 1);
     assert_eq!(own[0].background, Some([1.0, 0.0, 0.0]));
-    assert_eq!(own[0].owner, usize::MAX);
+    assert!(own[0].owner > usize::MAX / 2);
     // Its text after it has no box of its.
     assert!(runs.last().unwrap().inline_boxes.is_empty());
     // Text content gets the same, and a border its bars.
@@ -4134,8 +4141,8 @@ fn an_inline_generated_box_takes_its_sides_and_answers_to_no_element() {
     let runs = &tree.text_leaves()[0].1.runs;
     let place = runs.iter().find(|run| run.text == "\u{200B}").unwrap();
     assert_eq!(place.inline_boxes.len(), 2);
-    assert_eq!(place.inline_boxes[1].owner, usize::MAX);
-    assert_ne!(place.inline_boxes[0].owner, usize::MAX);
+    assert!(place.inline_boxes[1].owner > usize::MAX / 2);
+    assert!(place.inline_boxes[0].owner < usize::MAX / 2);
 }
 
 #[test]
@@ -4324,7 +4331,15 @@ fn hidden_boxes_keep_their_room_and_thin_side_borders_keep_their_bars() {
             .1
             .runs
             .iter()
-            .all(|run| run.inline_boxes.is_empty() && run.edge.is_none())
+            .all(|run| run.inline_boxes.iter().all(|sides| !sides.visible))
+    );
+    // Its sides are kept, marked hidden, for an animated `visibility` to show.
+    assert!(
+        leaves[0]
+            .1
+            .runs
+            .iter()
+            .any(|run| !run.inline_boxes.is_empty())
     );
     assert_eq!(leaves[0].1.runs.len(), 3, "the room stays");
     assert!(!leaves[0].1.runs[0].visible);

@@ -163,11 +163,12 @@ pub(super) struct Followers {
     runs: Vec<(usize, usize, usize)>,
     /// Inline box sides showing the color at both ends, by box and side.
     inline_sides: BTreeSet<(usize, InlineSide)>,
-    /// For `visibility`: runs, by owner and text, and block generated boxes, by owner and
-    /// order, that keep a visibility of their own: a `:before` or `:after` that sets one.
+    /// For `visibility`: runs, by owner, text and innermost box, and block generated boxes,
+    /// by owner and order, that keep a visibility of their own: a `:before` or `:after`
+    /// that sets one.
     /// By content, not slot, so an interaction styling cannot shift them; another run of
     /// the same owner and text keeps its own too.
-    fixed_runs: BTreeSet<(usize, String)>,
+    fixed_runs: BTreeSet<(usize, String, Option<usize>)>,
     fixed_boxes: BTreeSet<(usize, usize)>,
 }
 
@@ -373,8 +374,8 @@ impl BoxTree {
     /// Shows or hides, with an animated `visibility`, the element and what follows it at
     /// both ends (`followers`, by source node): their boxes, outside markers, block generated
     /// boxes and text runs, found by owner whatever an interaction styling moved. Only
-    /// what still shows `target` changes. Hidden, their inline sides and backgrounds go
-    /// too; shown, those the styling hid at build stay hidden.
+    /// what still shows `target` changes. Their inline boxes' sides and backgrounds show
+    /// or hide with them.
     fn reveal(&mut self, followers: &Followers, root: usize, target: bool, now: bool) {
         let mut nodes: BTreeSet<usize> = followers.boxes.iter().map(|f| f.node).collect();
         nodes.insert(root);
@@ -413,38 +414,45 @@ impl BoxTree {
             .flatten()
             .flat_map(|leaf| &mut leaf.runs)
         {
-            let edge = run.edge.map(|_| edge_owner(run));
-            if nodes.contains(&run.owner)
+            let follows = nodes.contains(&run.owner)
                 && run.visible == target
                 && (followers.fixed_runs.is_empty()
-                    || !followers
-                        .fixed_runs
-                        .contains(&(run.owner, run.text.clone())))
-            {
+                    || !followers.fixed_runs.contains(&run_key(run)));
+            if follows {
                 run.visible = now;
-                if !now {
-                    // Its generated box's sides, and a background not of a box around it.
-                    run.inline_boxes.retain(|sides| sides.owner != usize::MAX);
-                    if edge == Some(usize::MAX) {
-                        run.edge = None;
-                    }
-                    if run.background_from.is_none_or(|from| nodes.contains(&from)) {
-                        run.background = None;
-                    }
+                // Its generated box goes with it.
+                for sides in run
+                    .inline_boxes
+                    .iter_mut()
+                    .filter(|sides| super::is_generated(sides.owner))
+                {
+                    sides.visible = now;
                 }
             }
-            if !now {
-                run.inline_boxes
-                    .retain(|sides| !nodes.contains(&sides.owner));
-                if edge.is_some_and(|owner| nodes.contains(&owner)) {
-                    run.edge = None;
-                }
-                if run
-                    .background_from
-                    .is_some_and(|from| nodes.contains(&from))
-                {
-                    run.background = None;
-                }
+            // The boxes that follow, wherever their sides and backgrounds fall.
+            for sides in run
+                .inline_boxes
+                .iter_mut()
+                .filter(|sides| nodes.contains(&sides.owner))
+            {
+                sides.visible = now;
+            }
+            // Its background: the nearest that shows now, if any box it lies in moves.
+            let moves = |key: usize| nodes.contains(&key) || (follows && super::is_generated(key));
+            if run.backgrounds.iter().any(|entry| moves(entry.1)) {
+                let shown = run
+                    .backgrounds
+                    .iter()
+                    .find(|(_, key, visible)| if moves(*key) { now } else { *visible })
+                    // A side space leaves its own box's background to the box.
+                    .filter(|(_, key, _)| {
+                        !(run.spacer
+                            && run.inline_boxes.last().is_some_and(|own| own.owner == *key))
+                    });
+                run.background = shown.map(|entry| entry.0);
+                run.background_from = shown
+                    .map(|entry| entry.1)
+                    .filter(|key| !super::is_generated(*key));
             }
         }
     }
@@ -502,7 +510,7 @@ impl BoxTree {
                     .and_then(|old| old.runs.iter().filter(alike).nth(occurrence))
                     .is_some_and(|old| old.visible != committed)
                 {
-                    followers.fixed_runs.insert((run.owner, run.text.clone()));
+                    followers.fixed_runs.insert(run_key(run));
                 }
             }
         }
@@ -716,7 +724,7 @@ impl BoxTree {
     fn inline_side_colors(&self) -> BTreeMap<(usize, InlineSide), [f32; 3]> {
         let mut found = BTreeMap::new();
         for run in self.texts.iter().flatten().flat_map(|leaf| &leaf.runs) {
-            // A generated box's sides key as `usize::MAX`, inside no element.
+            // A generated box's sides key past `usize::MAX / 2`, inside no element.
             for sides in &run.inline_boxes {
                 if let (width, Some(color)) = sides.border[0]
                     && width > 0.0
@@ -742,8 +750,18 @@ impl BoxTree {
     }
 }
 
+/// A run told apart by content, not slot: its owner, text, and innermost box, which keeps
+/// a box's side spaces apart from its `:before`'s.
+fn run_key(run: &super::TextRun) -> (usize, String, Option<usize>) {
+    (
+        run.owner,
+        run.text.clone(),
+        run.inline_boxes.last().map(|sides| sides.owner),
+    )
+}
+
 /// The box a run's side bar belongs to: the innermost box it wears, which a side spacer's
-/// own box is; a generated box's is `usize::MAX`.
+/// own box is; a generated box's is its `generated_owner`.
 fn edge_owner(run: &super::TextRun) -> usize {
     run.inline_boxes
         .last()

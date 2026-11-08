@@ -318,6 +318,10 @@ pub struct TextRun {
     /// The source node of the inline element whose background `background` is, for
     /// animating it; `None` for a run's own or no background.
     pub background_from: Option<usize>,
+    /// Every inline background around it, nearest first: the color, the box's source node
+    /// (a `:before` or `:after` box's `generated_owner`), and whether the box shows.
+    /// `background` is the first that shows; an animated `visibility` picks again.
+    pub backgrounds: Vec<([f32; 3], usize, bool)>,
     /// A side's stand-in spaces sized at layout: fixed pixels, a percentage of the
     /// containing block's width, and whether they round up to keep a thin border's bar.
     pub percent_room: Option<(f32, f32, bool)>,
@@ -1207,6 +1211,25 @@ impl BoxTree {
                 .map(|(&run, (text, _))| {
                     let style = style_of(run);
                     let mut background_from = None;
+                    let mut backgrounds = Vec::new();
+                    // Every inline background up from `at`; for generated text, only boxes
+                    // of their own (an inline element's slot is its paragraph's).
+                    let chain = |start: usize, generated: bool| {
+                        let mut found = Vec::new();
+                        let mut owner = Some(start);
+                        while let Some(here) = owner {
+                            let own_box = !generated
+                                || prepared.slot[here].is_some_and(|slot| prepared.anonymous[slot]);
+                            if own_box
+                                && let (Some(color), Some(node)) =
+                                    (raw_paints[here].background, projection.original_index(here))
+                            {
+                                found.push((color, node, raw_paints[here].visible));
+                            }
+                            owner = prepared.inline_parent[here];
+                        }
+                        found
+                    };
                     let (size, color, background, visible) = match (run, generated_of(run)) {
                         (run_source, Some(made)) => {
                             // Generated text keeps an enclosing inline's background.
@@ -1215,6 +1238,15 @@ impl BoxTree {
                             | RunSource::After(at)) = run_source;
                             let mut owner = (!boxed).then_some(at);
                             let mut background = made.background.filter(|_| made.visible && !boxed);
+                            if !boxed {
+                                let side = usize::from(matches!(run_source, RunSource::After(_)));
+                                backgrounds.extend(
+                                    made.background.map(|color| {
+                                        (color, generated_owner(at, side), made.visible)
+                                    }),
+                                );
+                                backgrounds.extend(chain(at, true));
+                            }
                             while background.is_none() {
                                 let Some(here) = owner else { break };
                                 if prepared.slot[here].is_some_and(|slot| prepared.anonymous[slot])
@@ -1236,6 +1268,7 @@ impl BoxTree {
                         ) => {
                             // An inline background paints behind its own and its children's
                             // text.
+                            backgrounds = chain(at, false);
                             let mut owner = Some(at);
                             let mut background = None;
                             while let Some(here) = owner {
@@ -1267,6 +1300,7 @@ impl BoxTree {
                         color,
                         background,
                         background_from,
+                        backgrounds,
                         percent_room: None,
                         marker_image: None,
                         weight: style.weight,
@@ -1430,6 +1464,11 @@ impl BoxTree {
                                 // Outside the box, the marker shows none of its background.
                                 background: if in_box { None } else { run.background },
                                 background_from: if in_box { None } else { run.background_from },
+                                backgrounds: if in_box {
+                                    Vec::new()
+                                } else {
+                                    run.backgrounds.clone()
+                                },
                                 ..run.clone()
                             },
                             at,
@@ -1565,11 +1604,11 @@ impl BoxTree {
                         percent_padding: [0.0; 4],
                     })
                 };
-                // 11.2: a hidden box paints nothing but keeps its room.
+                // 11.2: a hidden box paints nothing but keeps its room: its sides are kept,
+                // marked hidden.
                 let decorations = |elements: &[usize]| -> Vec<InlineDecoration> {
                     elements
                         .iter()
-                        .filter(|element| box_paints[**element].visible)
                         .map(|&element| {
                             let sides = sides_of(element);
                             let colors = box_paints[element].border;
@@ -1589,8 +1628,9 @@ impl BoxTree {
                                 owner: if element < count {
                                     projection.original_index(element).unwrap_or_default()
                                 } else {
-                                    usize::MAX
+                                    usize::MAX - (element - count)
                                 },
+                                visible: box_paints[element].visible,
                             }
                         })
                         .collect()
@@ -1612,6 +1652,22 @@ impl BoxTree {
                         at = box_parent[here];
                     }
                     (None, None)
+                };
+                // Every background up from `at`, nearest first, as `TextRun::backgrounds`.
+                let chain_around = |mut at: Option<usize>| {
+                    let mut found = Vec::new();
+                    while let Some(here) = at {
+                        if let Some(color) = box_paints[here].background {
+                            let from = if here < count {
+                                projection.original_index(here).unwrap_or_default()
+                            } else {
+                                usize::MAX - (here - count)
+                            };
+                            found.push((color, from, box_paints[here].visible));
+                        }
+                        at = box_parent[here];
+                    }
+                    found
                 };
                 let side = |element: usize, across: usize, run: &TextRun, depth: usize| {
                     let sides = sides_of(element);
@@ -1642,6 +1698,7 @@ impl BoxTree {
                             )),
                             background: around(box_parent[element]).0,
                             background_from: around(box_parent[element]).1,
+                            backgrounds: chain_around(box_parent[element]),
                             inline_boxes: decorations(&here[..depth]),
                             // Nothing hidden answers input: the nearest box around that shows.
                             owner: owner_of(
@@ -1655,7 +1712,7 @@ impl BoxTree {
                     let room = bar + sides.padding[across];
                     let visible = box_paints[element].visible;
                     let edge = box_paints[element].border[across]
-                        .filter(|_| bar > 0.0 && visible)
+                        .filter(|_| bar > 0.0)
                         .map(|color| (across == 3, bar, color));
                     // Up to the next space that fits: a thin border must keep its bar.
                     let step = run.size.max(1.0) / 6.0;
@@ -1681,6 +1738,8 @@ impl BoxTree {
                             } else {
                                 around(box_parent[element]).1
                             },
+                            // Its padding shows its own box's background, or those around it.
+                            backgrounds: chain_around(Some(element)),
                             inline_boxes: decorations(&here[..=depth]),
                             edge,
                             edge_style: box_paints[element].border_style[across],
@@ -1837,6 +1896,7 @@ impl BoxTree {
                             background_from: None,
                             percent_room: None,
                             marker_image: None,
+                            backgrounds: Vec::new(),
                             weight: style.weight,
                             italic: style.italic,
                             family: style.family.clone(),
@@ -2779,9 +2839,12 @@ pub struct InlineDecoration {
     /// The `border-top-style` and `border-bottom-style`.
     pub border_style: [&'static str; 2],
     pub background: Option<[f32; 3]>,
-    /// The source node of the box; `usize::MAX` for a `:before` or `:after` box, which
-    /// is no source node's.
+    /// The source node of the box; for a `:before` or `:after` box, which is no source
+    /// node's, its `generated_owner`, past `usize::MAX / 2`.
     pub owner: usize,
+    /// 11.2: a hidden box keeps its room and paints nothing; kept for an animated
+    /// `visibility` to show.
+    pub visible: bool,
 }
 
 /// Whether text has characters of the right-to-left scripts.
@@ -2818,6 +2881,19 @@ fn small_capitals(run: &TextRun) -> Vec<TextRun> {
         }
     }
     parts
+}
+
+/// The owner a `:before` (side 0) or `:after` (side 1) box of the projected `element` keys
+/// under in decorations: one of its own, past `usize::MAX / 2`, which no source node is.
+#[must_use]
+pub fn generated_owner(element: usize, side: usize) -> usize {
+    usize::MAX - (2 * element + side)
+}
+
+/// Whether a decoration's owner is a `:before` or `:after` box.
+#[must_use]
+pub fn is_generated(owner: usize) -> bool {
+    owner > usize::MAX / 2
 }
 
 /// An inline `:before` or `:after`'s sides, from its frame, as an inline element's.
@@ -2866,6 +2942,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         background_from: None,
         percent_room: None,
         marker_image: None,
+        backgrounds: Vec::new(),
         underline: false,
         line_through: false,
         inline_boxes: Vec::new(),
@@ -3519,7 +3596,8 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
     };
     for (index, run) in leaf.runs.iter().enumerate() {
         // A hidden run keeps its room inside the visible boxes around it.
-        if !run.visible && run.inline_boxes.is_empty() && run.background.is_none() {
+        let sided = run.inline_boxes.iter().any(|sides| sides.visible);
+        if !run.visible && !sided && run.background.is_none() {
             continue;
         }
         let color = run.color.unwrap_or([0.0; 3]);
@@ -3531,7 +3609,6 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                 ..area
             };
             // 10.6.1: an inline box wraps the font's content area, not the taller line box.
-            let sided = !run.inline_boxes.is_empty();
             let (content_top, content_height) = if sided {
                 let height = area.height.min(run.line_size.unwrap_or(run.size) * 1.3);
                 (area.y + (area.height - height) / 2.0, height)
@@ -3539,7 +3616,7 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                 (area.y, area.height)
             };
             let content_bottom = content_top + content_height;
-            for sides in &run.inline_boxes {
+            for sides in run.inline_boxes.iter().filter(|sides| sides.visible) {
                 let top = content_top - sides.padding[0];
                 let bottom = content_bottom + sides.padding[1];
                 if let Some(background) = sides.background {
@@ -3579,6 +3656,7 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
             if !run.visible {
                 continue;
             }
+            // A bar draws with its own box, the innermost one, which shows when its spaces do.
             if let (Some((start, width, edge)), Some(sides)) = (run.edge, run.inline_boxes.last()) {
                 let top = content_top - sides.padding[0] - sides.border[0].0;
                 let bottom = content_bottom + sides.padding[1] + sides.border[1].0;
