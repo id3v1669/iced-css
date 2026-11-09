@@ -3335,6 +3335,69 @@ fn right_to_left_text_keeps_its_mark_before_percentage_sides() {
 }
 
 #[test]
+fn em_lengths_follow_an_animated_font_size() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "box",
+                vec![
+                    text("t", "words in a box "),
+                    node("in", vec![text("i", "em")]),
+                    text("g", " "),
+                    node("px", vec![text("p", "px")]),
+                ],
+            )],
+        )
+    };
+    let css = |size: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #box {{ font-size:{size}; width:10em; padding:0.5em; margin-left:1em;
+                     border-left:0.25em solid #0000ff; line-height:1.5em;
+                     background-color:#ddeeff; }}
+             #in {{ display:inline; padding:0 0.5em; background-color:#ffcc00; }}
+             #px {{ display:inline; padding:0 6px; background-color:#ff8800; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let from = BoxTree::new(source(), &css("16px")).unwrap();
+    let to = from.restyled(&[&css("32px")]).unwrap();
+    assert!(picture(
+        BoxTree::new(source(), &css("24px")).unwrap(),
+        "em-between"
+    ));
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &from,
+            &to,
+            "box",
+            &["font-size"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "em-between"));
+    for renderer in ["wgpu", "tiny-skia"] {
+        let _ = std::fs::remove_file(
+            std::env::temp_dir().join(format!("em-between-{}-{renderer}.png", std::process::id())),
+        );
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

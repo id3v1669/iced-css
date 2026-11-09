@@ -3599,7 +3599,7 @@ mod animation {
         let css = |size: &str| {
             format!(
                 "#parent {{ font-size:{size}; }}
-                 #child {{ font-size:0.5em; }}
+                 #child {{ font-size:0.5em; padding-top:1em; }}
                  #parent:before {{ content:\"*\"; font-size:12px; }}
                  #parent:after {{ content:\"*\"; }}"
             )
@@ -3616,6 +3616,10 @@ mod animation {
             }
             animations.advance(start + Duration::from_millis(500), &to);
             let shown = animations.presented(&to);
+            let geometry = shown.layout(800.0, None).unwrap();
+            let child = geometry[2].as_ref().unwrap();
+            // Its padding of 1em, 8 to 16: 12 halfway, scaled once.
+            assert_eq!(child.content.top - child.padding.top, 12.0, "{order:?}");
             let leaves = shown.text_leaves();
             let runs: Vec<(String, f32)> = leaves
                 .iter()
@@ -3636,6 +3640,110 @@ mod animation {
             assert!(runs.contains(&("*".to_owned(), 12.0)), "{order:?} {runs:?}");
             assert!(runs.contains(&("*".to_owned(), 24.0)), "{order:?} {runs:?}");
         }
+    }
+
+    #[test]
+    fn an_em_length_animated_of_its_own_keeps_its_animation() {
+        let css = |size: &str| format!("#box {{ font-size:{size}; width:10em; }}");
+        let from = tree(&css("16px"));
+        let to = from.restyled(&[&css("32px")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["font-size", "width"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let geometry = animations.presented(&to).layout(800.0, None).unwrap();
+        let moved = geometry[1].as_ref().unwrap();
+        // 160 to 320 by its own animation: 240, not scaled again with the size.
+        assert_eq!(moved.border.right - moved.border.left, 240.0);
+    }
+
+    #[test]
+    fn em_lengths_another_styling_moves_keep_its_value() {
+        let css = |size: &str| {
+            format!("#box {{ font-size:{size}; width:10em; }} #kid {{ line-height:1.5em; }}")
+        };
+        let source = || {
+            node(
+                "page",
+                vec![node("box", vec![node("kid", vec![text("t", "words")])])],
+            )
+        };
+        let from = BoxTree::new(source(), &css("16px")).unwrap();
+        let to = from.restyled(&[&css("32px")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["font-size"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        // Moved on to pixels of its own, as a hover styling can: they stay.
+        let moved = to
+            .restyled(&[
+                &css("32px"),
+                "#box { width:200px; } #kid { line-height:30px; }",
+            ])
+            .unwrap();
+        let shown = animations.presented(&moved);
+        let geometry = shown.layout(800.0, None).unwrap();
+        let wide = geometry[1].as_ref().unwrap();
+        assert_eq!(wide.border.right - wide.border.left, 200.0);
+        let leaves = shown.text_leaves();
+        assert_eq!(
+            leaves[0].1.line_height,
+            iced_css::evaluation::tree_layout::TextLineHeight::Px(30.0)
+        );
+        // Unmoved, they follow the size: 240 wide, 36 high lines.
+        let shown = animations.presented(&to);
+        let geometry = shown.layout(800.0, None).unwrap();
+        let wide = geometry[1].as_ref().unwrap();
+        assert_eq!(wide.border.right - wide.border.left, 240.0);
+        assert_eq!(
+            shown.text_leaves()[0].1.line_height,
+            iced_css::evaluation::tree_layout::TextLineHeight::Px(36.0)
+        );
+    }
+
+    #[test]
+    fn an_inline_padding_animated_of_its_own_keeps_its_timing() {
+        let source = || {
+            node(
+                "page",
+                vec![node("p", vec![node("s", vec![text("t", "x")])])],
+            )
+        };
+        let css = |size: &str| format!("#s {{ display:inline; font-size:{size}; padding:0 1em; }}");
+        let from = BoxTree::new(source(), &css("16px")).unwrap();
+        let to = from.restyled(&[&css("32px")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "s", &["font-size"], second(), start)
+            .unwrap();
+        animations
+            .request(
+                &from,
+                &to,
+                "s",
+                &["padding-left"],
+                AnimationTiming::new(Duration::from_secs(2), Duration::ZERO),
+                start,
+            )
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        // Its own animation, a quarter of 16 to 32: 20 pixels of room, not the size's 24.
+        let room = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .find(|run| {
+                run.side_of.is_some_and(|at| at.1 == 3) && run.percent_room.is_some_and(|r| r.2)
+            })
+            .and_then(|run| run.percent_room)
+            .map(|room| room.0);
+        assert_eq!(room, Some(20.0));
     }
 
     #[test]

@@ -193,6 +193,11 @@ pub(super) struct Followers {
     /// element's at both ends. Only what still has its target size scales.
     sized_runs: BTreeSet<(RunKey, u32)>,
     sized_nodes: BTreeMap<usize, f32>,
+    /// Lengths of the element and those descendants that are a share of their font size
+    /// at both ends, as `em` gives: by source node and field, and line heights by arena slot.
+    /// Each with its target pixels: only what still has them scales.
+    em_lengths: Vec<(usize, Field, f32)>,
+    em_line_heights: Vec<(usize, f32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -645,6 +650,14 @@ impl BoxTree {
         let (sides, rest): (Vec<_>, Vec<_>) = rest
             .into_iter()
             .partition(|presented| matches!(presented.field, Field::Margin(_) | Field::Padding(_)));
+        // What animates of its own, by source node and field.
+        let animated: Vec<(usize, Field)> = presentation
+            .iter()
+            .filter_map(|presented| {
+                let projected = self.element(&presented.id)?;
+                Some((self.originals[projected], presented.field))
+            })
+            .collect();
         for presented in rest.into_iter().chain(sizes).chain(sides) {
             let Some(projected) = self.element(&presented.id) else {
                 continue;
@@ -666,6 +679,7 @@ impl BoxTree {
                     &presented.followers,
                     self.originals[projected],
                     now / target,
+                    &animated,
                 );
             }
             if let (Field::Visibility, Value::Visible(target), Value::Visible(now)) =
@@ -778,7 +792,7 @@ impl BoxTree {
     /// it (`followers`) and still has its target size: computed sizes, outside markers, text
     /// runs, and the spaces made from them for sides and indents, which keep their room.
     /// Lengths in `em` keep their target's.
-    fn resize(&mut self, followers: &Followers, root: usize, factor: f32) {
+    fn resize(&mut self, followers: &Followers, root: usize, factor: f32, own: &[(usize, Field)]) {
         for (projected, node) in self.originals.iter().enumerate() {
             let target = followers.sized_nodes.get(node);
             if *node != root && target != Some(&self.prepared.font_sizes[projected]) {
@@ -835,6 +849,32 @@ impl BoxTree {
                 }
             }
         }
+        // Lengths in `em` move with the size, unless something else moved them already or
+        // an animation of their own does; an inline's sides make their spaces again.
+        let projected_of: BTreeMap<usize, usize> = self
+            .originals
+            .iter()
+            .enumerate()
+            .map(|(at, node)| (*node, at))
+            .collect();
+        for &(node, field, target) in &followers.em_lengths {
+            let Some(&projected) = projected_of.get(&node) else {
+                continue;
+            };
+            if own.contains(&(node, field)) {
+                continue;
+            }
+            if self.read(projected, field) == Some(Value::Length(Dim::Px(target))) {
+                self.write(projected, field, Value::Length(Dim::Px(target * factor)));
+            }
+        }
+        for &(arena, target) in &followers.em_line_heights {
+            if let Some(leaf) = self.texts.get_mut(arena).and_then(Option::as_mut)
+                && leaf.line_height == super::TextLineHeight::Px(target)
+            {
+                leaf.line_height = super::TextLineHeight::Px(target * factor);
+            }
+        }
     }
 
     /// What follows an animated `font-size` from `committed` to `target` pixels: the
@@ -886,6 +926,61 @@ impl BoxTree {
                         .sized_runs
                         .insert((run_key(run), run.size.to_bits()));
                 }
+            }
+        }
+        // A length whose pixels are the same share of the size at both ends is in `em`: one
+        // that stays the same, or changes otherwise, is its own.
+        let em = |from: f32, to: f32| {
+            (from * target - to * committed).abs() <= 1e-3 * (to * committed).abs()
+        };
+        let mut fields = vec![
+            Field::Width,
+            Field::MinWidth,
+            Field::MaxWidth,
+            Field::Height,
+            Field::MinHeight,
+            Field::MaxHeight,
+            Field::OutlineWidth,
+        ];
+        for side in 0..4 {
+            fields.extend([
+                Field::Margin(side),
+                Field::Padding(side),
+                Field::BorderWidth(side),
+                Field::Offset(side),
+            ]);
+        }
+        let nodes: Vec<usize> = std::iter::once(root)
+            .chain(followers.sized_nodes.keys().copied())
+            .collect();
+        for node in nodes {
+            let (Some(&at), Some(after)) = (
+                before.get(&node),
+                to.originals.iter().position(|n| *n == node),
+            ) else {
+                continue;
+            };
+            for &field in &fields {
+                if let (Some(Value::Length(Dim::Px(old))), Some(Value::Length(Dim::Px(new)))) =
+                    (self.read(at, field), to.read(after, field))
+                    && em(old, new)
+                {
+                    followers.em_lengths.push((node, field, new));
+                }
+            }
+        }
+        for (arena, leaf) in to.texts.iter().enumerate() {
+            let Some(leaf) = leaf else { continue };
+            if let (Some(super::TextLineHeight::Px(old)), super::TextLineHeight::Px(new)) = (
+                self.texts
+                    .get(arena)
+                    .and_then(Option::as_ref)
+                    .map(|old| old.line_height),
+                leaf.line_height,
+            ) && em(old, new)
+                && leaf.runs.iter().any(|run| to.within(run.owner, root))
+            {
+                followers.em_line_heights.push((arena, new));
             }
         }
         followers
