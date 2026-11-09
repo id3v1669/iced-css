@@ -2469,6 +2469,45 @@ mod animation {
     }
 
     #[test]
+    fn an_inline_margin_made_for_an_animation_answers_as_the_styling_would() {
+        let source = || {
+            node(
+                "page",
+                vec![node("p", vec![node("s", vec![text("t", "x")])])],
+            )
+        };
+        let css = |sides: &str| format!("#s {{ display:inline; {sides} }}");
+        let wide = BoxTree::new(source(), &css("margin-left:10px;")).unwrap();
+        let none = wide.restyled(&[&css("")]).unwrap();
+        let half = BoxTree::new(source(), &css("margin-left:5px;")).unwrap();
+        let margin = |tree: &BoxTree| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.side_of.is_some() && run.percent_room.is_some_and(|r| !r.2))
+                .map(|run| (run.owner, run.text.clone()))
+        };
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&wide, &none, "s", &["margin-left"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &none);
+        // Made where the target has none, its spaces answer for the block around it.
+        assert_eq!(margin(&animations.presented(&none)), margin(&half));
+        assert!(margin(&half).is_some());
+        // An empty inline whose sides go to none has no place for them: at once.
+        let empty = || node("page", vec![node("p", vec![node("s", vec![])])]);
+        let padded = BoxTree::new(empty(), &css("padding:20px;")).unwrap();
+        let bare = padded.restyled(&[&css("")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(&padded, &bare, "s", &["padding"], second(), start)
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
     fn an_interruption_starts_from_what_is_shown() {
         let from = tree("#box { background-color:#000000; }");
         let middle = from
@@ -2657,8 +2696,8 @@ mod animation {
                 start,
             )
             .unwrap();
-        // The background runs under the text; the inline has no box for its margin.
-        assert_eq!(count, 1);
+        // The background runs under the text, and the margin across its line.
+        assert_eq!(count, 2);
         animations.advance(start + Duration::from_millis(500), &to);
         let shown = animations.presented(&to);
         let under = |tree: &BoxTree| {

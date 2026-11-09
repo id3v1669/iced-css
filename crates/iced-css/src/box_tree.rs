@@ -326,6 +326,10 @@ pub struct TextRun {
     /// percentage of the containing block's width, and whether they round up to keep a
     /// thin border's bar.
     pub percent_room: Option<(f32, f32, bool)>,
+    /// For a side's spaces: the box (its source node, or a `:before` or `:after` box's
+    /// `generated_owner`) and side, 3 for the start and 1 for the end. Its margin's spaces
+    /// do not round (`percent_room`), its border and padding's do.
+    pub side_of: Option<(usize, usize)>,
     /// An inside list marker's image: once it loads, the run is spaces as wide as it.
     pub marker_image: Option<MarkerImage>,
     pub weight: u16,
@@ -1303,6 +1307,7 @@ impl BoxTree {
                         background_from,
                         backgrounds,
                         percent_room: None,
+                        side_of: None,
                         marker_image: None,
                         weight: style.weight,
                         italic: style.italic,
@@ -1654,6 +1659,14 @@ impl BoxTree {
                     }
                     (None, None)
                 };
+                // A box's key in decorations and backgrounds.
+                let box_key = |here: usize| {
+                    if here < count {
+                        projection.original_index(here).unwrap_or_default()
+                    } else {
+                        usize::MAX - (here - count)
+                    }
+                };
                 // Every background up from `at`, nearest first, as `TextRun::backgrounds`.
                 let chain_around = |mut at: Option<usize>| {
                     let mut found = Vec::new();
@@ -1695,6 +1708,7 @@ impl BoxTree {
                             // Sized again at layout: for a share of the width, or a font size
                             // an animation moves.
                             percent_room: Some((sides.margin[across], percent_margin, false)),
+                            side_of: Some((box_key(element), across)),
                             background: around(box_parent[element]).0,
                             background_from: around(box_parent[element]).1,
                             backgrounds: chain_around(box_parent[element]),
@@ -1721,6 +1735,7 @@ impl BoxTree {
                         .flatten()
                         .map(|spacer| TextRun {
                             percent_room: Some((room, percent_padding, true)),
+                            side_of: Some((box_key(element), across)),
                             // Its own background comes with its box, over its padding too.
                             background: if box_paints[element].background.is_some() && visible {
                                 None
@@ -1892,6 +1907,7 @@ impl BoxTree {
                             background: None,
                             background_from: None,
                             percent_room: None,
+                            side_of: None,
                             marker_image: None,
                             backgrounds: Vec::new(),
                             weight: style.weight,
@@ -2948,6 +2964,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         background: None,
         background_from: None,
         percent_room: None,
+        side_of: None,
         marker_image: None,
         backgrounds: Vec::new(),
         underline: false,

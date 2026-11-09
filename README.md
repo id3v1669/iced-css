@@ -59,7 +59,8 @@ capturing the tree again, which is enough to build hot reload on.
 `BoxTreeAnimations` runs explicit requests between two styled trees: colors (`color` reaches
 what inherits or uses it, plus `background-color`, border and outline colors) and lengths
 (`width`, `height`, their min and max, margins, paddings, border and outline widths, box
-offsets, a length to or from a percentage mixing them as `calc()` does, which acts as a
+offsets, an inline element's margins across and paddings, its side spaces growing from or
+shrinking to none, a length to or from a percentage mixing them as `calc()` does, which acts as a
 percentage does where its basis is not known, so a height in an auto-height block or a
 width in a shrink-to-fit one applies at once), `visibility`, shown all the way through while either end is shown, with
 what inherits it, and `font-size`, with the text and boxes whose sizes keep the same share

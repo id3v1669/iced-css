@@ -234,6 +234,42 @@ impl BoxTree {
                 .or(paint.border[side])
                 .map(Value::Color);
         }
+        // An inline element's margin across and padding: the spaces of its line.
+        if self.under_text(projected)
+            && let Some(sides) = self.prepared.inline_boxes[projected]
+            && matches!(field, Field::Margin(_) | Field::Padding(_))
+        {
+            // With no run in its box, as an empty inline without sides has, there is no
+            // place for its sides: they apply at once.
+            let inside = self.chain_test(projected);
+            if !self
+                .texts
+                .iter()
+                .flatten()
+                .flat_map(|leaf| &leaf.runs)
+                .any(|run| inside(run.owner))
+            {
+                return None;
+            }
+            let both = |pixels: f32, percent: f32| {
+                Value::Length(match (pixels, percent) {
+                    (_, 0.0) => Dim::Px(pixels),
+                    (0.0, _) => Dim::Percent(percent),
+                    _ => Dim::Mix(pixels, percent),
+                })
+            };
+            match field {
+                Field::Margin(side @ (1 | 3)) => {
+                    return Some(both(sides.margin[side], sides.percent_margin[side]));
+                }
+                Field::Padding(side) => {
+                    return Some(both(sides.padding[side], sides.percent_padding[side]));
+                }
+                // Vertical margins move nothing on a line.
+                Field::Margin(_) => return None,
+                _ => {}
+            }
+        }
         // Display none shows nothing to come from or go to.
         self.prepared.slot[projected]?;
         let color = |value: Option<[f32; 3]>| value.map(Value::Color);
@@ -274,6 +310,12 @@ impl BoxTree {
     }
 
     fn write(&mut self, projected: usize, field: Field, value: Value) {
+        if let (Field::Margin(_) | Field::Padding(_), Value::Length(dim)) = (field, value)
+            && self.under_text(projected)
+        {
+            self.inline_side(projected, field, dim);
+            return;
+        }
         let slot = self.prepared.slot[projected];
         let under_text = self.under_text(projected);
         let paint = &mut self.paints[projected];
@@ -343,6 +385,237 @@ impl BoxTree {
         }
     }
 
+    /// An inline element's margin or padding on its line: its decoration's bands above and
+    /// below, and its side spaces across, made where the styling has none.
+    fn inline_side(&mut self, projected: usize, field: Field, value: Dim) {
+        let (pixels, percent) = match value {
+            Dim::Px(pixels) => (pixels, 0.0),
+            Dim::Percent(percent) => (0.0, percent),
+            Dim::Mix(pixels, percent) => (pixels, percent),
+            Dim::Auto => (0.0, 0.0),
+        };
+        let (side, margin) = match field {
+            Field::Margin(side) => (side, true),
+            Field::Padding(side) => (side, false),
+            _ => return,
+        };
+        let Some(sides) = self.prepared.inline_boxes[projected].as_mut() else {
+            return;
+        };
+        if margin {
+            sides.margin[side] = pixels;
+            sides.percent_margin[side] = percent.max(0.0);
+        } else {
+            sides.padding[side] = pixels;
+            sides.percent_padding[side] = percent.max(0.0);
+        }
+        let sides = *sides;
+        let node = self.originals[projected];
+        let paint = self.paints[projected];
+        // Opening its line, an inline's colors went under its text.
+        let background = paint.under_text.or(paint.background);
+        let border = [0, 2].map(|at| paint.under_text_border[at].or(paint.border[at]));
+        let inside = self.chain_test(projected);
+        // Its box around its runs, after the boxes around it, as the styling would make it.
+        let own = super::InlineDecoration {
+            padding: [sides.padding[0], sides.padding[2]],
+            border: [(sides.border[0], border[0]), (sides.border[2], border[1])],
+            border_style: [paint.border_style[0], paint.border_style[2]],
+            background,
+            owner: node,
+            visible: paint.visible,
+        };
+        let boxed = self
+            .texts
+            .iter()
+            .flatten()
+            .flat_map(|leaf| &leaf.runs)
+            .any(|run| run.inline_boxes.iter().any(|sides| sides.owner == node));
+        let around = |key: usize| key != node && !super::is_generated(key) && !inside(key);
+        for run in self
+            .texts
+            .iter_mut()
+            .flatten()
+            .flat_map(|leaf| &mut leaf.runs)
+        {
+            if !boxed && inside(run.owner) && run.side_of.is_none_or(|at| at.0 != node) {
+                let at = run
+                    .inline_boxes
+                    .iter()
+                    .take_while(|sides| around(sides.owner))
+                    .count();
+                run.inline_boxes.insert(at, own);
+            }
+            for sides in run
+                .inline_boxes
+                .iter_mut()
+                .filter(|sides| sides.owner == node)
+            {
+                sides.padding = own.padding;
+            }
+        }
+        if !matches!(side, 1 | 3) {
+            return;
+        }
+        // Across: its spaces, resized for their room, or made beside its first or last run.
+        let room = if margin {
+            (pixels, percent.max(0.0), false)
+        } else {
+            (sides.border[side] + pixels, percent.max(0.0), true)
+        };
+        let ours = |run: &super::TextRun| {
+            run.side_of == Some((node, side)) && run.percent_room.is_some_and(|r| r.2 == !margin)
+        };
+        let mut found = false;
+        for run in self
+            .texts
+            .iter_mut()
+            .flatten()
+            .flat_map(|leaf| &mut leaf.runs)
+        {
+            if ours(run) {
+                run.percent_room = Some(room);
+                if let Some(text) = super::room_text(run, 0.0) {
+                    run.text = text;
+                }
+                found = true;
+            }
+        }
+        if found {
+            return;
+        }
+        // Its runs on its own lines: not its margin's spaces, nor what nests in blocks.
+        let in_box = |run: &super::TextRun| {
+            inside(run.owner)
+                && !(run.side_of.is_some_and(|at| at.0 == node)
+                    && !run.percent_room.is_some_and(|r| r.2))
+        };
+        let leaves: Vec<usize> = self
+            .texts
+            .iter()
+            .enumerate()
+            .filter(|(_, leaf)| {
+                leaf.as_ref()
+                    .is_some_and(|leaf| leaf.runs.iter().any(in_box))
+            })
+            .map(|(arena, _)| arena)
+            .collect();
+        let arena = if side == 3 {
+            leaves.first()
+        } else {
+            leaves.last()
+        };
+        // The nearest shown inline around it answers for its margin; nothing hidden does.
+        let mut answer = self.prepared.inline_parent[projected];
+        while let Some(here) = answer.filter(|here| !self.paints[*here].visible) {
+            answer = self.prepared.inline_parent[here];
+        }
+        // Else its block container, the first box around it that is no inline.
+        let container = || {
+            let nodes = self.source.construction.nodes();
+            let mut at = nodes.get(node).and_then(|value| value.parent());
+            while let Some(here) = at {
+                let inline = self
+                    .originals
+                    .iter()
+                    .position(|original| *original == here)
+                    .is_some_and(|projected| self.prepared.inline_boxes[projected].is_some());
+                if !inline {
+                    return here;
+                }
+                at = nodes.get(here).and_then(|value| value.parent());
+            }
+            node
+        };
+        let margin_owner = answer.map_or_else(container, |here| self.originals[here]);
+        let Some(leaf) = arena.and_then(|arena| self.texts[*arena].as_mut()) else {
+            return;
+        };
+        let place = if side == 3 {
+            leaf.runs.iter().position(in_box)
+        } else {
+            leaf.runs.iter().rposition(in_box)
+        };
+        let Some(place) = place else { return };
+        let base = &leaf.runs[place];
+        let inline_boxes: Vec<super::InlineDecoration> = base
+            .inline_boxes
+            .iter()
+            .filter(|sides| around(sides.owner) || (!margin && sides.owner == node))
+            .copied()
+            .collect();
+        let backgrounds: Vec<([f32; 3], usize, bool)> = base
+            .backgrounds
+            .iter()
+            .filter(|entry| around(entry.1) || (!margin && entry.1 == node))
+            .copied()
+            .collect();
+        let shows_own = !margin && background.is_some() && paint.visible;
+        let shown = backgrounds
+            .iter()
+            .find(|entry| entry.2 && entry.1 != node)
+            .filter(|_| !shows_own);
+        let mut spacer = super::TextRun {
+            text: String::new(),
+            spacer: true,
+            edge: None,
+            edge_style: "solid",
+            background: shown.map(|entry| entry.0),
+            background_from: shown.map(|entry| entry.1),
+            backgrounds,
+            percent_room: Some(room),
+            side_of: Some((node, side)),
+            marker_image: None,
+            underline: false,
+            line_through: false,
+            inline_boxes,
+            visible: if margin { base.visible } else { paint.visible },
+            owner: if margin { margin_owner } else { node },
+            ..base.clone()
+        };
+        if let Some(text) = super::room_text(&spacer, 0.0) {
+            spacer.text = text;
+        }
+        // Opening, the margin outside the padding; closing, the padding first.
+        let at = if side == 3 { place } else { place + 1 };
+        // 9.10: a paragraph's direction mark leads it, so it moves onto spaces put first.
+        if side == 3
+            && !spacer.text.is_empty()
+            && leaf.runs[..at].iter().all(|run| run.text.is_empty())
+            && let Some(mark) = leaf.runs[at]
+                .text
+                .chars()
+                .next()
+                .filter(|mark| matches!(mark, '\u{200E}' | '\u{200F}'))
+        {
+            leaf.runs[at].text.remove(0);
+            spacer.text.insert(0, mark);
+        }
+        leaf.runs.insert(at, spacer);
+    }
+
+    /// Whether a source node lies in the inline box of the projected `element` on its lines:
+    /// by inline parents, so not inside a block or inline-block that nests in it.
+    fn chain_test(&self, element: usize) -> impl Fn(usize) -> bool + 'static {
+        let projected: BTreeMap<usize, usize> = self
+            .originals
+            .iter()
+            .enumerate()
+            .map(|(at, node)| (*node, at))
+            .collect();
+        let parents = self.prepared.inline_parent.clone();
+        move |node: usize| {
+            let mut at = projected.get(&node).copied();
+            while let Some(here) = at {
+                if here == element {
+                    return true;
+                }
+                at = parents[here];
+            }
+            false
+        }
+    }
+
     /// Whether `node` is `ancestor` or lies inside it.
     pub(super) fn within(&self, mut node: usize, ancestor: usize) -> bool {
         let nodes = self.source.construction.nodes();
@@ -362,11 +635,17 @@ impl BoxTree {
         let Some(presentation) = self.presentation.clone() else {
             return;
         };
-        // Sizes last: scaling rewrites side spaces, which other followers know by text.
+        // Sizes after the rest: scaling rewrites side spaces, which other followers know by
+        // text. An inline's sides last: they may add spaces and boxes, shifting the runs
+        // `color` knows by place and the boxes sizes know runs by; they make them at the
+        // scaled size.
         let (sizes, rest): (Vec<_>, Vec<_>) = presentation
             .iter()
             .partition(|presented| presented.field == Field::FontSize);
-        for presented in rest.into_iter().chain(sizes) {
+        let (sides, rest): (Vec<_>, Vec<_>) = rest
+            .into_iter()
+            .partition(|presented| matches!(presented.field, Field::Margin(_) | Field::Padding(_)));
+        for presented in rest.into_iter().chain(sizes).chain(sides) {
             let Some(projected) = self.element(&presented.id) else {
                 continue;
             };

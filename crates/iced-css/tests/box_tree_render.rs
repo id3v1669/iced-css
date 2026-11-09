@@ -3043,6 +3043,252 @@ fn lengths_and_percentages_mix_halfway() {
 }
 
 #[test]
+fn an_inline_elements_sides_animate_both_ways() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    // An inline with a background, around text and a bordered inline of its own.
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "before "),
+                    node(
+                        "span",
+                        vec![text("s", "span "), node("kid", vec![text("k", "kid")])],
+                    ),
+                    text("b", " after"),
+                ],
+            )],
+        )
+    };
+    let css = |sides: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #p {{ line-height:40px; }}
+             #span {{ display:inline; background-color:#ffcc00; {sides} }}
+             #kid {{ display:inline; border-left:2px solid #0000ff; padding:0 3px; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let none = BoxTree::new(source(), &css("")).unwrap();
+    let full = none
+        .restyled(&[&css("padding:20px; margin-left:10px;")])
+        .unwrap();
+    let half = BoxTree::new(source(), &css("padding:10px; margin-left:5px;")).unwrap();
+    assert!(picture(half, "sides-half"));
+    assert!(!picture(none.clone(), "sides-half"));
+    let start = Instant::now();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    // Growing, the target has the spaces; shrinking to none, it has no spaces or box.
+    for (from, to) in [(&none, &full), (&full, &none)] {
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(from, to, "span", &["padding", "margin-left"], timing, start)
+            .unwrap();
+        assert_eq!(count, 5);
+        animations.advance(start + Duration::from_millis(500), to);
+        assert!(picture(animations.presented(to), "sides-half"));
+    }
+    for renderer in ["wgpu", "tiny-skia"] {
+        let _ = std::fs::remove_file(
+            std::env::temp_dir().join(format!("sides-half-{}-{renderer}.png", std::process::id())),
+        );
+    }
+}
+
+#[test]
+fn inline_sides_animate_in_every_place_they_fall() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    // `#s` between `ends`, both ways: halfway it draws as `half`.
+    let check = |source: &dyn Fn() -> Node,
+                 css: &dyn Fn(&str) -> String,
+                 ends: [&str; 2],
+                 half: &str,
+                 properties: &[&str],
+                 tag: &str| {
+        let name = format!("inline-sides-{tag}");
+        assert!(picture(BoxTree::new(source(), &css(half)).unwrap(), &name));
+        let one = BoxTree::new(source(), &css(ends[0])).unwrap();
+        let two = one.restyled(&[&css(ends[1])]).unwrap();
+        assert!(!picture(one.clone(), &name), "{tag}");
+        let start = Instant::now();
+        let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+        for (from, to) in [(&one, &two), (&two, &one)] {
+            let mut animations = BoxTreeAnimations::new();
+            animations
+                .request(from, to, "s", properties, timing, start)
+                .unwrap();
+            animations.advance(start + Duration::from_millis(500), to);
+            assert!(picture(animations.presented(to), &name), "{tag}");
+        }
+        for renderer in ["wgpu", "tiny-skia"] {
+            let _ = std::fs::remove_file(
+                std::env::temp_dir().join(format!("{name}-{}-{renderer}.png", std::process::id())),
+            );
+        }
+    };
+    let style = |rules: &'static str| {
+        move |sides: &str| {
+            format!(
+                "#page {{ background-color:white; padding:20px; color:#000000; }}
+                 #p {{ line-height:40px; width:400px; }}
+                 #s {{ display:inline; background-color:#ffcc00; {sides} }} {rules}"
+            )
+        }
+    };
+    let sides = ["", "padding:20px; margin-left:10px;"];
+    let half = "padding:10px; margin-left:5px;";
+    let both = &["padding", "margin-left"];
+    // Opening its line: its colors go under its text.
+    check(
+        &|| {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node("s", vec![text("t", "span")]), text("b", " tail")],
+                )],
+            )
+        },
+        &style(""),
+        sides,
+        half,
+        both,
+        "opening",
+    );
+    // A `:before` with a box of its own inside it.
+    check(
+        &|| {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![text("a", "head "), node("s", vec![text("t", "span")])],
+                )],
+            )
+        },
+        &style("#s:before { content:\"x\"; padding:0 4px; background-color:#ff0000; }"),
+        sides,
+        half,
+        both,
+        "generated",
+    );
+    // A block and an inline-block inside it: its sides stay on its own lines.
+    check(
+        &|| {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node(
+                        "s",
+                        vec![
+                            node("d", vec![text("b", "block")]),
+                            text("c", "after "),
+                            node("i", vec![text("y", "row")]),
+                        ],
+                    )],
+                )],
+            )
+        },
+        &style("#d { display:block; } #i { display:inline-block; background-color:#ddeeff; }"),
+        sides,
+        half,
+        both,
+        "nested",
+    );
+    // Right to left: the paragraph's mark stays first.
+    check(
+        &|| {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node("s", vec![text("t", "span")]), text("b", " tail")],
+                )],
+            )
+        },
+        &style("#p { direction:rtl; }"),
+        sides,
+        half,
+        both,
+        "rtl",
+    );
+    // Inside an inline with a background: its padding shows its own.
+    check(
+        &|| {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node(
+                        "o",
+                        vec![text("a", "outer "), node("s", vec![text("t", "span")])],
+                    )],
+                )],
+            )
+        },
+        &style("#o { display:inline; background-color:#ff0000; }"),
+        sides,
+        half,
+        both,
+        "outer",
+    );
+    // A share of the line's width.
+    check(
+        &|| {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![text("a", "head "), node("s", vec![text("t", "span")])],
+                )],
+            )
+        },
+        &style(""),
+        ["", "padding:0 10%;"],
+        "padding:0 5%;",
+        &["padding"],
+        "percent",
+    );
+    // With its font size at once.
+    check(
+        &|| {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![text("a", "head "), node("s", vec![text("t", "span")])],
+                )],
+            )
+        },
+        &style(""),
+        ["font-size:16px;", "font-size:32px; padding:20px;"],
+        "font-size:24px; padding:10px;",
+        &["padding", "font-size"],
+        "sized",
+    );
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};
