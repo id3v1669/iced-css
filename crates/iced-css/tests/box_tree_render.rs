@@ -3406,6 +3406,70 @@ fn em_lengths_follow_an_animated_font_size() {
 }
 
 #[test]
+fn an_inline_background_fades_to_and_from_transparent() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "before "),
+                    node(
+                        "o",
+                        vec![text("b", "outer "), node("s", vec![text("t", "span")])],
+                    ),
+                    text("c", " after"),
+                ],
+            )],
+        )
+    };
+    let css = |color: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #p {{ line-height:40px; }}
+             #o {{ display:inline; background-color:#9999ff; }}
+             #s {{ display:inline; padding:4px 8px; background-color:{color};
+                   border:3px solid {color}; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let clear = BoxTree::new(source(), &css("transparent")).unwrap();
+    let red = clear.restyled(&[&css("#ff0000")]).unwrap();
+    assert!(picture(clear.clone(), "fade-clear"));
+    assert!(picture(red.clone(), "fade-red"));
+    let start = Instant::now();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    let colors = &["background-color", "border-color"];
+    for (from, to, first, last) in [
+        (&clear, &red, "fade-clear", "fade-red"),
+        (&red, &clear, "fade-red", "fade-clear"),
+    ] {
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(from, to, "s", colors, timing, start)
+            .unwrap();
+        // At its start it shows where it comes from; halfway neither end.
+        animations.advance(start, to);
+        assert!(picture(animations.presented(to), first), "{first}");
+        animations.advance(start + Duration::from_millis(500), to);
+        assert!(!picture(animations.presented(to), first), "{first}");
+        assert!(!picture(animations.presented(to), last), "{last}");
+        let _ = picture(animations.presented(to), &format!("{first}-half"));
+        animations.advance(start + Duration::from_millis(1500), to);
+        assert!(picture(animations.presented(to), last), "{last}");
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

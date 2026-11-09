@@ -330,6 +330,11 @@ pub struct TextRun {
     /// `generated_owner`) and side, 3 for the start and 1 for the end. Its margin's spaces
     /// do not round (`percent_room`), its border and padding's do.
     pub side_of: Option<(usize, usize)>,
+    /// An inline background on its way to or from transparent, over `background` in its
+    /// content area: color and opacity.
+    pub fade: Option<([f32; 3], f32)>,
+    /// The opacity of `edge`'s color, 1 but while it fades.
+    pub edge_alpha: f32,
     /// An inside list marker's image: once it loads, the run is spaces as wide as it.
     pub marker_image: Option<MarkerImage>,
     pub weight: u16,
@@ -1314,6 +1319,8 @@ impl BoxTree {
                         backgrounds,
                         percent_room: None,
                         side_of: None,
+                        fade: None,
+                        edge_alpha: 1.0,
                         marker_image: None,
                         weight: style.weight,
                         italic: style.italic,
@@ -1643,6 +1650,8 @@ impl BoxTree {
                                     usize::MAX - (element - count)
                                 },
                                 visible: box_paints[element].visible,
+                                alpha: 1.0,
+                                border_alpha: [1.0; 2],
                             }
                         })
                         .collect()
@@ -1914,6 +1923,8 @@ impl BoxTree {
                             background_from: None,
                             percent_room: None,
                             side_of: None,
+                            fade: None,
+                            edge_alpha: 1.0,
                             marker_image: None,
                             backgrounds: Vec::new(),
                             weight: style.weight,
@@ -2868,6 +2879,10 @@ pub struct InlineDecoration {
     /// 11.2: a hidden box keeps its room and paints nothing; kept for an animated
     /// `visibility` to show.
     pub visible: bool,
+    /// The opacity of `background`, 1 but while it fades.
+    pub alpha: f32,
+    /// The opacity of the top and bottom border colors, 1 but while they fade.
+    pub border_alpha: [f32; 2],
 }
 
 /// Whether text has characters of the right-to-left scripts.
@@ -2992,6 +3007,8 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         background_from: None,
         percent_room: None,
         side_of: None,
+        fade: None,
+        edge_alpha: 1.0,
         marker_image: None,
         backgrounds: Vec::new(),
         underline: false,
@@ -3636,19 +3653,19 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &mut Renderer,
     corner: Point,
 ) {
-    let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
+    let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3], alpha: f32| {
         renderer.fill_quad(
             Quad {
                 bounds,
                 ..Quad::default()
             },
-            Color::from_rgb(color[0], color[1], color[2]),
+            Color::from_rgba(color[0], color[1], color[2], alpha),
         );
     };
     for (index, run) in leaf.runs.iter().enumerate() {
         // A hidden run keeps its room inside the visible boxes around it.
         let sided = run.inline_boxes.iter().any(|sides| sides.visible);
-        if !run.visible && !sided && run.background.is_none() {
+        if !run.visible && !sided && run.background.is_none() && run.fade.is_none() {
             continue;
         }
         let color = run.color.unwrap_or([0.0; 3]);
@@ -3676,13 +3693,14 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                         height: bottom - top,
                         ..area
                     };
-                    quad(renderer, bounds, background);
+                    quad(renderer, bounds, background, sides.alpha);
                 }
                 let edges = [
                     (top - sides.border[0].0, sides.border[0], 0),
                     (bottom, sides.border[1], 2),
                 ];
                 for (at, (height, edge), side) in edges {
+                    let alpha = sides.border_alpha[side / 2];
                     if let Some(edge) = edge.filter(|_| height > 0.0) {
                         let bounds = Rectangle {
                             y: at,
@@ -3691,7 +3709,7 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                         };
                         let style = sides.border_style[side / 2];
                         for (piece, shade) in band_pieces(bounds, side, style, edge) {
-                            quad(renderer, piece, shade);
+                            quad(renderer, piece, shade, alpha);
                         }
                     }
                 }
@@ -3702,7 +3720,16 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                     height: content_height,
                     ..area
                 };
-                quad(renderer, bounds, background);
+                quad(renderer, bounds, background, 1.0);
+            }
+            // An inline's background fading over what shows beneath it.
+            if let Some((color, alpha)) = run.fade {
+                let bounds = Rectangle {
+                    y: content_top,
+                    height: content_height,
+                    ..area
+                };
+                quad(renderer, bounds, color, alpha);
             }
             if !run.visible {
                 continue;
@@ -3723,7 +3750,7 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                 };
                 let side = if start { 3 } else { 1 };
                 for (piece, shade) in band_pieces(bounds, side, run.edge_style, edge) {
-                    quad(renderer, piece, shade);
+                    quad(renderer, piece, shade, run.edge_alpha);
                 }
             }
             // Line boxes may be taller than the text: measure from their centre, by size.
@@ -3734,10 +3761,10 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                 height: thickness,
             };
             if run.underline {
-                quad(renderer, line(run.size * 0.4), color);
+                quad(renderer, line(run.size * 0.4), color, 1.0);
             }
             if run.line_through {
-                quad(renderer, line(0.0), color);
+                quad(renderer, line(0.0), color, 1.0);
             }
         }
     }

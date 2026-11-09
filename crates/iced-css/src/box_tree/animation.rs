@@ -228,18 +228,17 @@ impl BoxTree {
 
     fn read(&self, projected: usize, field: Field) -> Option<Value> {
         let paint = &self.paints[projected];
-        // An inline element's background lies under its text, which has no opacity: it runs
-        // from one color to another, and a transparent end applies at once.
+        // An inline element's background lies under its text; transparent is a fade at none.
+        let opaque =
+            |color: Option<[f32; 3]>| color.map_or(Value::Fade([0.0; 3], 0.0), Value::Color);
         if field == Field::Background && self.under_text(projected) {
-            return paint.under_text.or(paint.background).map(Value::Color);
+            return Some(opaque(paint.under_text.or(paint.background)));
         }
         // Its border colors likewise paint on its line's sides.
         if let Field::BorderColor(side) = field
             && self.under_text(projected)
         {
-            return paint.under_text_border[side]
-                .or(paint.border[side])
-                .map(Value::Color);
+            return Some(opaque(paint.under_text_border[side].or(paint.border[side])));
         }
         // An inline element's margin across and padding: the spaces of its line.
         if self.under_text(projected)
@@ -348,6 +347,8 @@ impl BoxTree {
                     paint.border[side] = Some(value);
                 }
             }
+            // A fade under text paints on its line, not on its paint (`inline_fade`).
+            (Field::Background | Field::BorderColor(_), Value::Fade(..)) if under_text => {}
             (Field::Color, Value::Color(value)) => paint.color = Some(value),
             // `reveal` shows or hides the element with what follows it.
             (Field::Background, Value::Color(value)) => {
@@ -443,6 +444,8 @@ impl BoxTree {
             background,
             owner: node,
             visible: paint.visible,
+            alpha: 1.0,
+            border_alpha: [1.0; 2],
         };
         let boxed = self
             .texts
@@ -690,12 +693,33 @@ impl BoxTree {
                 Some((self.originals[projected], presented.field))
             })
             .collect();
+        // Fades on a line last: a layer over what the rest leaves beneath it, shown or not.
+        let mut fades = Vec::new();
+        // Inline backgrounds presented between two colors, by source node: what a fade inside
+        // them shows beneath it.
+        let mut presented_colors: BTreeMap<usize, [f32; 3]> = BTreeMap::new();
         for presented in rest.into_iter().chain(sizes).chain(sides) {
             let Some(projected) = self.element(&presented.id) else {
                 continue;
             };
             if self.read(projected, presented.field) != Some(presented.target) {
                 continue;
+            }
+            if matches!(presented.field, Field::Background | Field::BorderColor(_))
+                && self.under_text(projected)
+                && (matches!(presented.target, Value::Fade(..))
+                    || matches!(presented.now, Value::Fade(..)))
+            {
+                if let Some((color, alpha)) = rgba(presented.now) {
+                    fades.push((projected, presented.field, color, alpha));
+                }
+                continue;
+            }
+            if let (Field::Background, Value::Color(_), Value::Color(now)) =
+                (presented.field, presented.target, presented.now)
+                && self.under_text(projected)
+            {
+                presented_colors.insert(self.originals[projected], now);
             }
             self.write(projected, presented.field, presented.now);
             if let (Field::Color, Value::Color(target), Value::Color(now)) =
@@ -731,6 +755,9 @@ impl BoxTree {
             {
                 self.inline_border(projected, side, now);
             }
+        }
+        for (projected, field, color, alpha) in fades {
+            self.inline_fade(projected, field, color, alpha, &presented_colors);
         }
     }
 
@@ -1138,6 +1165,89 @@ impl BoxTree {
             }
         }
         followers
+    }
+
+    /// An inline element's background or border color on its way to or from transparent:
+    /// a layer of `color` at `alpha` where its box paints, over what shows beneath it.
+    fn inline_fade(
+        &mut self,
+        projected: usize,
+        field: Field,
+        color: [f32; 3],
+        alpha: f32,
+        presented: &BTreeMap<usize, [f32; 3]>,
+    ) {
+        if !self.paints[projected].visible {
+            return;
+        }
+        let node = self.originals[projected];
+        let inside = self.chain_test(projected);
+        let width = self.prepared.inline_boxes[projected].map_or([0.0; 4], |sides| sides.border);
+        for run in self
+            .texts
+            .iter_mut()
+            .flatten()
+            .flat_map(|leaf| &mut leaf.runs)
+        {
+            match field {
+                Field::Background => {
+                    for sides in run
+                        .inline_boxes
+                        .iter_mut()
+                        .filter(|sides| sides.owner == node)
+                    {
+                        sides.background = Some(color);
+                        sides.alpha = alpha;
+                    }
+                    if !inside(run.owner) {
+                        continue;
+                    }
+                    // Beneath it, the nearest background around it; one nearer covers it.
+                    let mut outer = None;
+                    let mut covered = false;
+                    for &(shade, key, shown) in &run.backgrounds {
+                        if key == node || !shown {
+                            continue;
+                        }
+                        if super::is_generated(key) || inside(key) {
+                            covered = true;
+                        } else {
+                            outer = Some((presented.get(&key).copied().unwrap_or(shade), key));
+                        }
+                        break;
+                    }
+                    if covered {
+                        continue;
+                    }
+                    run.background = outer.map(|entry| entry.0);
+                    run.background_from = outer.map(|entry| entry.1);
+                    // Its box's layer covers the content too, unless something opaque
+                    // paints over it there.
+                    let boxed = run.inline_boxes.iter().any(|sides| sides.owner == node);
+                    run.fade = (run.background.is_some() || !boxed).then_some((color, alpha));
+                }
+                Field::BorderColor(side @ (0 | 2)) => {
+                    for sides in run
+                        .inline_boxes
+                        .iter_mut()
+                        .filter(|sides| sides.owner == node)
+                    {
+                        sides.border[side / 2].1 = Some(color);
+                        sides.border_alpha[side / 2] = alpha;
+                    }
+                }
+                // Its bar, on its border and padding's spaces on that side.
+                Field::BorderColor(side)
+                    if run.side_of == Some((node, side))
+                        && run.percent_room.is_some_and(|room| room.2)
+                        && width[side] > 0.0 =>
+                {
+                    run.edge = Some((side == 3, width[side], color));
+                    run.edge_alpha = alpha;
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Carries an inline element's presented background to where it paints: the runs that
@@ -1557,10 +1667,10 @@ impl BoxTreeAnimations {
             if committed == target {
                 continue;
             }
-            // Under text there is no opacity: a fade between a box and an inline has no
-            // in-between there.
-            if field == Field::Background
-                && (from.under_text(before) || to.under_text(after))
+            // A fade between a box and an inline has no in-between: one paints as a box, the
+            // other on its line.
+            if matches!(field, Field::Background | Field::BorderColor(_))
+                && from.under_text(before) != to.under_text(after)
                 && !matches!((committed, target), (Value::Color(_), Value::Color(_)))
             {
                 dropped.push(property);
@@ -1578,6 +1688,7 @@ impl BoxTreeAnimations {
             // A box still fading when it becomes an inline starts from a fade, too.
             if field == Field::Background
                 && to.under_text(after)
+                && !from.under_text(before)
                 && !matches!(start, Value::Color(_))
             {
                 dropped.push(property);

@@ -3762,6 +3762,235 @@ mod animation {
     }
 
     #[test]
+    fn an_inline_fades_to_and_from_transparent_over_what_is_beneath() {
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "o",
+                    vec![text("a", "outer "), node("s", vec![text("t", "span")])],
+                )],
+            )
+        };
+        let css = |color: &str| {
+            format!(
+                "#o {{ display:inline; background-color:#0000ff; }}
+                 #s {{ display:inline; padding:0 4px; background-color:{color};
+                       border-left:2px solid {color}; border-top:2px solid {color}; }}"
+            )
+        };
+        let clear = BoxTree::new(source(), &css("transparent")).unwrap();
+        let red = clear.restyled(&[&css("#ff0000")]).unwrap();
+        let start = Instant::now();
+        for (from, to) in [(&clear, &red), (&red, &clear)] {
+            let mut animations = BoxTreeAnimations::new();
+            let count = animations
+                .request(
+                    from,
+                    to,
+                    "s",
+                    &["background-color", "border-left-color", "border-top-color"],
+                    second(),
+                    start,
+                )
+                .unwrap();
+            assert_eq!(count, 3);
+            animations.advance(start + Duration::from_millis(500), to);
+            let shown = animations.presented(to);
+            let leaves = shown.text_leaves();
+            let runs: Vec<&iced_css::box_tree::TextRun> = leaves
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .collect();
+            let red = [1.0, 0.0, 0.0];
+            // Its text: the outer blue beneath, the red half over it.
+            let span = runs.iter().find(|run| run.text.contains("span")).unwrap();
+            assert_eq!(span.background, Some([0.0, 0.0, 1.0]));
+            assert_eq!(span.fade, Some((red, 0.5)));
+            // Its box: the red at half, padding and top band too.
+            let own = span.inline_boxes.last().unwrap();
+            assert_eq!((own.background, own.alpha), (Some(red), 0.5));
+            assert_eq!((own.border[0].1, own.border_alpha[0]), (Some(red), 0.5));
+            // Its left bar.
+            let bar = runs
+                .iter()
+                .find_map(|run| run.edge.map(|edge| (edge, run.edge_alpha)));
+            assert_eq!(bar, Some(((true, 2.0, red), 0.5)));
+            // The outer text is no part of it.
+            let outer = runs.iter().find(|run| run.text.contains("outer")).unwrap();
+            assert_eq!(outer.fade, None);
+        }
+    }
+
+    #[test]
+    fn an_inline_fade_keeps_one_layer_with_what_animates_beside_it() {
+        let source = || {
+            node(
+                "page",
+                vec![node("p", vec![node("s", vec![text("t", "span")])])],
+            )
+        };
+        let red = [1.0, 0.0, 0.0];
+        let start = Instant::now();
+        let halfway = |from: &str, to: &str, properties: &[&str]| {
+            let one = BoxTree::new(source(), from).unwrap();
+            let two = one.restyled(&[to]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            animations
+                .request(&one, &two, "s", properties, second(), start)
+                .unwrap();
+            animations.advance(start + Duration::from_millis(500), &two);
+            animations.presented(&two)
+        };
+        let runs = |tree: &BoxTree| -> Vec<iced_css::box_tree::TextRun> {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter().cloned())
+                .collect()
+        };
+        let span = |runs: &[iced_css::box_tree::TextRun]| {
+            runs.iter()
+                .find(|run| run.text.contains("span"))
+                .cloned()
+                .unwrap()
+        };
+        // Nothing beneath: its box paints the one layer, the text no second over it.
+        let shown = halfway(
+            "#s { display:inline; padding:4px; background-color:transparent; }",
+            "#s { display:inline; padding:4px; background-color:#ff0000; }",
+            &["background-color"],
+        );
+        let text = span(&runs(&shown));
+        assert_eq!((text.background, text.fade), (None, None));
+        let own = text.inline_boxes.last().unwrap();
+        assert_eq!((own.background, own.alpha), (Some(red), 0.5));
+        // Shown at once with it, either way: still a layer at half, never the end at full.
+        for (from, to) in [
+            (
+                "#s { display:inline; padding:4px; visibility:hidden; background-color:transparent; }",
+                "#s { display:inline; padding:4px; visibility:visible; background-color:#ff0000; }",
+            ),
+            (
+                "#s { display:inline; padding:4px; visibility:visible; background-color:#ff0000; }",
+                "#s { display:inline; padding:4px; visibility:hidden; background-color:transparent; }",
+            ),
+        ] {
+            // Whichever is asked first.
+            for order in [
+                ["visibility", "background-color"],
+                ["background-color", "visibility"],
+            ] {
+                let shown = halfway(from, to, &order);
+                let text = span(&runs(&shown));
+                assert!(text.visible, "{to} {order:?}");
+                assert_eq!(text.background, None, "{to} {order:?}");
+                let own = text.inline_boxes.last().unwrap();
+                assert_eq!(
+                    (own.background, own.alpha, own.visible),
+                    (Some(red), 0.5, true),
+                    "{to} {order:?}"
+                );
+            }
+        }
+        // Its padding shrinking to none: the box made for it fades too.
+        let shown = halfway(
+            "#s { display:inline; padding:4px; background-color:#ff0000; }",
+            "#s { display:inline; background-color:transparent; }",
+            &["padding", "background-color"],
+        );
+        let own = span(&runs(&shown)).inline_boxes.last().copied().unwrap();
+        assert_eq!((own.background, own.alpha), (Some(red), 0.5));
+        // Its border widening while its color fades: the bar at half.
+        let shown = halfway(
+            "#s { display:inline; border-left:2px solid #ff0000; }",
+            "#s { display:inline; border-left:4px solid transparent; }",
+            &["border-left-width", "border-left-color"],
+        );
+        let bar = runs(&shown)
+            .iter()
+            .find_map(|run| run.edge.map(|edge| (edge, run.edge_alpha)));
+        assert_eq!(bar, Some(((true, 3.0, red), 0.5)));
+        // A margin made beside it, which the target has none of, takes no layer of its
+        // background.
+        let shown = halfway(
+            "#s { display:inline; margin-left:10px; background-color:#ff0000; }",
+            "#s { display:inline; background-color:transparent; }",
+            &["margin-left", "background-color"],
+        );
+        let margin = runs(&shown)
+            .into_iter()
+            .find(|run| run.side_of.is_some() && run.percent_room.is_some_and(|r| !r.2))
+            .unwrap();
+        assert_eq!(margin.fade, None);
+        // Fading in inside an inline whose color moves: that color, as it is, beneath it.
+        let nested = || {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node("o", vec![node("s", vec![super::text("t", "span")])])],
+                )],
+            )
+        };
+        let css = |outer: &str, own: &str| {
+            format!(
+                "#o {{ display:inline; background-color:{outer}; }}
+                 #s {{ display:inline; background-color:{own}; }}"
+            )
+        };
+        let one = BoxTree::new(nested(), &css("#0000ff", "transparent")).unwrap();
+        let two = one.restyled(&[&css("#00ff00", "#ff0000")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        for id in ["o", "s"] {
+            animations
+                .request(&one, &two, id, &["background-color"], second(), start)
+                .unwrap();
+        }
+        animations.advance(start + Duration::from_millis(500), &two);
+        let shown = animations.presented(&two);
+        let text = span(&runs(&shown));
+        assert!(
+            near(text.background.unwrap(), [0.0, 0.5, 0.5]),
+            "{:?}",
+            text.background
+        );
+        assert_eq!(text.fade, Some((red, 0.5)));
+        // Hidden at both ends: nothing of it paints.
+        let shown = halfway(
+            "#s { display:inline; visibility:hidden; background-color:transparent; }",
+            "#s { display:inline; visibility:hidden; background-color:#ff0000; }",
+            &["background-color"],
+        );
+        assert_eq!(span(&runs(&shown)).fade, None);
+        // A nearer background of its own inside it covers it there.
+        let inner = || {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node("s", vec![node("n", vec![super::text("t", "span")])])],
+                )],
+            )
+        };
+        let css = |own: &str| {
+            format!(
+                "#s {{ display:inline; background-color:{own}; }}
+                 #n {{ display:inline; background-color:#00ff00; }}"
+            )
+        };
+        let one = BoxTree::new(inner(), &css("transparent")).unwrap();
+        let two = one.restyled(&[&css("#ff0000")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&one, &two, "s", &["background-color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &two);
+        let shown = animations.presented(&two);
+        let text = span(&runs(&shown));
+        assert_eq!((text.background, text.fade), (Some([0.0, 1.0, 0.0]), None));
+    }
+
+    #[test]
     fn generated_runs_with_the_same_text_keep_their_own_ends() {
         let source = || node("page", vec![text("line", "words")]);
         let css = |color: &str| {
