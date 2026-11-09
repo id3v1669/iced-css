@@ -597,6 +597,7 @@ struct Style {
     markers: BTreeMap<usize, TextLeaf>,
     backgrounds: BTreeMap<usize, (BackgroundImage, image::Handle)>,
     important: Vec<Vec<PropertyId>>,
+    em_lengths: Vec<Vec<PropertyId>>,
     marker_images: BTreeMap<usize, image::Handle>,
 }
 
@@ -618,6 +619,8 @@ pub struct BoxTree {
     source: Arc<Source>,
     /// Longhands won by `!important`, per projected index.
     important: Vec<Vec<PropertyId>>,
+    /// Length longhands given in `em` or `ex`, per projected index.
+    em_lengths: Vec<Vec<PropertyId>>,
     /// Images that replace outside markers, by projected index of their item.
     marker_images: BTreeMap<usize, image::Handle>,
     /// Temporary values of running animations, laid over every interaction styling.
@@ -819,6 +822,7 @@ impl BoxTree {
             markers: self.markers.clone(),
             backgrounds: self.backgrounds.clone(),
             important: self.important.clone(),
+            em_lengths: self.em_lengths.clone(),
             marker_images: self.marker_images.clone(),
         }
     }
@@ -834,6 +838,7 @@ impl BoxTree {
             backgrounds: style.backgrounds,
             source,
             important: style.important,
+            em_lengths: style.em_lengths,
             marker_images: style.marker_images,
             presentation: None,
         }
@@ -997,6 +1002,7 @@ impl BoxTree {
             vertical_aligns,
             captions_below,
             important,
+            em_lengths,
             marker_images,
             outside_items,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
@@ -2050,6 +2056,7 @@ impl BoxTree {
             backgrounds: background_images,
             source: Arc::clone(source),
             important,
+            em_lengths,
             marker_images: marker_image_handles,
             presentation: None,
         })

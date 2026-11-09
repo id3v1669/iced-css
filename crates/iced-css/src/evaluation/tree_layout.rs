@@ -1578,6 +1578,9 @@ pub struct TreePaint {
     pub captions_below: Vec<bool>,
     /// The longhands whose winning declaration is `!important`, per projected index.
     pub important: Vec<Vec<PropertyId>>,
+    /// Length longhands given in `em` or `ex`, or inherited from a parent's that were, per
+    /// projected index: their pixels follow the font size.
+    pub em_lengths: Vec<Vec<PropertyId>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -1832,6 +1835,34 @@ impl CounterWalk<'_> {
     }
 }
 
+/// The length longhands an animated `font-size` can move when given in `em` or `ex`.
+const EM_LENGTHS: [&str; 24] = [
+    "width",
+    "min-width",
+    "max-width",
+    "height",
+    "min-height",
+    "max-height",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+    "top",
+    "right",
+    "bottom",
+    "left",
+    "outline-width",
+    "text-indent",
+];
+
 /// A computed line height, keeping the number form that inherits as a number (10.8.1).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TextLineHeight {
@@ -1949,6 +1980,11 @@ pub fn evaluate_tree_paint<'r>(
     let mut background_parts: Vec<BackgroundParts> = Vec::with_capacity(projection.len());
     let mut vertical_aligns: Vec<Option<&'static str>> = Vec::with_capacity(projection.len());
     let mut important: Vec<Vec<PropertyId>> = Vec::with_capacity(projection.len());
+    let mut em_lengths: Vec<Vec<PropertyId>> = Vec::with_capacity(projection.len());
+    let em_properties = EM_LENGTHS
+        .iter()
+        .map(|name| id(name))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut marker_images: Vec<Option<String>> = Vec::with_capacity(projection.len());
     let mut outline_colors: Vec<Option<[f32; 3]>> = Vec::with_capacity(projection.len());
     let mut outside_items: Vec<bool> = Vec::with_capacity(projection.len());
@@ -2043,6 +2079,24 @@ pub fn evaluate_tree_paint<'r>(
                 .defaulted(property, parent_index.is_some())
                 .map_err(|_| E::Paint { property: name })
         };
+        // Lengths given relative to the font, as an animated `font-size` moves them.
+        // An inherited one follows when its parent's does: its computed pixels move with it.
+        let mut relative = Vec::new();
+        for (name, property) in EM_LENGTHS.iter().zip(&em_properties) {
+            let em = match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Length(LengthTarget::Relative(..))) => {
+                    true
+                }
+                DefaultedValueRef::ParentComputed => {
+                    parent_index.is_some_and(|parent| em_lengths[parent].contains(property))
+                }
+                _ => false,
+            };
+            if em {
+                relative.push(*property);
+            }
+        }
+        em_lengths.push(relative);
         let visible = match defaulted("visibility")? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
                 keyword.as_str() == "visible"
@@ -2910,6 +2964,7 @@ pub fn evaluate_tree_paint<'r>(
         vertical_aligns,
         captions_below,
         important,
+        em_lengths,
         marker_images,
         outside_items,
     })

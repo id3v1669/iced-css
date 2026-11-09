@@ -3348,17 +3348,25 @@ fn em_lengths_follow_an_animated_font_size() {
                     node("in", vec![text("i", "em")]),
                     text("g", " "),
                     node("px", vec![text("p", "px")]),
+                    // A block inheriting the indent, as `text-indent` does.
+                    node("kid", vec![text("k", "inherits")]),
+                    node("z", vec![text("zz", "zero")]),
                 ],
             )],
         )
     };
-    let css = |size: &str| {
+    // A top border in pixels that the same styling doubles, as the size: no `em`, so it
+    // takes its end at once.
+    let css = |size: &str, top: &str| {
         format!(
             "#page {{ background-color:white; padding:20px; color:#000000; }}
              #box {{ font-size:{size}; width:10em; padding:0.5em; margin-left:1em;
                      border-left:0.25em solid #0000ff; line-height:1.5em;
+                     border-top:{top} solid #00aa00; text-indent:1em;
                      background-color:#ddeeff; }}
-             #in {{ display:inline; padding:0 0.5em; background-color:#ffcc00; }}
+             #in {{ display:inline; padding:0 0.5em; background-color:#ffcc00;
+                    border-left:0.25em solid #000000; border-top:0.25em solid #ff0000; }}
+             #z {{ display:inline; padding-left:0em; background-color:#ccffcc; }}
              #px {{ display:inline; padding:0 6px; background-color:#ff8800; }}"
         )
     };
@@ -3370,10 +3378,10 @@ fn em_lengths_follow_an_animated_font_size() {
             .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
-    let from = BoxTree::new(source(), &css("16px")).unwrap();
-    let to = from.restyled(&[&css("32px")]).unwrap();
+    let from = BoxTree::new(source(), &css("16px", "2px")).unwrap();
+    let to = from.restyled(&[&css("32px", "4px")]).unwrap();
     assert!(picture(
-        BoxTree::new(source(), &css("24px")).unwrap(),
+        BoxTree::new(source(), &css("24px", "4px")).unwrap(),
         "em-between"
     ));
     let start = Instant::now();

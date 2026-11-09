@@ -64,11 +64,12 @@ shrinking to none, a length to or from a percentage mixing them as `calc()` does
 percentage does where its basis is not known, so a height in an auto-height block or a
 width in a shrink-to-fit one applies at once), `visibility`, shown all the way through while either end is shown, with
 what inherits it, and `font-size`, with the text and boxes whose sizes keep the same share
-of it at both ends, as inherited, `em` and percentage sizes do, and their lengths and
-pixel `line-height` that are the same share of their size at both ends, as `em` gives. A
-length that changes otherwise in that same proportion counts as `em` too. A `text-indent`
-in `em`, an inline's border, outline and offsets in `em`, and `calc()`-like mixes of `em`
-and a percentage take their end value at once; `word-spacing` scales with the text. A
+of it at both ends, as inherited, `em` and percentage sizes do, and their lengths given in
+`em` or `ex` (`text-indent` and an inline's margins, padding and borders too); a pixel
+`line-height` follows when it is the same share of the size at both ends, as `em` gives,
+since it inherits as pixels. An inline's outline and offsets in `em`, and `calc()`-like
+mixes of `em` and a percentage, take their end value at once; `word-spacing` scales with
+the text. A
 style change without a request applies at once. Time comes from luminate; a
 `Transition` adds an easing, cut off at the two ends.
 

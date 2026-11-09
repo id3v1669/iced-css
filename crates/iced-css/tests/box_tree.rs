@@ -3662,7 +3662,10 @@ mod animation {
     #[test]
     fn em_lengths_another_styling_moves_keep_its_value() {
         let css = |size: &str| {
-            format!("#box {{ font-size:{size}; width:10em; }} #kid {{ line-height:1.5em; }}")
+            format!(
+                "#box {{ font-size:{size}; width:10em; }}
+                 #kid {{ line-height:1.5em; text-indent:1em; }}"
+            )
         };
         let source = || {
             node(
@@ -3682,7 +3685,7 @@ mod animation {
         let moved = to
             .restyled(&[
                 &css("32px"),
-                "#box { width:200px; } #kid { line-height:30px; }",
+                "#box { width:200px; } #kid { line-height:30px; text-indent:10px; }",
             ])
             .unwrap();
         let shown = animations.presented(&moved);
@@ -3694,6 +3697,16 @@ mod animation {
             leaves[0].1.line_height,
             iced_css::evaluation::tree_layout::TextLineHeight::Px(30.0)
         );
+        let indent = |tree: &BoxTree| {
+            tree.text_leaves()[0]
+                .1
+                .runs
+                .iter()
+                .find(|run| run.spacer && run.side_of.is_none())
+                .and_then(|run| run.percent_room)
+                .map(|room| room.0)
+        };
+        assert_eq!(indent(&shown), Some(10.0));
         // Unmoved, they follow the size: 240 wide, 36 high lines.
         let shown = animations.presented(&to);
         let geometry = shown.layout(800.0, None).unwrap();
@@ -3703,6 +3716,8 @@ mod animation {
             shown.text_leaves()[0].1.line_height,
             iced_css::evaluation::tree_layout::TextLineHeight::Px(36.0)
         );
+        // Its indent of 1em, 16 to 32: 24 halfway.
+        assert_eq!(indent(&shown), Some(24.0));
     }
 
     #[test]

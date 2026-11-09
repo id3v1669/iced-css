@@ -198,6 +198,8 @@ pub(super) struct Followers {
     /// Each with its target pixels: only what still has them scales.
     em_lengths: Vec<(usize, Field, f32)>,
     em_line_heights: Vec<(usize, f32)>,
+    /// `text-indent` in `em`: the leaf, its block's source node and the indent's pixels.
+    em_indents: Vec<(usize, usize, f32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -242,7 +244,10 @@ impl BoxTree {
         // An inline element's margin across and padding: the spaces of its line.
         if self.under_text(projected)
             && let Some(sides) = self.prepared.inline_boxes[projected]
-            && matches!(field, Field::Margin(_) | Field::Padding(_))
+            && matches!(
+                field,
+                Field::Margin(_) | Field::Padding(_) | Field::BorderWidth(_)
+            )
         {
             // With no run in its box, as an empty inline without sides has, there is no
             // place for its sides: they apply at once.
@@ -269,6 +274,9 @@ impl BoxTree {
                 }
                 Field::Padding(side) => {
                     return Some(both(sides.padding[side], sides.percent_padding[side]));
+                }
+                Field::BorderWidth(side) => {
+                    return Some(Value::Length(Dim::Px(sides.border[side])));
                 }
                 // Vertical margins move nothing on a line.
                 Field::Margin(_) => return None,
@@ -315,7 +323,8 @@ impl BoxTree {
     }
 
     fn write(&mut self, projected: usize, field: Field, value: Value) {
-        if let (Field::Margin(_) | Field::Padding(_), Value::Length(dim)) = (field, value)
+        if let (Field::Margin(_) | Field::Padding(_) | Field::BorderWidth(_), Value::Length(dim)) =
+            (field, value)
             && self.under_text(projected)
         {
             self.inline_side(projected, field, dim);
@@ -399,20 +408,25 @@ impl BoxTree {
             Dim::Mix(pixels, percent) => (pixels, percent),
             Dim::Auto => (0.0, 0.0),
         };
+        // A border's width is in its box with the padding: the same spaces inside.
         let (side, margin) = match field {
             Field::Margin(side) => (side, true),
-            Field::Padding(side) => (side, false),
+            Field::Padding(side) | Field::BorderWidth(side) => (side, false),
             _ => return,
         };
         let Some(sides) = self.prepared.inline_boxes[projected].as_mut() else {
             return;
         };
-        if margin {
-            sides.margin[side] = pixels;
-            sides.percent_margin[side] = percent.max(0.0);
-        } else {
-            sides.padding[side] = pixels;
-            sides.percent_padding[side] = percent.max(0.0);
+        match field {
+            Field::Margin(_) => {
+                sides.margin[side] = pixels;
+                sides.percent_margin[side] = percent.max(0.0);
+            }
+            Field::BorderWidth(_) => sides.border[side] = pixels.max(0.0),
+            _ => {
+                sides.padding[side] = pixels;
+                sides.percent_padding[side] = percent.max(0.0);
+            }
         }
         let sides = *sides;
         let node = self.originals[projected];
@@ -457,6 +471,8 @@ impl BoxTree {
                 .filter(|sides| sides.owner == node)
             {
                 sides.padding = own.padding;
+                sides.border[0].0 = own.border[0].0;
+                sides.border[1].0 = own.border[1].0;
             }
         }
         if !matches!(side, 1 | 3) {
@@ -464,10 +480,20 @@ impl BoxTree {
         }
         // Across: its spaces, resized for their room, or made beside its first or last run.
         let room = if margin {
-            (pixels, percent.max(0.0), false)
+            (sides.margin[side], sides.percent_margin[side], false)
         } else {
-            (sides.border[side] + pixels, percent.max(0.0), true)
+            (
+                sides.border[side] + sides.padding[side],
+                sides.percent_padding[side],
+                true,
+            )
         };
+        // Its side bar, on its border and padding's spaces.
+        let bar_color = paint.under_text_border[side].or(paint.border[side]);
+        let bar = (!margin && sides.border[side] > 0.0)
+            .then_some(bar_color)
+            .flatten()
+            .map(|color| (side == 3, sides.border[side], color));
         let ours = |run: &super::TextRun| {
             run.side_of == Some((node, side)) && run.percent_room.is_some_and(|r| r.2 == !margin)
         };
@@ -480,6 +506,9 @@ impl BoxTree {
         {
             if ours(run) {
                 run.percent_room = Some(room);
+                if !margin {
+                    run.edge = bar;
+                }
                 if let Some(text) = super::room_text(run, 0.0) {
                     run.text = text;
                 }
@@ -563,8 +592,8 @@ impl BoxTree {
         let mut spacer = super::TextRun {
             text: String::new(),
             spacer: true,
-            edge: None,
-            edge_style: "solid",
+            edge: bar,
+            edge_style: paint.border_style[side],
             background: shown.map(|entry| entry.0),
             background_from: shown.map(|entry| entry.1),
             backgrounds,
@@ -647,9 +676,12 @@ impl BoxTree {
         let (sizes, rest): (Vec<_>, Vec<_>) = presentation
             .iter()
             .partition(|presented| presented.field == Field::FontSize);
-        let (sides, rest): (Vec<_>, Vec<_>) = rest
-            .into_iter()
-            .partition(|presented| matches!(presented.field, Field::Margin(_) | Field::Padding(_)));
+        let (sides, rest): (Vec<_>, Vec<_>) = rest.into_iter().partition(|presented| {
+            matches!(
+                presented.field,
+                Field::Margin(_) | Field::Padding(_) | Field::BorderWidth(_)
+            )
+        });
         // What animates of its own, by source node and field.
         let animated: Vec<(usize, Field)> = presentation
             .iter()
@@ -864,8 +896,27 @@ impl BoxTree {
             if own.contains(&(node, field)) {
                 continue;
             }
-            if self.read(projected, field) == Some(Value::Length(Dim::Px(target))) {
+            // Nothing of no size moves: an inline would make empty spaces for it.
+            if target != 0.0 && self.read(projected, field) == Some(Value::Length(Dim::Px(target)))
+            {
                 self.write(projected, field, Value::Length(Dim::Px(target * factor)));
+            }
+        }
+        for &(arena, node, target) in &followers.em_indents {
+            let Some(leaf) = self.texts.get_mut(arena).and_then(Option::as_mut) else {
+                continue;
+            };
+            for run in leaf
+                .runs
+                .iter_mut()
+                .filter(|run| indent_space(run) && run.owner == node)
+            {
+                if run.percent_room.is_some_and(|room| room.0 == target) {
+                    run.percent_room = Some((target * factor, 0.0, false));
+                    if let Some(text) = super::room_text(run, 0.0) {
+                        run.text = text;
+                    }
+                }
             }
         }
         for &(arena, target) in &followers.em_line_heights {
@@ -928,8 +979,8 @@ impl BoxTree {
                 }
             }
         }
-        // A length whose pixels are the same share of the size at both ends is in `em`: one
-        // that stays the same, or changes otherwise, is its own.
+        // A line height whose pixels are the same share of the size at both ends follows it:
+        // it inherits as pixels, so no element's own declaration tells.
         let em = |from: f32, to: f32| {
             (from * target - to * committed).abs() <= 1e-3 * (to * committed).abs()
         };
@@ -953,19 +1004,33 @@ impl BoxTree {
         let nodes: Vec<usize> = std::iter::once(root)
             .chain(followers.sized_nodes.keys().copied())
             .collect();
+        // Lengths given in `em` or `ex` follow the size, whatever they were before.
+        let indent = PropertyId::lookup("text-indent");
         for node in nodes {
-            let (Some(&at), Some(after)) = (
-                before.get(&node),
-                to.originals.iter().position(|n| *n == node),
-            ) else {
+            let Some(after) = to.originals.iter().position(|n| *n == node) else {
                 continue;
             };
+            let given = &to.em_lengths[after];
             for &field in &fields {
-                if let (Some(Value::Length(Dim::Px(old))), Some(Value::Length(Dim::Px(new)))) =
-                    (self.read(at, field), to.read(after, field))
-                    && em(old, new)
+                let named = field_name(field).and_then(PropertyId::lookup);
+                if named.is_some_and(|property| given.contains(&property))
+                    && let Some(Value::Length(Dim::Px(new))) = to.read(after, field)
                 {
                     followers.em_lengths.push((node, field, new));
+                }
+            }
+            // An indent in `em`: its spaces' room at the start of its block's lines.
+            if indent.is_some_and(|property| given.contains(&property)) {
+                for (arena, leaf) in to.texts.iter().enumerate() {
+                    let Some(leaf) = leaf else { continue };
+                    if let Some(room) = leaf
+                        .runs
+                        .iter()
+                        .find(|run| indent_space(run) && run.owner == node)
+                        .and_then(|run| run.percent_room)
+                    {
+                        followers.em_indents.push((arena, node, room.0));
+                    }
                 }
             }
         }
@@ -1289,6 +1354,49 @@ impl BoxTree {
 
 /// A run's owner, text and innermost box (`run_key`).
 type RunKey = (usize, String, Option<usize>);
+
+/// The longhand a length field animates.
+fn field_name(field: Field) -> Option<&'static str> {
+    let side = |names: [&'static str; 4], at: usize| names.get(at).copied();
+    match field {
+        Field::Width => Some("width"),
+        Field::MinWidth => Some("min-width"),
+        Field::MaxWidth => Some("max-width"),
+        Field::Height => Some("height"),
+        Field::MinHeight => Some("min-height"),
+        Field::MaxHeight => Some("max-height"),
+        Field::OutlineWidth => Some("outline-width"),
+        Field::Margin(at) => side(
+            ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+            at,
+        ),
+        Field::Padding(at) => side(
+            [
+                "padding-top",
+                "padding-right",
+                "padding-bottom",
+                "padding-left",
+            ],
+            at,
+        ),
+        Field::BorderWidth(at) => side(
+            [
+                "border-top-width",
+                "border-right-width",
+                "border-bottom-width",
+                "border-left-width",
+            ],
+            at,
+        ),
+        Field::Offset(at) => side(["top", "right", "bottom", "left"], at),
+        _ => None,
+    }
+}
+
+/// A `text-indent`'s spaces: a sized spacer of no side, with no share of the width.
+fn indent_space(run: &super::TextRun) -> bool {
+    run.spacer && run.side_of.is_none() && run.percent_room.is_some_and(|room| room.1 == 0.0)
+}
 
 /// A run told apart by content, not slot: its owner, text, and innermost box, which keeps
 /// a box's side spaces apart from its `:before`'s.
