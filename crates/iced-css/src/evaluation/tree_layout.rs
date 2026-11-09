@@ -555,13 +555,13 @@ pub fn prepare_captured_tree(
         let sides = flow_box(&rows[at], facts.numeric).ok()?;
         let pixels = |dims: [Dim; 4]| {
             dims.map(|value| match value {
-                Dim::Px(pixels) => pixels,
+                Dim::Px(pixels) | Dim::Mix(pixels, _) => pixels,
                 _ => 0.0,
             })
         };
         let percent = |dims: [Dim; 4]| {
             dims.map(|value| match value {
-                Dim::Percent(percent) => percent.max(0.0),
+                Dim::Percent(percent) | Dim::Mix(_, percent) => percent.max(0.0),
                 _ => 0.0,
             })
         };
@@ -1235,6 +1235,7 @@ fn place_absolute(
         Dim::Auto => AutoLength::Auto,
         Dim::Px(number) => AutoLength::Value(number),
         Dim::Percent(number) => AutoLength::Value(basis * number / 100.0),
+        Dim::Mix(pixels, percent) => AutoLength::Value(pixels + basis * percent / 100.0),
     };
     let zero = |dim: Dim, basis: f32| match auto(dim, basis) {
         AutoLength::Auto => 0.0,
@@ -1306,7 +1307,11 @@ fn place_absolute(
         )
     };
     let specified = match value.height {
-        Dim::Percent(_) if viewport.height.is_none() && position == Position::Fixed => Dim::Auto,
+        Dim::Percent(_) | Dim::Mix(..)
+            if viewport.height.is_none() && position == Position::Fixed =>
+        {
+            Dim::Auto
+        }
         other => other,
     };
     let first = solve(Dim::Auto).map_err(AbsoluteFailure::Flow)?;
@@ -1385,11 +1390,13 @@ fn relative_shift(direction: Direction, offset: [Dim; 4], basis: (f32, Option<f3
         Dim::Auto => None,
         Dim::Px(number) => Some(number),
         Dim::Percent(number) => Some(basis.0 * number / 100.0),
+        Dim::Mix(pixels, percent) => Some(pixels + basis.0 * percent / 100.0),
     };
     let vertical = |dim: Dim| match dim {
         Dim::Auto => None,
         Dim::Px(number) => Some(number),
         Dim::Percent(number) => basis.1.map(|height| height * number / 100.0),
+        Dim::Mix(pixels, percent) => basis.1.map(|height| pixels + height * percent / 100.0),
     };
     let [top, right, bottom, left] = offset;
     // 9.4.3: top wins over bottom; the containing block's start edge wins horizontally.

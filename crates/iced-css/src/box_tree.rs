@@ -2880,13 +2880,13 @@ pub fn is_generated(owner: usize) -> bool {
 fn frame_sides(frame: &GeneratedFrame) -> InlineBoxSides {
     let pixels = |dims: [Dim; 4]| {
         dims.map(|value| match value {
-            Dim::Px(pixels) => pixels,
+            Dim::Px(pixels) | Dim::Mix(pixels, _) => pixels,
             _ => 0.0,
         })
     };
     let percent = |dims: [Dim; 4]| {
         dims.map(|value| match value {
-            Dim::Percent(percent) => percent.max(0.0),
+            Dim::Percent(percent) | Dim::Mix(_, percent) => percent.max(0.0),
             _ => 0.0,
         })
     };

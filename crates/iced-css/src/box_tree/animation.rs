@@ -98,8 +98,7 @@ fn field(name: &str) -> Option<Field> {
     })
 }
 
-/// Between two values of one kind. `None` has no in-between: keywords, or a length and a
-/// percentage, whose mix only layout could resolve.
+/// Between two values of one kind. `None` has no in-between: keywords, or `auto`.
 fn mix(from: Value, to: Value, progress: f32) -> Option<Value> {
     let along = |a: f32, b: f32| a + (b - a) * progress;
     match (from, to) {
@@ -123,6 +122,23 @@ fn mix(from: Value, to: Value, progress: f32) -> Option<Value> {
         }
         (Value::Length(Dim::Percent(a)), Value::Length(Dim::Percent(b))) => {
             Some(Value::Length(Dim::Percent(along(a, b))))
+        }
+        // A length and a percentage mix as `calc()` does, for layout to resolve.
+        (Value::Length(a), Value::Length(b)) => {
+            let parts = |dim: Dim| match dim {
+                Dim::Px(pixels) => Some((pixels, 0.0)),
+                Dim::Percent(percent) => Some((0.0, percent)),
+                Dim::Mix(pixels, percent) => Some((pixels, percent)),
+                Dim::Auto => None,
+            };
+            let ((a_pixels, a_percent), (b_pixels, b_percent)) = (parts(a)?, parts(b)?);
+            Some(Value::Length(if progress <= 0.0 {
+                a
+            } else if progress >= 1.0 {
+                b
+            } else {
+                Dim::Mix(along(a_pixels, b_pixels), along(a_percent, b_percent))
+            }))
         }
         // CSS Transitions: shown all the way between, when either end is shown.
         (Value::Visible(a), Value::Visible(b)) => Some(Value::Visible(if progress <= 0.0 {
@@ -1004,8 +1020,8 @@ impl BoxTreeAnimations {
     /// request starts from the current presented value.
     ///
     /// Returns the animations started. Nothing starts for a property that did not change, is
-    /// not animatable or not yet supported here, is won by `!important` in `to`, or has no in-between (`auto`, a transparent
-    /// border, a length and a percentage): those take `to`'s value at once.
+    /// not animatable or not yet supported here, is won by `!important` in `to`, or has no
+    /// in-between (`auto`, a transparent border): those take `to`'s value at once.
     ///
     /// # Errors
     /// Returns an unknown property name or a refused timing. Nothing changes then.

@@ -26,6 +26,9 @@ pub enum Dim {
     Px(f32),
     /// Percent of the containing block's width, or its height for vertical sizes.
     Percent(f32),
+    /// Pixels plus a percent, as `calc()` mixes them: an animation between a length and a
+    /// percentage.
+    Mix(f32, f32),
 }
 
 impl Dim {
@@ -34,6 +37,7 @@ impl Dim {
             Self::Auto => AutoLength::Auto,
             Self::Px(value) => AutoLength::Value(value),
             Self::Percent(value) => AutoLength::Value(basis * value / 100.0),
+            Self::Mix(pixels, percent) => AutoLength::Value(pixels + basis * percent / 100.0),
         }
     }
     fn zero_auto(self, basis: f32) -> f32 {
@@ -45,9 +49,10 @@ impl Dim {
     /// A percentage of an indefinite basis computes to auto (10.5, 10.7).
     fn vertical(self, basis: Option<f32>) -> Option<f32> {
         match (self, basis) {
-            (Self::Auto, _) | (Self::Percent(_), None) => None,
+            (Self::Auto, _) | (Self::Percent(_) | Self::Mix(..), None) => None,
             (Self::Px(value), _) => Some(value),
             (Self::Percent(value), Some(basis)) => Some(basis * value / 100.0),
+            (Self::Mix(pixels, percent), Some(basis)) => Some(pixels + basis * percent / 100.0),
         }
     }
 }
@@ -609,6 +614,7 @@ fn validate(boxes: &[FlowBox]) -> Result<(), FlowError> {
                 .all(|dim| match dim {
                     Dim::Auto => true,
                     Dim::Px(number) | Dim::Percent(number) => number.is_finite(),
+                    Dim::Mix(pixels, percent) => pixels.is_finite() && percent.is_finite(),
                 });
         let content = value.content.unwrap_or_default();
         if !finite_dims
@@ -799,17 +805,15 @@ impl Solver<'_> {
         let mut known: Vec<Option<f32>> = vec![None; count];
         for (slot, dim) in known.iter_mut().zip(&self.boxes[node].column_widths) {
             *slot = match *dim {
-                Dim::Px(width) => Some(width),
-                Dim::Percent(percent) => Some(percent / 100.0 * basis),
                 Dim::Auto => None,
+                other => Some(other.zero_auto(basis)),
             };
         }
         for item in placed.iter().filter(|item| item.row == 0) {
             let value = &self.boxes[item.cell];
             let wanted = match value.width {
-                Dim::Px(width) => width,
-                Dim::Percent(percent) => percent / 100.0 * basis,
                 Dim::Auto => continue,
+                other => other.zero_auto(basis),
             };
             let side = |dims: [Dim; 4]| dims[1].zero_auto(basis) + dims[3].zero_auto(basis);
             let outer = wanted + side(value.padding) + value.border[1] + value.border[3];

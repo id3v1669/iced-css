@@ -1582,3 +1582,63 @@ fn collapsed_overlap_skips_empty_tracks() {
     assert_eq!(g[1].border.bottom, 25.0);
     assert_eq!(g[1].border.right, 30.0);
 }
+
+#[test]
+fn mixed_lengths_resolve_their_percent_against_the_basis() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox {
+                // 10 pixels and a quarter of the width; a height against an indefinite
+                // one is auto, as a percentage's is.
+                width: Dim::Mix(10.0, 25.0),
+                height: Dim::Mix(5.0, 50.0),
+                margin: [
+                    Dim::Px(0.0),
+                    Dim::Px(0.0),
+                    Dim::Px(0.0),
+                    Dim::Mix(2.0, 10.0),
+                ],
+                content: Some(FlowContent {
+                    height: 7.0,
+                    preferred_width: 1.0,
+                    preferred_min_width: 1.0,
+                }),
+                ..FlowBox::default()
+            },
+        ],
+        &[(0, 1)],
+    );
+    let width = viewport().width;
+    assert_eq!(g[1].border.left, 2.0 + width * 0.1);
+    assert_eq!(g[1].border.right - g[1].border.left, 10.0 + width * 0.25);
+    assert_eq!(vertical(&g[1]), (0.0, 7.0));
+}
+
+#[test]
+fn mixed_heights_take_a_share_of_a_definite_height_and_must_be_finite() {
+    let g = tree(
+        vec![
+            FlowBox {
+                height: Dim::Px(400.0),
+                ..FlowBox::default()
+            },
+            FlowBox {
+                height: Dim::Mix(5.0, 50.0),
+                ..FlowBox::default()
+            },
+        ],
+        &[(0, 1)],
+    );
+    assert_eq!(vertical(&g[1]), (0.0, 205.0));
+    for bad in [Dim::Mix(f32::NAN, 0.0), Dim::Mix(0.0, f32::INFINITY)] {
+        let boxes = vec![FlowBox {
+            width: bad,
+            ..FlowBox::default()
+        }];
+        assert_eq!(
+            layout_block_flow(&boxes, viewport(), limits()),
+            Err(FlowError::Nonfinite { node: 0 })
+        );
+    }
+}

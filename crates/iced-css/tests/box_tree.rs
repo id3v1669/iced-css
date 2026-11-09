@@ -2393,7 +2393,7 @@ mod animation {
     }
 
     #[test]
-    fn lengths_animate_through_layout_and_mixed_kinds_apply_at_once() {
+    fn lengths_animate_through_layout_and_mixed_kinds_mix() {
         let from = tree(
             "#box { width:100px; margin-left:10px; padding-top:50%; height:10px; top:0px; position:relative; }",
         );
@@ -2413,7 +2413,7 @@ mod animation {
                 start,
             )
             .unwrap();
-        assert_eq!(count, 3);
+        assert_eq!(count, 4);
         animations.advance(start + Duration::from_millis(500), &to);
         let shown = animations.presented(&to);
         let geometry = shown.layout(800.0, Some(600.0)).unwrap();
@@ -2421,9 +2421,51 @@ mod animation {
         assert_eq!(moved.border.right - moved.border.left, 150.0);
         assert_eq!(moved.border.left, 20.0);
         assert_eq!(moved.border.top, 20.0);
-        // Padding took its target at once.
+        // Halfway from 50% to 10 pixels: 5 pixels and 25% of the 800 wide.
         assert_eq!(moved.padding.top, 20.0);
-        assert_eq!(moved.content.top - moved.padding.top, 10.0);
+        assert_eq!(moved.content.top - moved.padding.top, 205.0);
+    }
+
+    #[test]
+    fn a_fixed_box_mixing_a_percentage_height_is_auto_without_a_viewport_height() {
+        let from = tree("#box { position:fixed; height:100px; }");
+        let to = from
+            .restyled(&["#box { position:fixed; height:50%; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["height"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let height = |tree: &BoxTree, viewport: Option<f32>| {
+            let geometry = tree.layout(800.0, viewport).unwrap();
+            let moved = geometry[1].as_ref().unwrap();
+            moved.border.bottom - moved.border.top
+        };
+        // With no height to take a share of, the mix is auto, as the percentage is.
+        assert_eq!(height(&shown, None), height(&to, None));
+        // With one, it is halfway: 50 pixels and 25% of 600.
+        assert_eq!(height(&shown, Some(600.0)), 200.0);
+    }
+
+    #[test]
+    fn a_relative_offset_mixes_against_a_definite_height() {
+        let css = |top: &str| {
+            format!("#page {{ height:400px; }} #box {{ position:relative; top:{top}; }}")
+        };
+        let from = tree(&css("0px"));
+        let to = from.restyled(&[&css("10%")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "box", &["top"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let geometry = animations.presented(&to).layout(800.0, None).unwrap();
+        // Halfway: 5% of the 400 high.
+        assert_eq!(geometry[1].as_ref().unwrap().border.top, 20.0);
     }
 
     #[test]

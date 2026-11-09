@@ -2961,6 +2961,88 @@ fn a_list_image_keeps_its_gap_with_an_animated_font_size() {
 }
 
 #[test]
+fn lengths_and_percentages_mix_halfway() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || node("page", vec![node("bar", vec![text("t", "words")])]);
+    let css = |bar: &str| {
+        format!(
+            "#page {{ background-color:white; width:400px; color:#000000; }}
+             #bar {{ height:30px; background-color:#ff0000; position:relative; {bar} }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let from = BoxTree::new(source(), &css("width:25%; margin-left:0px; left:0px;")).unwrap();
+    let to = from
+        .restyled(&[&css("width:200px; margin-left:20%; left:10%;")])
+        .unwrap();
+    // Halfway: 100 pixels and 12.5% of 400 wide, 10% of 400 in, and 5% of 400 across.
+    let between =
+        BoxTree::new(source(), &css("width:150px; margin-left:40px; left:20px;")).unwrap();
+    assert!(picture(between, "mix-between"));
+    assert!(!picture(to.clone(), "mix-between"));
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    let count = animations
+        .request(
+            &from,
+            &to,
+            "bar",
+            &["width", "margin-left", "left"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            start,
+        )
+        .unwrap();
+    assert_eq!(count, 3);
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "mix-between"));
+    // Turned back halfway, it starts from the mix: at once it is where it was.
+    let back = to
+        .restyled(&[&css("width:25%; margin-left:0px; left:0px;")])
+        .unwrap();
+    let now = start + Duration::from_millis(500);
+    animations
+        .request(
+            &to,
+            &back,
+            "bar",
+            &["width", "margin-left", "left"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            now,
+        )
+        .unwrap();
+    animations.advance(now, &back);
+    assert!(picture(animations.presented(&back), "mix-between"));
+    // A quarter of the way back, mixes blend: 75 pixels and 15.625% wide, 7.5% in, 3.75%
+    // across.
+    animations.advance(now + Duration::from_millis(250), &back);
+    let quarter = BoxTree::new(
+        source(),
+        &css("width:137.5px; margin-left:30px; left:15px;"),
+    )
+    .unwrap();
+    assert!(picture(quarter, "mix-quarter"));
+    assert!(picture(animations.presented(&back), "mix-quarter"));
+    for renderer in ["wgpu", "tiny-skia"] {
+        let _ = std::fs::remove_file(
+            std::env::temp_dir().join(format!("mix-quarter-{}-{renderer}.png", std::process::id())),
+        );
+    }
+    for renderer in ["wgpu", "tiny-skia"] {
+        let _ = std::fs::remove_file(
+            std::env::temp_dir().join(format!("mix-between-{}-{renderer}.png", std::process::id())),
+        );
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};
