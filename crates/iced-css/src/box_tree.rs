@@ -330,9 +330,9 @@ pub struct TextRun {
     /// `generated_owner`) and side, 3 for the start and 1 for the end. Its margin's spaces
     /// do not round (`percent_room`), its border and padding's do.
     pub side_of: Option<(usize, usize)>,
-    /// An inline background on its way to or from transparent, over `background` in its
-    /// content area: color and opacity.
-    pub fade: Option<([f32; 3], f32)>,
+    /// Inline backgrounds on their way to or from transparent, over `background` in its
+    /// content area, outermost first: each box's source node, color and opacity.
+    pub fades: Vec<(usize, [f32; 3], f32)>,
     /// The opacity of `edge`'s color, 1 but while it fades.
     pub edge_alpha: f32,
     /// An inside list marker's image: once it loads, the run is spaces as wide as it.
@@ -1319,7 +1319,7 @@ impl BoxTree {
                         backgrounds,
                         percent_room: None,
                         side_of: None,
-                        fade: None,
+                        fades: Vec::new(),
                         edge_alpha: 1.0,
                         marker_image: None,
                         weight: style.weight,
@@ -1923,7 +1923,7 @@ impl BoxTree {
                             background_from: None,
                             percent_room: None,
                             side_of: None,
-                            fade: None,
+                            fades: Vec::new(),
                             edge_alpha: 1.0,
                             marker_image: None,
                             backgrounds: Vec::new(),
@@ -3007,7 +3007,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         background_from: None,
         percent_room: None,
         side_of: None,
-        fade: None,
+        fades: Vec::new(),
         edge_alpha: 1.0,
         marker_image: None,
         backgrounds: Vec::new(),
@@ -3665,7 +3665,7 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
     for (index, run) in leaf.runs.iter().enumerate() {
         // A hidden run keeps its room inside the visible boxes around it.
         let sided = run.inline_boxes.iter().any(|sides| sides.visible);
-        if !run.visible && !sided && run.background.is_none() && run.fade.is_none() {
+        if !run.visible && !sided && run.background.is_none() && run.fades.is_empty() {
             continue;
         }
         let color = run.color.unwrap_or([0.0; 3]);
@@ -3722,8 +3722,8 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                 };
                 quad(renderer, bounds, background, 1.0);
             }
-            // An inline's background fading over what shows beneath it.
-            if let Some((color, alpha)) = run.fade {
+            // Inline backgrounds fading over what shows beneath them, outermost first.
+            for &(_, color, alpha) in &run.fades {
                 let bounds = Rectangle {
                     y: content_top,
                     height: content_height,

@@ -756,8 +756,32 @@ impl BoxTree {
                 self.inline_border(projected, side, now);
             }
         }
+        // Outermost first: an inner one's layer goes over theirs.
+        let fading: BTreeSet<usize> = fades
+            .iter()
+            .filter(|fade| fade.1 == Field::Background)
+            .map(|fade| self.originals[fade.0])
+            .collect();
+        let nodes = self.source.construction.nodes();
+        let depth = |node: usize| {
+            std::iter::successors(Some(node), |at| {
+                nodes.get(*at).and_then(|value| value.parent())
+            })
+            .count()
+        };
+        fades.sort_by_cached_key(|fade| depth(self.originals[fade.0]));
+        let beneath = Beneath {
+            presented: presented_colors,
+            // Only for backgrounds fading inside one another.
+            blocks: if fading.is_empty() {
+                Vec::new()
+            } else {
+                self.block_bases()
+            },
+            fading,
+        };
         for (projected, field, color, alpha) in fades {
-            self.inline_fade(projected, field, color, alpha, &presented_colors);
+            self.inline_fade(projected, field, color, alpha, &beneath);
         }
     }
 
@@ -1167,6 +1191,42 @@ impl BoxTree {
         followers
     }
 
+    /// Each leaf's block background, beneath every inline in it: the base the layers of
+    /// inlines fading inside one another stack over.
+    fn block_bases(&self) -> Vec<Option<[f32; 3]>> {
+        let mut parent_of = vec![None; self.prepared.boxes.len()];
+        for (at, value) in self.prepared.boxes.iter().enumerate() {
+            for &child in &value.children {
+                parent_of[child] = Some(at);
+            }
+        }
+        let block_background = |mut at: Option<usize>| {
+            while let Some(here) = at {
+                let projected = self.prepared.positions[here].0;
+                // A hidden block paints nothing of its own: what lies beyond it shows.
+                if !self.prepared.anonymous[here] && self.paints[projected].visible {
+                    // An image would show through no color painted over it.
+                    if self.backgrounds.contains_key(&projected) {
+                        return None;
+                    }
+                    let paint = self.paints[projected];
+                    // Nor would a color fading itself: it paints at less than full.
+                    if paint.background_fade.is_some() {
+                        return None;
+                    }
+                    if let Some(color) = paint.background {
+                        return Some(color);
+                    }
+                }
+                at = parent_of[here];
+            }
+            None
+        };
+        (0..self.texts.len())
+            .map(|arena| block_background(Some(arena)))
+            .collect()
+    }
+
     /// An inline element's background or border color on its way to or from transparent:
     /// a layer of `color` at `alpha` where its box paints, over what shows beneath it.
     fn inline_fade(
@@ -1175,19 +1235,30 @@ impl BoxTree {
         field: Field,
         color: [f32; 3],
         alpha: f32,
-        presented: &BTreeMap<usize, [f32; 3]>,
+        beneath: &Beneath,
     ) {
+        let (presented, fading, blocks) = (&beneath.presented, &beneath.fading, &beneath.blocks);
         if !self.paints[projected].visible {
             return;
         }
         let node = self.originals[projected];
         let inside = self.chain_test(projected);
         let width = self.prepared.inline_boxes[projected].map_or([0.0; 4], |sides| sides.border);
-        for run in self
+        let source = Arc::clone(&self.source);
+        let nodes = source.construction.nodes();
+        // Whether a box around it lies inside another around it: nearer to it.
+        let nearer = |near: usize, far: usize| {
+            std::iter::successors(Some(near), |at| {
+                nodes.get(*at).and_then(|value| value.parent())
+            })
+            .any(|at| at == far)
+        };
+        for (arena, run) in self
             .texts
             .iter_mut()
-            .flatten()
-            .flat_map(|leaf| &mut leaf.runs)
+            .enumerate()
+            .filter_map(|(arena, leaf)| leaf.as_mut().map(|leaf| (arena, leaf)))
+            .flat_map(|(arena, leaf)| leaf.runs.iter_mut().map(move |run| (arena, run)))
         {
             match field {
                 Field::Background => {
@@ -1202,11 +1273,12 @@ impl BoxTree {
                     if !inside(run.owner) {
                         continue;
                     }
-                    // Beneath it, the nearest background around it; one nearer covers it.
+                    // Beneath it, the nearest opaque background around it; one nearer covers
+                    // it. A fading one is no cover: its layer is beneath this one.
                     let mut outer = None;
                     let mut covered = false;
                     for &(shade, key, shown) in &run.backgrounds {
-                        if key == node || !shown {
+                        if key == node || !shown || fading.contains(&key) {
                             continue;
                         }
                         if super::is_generated(key) || inside(key) {
@@ -1219,12 +1291,28 @@ impl BoxTree {
                     if covered {
                         continue;
                     }
-                    run.background = outer.map(|entry| entry.0);
+                    // Any fading box around it with a layer here is nearer than that: one
+                    // beyond an opaque box found that box covering it, and left none.
+                    debug_assert!(
+                        run.fades
+                            .iter()
+                            .all(|layer| outer.is_none_or(|(_, key)| nearer(layer.0, key)))
+                    );
+                    // Under a fading box around it, with nothing inline beneath, the block's
+                    // color as the base, so the layers stack over it in order.
+                    run.background = outer.map(|entry| entry.0).or_else(|| {
+                        if run.fades.is_empty() {
+                            None
+                        } else {
+                            blocks[arena]
+                        }
+                    });
                     run.background_from = outer.map(|entry| entry.1);
-                    // Its box's layer covers the content too, unless something opaque
-                    // paints over it there.
+                    // With nothing opaque beneath, its box's layer covers the content too.
                     let boxed = run.inline_boxes.iter().any(|sides| sides.owner == node);
-                    run.fade = (run.background.is_some() || !boxed).then_some((color, alpha));
+                    if run.background.is_some() || !boxed || !run.fades.is_empty() {
+                        run.fades.push((node, color, alpha));
+                    }
                 }
                 Field::BorderColor(side @ (0 | 2)) => {
                     for sides in run
@@ -1853,4 +1941,12 @@ impl BoxTreeAnimations {
             iced::Subscription::none()
         }
     }
+}
+
+/// What shows beneath inline fades as they stack: the inline colors presented under the
+/// text, the inline boxes fading, and each leaf's block base.
+struct Beneath {
+    presented: BTreeMap<usize, [f32; 3]>,
+    fading: BTreeSet<usize>,
+    blocks: Vec<Option<[f32; 3]>>,
 }

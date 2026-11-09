@@ -3470,6 +3470,150 @@ fn an_inline_background_fades_to_and_from_transparent() {
 }
 
 #[test]
+fn nested_inline_backgrounds_fade_together() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "before "),
+                    node(
+                        "o",
+                        vec![text("b", "outer "), node("s", vec![text("t", "span")])],
+                    ),
+                ],
+            )],
+        )
+    };
+    let css = |outer: &str, own: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #p {{ line-height:40px; }}
+             #o {{ display:inline; background-color:{outer}; }}
+             #s {{ display:inline; padding:4px 8px; background-color:{own}; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let clear = BoxTree::new(source(), &css("transparent", "transparent")).unwrap();
+    let full = clear.restyled(&[&css("#0000ff", "#ff0000")]).unwrap();
+    assert!(picture(clear.clone(), "nested-clear"));
+    assert!(picture(full.clone(), "nested-full"));
+    let start = Instant::now();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    for (from, to, last) in [
+        (&clear, &full, "nested-full"),
+        (&full, &clear, "nested-clear"),
+    ] {
+        let mut animations = BoxTreeAnimations::new();
+        for id in ["s", "o"] {
+            animations
+                .request(from, to, id, &["background-color"], timing, start)
+                .unwrap();
+        }
+        // Halfway the same both ways; at the end, the end.
+        animations.advance(start + Duration::from_millis(500), to);
+        assert!(picture(animations.presented(to), "nested-half"), "{last}");
+        animations.advance(start + Duration::from_millis(1500), to);
+        assert!(picture(animations.presented(to), last), "{last}");
+    }
+    assert!(!picture(clear, "nested-half"));
+    // The colors themselves, over the white page: the outer blue at half, the red at
+    // half over that in the span, and the red alone in its padding above the line.
+    let prefix = format!("nested-half-{}-", std::process::id());
+    let file = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .unwrap();
+    let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()))
+        .read_info()
+        .unwrap();
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let pixels: Vec<[u8; 3]> = bytes[..info.buffer_size()]
+        .chunks(4)
+        .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+        .collect();
+    let count = |color: [u8; 3]| {
+        pixels
+            .iter()
+            .filter(|pixel| (0..3).all(|at| pixel[at].abs_diff(color[at]) <= 2))
+            .count()
+    };
+    let outer = count([128, 128, 255]);
+    let span = count([191, 64, 128]);
+    let padding = count([255, 128, 128]);
+    assert!(
+        outer > 100 && span > 100 && padding > 100,
+        "{outer} {span} {padding}"
+    );
+    // Not the inner layer twice with the outer between.
+    assert_eq!(count([191, 32, 96]), 0);
+}
+
+#[test]
+fn an_inline_fade_shows_behind_hidden_text_in_it() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![node("s", vec![node("h", vec![text("t", "hidden words")])])],
+            )],
+        )
+    };
+    let css = |own: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #p {{ line-height:40px; }}
+             #s {{ display:inline; background-color:{own}; }}
+             #h {{ display:inline; visibility:hidden; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let clear = BoxTree::new(source(), &css("transparent")).unwrap();
+    let full = clear.restyled(&[&css("#ff0000")]).unwrap();
+    assert!(picture(clear.clone(), "hidden-text-clear"));
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &clear,
+            &full,
+            "s",
+            &["background-color"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &full);
+    // The box paints though its text is hidden: not the clear page.
+    assert!(!picture(animations.presented(&full), "hidden-text-clear"));
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

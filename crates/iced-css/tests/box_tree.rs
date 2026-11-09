@@ -3806,7 +3806,13 @@ mod animation {
             // Its text: the outer blue beneath, the red half over it.
             let span = runs.iter().find(|run| run.text.contains("span")).unwrap();
             assert_eq!(span.background, Some([0.0, 0.0, 1.0]));
-            assert_eq!(span.fade, Some((red, 0.5)));
+            assert_eq!(
+                span.fades
+                    .iter()
+                    .map(|layer| (layer.1, layer.2))
+                    .collect::<Vec<_>>(),
+                vec![(red, 0.5)]
+            );
             // Its box: the red at half, padding and top band too.
             let own = span.inline_boxes.last().unwrap();
             assert_eq!((own.background, own.alpha), (Some(red), 0.5));
@@ -3818,7 +3824,14 @@ mod animation {
             assert_eq!(bar, Some(((true, 2.0, red), 0.5)));
             // The outer text is no part of it.
             let outer = runs.iter().find(|run| run.text.contains("outer")).unwrap();
-            assert_eq!(outer.fade, None);
+            assert_eq!(
+                outer
+                    .fades
+                    .iter()
+                    .map(|layer| (layer.1, layer.2))
+                    .collect::<Vec<_>>(),
+                vec![]
+            );
         }
     }
 
@@ -3861,7 +3874,16 @@ mod animation {
             &["background-color"],
         );
         let text = span(&runs(&shown));
-        assert_eq!((text.background, text.fade), (None, None));
+        assert_eq!(
+            (
+                text.background,
+                text.fades
+                    .iter()
+                    .map(|layer| (layer.1, layer.2))
+                    .collect::<Vec<_>>()
+            ),
+            (None, vec![])
+        );
         let own = text.inline_boxes.last().unwrap();
         assert_eq!((own.background, own.alpha), (Some(red), 0.5));
         // Shown at once with it, either way: still a layer at half, never the end at full.
@@ -3921,7 +3943,14 @@ mod animation {
             .into_iter()
             .find(|run| run.side_of.is_some() && run.percent_room.is_some_and(|r| !r.2))
             .unwrap();
-        assert_eq!(margin.fade, None);
+        assert_eq!(
+            margin
+                .fades
+                .iter()
+                .map(|layer| (layer.1, layer.2))
+                .collect::<Vec<_>>(),
+            vec![]
+        );
         // Fading in inside an inline whose color moves: that color, as it is, beneath it.
         let nested = || {
             node(
@@ -3954,14 +3983,26 @@ mod animation {
             "{:?}",
             text.background
         );
-        assert_eq!(text.fade, Some((red, 0.5)));
+        assert_eq!(
+            text.fades
+                .iter()
+                .map(|layer| (layer.1, layer.2))
+                .collect::<Vec<_>>(),
+            vec![(red, 0.5)]
+        );
         // Hidden at both ends: nothing of it paints.
         let shown = halfway(
             "#s { display:inline; visibility:hidden; background-color:transparent; }",
             "#s { display:inline; visibility:hidden; background-color:#ff0000; }",
             &["background-color"],
         );
-        assert_eq!(span(&runs(&shown)).fade, None);
+        assert_eq!(
+            span(&runs(&shown))
+                .fades
+                .last()
+                .map(|layer| (layer.1, layer.2)),
+            None
+        );
         // A nearer background of its own inside it covers it there.
         let inner = || {
             node(
@@ -3987,7 +4028,162 @@ mod animation {
         animations.advance(start + Duration::from_millis(500), &two);
         let shown = animations.presented(&two);
         let text = span(&runs(&shown));
-        assert_eq!((text.background, text.fade), (Some([0.0, 1.0, 0.0]), None));
+        assert_eq!(
+            (
+                text.background,
+                text.fades
+                    .iter()
+                    .map(|layer| (layer.1, layer.2))
+                    .collect::<Vec<_>>()
+            ),
+            (Some([0.0, 1.0, 0.0]), vec![])
+        );
+    }
+
+    #[test]
+    fn nested_inline_fades_stack_their_layers() {
+        let start = Instant::now();
+        let shown = |source: &dyn Fn() -> Element, css: &dyn Fn(&str, &str) -> String| {
+            let one = BoxTree::new(source(), &css("transparent", "transparent")).unwrap();
+            let two = one.restyled(&[&css("#0000ff", "#ff0000")]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            // The inner one asked first: they still stack outermost first.
+            for id in ["s", "o"] {
+                animations
+                    .request(&one, &two, id, &["background-color"], second(), start)
+                    .unwrap();
+            }
+            animations.advance(start + Duration::from_millis(500), &two);
+            animations.presented(&two)
+        };
+        let layers = |tree: &BoxTree, text: &str| {
+            let leaves = tree.text_leaves();
+            let run = leaves
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.contains(text))
+                .cloned()
+                .unwrap();
+            let colors: Vec<([f32; 3], f32)> =
+                run.fades.iter().map(|layer| (layer.1, layer.2)).collect();
+            (run.background, colors)
+        };
+        let (blue, red, white) = ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        // Over the block's background: the outer layer, then the inner.
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "o",
+                    vec![
+                        super::text("a", "outer "),
+                        node("s", vec![super::text("t", "span")]),
+                    ],
+                )],
+            )
+        };
+        let css = |outer: &str, own: &str| {
+            format!(
+                "#page {{ background-color:#ffffff; }}
+                 #o {{ display:inline; background-color:{outer}; }}
+                 #s {{ display:inline; padding:4px; background-color:{own}; }}"
+            )
+        };
+        let tree = shown(&source, &css);
+        assert_eq!(
+            layers(&tree, "span"),
+            (Some(white), vec![(blue, 0.5), (red, 0.5)])
+        );
+        // The outer one without sides: its layer alone, over the block as it paints.
+        assert_eq!(layers(&tree, "outer"), (None, vec![(blue, 0.5)]));
+        // No block color to take as the base, an image there, or the block fading too:
+        // no base, the layers as they are. A hidden block's color is no base either,
+        // but the one beyond it is.
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node("o", vec![node("s", vec![super::text("t", "span")])])],
+                )],
+            )
+        };
+        for (page, block, base) in [
+            ("", "", None),
+            (
+                "background-color:#ffffff; background-image:url(x.png);",
+                "",
+                None,
+            ),
+            (
+                "background-color:#ffffff;",
+                "visibility:hidden; background-color:#00ff00;",
+                Some(white),
+            ),
+            (
+                "background-color:#ffffff;",
+                "visibility:hidden; background-image:url(x.png);",
+                Some(white),
+            ),
+        ] {
+            let css = |outer: &str, own: &str| {
+                format!(
+                    "#page {{ {page} }}
+                     #p {{ {block} }}
+                     #o {{ display:inline; visibility:visible; background-color:{outer}; }}
+                     #s {{ display:inline; padding:4px; background-color:{own}; }}"
+                )
+            };
+            let tree = shown(&source, &css);
+            assert_eq!(
+                layers(&tree, "span"),
+                (base, vec![(blue, 0.5), (red, 0.5)]),
+                "{page} {block}"
+            );
+        }
+        let css = |outer: &str, own: &str| {
+            format!(
+                "#page {{ background-color:{own}; }}
+                 #o {{ display:inline; background-color:{outer}; }}
+                 #s {{ display:inline; padding:4px; background-color:{own}; }}"
+            )
+        };
+        let one = BoxTree::new(source(), &css("transparent", "transparent")).unwrap();
+        let two = one.restyled(&[&css("#0000ff", "#ff0000")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        for id in ["page", "s", "o"] {
+            animations
+                .request(&one, &two, id, &["background-color"], second(), start)
+                .unwrap();
+        }
+        animations.advance(start + Duration::from_millis(500), &two);
+        assert_eq!(
+            layers(&animations.presented(&two), "span"),
+            (None, vec![(blue, 0.5), (red, 0.5)])
+        );
+        // An opaque one between them covers the outer layer there.
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "o",
+                    vec![node("m", vec![node("s", vec![super::text("t", "span")])])],
+                )],
+            )
+        };
+        let css = |outer: &str, own: &str| {
+            format!(
+                "#page {{ background-color:#ffffff; }}
+                 #o {{ display:inline; background-color:{outer}; }}
+                 #m {{ display:inline; background-color:#00ff00; }}
+                 #s {{ display:inline; background-color:{own}; }}"
+            )
+        };
+        let tree = shown(&source, &css);
+        assert_eq!(
+            layers(&tree, "span"),
+            (Some([0.0, 1.0, 0.0]), vec![(red, 0.5)])
+        );
     }
 
     #[test]

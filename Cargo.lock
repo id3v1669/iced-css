@@ -1695,6 +1695,7 @@ dependencies = [
  "iced_test",
  "log",
  "notify",
+ "png 0.18.1",
  "reqwest",
  "ring",
  "rustls",
