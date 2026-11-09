@@ -5,9 +5,59 @@ use iced_css_core::{
         sheets::{AuthorSheets, SheetError, SheetId},
         ua_display::UaDisplayCatalog,
     },
+    selectors::{SelectorSource, SimpleSelector},
     stylesheet::owned_graph::OwnedStylesheetGraph,
 };
-use std::num::NonZeroUsize;
+use std::{collections::HashMap, num::NonZeroUsize};
+
+/// Offers by what the rightmost compound of a selector needs of an element: an id, a class
+/// or a type. A selector needing none, such as `*` or `:hover`, can match anything.
+#[derive(Default)]
+struct RuleIndex<'a> {
+    by_id: HashMap<&'a str, Vec<usize>>,
+    by_class: HashMap<&'a str, Vec<usize>>,
+    by_type: HashMap<&'a str, Vec<usize>>,
+    any: Vec<usize>,
+}
+
+impl<'a> RuleIndex<'a> {
+    fn new(offers: &[PositionedRuleOffer<'a>]) -> Self {
+        let mut index = Self::default();
+        for (at, offer) in offers.iter().enumerate() {
+            for selector in offer.rule.selectors {
+                let tests = selector
+                    .compounds
+                    .last()
+                    .map_or(&[][..], |compound| compound.tests.as_slice());
+                let find =
+                    |want: fn(&'a SimpleSelector) -> Option<&'a str>| tests.iter().find_map(want);
+                let id = find(|test| match test {
+                    SimpleSelector::Id(id) => Some(id.as_str()),
+                    _ => None,
+                });
+                let class = find(|test| match test {
+                    SimpleSelector::Class(class) => Some(class.as_str()),
+                    _ => None,
+                });
+                let kind = find(|test| match test {
+                    SimpleSelector::Type(name) => Some(name.as_str()),
+                    _ => None,
+                });
+                let bucket = match (id, class, kind) {
+                    (Some(id), ..) => index.by_id.entry(id).or_default(),
+                    (_, Some(class), _) => index.by_class.entry(class).or_default(),
+                    (.., Some(kind)) => index.by_type.entry(kind).or_default(),
+                    _ => &mut index.any,
+                };
+                // One entry per offer in each bucket: its selectors may share one.
+                if bucket.last() != Some(&at) {
+                    bucket.push(at);
+                }
+            }
+        }
+        index
+    }
+}
 
 /// Application bindings cannot introduce an additional UA origin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,10 +86,12 @@ pub struct BundleLimits {
     pub graphs: NonZeroUsize,
     /// Includes the mandatory eight UA rules and excluded author occurrences.
     pub rules: NonZeroUsize,
-    /// Actual offer-vector capacity only; borrowed storage stays with its owners.
+    /// Actual offer-vector capacity only; borrowed storage stays with its owners. The
+    /// selector index (`DisplayRuleBundle::offers_for`) is not counted.
     pub retained_bytes: NonZeroUsize,
     /// Admission + two graph traversals + earlier author-binding scans + two
-    /// rule traversals: 1 + 2*g + P + 2*r, including all eight UA rules.
+    /// rule traversals: 1 + 2*g + P + 2*r, including all eight UA rules. Building the
+    /// selector index, one pass over every selector, is not counted.
     pub work: NonZeroUsize,
     /// Sum of the exact controls' stored allowance for every author binding.
     pub membership_work: NonZeroUsize,
@@ -148,6 +200,7 @@ pub struct DisplayRuleBundle<'a> {
     bindings: &'a [GraphBinding<'a>],
     sheets: &'a AuthorSheets,
     offers: Vec<PositionedRuleOffer<'a>>,
+    index: RuleIndex<'a>,
     declarations: usize,
     author_rules: usize,
     retained_bytes: usize,
@@ -243,11 +296,13 @@ impl<'a> DisplayRuleBundle<'a> {
             }
         }
         debug_assert_eq!(offers.len(), counts.rules);
+        let index = RuleIndex::new(&offers);
         Ok(Self {
             catalog,
             bindings,
             sheets,
             offers,
+            index,
             declarations: counts.declarations,
             author_rules: counts.author_rules,
             retained_bytes,
@@ -257,6 +312,40 @@ impl<'a> DisplayRuleBundle<'a> {
     }
     pub fn offers(&self) -> &[PositionedRuleOffer<'a>] {
         &self.offers
+    }
+    /// The offers that can match `node`, in source order: those whose selectors' last
+    /// compound needs its id, one of its classes or its type, or nothing of these. The rest
+    /// cannot match it, so the cascade need not try them. A node with no element facts
+    /// gets them all.
+    pub fn offers_for<S: SelectorSource>(
+        &self,
+        source: &S,
+        node: S::Node,
+    ) -> Vec<PositionedRuleOffer<'a>> {
+        let Some(facts) = source.facts(node) else {
+            return self.offers.clone();
+        };
+        let index = &self.index;
+        let mut chosen: Vec<usize> = index.any.clone();
+        if let Some(found) = index.by_type.get(facts.type_name) {
+            chosen.extend(found);
+        }
+        if let Some(found) = facts.metadata.css_id().and_then(|id| index.by_id.get(id)) {
+            chosen.extend(found);
+        }
+        if let Some(classes) = facts.metadata.attribute("class") {
+            for class in classes.split([' ', '\t', '\n', '\r', '\u{C}']) {
+                if let Some(found) = (!class.is_empty())
+                    .then(|| index.by_class.get(class))
+                    .flatten()
+                {
+                    chosen.extend(found);
+                }
+            }
+        }
+        chosen.sort_unstable();
+        chosen.dedup();
+        chosen.into_iter().map(|at| self.offers[at]).collect()
     }
     pub fn catalog(&self) -> &'a UaDisplayCatalog {
         self.catalog

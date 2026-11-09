@@ -309,7 +309,7 @@ pub fn evaluate_source_display<'snapshot, 'bundle, 'rules>(
         let mut winners = PropertyWinners::new();
         cascade_positioned_rules(
             &mut winners,
-            bundle.offers().iter().copied(),
+            bundle.offers_for(&source, index),
             RuleTarget {
                 source: &source,
                 node: index,

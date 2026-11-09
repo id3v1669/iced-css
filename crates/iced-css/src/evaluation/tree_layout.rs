@@ -1989,7 +1989,7 @@ pub fn evaluate_tree_paint<'r>(
         let mut winners = PropertyWinners::new();
         cascade_positioned_rules(
             &mut winners,
-            bundle.offers().iter().copied(),
+            bundle.offers_for(&source, original),
             RuleTarget {
                 source: &source,
                 node: original,
@@ -2531,7 +2531,7 @@ pub fn evaluate_tree_paint<'r>(
             let mut winners = PropertyWinners::new();
             cascade_positioned_rules(
                 &mut winners,
-                bundle.offers().iter().copied(),
+                bundle.offers_for(&source, original),
                 RuleTarget {
                     source: &source,
                     node: original,

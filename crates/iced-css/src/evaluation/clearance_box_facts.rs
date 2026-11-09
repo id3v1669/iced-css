@@ -685,7 +685,7 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
         let mut winners = PropertyWinners::new();
         cascade_positioned_rules(
             &mut winners,
-            bundle.offers().iter().copied(),
+            bundle.offers_for(&source, original),
             RuleTarget {
                 source: &source,
                 node: original,
@@ -779,7 +779,7 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
             let mut winners = PropertyWinners::new();
             cascade_positioned_rules(
                 &mut winners,
-                bundle.offers().iter().copied(),
+                bundle.offers_for(&source, original),
                 RuleTarget {
                     source: &source,
                     node: original,

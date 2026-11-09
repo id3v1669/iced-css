@@ -4524,6 +4524,95 @@ fn an_inside_marker_stays_outside_its_before_box() {
 }
 
 #[test]
+fn every_rule_that_can_match_an_element_reaches_it() {
+    // Rules are tried by what their last compound needs; none that can match is left out.
+    let bound = NonZeroUsize::new(1000).unwrap();
+    let limits = AttributeLimits {
+        entries: bound,
+        retained_bytes: bound,
+        work: bound,
+    };
+    let classed = |id: &str, classes: &str| -> Element {
+        let column = adapters::column_from_vec(Vec::<Element>::new(), capture_limits())
+            .unwrap()
+            .style_id(id, limits)
+            .unwrap();
+        if classes.is_empty() {
+            column.erase()
+        } else {
+            column
+                .style_attribute("class", classes, limits)
+                .unwrap()
+                .erase()
+        }
+    };
+    let root = node(
+        "page",
+        vec![
+            classed("one", "a\tb"),
+            classed("two", "b"),
+            classed("three", ""),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        ".b { color:#00ff00; }
+         #three, .a { border-top:1px solid #ff0000; }
+         column.b { outline:2px solid #0000ff; }
+         [class~=\"b\"] { background-color:#ffff00; }
+         #page > .a { border-bottom:1px solid #00ffff; }
+         * { border-left:1px solid #ff00ff; }
+         #two:first-child { border-right:1px solid #000000; }
+         column { padding-left:1px; }
+         nosuchtype { padding-left:9px; }
+         .B, #ONE { background-color:#000000; }
+         [id=\"three\"] { outline:3px dotted #00ff00; }
+         .a:before { content:\"x\"; }",
+    )
+    .unwrap();
+    let paints = tree.paints();
+    let (one, two, three) = (paints[1], paints[2], paints[3]);
+    let green = Some([0.0, 1.0, 0.0]);
+    assert_eq!((one.color, two.color), (green, green));
+    assert_ne!(three.color, green);
+    assert_eq!(one.border[0], Some([1.0, 0.0, 0.0]));
+    assert_eq!(three.border[0], Some([1.0, 0.0, 0.0]));
+    // A border's color defaults to the text's: whether it shows is its style.
+    assert_eq!(two.border_style[0], "none");
+    let width = |paint: iced_css::evaluation::tree_layout::BoxPaint| paint.outline.map(|o| o.0);
+    assert_eq!((width(one), width(two)), (Some(2.0), Some(2.0)));
+    let yellow = Some([1.0, 1.0, 0.0]);
+    assert_eq!(
+        (one.background, two.background, three.background),
+        (yellow, yellow, None)
+    );
+    assert_eq!(one.border[2], Some([0.0, 1.0, 1.0]));
+    assert_eq!(two.border_style[2], "none");
+    for paint in [one, two, three] {
+        assert_eq!(paint.border[3], Some([1.0, 0.0, 1.0]));
+    }
+    // Not its first child: the rule needs both.
+    assert_eq!(two.border_style[1], "none");
+    // A type alone, and a type no box here has.
+    let geometry = tree.layout(800.0, None).unwrap();
+    for (at, boxed) in geometry[1..=3].iter().enumerate() {
+        let boxed = boxed.as_ref().unwrap();
+        assert_eq!(boxed.content.left - boxed.padding.left, 1.0, "{at}");
+    }
+    // Names match as written: `.B` and `#ONE` are not `b` and `one`.
+    assert_eq!(one.background, yellow);
+    // An attribute test on the id is no id rule: it still matches.
+    assert_eq!(three.outline.map(|outline| outline.0), Some(3.0));
+    // A class's `:before` reaches its element.
+    let texts: Vec<String> = tree
+        .text_leaves()
+        .iter()
+        .map(|(_, leaf)| leaf.text())
+        .collect();
+    assert_eq!(texts, vec!["x".to_owned()]);
+}
+
+#[test]
 fn nested_inline_boxes_paint_every_level_and_blocks_do_not_repeat_sides() {
     let root = node(
         "page",
