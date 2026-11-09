@@ -3289,6 +3289,52 @@ fn inline_sides_animate_in_every_place_they_fall() {
 }
 
 #[test]
+fn right_to_left_text_keeps_its_mark_before_percentage_sides() {
+    // 10% of 400 is 40 pixels: the same line either way.
+    let draw = |sides: &str, name: &str| {
+        let root = node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    node("s", vec![node("i", vec![text("t", "span")])]),
+                    text("b", " tail"),
+                ],
+            )],
+        );
+        let sheet = format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #p {{ width:400px; direction:rtl; }}
+             #s {{ display:inline; background-color:#ffcc00; {sides} }}
+             #i {{ display:inline; padding:0 4px; background-color:#ff8800; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // Its own padding, its margin before a nested inline's padding: the mark leads them all.
+    let name = format!("rtl-percent-{}.png", std::process::id());
+    assert!(draw("padding:0 40px;", &name));
+    assert!(draw("padding:0 10%;", &name));
+    let margin = format!("rtl-percent-margin-{}.png", std::process::id());
+    assert!(draw("margin:0 40px;", &margin));
+    assert!(draw("margin:0 10%;", &margin));
+    let _ = std::fs::remove_file(std::env::temp_dir().join(format!(
+        "rtl-percent-margin-{}-wgpu.png",
+        std::process::id()
+    )));
+    for renderer in ["wgpu", "tiny-skia"] {
+        let _ = std::fs::remove_file(
+            std::env::temp_dir().join(format!("rtl-percent-{}-{renderer}.png", std::process::id())),
+        );
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

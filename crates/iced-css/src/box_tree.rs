@@ -2177,6 +2177,26 @@ impl BoxTree {
                     changed = true;
                 }
             }
+            // 9.10: the paragraph's direction mark leads its first text. Side spaces that
+            // were empty until sized here came before it, or before the spaces holding it: it
+            // moves onto them.
+            let starts = |run: &TextRun| {
+                run.text
+                    .chars()
+                    .next()
+                    .is_some_and(|mark| matches!(mark, '\u{200E}' | '\u{200F}'))
+            };
+            if let Some(first) = leaf.runs.iter().position(|run| !run.text.is_empty())
+                && !starts(&leaf.runs[first])
+                && let Some(at) = leaf.runs[first..]
+                    .iter()
+                    .position(|run| starts(run) || (!run.spacer && !run.text.is_empty()))
+                && starts(&leaf.runs[first + at])
+            {
+                let mark = leaf.runs[first + at].text.remove(0);
+                leaf.runs[first].text.insert(0, mark);
+                changed = true;
+            }
             let Some(mut indent) = leaf.percent_indent else {
                 continue;
             };
