@@ -238,6 +238,18 @@ impl BoxTree {
             && self.prepared.slot[projected].is_some_and(|slot| self.prepared.anonymous[slot])
     }
 
+    /// A border side's computed width, on its box or on its line; a style of `none` or
+    /// `hidden` computes it to 0.
+    fn side_width(&self, projected: usize, side: usize) -> f32 {
+        if self.under_text(projected) {
+            return self.prepared.inline_boxes[projected].map_or(0.0, |sides| sides.border[side]);
+        }
+        self.prepared.slot[projected]
+            .filter(|slot| !self.prepared.anonymous[*slot])
+            .and_then(|slot| self.prepared.boxes.get(slot))
+            .map_or(0.0, |value| value.border[side])
+    }
+
     fn read(&self, projected: usize, field: Field) -> Option<Value> {
         let paint = &self.paints[projected];
         // An inline element's background lies under its text; transparent is a fade at none.
@@ -324,11 +336,12 @@ impl BoxTree {
                 (Some(value), None) => Value::Color(value),
                 (Some(value), Some(alpha)) => Value::Fade(value, alpha),
             }),
-            // Transparent is a fade at none where a side shows: it has a width, which a
-            // style of `none` or `hidden` computes to 0. A collapsed table's borders pick
-            // their colors among cells: they apply at once.
+            // Transparent is a fade at none. A collapsed table's borders pick their colors
+            // among cells: they apply at once. (`request` skips a side with no width at
+            // either end.)
             Field::BorderColor(side) => {
-                let shows = boxed()?.1.border[side] > 0.0 && paint.collapsed_cell.is_none();
+                boxed()?;
+                let shows = paint.collapsed_cell.is_none();
                 match (paint.border[side], paint.border_fade[side]) {
                     (None, _) if shows => Some(Value::Fade([0.0; 3], 0.0)),
                     (None, _) => None,
@@ -1919,6 +1932,19 @@ impl BoxTreeAnimations {
                 continue;
             };
             if committed == target {
+                continue;
+            }
+            // A side with no width at either end draws no color to move: at once. A width
+            // still animating there draws one (a finished one is gone).
+            if let Field::BorderColor(side) = field
+                && from.side_width(before, side) <= 0.0
+                && to.side_width(after, side) <= 0.0
+                && !field_name(Field::BorderWidth(side))
+                    .and_then(PropertyId::lookup)
+                    .and_then(|width| self.current(id, width))
+                    .is_some_and(|(track, _)| track.capture == capture)
+            {
+                dropped.push(property);
                 continue;
             }
             // Between a box and an inline, `display` changes at once and the color moves in

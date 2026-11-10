@@ -2983,6 +2983,136 @@ mod animation {
     }
 
     #[test]
+    fn a_border_color_moves_only_where_its_side_has_a_width() {
+        let start = Instant::now();
+        for display in ["inline", "block"] {
+            let source = || {
+                node(
+                    "page",
+                    vec![node("p", vec![node("s", vec![text("x", "words")])])],
+                )
+            };
+            let run = |from: &str, to: &str, properties: &[&str]| {
+                let one =
+                    BoxTree::new(source(), &format!("#s {{ display:{display}; {from} }}")).unwrap();
+                let two = one
+                    .restyled(&[&format!("#s {{ display:{display}; {to} }}")])
+                    .unwrap();
+                let mut animations = BoxTreeAnimations::new();
+                animations
+                    .request(&one, &two, "s", properties, second(), start)
+                    .unwrap()
+            };
+            // No width at either end, by width or by style: nothing draws, so nothing runs.
+            assert_eq!(
+                run(
+                    "border:0 solid transparent;",
+                    "border:0 solid #ff0000;",
+                    &["border-color"]
+                ),
+                0,
+                "{display}"
+            );
+            assert_eq!(
+                run(
+                    "border:2px none transparent;",
+                    "border:2px none #ff0000;",
+                    &["border-color"]
+                ),
+                0,
+                "{display}"
+            );
+            // A side growing from none fades its color in as it grows.
+            assert_eq!(
+                run(
+                    "border:0 solid transparent;",
+                    "border:2px solid #ff0000;",
+                    &["border-color", "border-width"]
+                ),
+                8,
+                "{display}"
+            );
+            // And fades it out as it shrinks to none.
+            assert_eq!(
+                run(
+                    "border:2px solid #ff0000;",
+                    "border:0 solid transparent;",
+                    &["border-color", "border-width"]
+                ),
+                8,
+                "{display}"
+            );
+            // A width still shrinking to none draws a color: a new one moves there, on that
+            // side only.
+            let thin = |color: &str| format!("#s {{ display:{display}; border:0 solid {color}; }}");
+            let one = BoxTree::new(
+                source(),
+                &format!(
+                    "#s {{ display:{display}; border:0 solid #ff0000; border-left-width:2px; }}"
+                ),
+            )
+            .unwrap();
+            let two = one.restyled(&[&thin("#ff0000")]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            animations
+                .request(&one, &two, "s", &["border-width"], second(), start)
+                .unwrap();
+            let later = start + Duration::from_millis(500);
+            animations.advance(later, &two);
+            let three = two.restyled(&[&thin("#0000ff")]).unwrap();
+            assert_eq!(
+                animations
+                    .request(&two, &three, "s", &["border-color"], second(), later)
+                    .unwrap(),
+                1,
+                "{display}"
+            );
+            // A width animating on another capture of the same id is not this one's.
+            let other = BoxTree::new(source(), &thin("#ff0000")).unwrap();
+            let blue = other.restyled(&[&thin("#0000ff")]).unwrap();
+            let mut shared = BoxTreeAnimations::new();
+            shared
+                .request(&one, &two, "s", &["border-width"], second(), start)
+                .unwrap();
+            shared.advance(later, &two);
+            assert_eq!(
+                shared
+                    .request(&other, &blue, "s", &["border-color"], second(), later)
+                    .unwrap(),
+                0,
+                "{display}"
+            );
+            // Once it has none, at once again.
+            animations.advance(start + Duration::from_millis(1500), &three);
+            let four = three.restyled(&[&thin("#00ff00")]).unwrap();
+            assert_eq!(
+                animations
+                    .request(
+                        &three,
+                        &four,
+                        "s",
+                        &["border-color"],
+                        second(),
+                        start + Duration::from_millis(1500)
+                    )
+                    .unwrap(),
+                0,
+                "{display}"
+            );
+            // One side with a width, the others none: that one.
+            assert_eq!(
+                run(
+                    "border:0 solid transparent; border-left-width:2px;",
+                    "border:0 solid #ff0000; border-left-width:2px;",
+                    &["border-color"]
+                ),
+                1,
+                "{display}"
+            );
+        }
+    }
+
+    #[test]
     fn a_boxs_border_fades_to_and_from_transparent() {
         let source = || node("page", vec![node("b", vec![text("x", "words")])]);
         let start = Instant::now();
