@@ -4352,7 +4352,7 @@ fn paint_box<Renderer: renderer::Renderer>(
     parts: BoxParts,
     cuts: &[(usize, f32, f32)],
 ) {
-    let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3]| {
+    let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3], alpha: f32| {
         if bounds.width > 0.0 && bounds.height > 0.0 {
             renderer.fill_quad(
                 Quad {
@@ -4363,7 +4363,7 @@ fn paint_box<Renderer: renderer::Renderer>(
                     },
                     ..Quad::default()
                 },
-                Color::from_rgb(color[0], color[1], color[2]),
+                Color::from_rgba(color[0], color[1], color[2], alpha),
             );
         }
     };
@@ -4435,8 +4435,11 @@ fn paint_box<Renderer: renderer::Renderer>(
                         ..band
                     }
                 };
+                // A side fading to or from transparent: at its opacity. Bands meet without
+                // overlapping, so no corner paints twice.
+                let alpha = paint.border_fade[side].unwrap_or(1.0);
                 for (piece, shade) in band_pieces(part, side, paint.border_style[side], color) {
-                    quad(renderer, piece, shade);
+                    quad(renderer, piece, shade, alpha);
                 }
             }
         }

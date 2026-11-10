@@ -324,7 +324,18 @@ impl BoxTree {
                 (Some(value), None) => Value::Color(value),
                 (Some(value), Some(alpha)) => Value::Fade(value, alpha),
             }),
-            Field::BorderColor(side) => color(own.and(paint.border[side])),
+            // Transparent is a fade at none where a side shows: it has a width, which a
+            // style of `none` or `hidden` computes to 0. A collapsed table's borders pick
+            // their colors among cells: they apply at once.
+            Field::BorderColor(side) => {
+                let shows = boxed()?.1.border[side] > 0.0 && paint.collapsed_cell.is_none();
+                match (paint.border[side], paint.border_fade[side]) {
+                    (None, _) if shows => Some(Value::Fade([0.0; 3], 0.0)),
+                    (None, _) => None,
+                    (Some(value), None) => Some(Value::Color(value)),
+                    (Some(value), Some(alpha)) => Some(Value::Fade(value, alpha)),
+                }
+            }
             Field::OutlineColor => color(own.and(paint.outline).map(|outline| outline.1)),
             Field::OutlineWidth => own
                 .and(paint.outline)
@@ -388,7 +399,14 @@ impl BoxTree {
                 paint.background = Some(value);
                 paint.background_fade = Some(alpha);
             }
-            (Field::BorderColor(side), Value::Color(value)) => paint.border[side] = Some(value),
+            (Field::BorderColor(side), Value::Color(value)) => {
+                paint.border[side] = Some(value);
+                paint.border_fade[side] = None;
+            }
+            (Field::BorderColor(side), Value::Fade(value, alpha)) => {
+                paint.border[side] = Some(value);
+                paint.border_fade[side] = Some(alpha);
+            }
             (Field::OutlineColor, Value::Color(value)) => {
                 if let Some(outline) = &mut paint.outline {
                     outline.1 = value;
@@ -1844,7 +1862,9 @@ impl BoxTreeAnimations {
     ///
     /// Returns the animations started. Nothing starts for a property that did not change, is
     /// not animatable or not yet supported here, is won by `!important` in `to`, or has no
-    /// in-between (`auto`, a transparent border): those take `to`'s value at once.
+    /// in-between (`auto`; a transparent border color on a side that draws nothing, on a
+    /// collapsed table cell, or between an inline and a box): those take `to`'s value at
+    /// once.
     ///
     /// # Errors
     /// Returns an unknown property name or a refused timing. Nothing changes then.
@@ -1921,7 +1941,7 @@ impl BoxTreeAnimations {
                 .filter(|(track, _)| track.target == committed && track.capture == capture)
                 .map_or(committed, |(_, value)| value);
             // A box still fading when it becomes an inline starts from a fade, too.
-            if field == Field::Background
+            if matches!(field, Field::Background | Field::BorderColor(_))
                 && to.under_text(after)
                 && !from.under_text(before)
                 && !matches!(start, Value::Color(_))

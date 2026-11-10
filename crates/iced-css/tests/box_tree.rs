@@ -2983,6 +2983,100 @@ mod animation {
     }
 
     #[test]
+    fn a_boxs_border_fades_to_and_from_transparent() {
+        let source = || node("page", vec![node("b", vec![text("x", "words")])]);
+        let start = Instant::now();
+        let run = |css: &dyn Fn(&str) -> String, ends: [&str; 2]| {
+            let from = BoxTree::new(source(), &css(ends[0])).unwrap();
+            let to = from.restyled(&[&css(ends[1])]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            let count = animations
+                .request(&from, &to, "b", &["border-color"], second(), start)
+                .unwrap();
+            animations.advance(start + Duration::from_millis(500), &to);
+            let half = animations.presented(&to).paints()[1];
+            animations.advance(start + Duration::from_millis(1500), &to);
+            let end = animations.presented(&to).paints()[1];
+            (count, half, end)
+        };
+        let css = |color: &str| format!("#b {{ border:4px solid {color}; }}");
+        let red = [1.0, 0.0, 0.0];
+        for ends in [["transparent", "#ff0000"], ["#ff0000", "transparent"]] {
+            let (count, half, end) = run(&css, ends);
+            assert_eq!(count, 4, "{ends:?}");
+            // Halfway: the red at half, whichever way.
+            assert_eq!(
+                (half.border, half.border_fade),
+                ([Some(red); 4], [Some(0.5); 4])
+            );
+            let last = if ends[1] == "transparent" {
+                None
+            } else {
+                Some(red)
+            };
+            assert_eq!(
+                (end.border, end.border_fade),
+                ([last; 4], [None; 4]),
+                "{ends:?}"
+            );
+        }
+        // Turned back halfway: from the half, back to none.
+        let clear = BoxTree::new(source(), &css("transparent")).unwrap();
+        let full = clear.restyled(&[&css("#ff0000")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&clear, &full, "b", &["border-color"], second(), start)
+            .unwrap();
+        let later = start + Duration::from_millis(500);
+        animations.advance(later, &full);
+        animations
+            .request(&full, &clear, "b", &["border-color"], second(), later)
+            .unwrap();
+        animations.advance(later + Duration::from_millis(500), &clear);
+        let back = animations.presented(&clear).paints()[1];
+        assert_eq!(
+            (back.border[0], back.border_fade[0]),
+            (Some(red), Some(0.25))
+        );
+        // One side alone.
+        let one =
+            |color: &str| format!("#b {{ border:4px solid red; border-left-color:{color}; }}");
+        let (count, half, _) = run(&one, ["transparent", "#0000ff"]);
+        assert_eq!(count, 1);
+        assert_eq!(half.border_fade, [None, None, None, Some(0.5)]);
+        // A side that draws nothing, by style or width, takes its color at once.
+        let none = |color: &str| format!("#b {{ border:4px none {color}; }}");
+        assert_eq!(run(&none, ["transparent", "#ff0000"]).0, 0);
+        let thin = |color: &str| format!("#b {{ border:0 solid {color}; }}");
+        assert_eq!(run(&thin, ["transparent", "#ff0000"]).0, 0);
+        // And so do a collapsed table's cells, whose borders pick among neighbours.
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "t",
+                    vec![node("r", vec![node("b", vec![text("x", "cell")])])],
+                )],
+            )
+        };
+        let from = |color: &str| {
+            format!(
+                "#t {{ display:table; border-collapse:collapse; }} #r {{ display:table-row; }}
+                 #b {{ display:table-cell; border:4px solid {color}; }}"
+            )
+        };
+        let one = BoxTree::new(source(), &from("transparent")).unwrap();
+        let two = one.restyled(&[&from("#ff0000")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        assert_eq!(
+            animations
+                .request(&one, &two, "b", &["border-color"], second(), start)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
     fn an_inline_elements_border_colors_animate_on_its_line() {
         let source = || node("page", vec![node("s", vec![text("x", "words")])]);
         let css = |color: &str| format!("#s {{ display:inline; border:2px solid {color}; }}");
@@ -3257,6 +3351,33 @@ mod animation {
             .unwrap();
         assert_eq!(count, 0);
         assert!(!animations.is_animating());
+        // So does a box border mid-fade.
+        let bare = BoxTree::new(source(), "#s { border:2px solid transparent; }").unwrap();
+        let white = bare
+            .restyled(&["#s { border:2px solid #ffffff; }"])
+            .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        assert_eq!(
+            animations
+                .request(&bare, &white, "s", &["border-color"], second(), start)
+                .unwrap(),
+            4
+        );
+        animations.advance(start + Duration::from_millis(500), &white);
+        let inline = white
+            .restyled(&["#s { display:inline; border:2px solid #000000; }"])
+            .unwrap();
+        let count = animations
+            .request(
+                &white,
+                &inline,
+                "s",
+                &["border-color"],
+                second(),
+                start + Duration::from_millis(500),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

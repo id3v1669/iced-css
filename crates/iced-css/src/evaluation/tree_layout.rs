@@ -1503,6 +1503,8 @@ pub struct BoxPaint {
     pub fixed_table: bool,
     /// Top, right, bottom, left.
     pub border: [Option<[f32; 3]>; 4],
+    /// Each border color's opacity while an animation fades it; `None` is opaque.
+    pub border_fade: [Option<f32>; 4],
     /// The `border-*-style` keywords, in that order.
     pub border_style: [&'static str; 4],
     /// The `outline-style` keyword.
@@ -2337,6 +2339,7 @@ pub fn evaluate_tree_paint<'r>(
             },
             background: paint(1),
             background_fade: None,
+            border_fade: [None; 4],
             under_text: None,
             under_text_border: [None; 4],
             border_style: ["solid"; 4],
