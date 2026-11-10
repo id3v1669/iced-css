@@ -2137,6 +2137,20 @@ pub fn evaluate_tree_paint<'r>(
                     .to_nonnegative_f32(limits.numeric)
                     .ok()
                     .map(|c| c.value),
+                // Of its own font size, as border widths are.
+                DefaultedValueRef::Compute(SpecifiedValue::Length(LengthTarget::Relative(
+                    value,
+                    unit,
+                ))) => value
+                    .scaled_finite_f32(
+                        match unit {
+                            RelativeUnit::Em => font_size,
+                            RelativeUnit::Ex => font_size * 0.5,
+                        },
+                        limits.numeric,
+                    )
+                    .ok()
+                    .map(|c| c.value.max(0.0)),
                 DefaultedValueRef::ParentComputed => parent_index
                     .and_then(|parent: usize| paints[parent].outline)
                     .map(|outline| outline.0),

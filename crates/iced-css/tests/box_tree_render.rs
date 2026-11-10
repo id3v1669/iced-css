@@ -3614,6 +3614,81 @@ fn an_inline_fade_shows_behind_hidden_text_in_it() {
 }
 
 #[test]
+fn an_inline_outline_animates_where_it_draws() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![text("a", "before "), node("s", vec![text("t", "outlined")])],
+            )],
+        )
+    };
+    let css = |color: &str, width: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #p {{ line-height:40px; }}
+             #s {{ display:inline; outline:{width} solid {color}; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let from = BoxTree::new(source(), &css("#ff0000", "2px")).unwrap();
+    let to = from.restyled(&[&css("#0000ff", "6px")]).unwrap();
+    // Halfway: as wide and as colored as the static outline between them.
+    let mid = from.restyled(&[&css("rgb(50%, 0%, 50%)", "4px")]).unwrap();
+    assert!(picture(mid, "outline-half"));
+    assert!(picture(to.clone(), "outline-end"));
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &from,
+            &to,
+            "s",
+            &["outline-color", "outline-width"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "outline-half"));
+    animations.advance(start + Duration::from_millis(1500), &to);
+    assert!(picture(animations.presented(&to), "outline-end"));
+    // The colors themselves: the halfway purple, and neither end.
+    let prefix = format!("outline-half-{}-", std::process::id());
+    let file = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .unwrap();
+    let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()))
+        .read_info()
+        .unwrap();
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let count = |color: [u8; 3]| {
+        bytes[..info.buffer_size()]
+            .chunks(4)
+            .filter(|pixel| (0..3).all(|at| pixel[at].abs_diff(color[at]) <= 2))
+            .count()
+    };
+    assert!(count([128, 0, 128]) > 100, "{}", count([128, 0, 128]));
+    assert_eq!((count([255, 0, 0]), count([0, 0, 255])), (0, 0));
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

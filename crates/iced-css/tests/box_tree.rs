@@ -2841,8 +2841,8 @@ mod animation {
                 start,
             )
             .unwrap();
-        // Its background and border colors paint on its line; its outline has no box here.
-        assert_eq!(count, 5);
+        // Its background, border and outline colors paint on its line.
+        assert_eq!(count, 6);
         animations.advance(start + Duration::from_millis(500), &to);
         let shown = animations.presented(&to);
         let under = |text: &str| {
@@ -2863,6 +2863,8 @@ mod animation {
             .filter_map(|run| run.edge.map(|edge| edge.2))
             .collect();
         assert!(!bars.is_empty() && bars.iter().all(|color| near(*color, [0.5, 0.5, 0.5])));
+        // Page, first, its text, then the span.
+        assert!(near(shown.paints()[3].outline.unwrap().1, [0.5, 0.5, 0.5]));
     }
 
     /// Runs whose text contains `text`, and their backgrounds, in `tree`.
@@ -3022,6 +3024,46 @@ mod animation {
             paint.under_text_border[0].or(paint.border[0]).unwrap(),
             mid
         ));
+    }
+
+    #[test]
+    fn an_inline_elements_outline_animates_around_its_line() {
+        let source = || {
+            node(
+                "page",
+                vec![node("p", vec![node("s", vec![text("x", "words")])])],
+            )
+        };
+        let css = |color: &str, width: &str| {
+            format!("#s {{ display:inline; outline:{width} solid {color}; }}")
+        };
+        let from = BoxTree::new(source(), &css("#ff0000", "2px")).unwrap();
+        let to = from.restyled(&[&css("#0000ff", "6px")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let count = animations
+            .request(
+                &from,
+                &to,
+                "s",
+                &["outline-color", "outline-width"],
+                second(),
+                start,
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        // Page, paragraph, then the span.
+        let at = 2;
+        assert_eq!(to.paints()[at].outline, Some((6.0, [0.0, 0.0, 1.0])));
+        let (width, color) = shown.paints()[at].outline.unwrap();
+        assert!((width - 4.0).abs() < 1e-3, "{width}");
+        assert!(near(color, [0.5, 0.0, 0.5]), "{color:?}");
+        // At the end, the end.
+        animations.advance(start + Duration::from_millis(1500), &to);
+        let shown = animations.presented(&to);
+        assert_eq!(shown.paints()[at].outline, Some((6.0, [0.0, 0.0, 1.0])));
     }
 
     #[test]
@@ -3718,6 +3760,40 @@ mod animation {
         );
         // Its indent of 1em, 16 to 32: 24 halfway.
         assert_eq!(indent(&shown), Some(24.0));
+    }
+
+    #[test]
+    fn an_inline_em_outline_follows_its_font_size() {
+        let source = || {
+            node(
+                "page",
+                vec![node("p", vec![node("s", vec![text("t", "x")])])],
+            )
+        };
+        let css = |size: &str| {
+            format!("#s {{ display:inline; font-size:{size}; outline:0.25em solid #ff0000; }}")
+        };
+        let from = BoxTree::new(source(), &css("16px")).unwrap();
+        let to = from.restyled(&[&css("32px")]).unwrap();
+        // A quarter of each font size at the ends.
+        assert_eq!(from.paints()[2].outline.unwrap().0, 4.0);
+        assert_eq!(to.paints()[2].outline.unwrap().0, 8.0);
+        // An ex is taken as half an em.
+        let ex = BoxTree::new(
+            source(),
+            "#s { display:inline; font-size:16px; outline:1ex solid #ff0000; }",
+        )
+        .unwrap();
+        assert_eq!(ex.paints()[2].outline.unwrap().0, 8.0);
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        animations
+            .request(&from, &to, "s", &["font-size"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        // Halfway a 24 pixel font: a 6 pixel outline, not the end's 8.
+        let width = animations.presented(&to).paints()[2].outline.unwrap().0;
+        assert!((width - 6.0).abs() < 1e-3, "{width}");
     }
 
     #[test]

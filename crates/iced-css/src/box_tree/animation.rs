@@ -240,6 +240,18 @@ impl BoxTree {
         {
             return Some(opaque(paint.under_text_border[side].or(paint.border[side])));
         }
+        // And its outline, drawn around its pieces on the lines from its paint.
+        if self.under_text(projected) {
+            match field {
+                Field::OutlineColor => return paint.outline.map(|outline| Value::Color(outline.1)),
+                Field::OutlineWidth => {
+                    return paint
+                        .outline
+                        .map(|outline| Value::Length(Dim::Px(outline.0)));
+                }
+                _ => {}
+            }
+        }
         // An inline element's margin across and padding: the spaces of its line.
         if self.under_text(projected)
             && let Some(sides) = self.prepared.inline_boxes[projected]
