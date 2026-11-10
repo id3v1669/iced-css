@@ -1882,7 +1882,10 @@ impl BoxTreeAnimations {
     /// not animatable or not yet supported here, is won by `!important` in `to`, or has no
     /// in-between (`auto`; a transparent border color on a side that draws nothing, or on a
     /// collapsed cell's side that gives way along all of its edge): those take `to`'s value
-    /// at once.
+    /// at once. A border color on a side with no width still starts while a width animates
+    /// there, or where an interaction styling could give it one: a `:hover`, `:active` or
+    /// `:focus` rule that could select the element, an ancestor or an earlier sibling of
+    /// either, whatever it declares.
     ///
     /// # Errors
     /// Returns an unknown property name or a refused timing. Nothing changes then.
@@ -1941,7 +1944,9 @@ impl BoxTreeAnimations {
                 continue;
             }
             // A side with no width at either end draws no color to move: at once. A width
-            // still animating there draws one (a finished one is gone).
+            // still animating there draws one (a finished one is gone), and so can one an
+            // interaction styling gives, wherever a `:hover`, `:active` or `:focus` rule
+            // could restyle it.
             if let Field::BorderColor(side) = field
                 && from.side_width(before, side) <= 0.0
                 && to.side_width(after, side) <= 0.0
@@ -1949,6 +1954,7 @@ impl BoxTreeAnimations {
                     .and_then(PropertyId::lookup)
                     .and_then(|width| self.current(id, width))
                     .is_some_and(|(track, _)| track.capture == capture)
+                && !to.source.interaction_reaches(to.originals[after])
             {
                 dropped.push(property);
                 continue;

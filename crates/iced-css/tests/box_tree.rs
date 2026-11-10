@@ -3113,6 +3113,50 @@ mod animation {
     }
 
     #[test]
+    fn an_interaction_styling_that_could_give_a_side_width_keeps_its_color_moving() {
+        let start = Instant::now();
+        let source = || {
+            node(
+                "page",
+                vec![
+                    node("before", vec![node("y", vec![])]),
+                    node(
+                        "p",
+                        vec![node("x", vec![]), node("s", vec![text("t", "words")])],
+                    ),
+                    node("after", vec![]),
+                ],
+            )
+        };
+        let run = |rule: &str| {
+            let css = |color: &str| format!("#s {{ border:0 solid {color}; }} {rule}");
+            let one = BoxTree::new(source(), &css("transparent")).unwrap();
+            let two = one.restyled(&[&css("#ff0000")]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            animations
+                .request(&one, &two, "s", &["border-color"], second(), start)
+                .unwrap()
+        };
+        // On it, an ancestor, an earlier sibling, an ancestor's earlier sibling.
+        for rule in [
+            "#s:hover { border-width:2px; }",
+            "#p:hover #s { border-width:2px; }",
+            "#x:focus + #s { border-width:2px; }",
+            "#before:active ~ #p #s { border-width:2px; }",
+        ] {
+            assert_eq!(run(rule), 4, "{rule}");
+        }
+        // One that can reach only elsewhere, or none: at once.
+        for rule in [
+            "#after:hover { border-width:2px; }",
+            "#y:hover { border-width:2px; }",
+            "",
+        ] {
+            assert_eq!(run(rule), 0, "{rule}");
+        }
+    }
+
+    #[test]
     fn a_boxs_border_fades_to_and_from_transparent() {
         let source = || node("page", vec![node("b", vec![text("x", "words")])]);
         let start = Instant::now();

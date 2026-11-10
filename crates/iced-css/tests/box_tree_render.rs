@@ -3948,6 +3948,77 @@ fn collapsed_borders_fade_where_they_win() {
 }
 
 #[test]
+fn a_border_a_hover_gives_fades_its_color_there() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || node("page", vec![node("b", vec![text("t", "hovered")])]);
+    let css = |color: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #b {{ border:0 solid {color}; height:60px; }}
+             #b:hover {{ border-width:10px; }}"
+        )
+    };
+    let hovered = |tree: BoxTree| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        let on = iced::Point::new(60.0, 50.0);
+        ui.point_at(on);
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position: on,
+        })]);
+        let snapshot = ui.snapshot(&Theme::Light).unwrap();
+        let path = std::env::temp_dir().join(format!("hover-border-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(snapshot.matches_image(path.join("frame.png")).unwrap());
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut reader =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()))
+                .read_info()
+                .unwrap();
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let count = |color: [u8; 3]| {
+            bytes[..info.buffer_size()]
+                .chunks(4)
+                .filter(|pixel| (0..3).all(|at| pixel[at].abs_diff(color[at]) <= 2))
+                .count()
+        };
+        (count([255, 128, 128]), count([255, 0, 0]))
+    };
+    let clear = BoxTree::new(source(), &css("transparent")).unwrap();
+    let full = clear.restyled(&[&css("#ff0000")]).unwrap();
+    // Hovered at the end: the border at full.
+    let (_, red) = hovered(full.clone());
+    assert!(red > 500, "{red}");
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    assert_eq!(
+        animations
+            .request(
+                &clear,
+                &full,
+                "b",
+                &["border-color"],
+                AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+                start,
+            )
+            .unwrap(),
+        4
+    );
+    animations.advance(start + Duration::from_millis(500), &full);
+    // Hovered halfway: the red at half, none at full.
+    let (half, red) = hovered(animations.presented(&full));
+    assert!(half > 500 && red == 0, "{half} {red}");
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

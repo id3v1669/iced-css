@@ -564,6 +564,36 @@ impl Source {
         [":hover", ":active", ":focus"].map(|pseudo| PseudoReach::of(sheets, pseudo))
     }
 
+    /// Whether an interaction state could restyle `node`: some `:hover`, `:active` or
+    /// `:focus` rule can select it, an ancestor, or an earlier sibling of either, which
+    /// descendant and sibling combinators reach it from.
+    pub(super) fn interaction_reaches(&self, node: usize) -> bool {
+        let nodes = self.construction.nodes();
+        let parent = |at: usize| nodes.get(at).and_then(|value| value.parent());
+        // The node and its ancestors, and for each parent on the way the latest of its
+        // children there: its earlier children come before it (siblings in order).
+        let mut chain = BTreeSet::new();
+        let mut latest: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut at = Some(node);
+        while let Some(here) = at {
+            chain.insert(here);
+            at = parent(here);
+            if let Some(up) = at {
+                latest.insert(up, here);
+            }
+        }
+        // One pass, testing only what could match.
+        (0..nodes.len()).any(|at| {
+            let candidate = chain.contains(&at)
+                || parent(at).is_some_and(|up| latest.get(&up).is_some_and(|last| at < *last));
+            candidate
+                && self
+                    .reach
+                    .iter()
+                    .any(|reach| reach.selects(nodes[at].metadata()))
+        })
+    }
+
     /// The same styling under fewer keys: an interaction on a box no rule can select counts
     /// as being on the nearest ancestor one can, for the states ancestors share (5.11.3),
     /// and otherwise as none. So hovering a box no rule cares about cascades nothing.
