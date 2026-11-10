@@ -336,12 +336,17 @@ impl BoxTree {
                 (Some(value), None) => Value::Color(value),
                 (Some(value), Some(alpha)) => Value::Fade(value, alpha),
             }),
-            // Transparent is a fade at none. A collapsed table's borders pick their colors
-            // among cells: they apply at once. (`request` skips a side with no width at
-            // either end.)
+            // Transparent is a fade at none, but not on a collapsed cell's side that gives way
+            // along all of its edge: the neighbour's color draws there. Color picks no
+            // winner, so a color change leaves them as they are. (`request` skips a side with
+            // no width at either end.)
             Field::BorderColor(side) => {
-                boxed()?;
-                let shows = paint.collapsed_cell.is_none();
+                let (slot, _) = boxed()?;
+                let shows = self
+                    .prepared
+                    .collapsed_losers
+                    .binary_search(&(slot, side))
+                    .is_err();
                 match (paint.border[side], paint.border_fade[side]) {
                     (None, _) if shows => Some(Value::Fade([0.0; 3], 0.0)),
                     (None, _) => None,
@@ -1875,8 +1880,9 @@ impl BoxTreeAnimations {
     ///
     /// Returns the animations started. Nothing starts for a property that did not change, is
     /// not animatable or not yet supported here, is won by `!important` in `to`, or has no
-    /// in-between (`auto`; a transparent border color on a side that draws nothing or on a
-    /// collapsed table cell): those take `to`'s value at once.
+    /// in-between (`auto`; a transparent border color on a side that draws nothing, or on a
+    /// collapsed cell's side that gives way along all of its edge): those take `to`'s value
+    /// at once.
     ///
     /// # Errors
     /// Returns an unknown property name or a refused timing. Nothing changes then.

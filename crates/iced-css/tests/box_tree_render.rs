@@ -3865,6 +3865,89 @@ fn a_fade_across_a_display_change_paints_as_the_new_display() {
 }
 
 #[test]
+fn collapsed_borders_fade_where_they_win() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "t",
+                vec![node(
+                    "r",
+                    vec![
+                        node("a", vec![text("x", "wide")]),
+                        node("b", vec![text("y", "narrow")]),
+                    ],
+                )],
+            )],
+        )
+    };
+    let css = |wide: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #t {{ display:table; border-collapse:collapse; }} #r {{ display:table-row; }}
+             #a {{ display:table-cell; border:8px solid {wide}; height:40px; }}
+             #b {{ display:table-cell; border:2px solid #0000ff; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let clear = BoxTree::new(source(), &css("transparent")).unwrap();
+    let full = clear.restyled(&[&css("#ff0000")]).unwrap();
+    assert!(picture(clear.clone(), "collapsed-clear"));
+    assert!(picture(full.clone(), "collapsed-full"));
+    let start = Instant::now();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    for (from, to, last) in [
+        (&clear, &full, "collapsed-full"),
+        (&full, &clear, "collapsed-clear"),
+    ] {
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(from, to, "a", &["border-color"], timing, start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), to);
+        assert!(
+            picture(animations.presented(to), "collapsed-half"),
+            "{last}"
+        );
+        animations.advance(start + Duration::from_millis(1500), to);
+        assert!(picture(animations.presented(to), last), "{last}");
+    }
+    // The wide cell's red at half over white, the edge it wins too; no red at full.
+    let prefix = format!("collapsed-half-{}-", std::process::id());
+    let file = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .unwrap();
+    let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()))
+        .read_info()
+        .unwrap();
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let count = |color: [u8; 3]| {
+        bytes[..info.buffer_size()]
+            .chunks(4)
+            .filter(|pixel| (0..3).all(|at| pixel[at].abs_diff(color[at]) <= 2))
+            .count()
+    };
+    assert!(count([255, 128, 128]) > 500, "{}", count([255, 128, 128]));
+    assert_eq!(count([255, 0, 0]), 0);
+    assert!(count([0, 0, 255]) > 0);
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

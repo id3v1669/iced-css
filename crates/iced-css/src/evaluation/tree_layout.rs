@@ -491,6 +491,9 @@ pub struct PreparedTree {
     /// A cell's side that clears a wider neighbour in layout but draws its own width there,
     /// as (cell, side, width), by arena slot.
     pub thin_sides: Vec<(usize, usize, f32)>,
+    /// A collapsed cell's side that gives way along all of its edge and draws nothing,
+    /// as (cell, side), by arena slot, sorted.
+    pub collapsed_losers: Vec<(usize, usize)>,
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
@@ -1034,6 +1037,7 @@ pub fn prepare_captured_tree(
         generated_boxes,
         border_cuts: Vec::new(),
         thin_sides: Vec::new(),
+        collapsed_losers: Vec::new(),
         clipped,
         scrolls,
     })
@@ -1105,6 +1109,7 @@ impl PreparedTree {
             generated_boxes: _,
             border_cuts: _,
             thin_sides: _,
+            collapsed_losers: _,
             clipped: _,
             scrolls: _,
         } = self;

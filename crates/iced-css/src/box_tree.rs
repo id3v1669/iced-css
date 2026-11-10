@@ -1062,6 +1062,7 @@ impl BoxTree {
             // By cell, for drawing to find a box's own by search.
             prepared.border_cuts.sort_unstable_by_key(|cut| cut.0);
             prepared.thin_sides.sort_unstable_by_key(|thin| thin.0);
+            prepared.collapsed_losers.sort_unstable();
             // 17.6.2: a collapsed table has no padding.
             prepared.boxes[table].padding = [Dim::Px(0.0); 4];
             let (mut across, mut down) = (0.0_f32, 0.0_f32);
@@ -3177,6 +3178,7 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
     for (cell, owner, side, width) in losers {
         paints[owner].border[side] = None;
         prepared.boxes[cell].border[side] = width;
+        prepared.collapsed_losers.push((cell, side));
     }
     let mut thin: Vec<(usize, usize, f32)> = Vec::new();
     for &(cell, side, winner, width) in &cuts {

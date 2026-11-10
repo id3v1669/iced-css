@@ -3179,30 +3179,70 @@ mod animation {
         assert_eq!(run(&none, ["transparent", "#ff0000"]).0, 0);
         let thin = |color: &str| format!("#b {{ border:0 solid {color}; }}");
         assert_eq!(run(&thin, ["transparent", "#ff0000"]).0, 0);
-        // And so do a collapsed table's cells, whose borders pick among neighbours.
+        // A collapsed table's cells fade where their sides draw: not a side that gives way
+        // along all of its edge to a wider neighbour.
         let source = || {
             node(
                 "page",
                 vec![node(
                     "t",
-                    vec![node("r", vec![node("b", vec![text("x", "cell")])])],
+                    vec![node(
+                        "r",
+                        vec![
+                            node("a", vec![text("x", "wide")]),
+                            node("b", vec![text("y", "narrow")]),
+                        ],
+                    )],
                 )],
             )
         };
-        let from = |color: &str| {
+        let table = |wide: &str, narrow: &str| {
             format!(
                 "#t {{ display:table; border-collapse:collapse; }} #r {{ display:table-row; }}
-                 #b {{ display:table-cell; border:4px solid {color}; }}"
+                 #a {{ display:table-cell; border:4px solid {wide}; }}
+                 #b {{ display:table-cell; border:2px solid {narrow}; }}"
             )
         };
-        let one = BoxTree::new(source(), &from("transparent")).unwrap();
-        let two = one.restyled(&[&from("#ff0000")]).unwrap();
+        let collapsed = |id: &str, ends: [(&str, &str); 2]| {
+            let one = BoxTree::new(source(), &table(ends[0].0, ends[0].1)).unwrap();
+            let two = one.restyled(&[&table(ends[1].0, ends[1].1)]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            let count = animations
+                .request(&one, &two, id, &["border-color"], second(), start)
+                .unwrap();
+            animations.advance(start + Duration::from_millis(500), &two);
+            (count, animations.presented(&two))
+        };
+        // The wide one wins the edge they share: all four of its sides fade.
+        let (count, shown) = collapsed("a", [("transparent", "#000000"), ("#ff0000", "#000000")]);
+        assert_eq!(count, 4);
+        // Page, table, row, then the wide cell.
+        assert_eq!(shown.paints()[3].border_fade, [Some(0.5); 4]);
+        // The narrow one gives that edge way: three.
+        let (count, shown) = collapsed("b", [("#000000", "transparent"), ("#000000", "#0000ff")]);
+        assert_eq!(count, 3);
+        let faded = shown
+            .paints()
+            .iter()
+            .filter(|paint| paint.border_fade.iter().flatten().count() == 3)
+            .count();
+        assert_eq!(faded, 1);
+        // Where the edge's winner changes, its color comes from the other cell: at once.
+        let flip = |wide: &str, narrow: &str| {
+            format!(
+                "#t {{ display:table; border-collapse:collapse; }} #r {{ display:table-row; }}
+                 #a {{ display:table-cell; border:{wide} solid #000000; }}
+                 #b {{ display:table-cell; border:2px solid {narrow}; }}"
+            )
+        };
+        let one = BoxTree::new(source(), &flip("4px", "transparent")).unwrap();
+        let two = one.restyled(&[&flip("1px", "#0000ff")]).unwrap();
         let mut animations = BoxTreeAnimations::new();
         assert_eq!(
             animations
                 .request(&one, &two, "b", &["border-color"], second(), start)
                 .unwrap(),
-            0
+            3
         );
     }
 
