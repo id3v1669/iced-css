@@ -3807,6 +3807,64 @@ fn a_box_border_fades_over_what_lies_beneath() {
 }
 
 #[test]
+fn a_fade_across_a_display_change_paints_as_the_new_display() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![text("a", "before "), node("s", vec![text("t", "fading")])],
+            )],
+        )
+    };
+    let css = |display: &str, color: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #s {{ display:{display}; background-color:{color}; border:3px solid {color}; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let start = Instant::now();
+    let halfway = |from: &str, to: &str| {
+        let from = BoxTree::new(source(), &css(from, "transparent")).unwrap();
+        let to = from.restyled(&[&css(to, "#ff0000")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(
+                &from,
+                &to,
+                "s",
+                &["background-color", "border-color"],
+                AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+                start,
+            )
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        animations.presented(&to)
+    };
+    // Halfway as a fade within the new display, which is what shows.
+    for (display, other) in [("inline", "block"), ("block", "inline")] {
+        let name = format!("display-{display}-half");
+        assert!(picture(halfway(display, display), &name));
+        assert!(
+            picture(halfway(other, display), &name),
+            "{other} to {display}"
+        );
+        let full = BoxTree::new(source(), &css(display, "#ff0000")).unwrap();
+        assert!(!picture(full, &name));
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

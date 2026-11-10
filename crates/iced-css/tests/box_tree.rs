@@ -3296,88 +3296,114 @@ mod animation {
     }
 
     #[test]
-    fn a_box_and_an_inline_have_no_in_between_fade() {
+    fn a_fade_moves_between_a_box_and_an_inline() {
         let source = || node("page", vec![node("s", vec![text("x", "words")])]);
-        let to_inline = |from: &str| {
-            let from = BoxTree::new(source(), from).unwrap();
-            let to = from
-                .restyled(&["#s { display:inline; background-color:#ffffff; }"])
-                .unwrap();
-            let mut animations = BoxTreeAnimations::new();
-            animations
-                .request(
-                    &from,
-                    &to,
-                    "s",
-                    &["background-color"],
-                    second(),
-                    Instant::now(),
-                )
-                .unwrap()
+        let start = Instant::now();
+        let layer = |tree: &BoxTree| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.contains("words"))
+                .and_then(|run| run.fades.last().map(|layer| (layer.1, layer.2)))
         };
-        // From a transparent box, a fade, which text cannot show: it applies at once.
-        assert_eq!(to_inline("#s { display:block; }"), 0);
-        // From an opaque one, a color to a color.
-        assert_eq!(
-            to_inline("#s { display:block; background-color:#000000; }"),
-            1
+        let halfway = |from: &str, to: &str, property: &str| {
+            let from = BoxTree::new(source(), from).unwrap();
+            let to = from.restyled(&[to]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            let count = animations
+                .request(&from, &to, "s", &[property], second(), start)
+                .unwrap();
+            animations.advance(start + Duration::from_millis(500), &to);
+            (count, animations.presented(&to))
+        };
+        let white = [1.0, 1.0, 1.0];
+        // `display` changes at once; the color moves as the new one paints it. From a
+        // transparent box to an inline: a layer on its line.
+        let (count, shown) = halfway(
+            "#s { display:block; }",
+            "#s { display:inline; background-color:#ffffff; }",
+            "background-color",
         );
-        // A box mid-fade that becomes an inline starts from a fade: that applies at once too.
+        assert_eq!(count, 1);
+        assert_eq!(layer(&shown), Some((white, 0.5)));
+        // From a transparent inline to a box: the box's background at half.
+        let (count, shown) = halfway(
+            "#s { display:inline; }",
+            "#s { display:block; background-color:#ffffff; }",
+            "background-color",
+        );
+        assert_eq!(count, 1);
+        let paint = shown.paints()[1];
+        assert_eq!(
+            (paint.background, paint.background_fade),
+            (Some(white), Some(0.5))
+        );
+        // From an opaque one, a color to a color, as before.
+        let (count, _) = halfway(
+            "#s { display:block; background-color:#000000; }",
+            "#s { display:inline; background-color:#ffffff; }",
+            "background-color",
+        );
+        assert_eq!(count, 1);
+        // Borders too, either way.
+        let (count, shown) = halfway(
+            "#s { border:2px solid transparent; }",
+            "#s { display:inline; border:2px solid #ffffff; }",
+            "border-color",
+        );
+        assert_eq!(count, 4);
+        let bars: Vec<f32> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.edge.is_some())
+            .map(|run| run.edge_alpha)
+            .collect();
+        assert_eq!(bars, vec![0.5, 0.5]);
+        let (count, shown) = halfway(
+            "#s { display:inline; border:2px solid transparent; }",
+            "#s { border:2px solid #ffffff; }",
+            "border-color",
+        );
+        assert_eq!(count, 4);
+        assert_eq!(shown.paints()[1].border_fade, [Some(0.5); 4]);
+        // A box mid-fade that becomes an inline goes on from where it is.
         let bare = BoxTree::new(source(), "#s { display:block; }").unwrap();
-        let white = bare
+        let shown_white = bare
             .restyled(&["#s { display:block; background-color:#ffffff; }"])
             .unwrap();
         let mut animations = BoxTreeAnimations::new();
-        let start = Instant::now();
-        assert_eq!(
-            animations
-                .request(&bare, &white, "s", &["background-color"], second(), start)
-                .unwrap(),
-            1
-        );
-        animations.advance(start + Duration::from_millis(500), &white);
-        let inline = white
+        animations
+            .request(
+                &bare,
+                &shown_white,
+                "s",
+                &["background-color"],
+                second(),
+                start,
+            )
+            .unwrap();
+        let later = start + Duration::from_millis(500);
+        animations.advance(later, &shown_white);
+        let inline = shown_white
             .restyled(&["#s { display:inline; background-color:#000000; }"])
             .unwrap();
         let count = animations
             .request(
-                &white,
+                &shown_white,
                 &inline,
                 "s",
                 &["background-color"],
                 second(),
-                start + Duration::from_millis(500),
+                later,
             )
             .unwrap();
-        assert_eq!(count, 0);
-        assert!(!animations.is_animating());
-        // So does a box border mid-fade.
-        let bare = BoxTree::new(source(), "#s { border:2px solid transparent; }").unwrap();
-        let white = bare
-            .restyled(&["#s { border:2px solid #ffffff; }"])
-            .unwrap();
-        let mut animations = BoxTreeAnimations::new();
-        assert_eq!(
-            animations
-                .request(&bare, &white, "s", &["border-color"], second(), start)
-                .unwrap(),
-            4
-        );
-        animations.advance(start + Duration::from_millis(500), &white);
-        let inline = white
-            .restyled(&["#s { display:inline; border:2px solid #000000; }"])
-            .unwrap();
-        let count = animations
-            .request(
-                &white,
-                &inline,
-                "s",
-                &["border-color"],
-                second(),
-                start + Duration::from_millis(500),
-            )
-            .unwrap();
-        assert_eq!(count, 0);
+        assert_eq!(count, 1);
+        animations.advance(later + Duration::from_millis(500), &inline);
+        // Halfway from white at half to black: at three quarters, a third of the way gray.
+        let (color, alpha) = layer(&animations.presented(&inline)).unwrap();
+        assert!((alpha - 0.75).abs() < 1e-4, "{alpha}");
+        assert!(near(color, [1.0 / 3.0; 3]), "{color:?}");
     }
 
     #[test]

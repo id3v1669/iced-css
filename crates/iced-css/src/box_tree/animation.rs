@@ -1862,9 +1862,8 @@ impl BoxTreeAnimations {
     ///
     /// Returns the animations started. Nothing starts for a property that did not change, is
     /// not animatable or not yet supported here, is won by `!important` in `to`, or has no
-    /// in-between (`auto`; a transparent border color on a side that draws nothing, on a
-    /// collapsed table cell, or between an inline and a box): those take `to`'s value at
-    /// once.
+    /// in-between (`auto`; a transparent border color on a side that draws nothing or on a
+    /// collapsed table cell): those take `to`'s value at once.
     ///
     /// # Errors
     /// Returns an unknown property name or a refused timing. Nothing changes then.
@@ -1922,15 +1921,8 @@ impl BoxTreeAnimations {
             if committed == target {
                 continue;
             }
-            // A fade between a box and an inline has no in-between: one paints as a box, the
-            // other on its line.
-            if matches!(field, Field::Background | Field::BorderColor(_))
-                && from.under_text(before) != to.under_text(after)
-                && !matches!((committed, target), (Value::Color(_), Value::Color(_)))
-            {
-                dropped.push(property);
-                continue;
-            }
+            // Between a box and an inline, `display` changes at once and the color moves in
+            // the new one: it presents as `to` paints it, a box's or on its line.
             // Section 13: an important target holds without a temporary override.
             if mix(committed, target, 0.0).is_none() || to.important[after].contains(&property) {
                 dropped.push(property);
@@ -1940,15 +1932,6 @@ impl BoxTreeAnimations {
                 .current(id, property)
                 .filter(|(track, _)| track.target == committed && track.capture == capture)
                 .map_or(committed, |(_, value)| value);
-            // A box still fading when it becomes an inline starts from a fade, too.
-            if matches!(field, Field::Background | Field::BorderColor(_))
-                && to.under_text(after)
-                && !from.under_text(before)
-                && !matches!(start, Value::Color(_))
-            {
-                dropped.push(property);
-                continue;
-            }
             started.push(Track {
                 id: id.to_owned(),
                 property,
