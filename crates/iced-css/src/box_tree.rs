@@ -603,6 +603,7 @@ struct Style {
     backgrounds: BTreeMap<usize, (BackgroundImage, image::Handle)>,
     important: Vec<Vec<PropertyId>>,
     em_lengths: Vec<Vec<PropertyId>>,
+    weights: Vec<u16>,
     marker_images: BTreeMap<usize, image::Handle>,
 }
 
@@ -626,6 +627,8 @@ pub struct BoxTree {
     important: Vec<Vec<PropertyId>>,
     /// Length longhands given in `em` or `ex`, per projected index.
     em_lengths: Vec<Vec<PropertyId>>,
+    /// Computed `font-weight`, 100 to 900, per projected index.
+    weights: Vec<u16>,
     /// Images that replace outside markers, by projected index of their item.
     marker_images: BTreeMap<usize, image::Handle>,
     /// Temporary values of running animations, laid over every interaction styling.
@@ -828,6 +831,7 @@ impl BoxTree {
             backgrounds: self.backgrounds.clone(),
             important: self.important.clone(),
             em_lengths: self.em_lengths.clone(),
+            weights: self.weights.clone(),
             marker_images: self.marker_images.clone(),
         }
     }
@@ -844,6 +848,7 @@ impl BoxTree {
             source,
             important: style.important,
             em_lengths: style.em_lengths,
+            weights: style.weights,
             marker_images: style.marker_images,
             presentation: None,
         }
@@ -1012,6 +1017,7 @@ impl BoxTree {
             outside_items,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
             .map_err(failed)?;
+        let weights: Vec<u16> = styles.iter().map(|style| style.weight).collect();
         let mut prepared = prepare_captured_tree(
             &projection,
             &display,
@@ -2068,6 +2074,7 @@ impl BoxTree {
             source: Arc::clone(source),
             important,
             em_lengths,
+            weights,
             marker_images: marker_image_handles,
             presentation: None,
         })

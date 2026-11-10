@@ -3763,6 +3763,335 @@ mod animation {
     }
 
     #[test]
+    fn font_weight_animates_in_steps_through_what_inherits_it() {
+        let source = || {
+            node(
+                "page",
+                vec![
+                    node(
+                        "li",
+                        vec![
+                            text("a", "own "),
+                            node("b", vec![text("c", "inherits ")]),
+                            node("d", vec![text("e", "bolder")]),
+                            node("g", vec![text("h", "fixed")]),
+                        ],
+                    ),
+                    node("other", vec![text("f", "sibling")]),
+                ],
+            )
+        };
+        let css = |weight: &str| {
+            format!(
+                "#li {{ display:list-item; font-weight:{weight}; }}
+                 #b {{ display:inline; }}
+                 #d {{ display:inline; font-weight:bolder; }}
+                 #g {{ display:inline; font-weight:800; }}
+                 #other {{ font-weight:{weight}; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("400")).unwrap();
+        let to = from.restyled(&[&css("800")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let count = animations
+            .request(&from, &to, "li", &["font-weight"], second(), start)
+            .unwrap();
+        assert_eq!(count, 1);
+        let weights = |tree: &BoxTree| {
+            let leaves = tree.text_leaves();
+            let of = |text: &str| {
+                leaves
+                    .iter()
+                    .flat_map(|(_, leaf)| leaf.runs.iter())
+                    .find(|run| run.text.contains(text))
+                    .unwrap()
+                    .weight
+            };
+            let marker = tree.markers().values().next().unwrap().runs[0].weight;
+            (
+                of("own"),
+                of("inherits"),
+                of("bolder"),
+                of("fixed"),
+                of("sibling"),
+                marker,
+            )
+        };
+        // The fixed one is 800 at both ends, and the sibling moves with no request.
+        assert_eq!(weights(&from), (400, 400, 700, 800, 400, 400));
+        assert_eq!(weights(&to), (800, 800, 900, 800, 800, 800));
+        // A quarter of the way: 500. Halfway: 600. The bolder one has its own two ends.
+        animations.advance(start + Duration::from_millis(250), &to);
+        assert_eq!(
+            weights(&animations.presented(&to)),
+            (500, 500, 900, 800, 800, 500)
+        );
+        // In steps of 100, to the nearest: a third of the way is 500, not 533, and
+        // two fifths 600, not 560.
+        animations.advance(start + Duration::from_millis(333), &to);
+        assert_eq!(weights(&animations.presented(&to)).0, 500);
+        animations.advance(start + Duration::from_millis(400), &to);
+        assert_eq!(weights(&animations.presented(&to)).0, 600);
+        animations.advance(start + Duration::from_millis(500), &to);
+        assert_eq!(
+            weights(&animations.presented(&to)),
+            (600, 600, 900, 800, 800, 600)
+        );
+        // A descendant moved on to a weight of its own, as a hover styling can: it stays.
+        let moved = to
+            .restyled(&[&css("800"), "#b { display:inline; font-weight:300; }"])
+            .unwrap();
+        assert_eq!(weights(&animations.presented(&moved)).1, 300);
+        assert_eq!(weights(&animations.presented(&moved)).0, 600);
+        animations.advance(start + Duration::from_millis(1500), &to);
+        assert_eq!(weights(&animations.presented(&to)), weights(&to));
+    }
+
+    #[test]
+    fn a_weight_animates_only_runs_that_show_it_at_both_ends() {
+        let start = Instant::now();
+        let weight = |tree: &BoxTree, text: &str| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.contains(text))
+                .unwrap_or_else(|| panic!("{text}"))
+                .weight
+        };
+        let halfway =
+            |source: &dyn Fn() -> Element, css: &dyn Fn(&str) -> String, ends: [&str; 2]| {
+                let from = BoxTree::new(source(), &css(ends[0])).unwrap();
+                let to = from.restyled(&[&css(ends[1])]).unwrap();
+                let mut animations = BoxTreeAnimations::new();
+                animations
+                    .request(&from, &to, "p", &["font-weight"], second(), start)
+                    .unwrap();
+                animations.advance(start + Duration::from_millis(500), &to);
+                (from, animations.presented(&to), to)
+            };
+        let source = || node("page", vec![node("p", vec![text("t", "words")])]);
+        // A `:before` with a weight of its own keeps it; one `lighter` than its element,
+        // 700 then 100, takes its new weight at once.
+        let css = |weight: &str| {
+            format!(
+                "#p {{ font-weight:{weight}; }}
+                 #p:before {{ content:\"FIX\"; font-weight:800; }}
+                 #p:after {{ content:\"LIGHT\"; font-weight:lighter; }}"
+            )
+        };
+        let (from, shown, to) = halfway(&source, &css, ["900", "100"]);
+        assert_eq!((weight(&from, "LIGHT"), weight(&to, "LIGHT")), (700, 100));
+        assert_eq!(weight(&shown, "words"), 500);
+        assert_eq!(weight(&shown, "FIX"), 800);
+        assert_eq!(weight(&shown, "LIGHT"), 100);
+        // Runs with the same text: by owner, and by order among the same owner's.
+        let source = || {
+            node(
+                "page",
+                vec![
+                    node(
+                        "p",
+                        vec![node("b", vec![text("c", "same ")]), text("a", "same ")],
+                    ),
+                    node("other", vec![text("d", "sibling")]),
+                ],
+            )
+        };
+        let css = |weight: &str| {
+            format!(
+                "#p {{ font-weight:{weight}; }}
+                 #b {{ display:inline; font-weight:800; }}
+                 #p:before {{ content:\"X\"; font-weight:800; }}
+                 #p:after {{ content:\"X\"; }}
+                 #other {{ display:list-item; font-weight:{weight}; }}"
+            )
+        };
+        let (_, shown, _) = halfway(&source, &css, ["400", "800"]);
+        let runs: Vec<(String, u16)> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.text.contains("same") || run.text.contains('X'))
+            .map(|run| (run.text.trim().to_owned(), run.weight))
+            .collect();
+        let pair = |text: &str, weight: u16| (text.to_owned(), weight);
+        assert_eq!(
+            runs,
+            vec![
+                pair("X", 800),
+                pair("same", 800),
+                pair("same", 600),
+                pair("X", 600)
+            ]
+        );
+        // A list item outside it, moving with no request, has its marker at the new weight.
+        let markers: Vec<u16> = shown
+            .markers()
+            .values()
+            .map(|marker| marker.runs[0].weight)
+            .collect();
+        assert_eq!(markers, vec![800]);
+        // A side's spaces go with the box they are a side of, not with their owner's.
+        let source = || {
+            node(
+                "page",
+                vec![
+                    node(
+                        "p",
+                        vec![text("a", "moves "), node("g", vec![text("b", "fixed")])],
+                    ),
+                    node("q", vec![node("m", vec![text("c", "beside")])]),
+                ],
+            )
+        };
+        let css = |weight: &str| {
+            format!(
+                "#p {{ font-weight:{weight}; }}
+                 #g {{ display:inline; font-weight:800; margin-left:20px; }}
+                 #m {{ display:inline; margin-left:20px; }}"
+            )
+        };
+        let (_, shown, _) = halfway(&source, &css, ["400", "800"]);
+        let sides: Vec<(usize, u16)> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter_map(|run| run.side_of.map(|side| (side.0, run.weight)))
+            .collect();
+        assert_eq!(weight(&shown, "moves"), 600);
+        assert_eq!(weight(&shown, "fixed"), 800);
+        // By source node: #g is 2, its spaces 800 with it; #m is 5, outside, 400.
+        assert_eq!(sides, vec![(2, 800), (5, 400)]);
+        // The other way: an animated inline's sides, inside a block that keeps its weight.
+        let css = |weight: &str| {
+            format!(
+                "#m {{ display:inline; margin-left:20px; font-weight:{weight}; }}
+                 #g {{ display:inline; margin-left:20px; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("400")).unwrap();
+        let to = from.restyled(&[&css("800")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "m", &["font-weight"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let mine: Vec<u16> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.side_of.is_some_and(|side| side.0 == 5))
+            .map(|run| run.weight)
+            .collect();
+        assert_eq!(weight(&shown, "beside"), 600);
+        assert!(
+            !mine.is_empty() && mine.iter().all(|weight| *weight == 600),
+            "{mine:?}"
+        );
+        // A descendant animating its weight itself keeps its own timing, whichever asks
+        // first: its text, its sides' spaces and its marker. One animating only its color
+        // follows; a list item with a weight of its own keeps its marker's.
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![
+                        text("a", "outer "),
+                        node("b", vec![text("c", "inner")]),
+                        node("e", vec![text("f", "colored")]),
+                        node("l", vec![text("g", "item")]),
+                        node("k", vec![text("h", "kept")]),
+                    ],
+                )],
+            )
+        };
+        let css = |weight: &str, color: &str| {
+            format!(
+                "#p {{ font-weight:{weight}; }}
+                 #b {{ display:inline; font-weight:{weight}; margin-left:20px; }}
+                 #e {{ display:inline; color:{color}; }}
+                 #l {{ display:list-item; font-weight:{weight}; }}
+                 #k {{ display:list-item; font-weight:800; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("400", "#ff0000")).unwrap();
+        let to = from.restyled(&[&css("800", "#0000ff")]).unwrap();
+        for order in [["p", "b", "l"], ["b", "l", "p"]] {
+            let mut animations = BoxTreeAnimations::new();
+            for id in order {
+                let timing = if id == "p" {
+                    second()
+                } else {
+                    AnimationTiming::new(Duration::from_secs(4), Duration::ZERO)
+                };
+                animations
+                    .request(&from, &to, id, &["font-weight"], timing, start)
+                    .unwrap();
+            }
+            animations
+                .request(&from, &to, "e", &["color"], second(), start)
+                .unwrap();
+            animations.advance(start + Duration::from_millis(500), &to);
+            let shown = animations.presented(&to);
+            let sides: Vec<u16> = shown
+                .text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .filter(|run| run.side_of.is_some())
+                .map(|run| run.weight)
+                .collect();
+            let markers: Vec<u16> = shown
+                .markers()
+                .values()
+                .map(|marker| marker.runs[0].weight)
+                .collect();
+            // Its own eighth of the way: 450, to 500.
+            assert_eq!(
+                (
+                    weight(&shown, "outer"),
+                    weight(&shown, "inner"),
+                    weight(&shown, "colored"),
+                    weight(&shown, "item"),
+                    weight(&shown, "kept"),
+                ),
+                (600, 500, 600, 500, 800),
+                "{order:?}"
+            );
+            assert!(
+                !sides.is_empty() && sides.iter().all(|w| *w == 500),
+                "{sides:?}"
+            );
+            assert_eq!(markers, vec![500, 800], "{order:?}");
+        }
+        // Runs shifted by a styling that shows another element: that one keeps its own.
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node("z", vec![text("y", "zed ")]), text("a", "words")],
+                )],
+            )
+        };
+        let css = |weight: &str| format!("#p {{ font-weight:{weight}; }} #z {{ display:none; }}");
+        let from = BoxTree::new(source(), &css("400")).unwrap();
+        let to = from.restyled(&[&css("800")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "p", &["font-weight"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let moved = to
+            .restyled(&[&css("800"), "#z { display:inline; font-weight:800; }"])
+            .unwrap();
+        let shown = animations.presented(&moved);
+        assert_eq!((weight(&shown, "zed"), weight(&shown, "words")), (800, 600));
+    }
+
+    #[test]
     fn an_inline_em_outline_follows_its_font_size() {
         let source = || {
             node(

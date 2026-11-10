@@ -31,13 +31,15 @@ pub(super) enum Value {
     Length(Dim),
     /// `visibility`: shown or not; `collapse` shows as `hidden` does here.
     Visible(bool),
+    /// `font-weight`, 100 to 900.
+    Weight(f32),
 }
 
 fn rgba(value: Value) -> Option<([f32; 3], f32)> {
     match value {
         Value::Color(color) => Some((color, 1.0)),
         Value::Fade(color, alpha) => Some((color, alpha)),
-        Value::Length(_) | Value::Visible(_) => None,
+        Value::Length(_) | Value::Visible(_) | Value::Weight(_) => None,
     }
 }
 
@@ -61,6 +63,7 @@ pub(super) enum Field {
     Offset(usize),
     Visibility,
     FontSize,
+    FontWeight,
 }
 
 const SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
@@ -80,6 +83,7 @@ fn field(name: &str) -> Option<Field> {
         "max-height" => Field::MaxHeight,
         "visibility" => Field::Visibility,
         "font-size" => Field::FontSize,
+        "font-weight" => Field::FontWeight,
         _ => {
             if let Some(rest) = name.strip_prefix("margin-") {
                 Field::Margin(side(rest)?)
@@ -119,6 +123,10 @@ fn mix(from: Value, to: Value, progress: f32) -> Option<Value> {
         }
         (Value::Length(Dim::Px(a)), Value::Length(Dim::Px(b))) => {
             Some(Value::Length(Dim::Px(along(a, b))))
+        }
+        // In steps of 100, as CSS transitions take it, and as iced has its nine weights.
+        (Value::Weight(a), Value::Weight(b)) => {
+            Some(Value::Weight((along(a, b) / 100.0).round() * 100.0))
         }
         (Value::Length(Dim::Percent(a)), Value::Length(Dim::Percent(b))) => {
             Some(Value::Length(Dim::Percent(along(a, b))))
@@ -200,6 +208,10 @@ pub(super) struct Followers {
     em_line_heights: Vec<(usize, f32)>,
     /// `text-indent` in `em`: the leaf, its block's source node and the indent's pixels.
     em_indents: Vec<(usize, usize, f32)>,
+    /// For `font-weight`: text runs by arena slot, owner, text and occurrence of the two
+    /// in the leaf, so another element's runs shown by an interaction styling do not
+    /// shift them.
+    weighed_runs: Vec<(usize, usize, String, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -305,6 +317,7 @@ impl BoxTree {
         match field {
             Field::Visibility => Some(Value::Visible(paint.visible)),
             Field::FontSize => Some(Value::Length(Dim::Px(self.prepared.font_sizes[projected]))),
+            Field::FontWeight => Some(Value::Weight(f32::from(self.weights[projected]))),
             Field::Color => color(paint.color),
             Field::Background => own.map(|_| match (paint.background, paint.background_fade) {
                 (None, _) => Value::Fade([0.0; 3], 0.0),
@@ -339,6 +352,10 @@ impl BoxTree {
             && self.under_text(projected)
         {
             self.inline_side(projected, field, dim);
+            return;
+        }
+        // Its text carries a weight, not its box: `reweigh`.
+        if field == Field::FontWeight {
             return;
         }
         let slot = self.prepared.slot[projected];
@@ -747,6 +764,16 @@ impl BoxTree {
                     &presented.followers,
                     self.originals[projected],
                     now / target,
+                    &animated,
+                );
+            }
+            if let (Field::FontWeight, Value::Weight(target), Value::Weight(now)) =
+                (presented.field, presented.target, presented.now)
+            {
+                self.reweigh(
+                    &presented.followers,
+                    self.originals[projected],
+                    (target as u16, now as u16),
                     &animated,
                 );
             }
@@ -1533,6 +1560,110 @@ impl BoxTree {
         followers
     }
 
+    /// What shows the target's weight at both ends, inside it: the outside markers of it
+    /// and its descendants, by node, and text runs by arena slot, owner, text and occurrence,
+    /// each by its own weight, so a `:before` or `:after` with a weight of its own, or a `bolder`
+    /// one, keeps it. A side's spaces count as inside the box they are a side of.
+    /// This checks the old end; the new one is checked as it presents (`reweigh`).
+    fn weight_followers(&self, to: &Self, target: usize, from: Value) -> Followers {
+        let Value::Weight(from) = from else {
+            return Followers::default();
+        };
+        let from = from as u16;
+        let root = to.originals[target];
+        let mut followers = Followers::default();
+        for node in &to.originals {
+            let Some(before) = self.originals.iter().position(|n| n == node) else {
+                continue;
+            };
+            if to.within(*node, root) && self.weights[before] == from {
+                followers.boxes.push(Follower {
+                    node: *node,
+                    borders: [false; 4],
+                    outline: false,
+                    marker: true,
+                });
+            }
+        }
+        for (arena, leaf) in to.texts.iter().enumerate() {
+            let Some(leaf) = leaf else { continue };
+            for (at, run) in leaf.runs.iter().enumerate() {
+                if !to.within(run.side_of.map_or(run.owner, |side| side.0), root) {
+                    continue;
+                }
+                // By content, not place, as `followers` finds the color's runs.
+                let alike =
+                    |other: &&super::TextRun| other.owner == run.owner && other.text == run.text;
+                let occurrence = leaf.runs[..at].iter().filter(alike).count();
+                let old = self
+                    .texts
+                    .get(arena)
+                    .and_then(Option::as_ref)
+                    .and_then(|old| old.runs.iter().filter(alike).nth(occurrence));
+                if old.is_some_and(|old| old.weight == from) {
+                    followers
+                        .weighed_runs
+                        .push((arena, run.owner, run.text.clone(), occurrence));
+                }
+            }
+        }
+        followers
+    }
+
+    /// Carries an animated weight from `root` to its followers: whatever still has the
+    /// target weight, and is not inside a descendant animating a weight of its own.
+    fn reweigh(
+        &mut self,
+        followers: &Followers,
+        root: usize,
+        (target, now): (u16, u16),
+        animated: &[(usize, Field)],
+    ) {
+        let own: Vec<usize> = animated
+            .iter()
+            .filter(|(node, field)| *field == Field::FontWeight && *node != root)
+            .map(|(node, _)| *node)
+            .collect();
+        let apart = |tree: &Self, node: usize| {
+            own.iter()
+                .any(|inner| tree.within(node, *inner) && tree.within(*inner, root))
+        };
+        for follower in &followers.boxes {
+            if apart(self, follower.node) {
+                continue;
+            }
+            let Some(projected) = self.originals.iter().position(|n| *n == follower.node) else {
+                continue;
+            };
+            if let Some(marker) = self.markers.get_mut(&projected) {
+                for run in marker.runs.iter_mut().filter(|run| run.weight == target) {
+                    run.weight = now;
+                }
+            }
+        }
+        for (arena, owner, text, occurrence) in &followers.weighed_runs {
+            let Some(leaf) = self.texts.get(*arena).and_then(Option::as_ref) else {
+                continue;
+            };
+            let Some((at, run)) = leaf
+                .runs
+                .iter()
+                .enumerate()
+                .filter(|(_, run)| run.owner == *owner && run.text == *text)
+                .nth(*occurrence)
+                .filter(|(_, run)| run.weight == target)
+            else {
+                continue;
+            };
+            if apart(self, run.side_of.map_or(run.owner, |side| side.0)) {
+                continue;
+            }
+            if let Some(leaf) = self.texts[*arena].as_mut() {
+                leaf.runs[at].weight = now;
+            }
+        }
+    }
+
     fn inline_side_colors(&self) -> BTreeMap<(usize, InlineSide), [f32; 3]> {
         let mut found = BTreeMap::new();
         for run in self.texts.iter().flatten().flat_map(|leaf| &leaf.runs) {
@@ -1755,7 +1886,11 @@ impl BoxTreeAnimations {
             };
             if !matches!(
                 property.descriptor().animation,
-                Some(AnimationRule::ByComputedValue | AnimationRule::Visibility)
+                Some(
+                    AnimationRule::ByComputedValue
+                        | AnimationRule::Visibility
+                        | AnimationRule::FontWeight
+                )
             ) {
                 continue;
             }
@@ -1802,6 +1937,7 @@ impl BoxTreeAnimations {
                 target,
                 followers: match field {
                     Field::Color => from.followers(to, after, committed, target),
+                    Field::FontWeight => from.weight_followers(to, after, committed),
                     Field::FontSize => match (committed, target) {
                         (Value::Length(Dim::Px(committed)), Value::Length(Dim::Px(target))) => {
                             from.size_followers(to, after, committed, target)

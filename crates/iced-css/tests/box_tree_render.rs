@@ -3689,6 +3689,60 @@ fn an_inline_outline_animates_where_it_draws() {
 }
 
 #[test]
+fn font_weight_animates_through_the_weights_between() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![text("a", "heavier "), node("s", vec![text("t", "text")])],
+            )],
+        )
+    };
+    let css = |weight: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #p {{ font-weight:{weight}; }}
+             #s {{ display:inline; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let from = BoxTree::new(source(), &css("400")).unwrap();
+    let to = from.restyled(&[&css("800")]).unwrap();
+    let mid = from.restyled(&[&css("600")]).unwrap();
+    assert!(picture(mid, "weight-half"));
+    // The weights draw apart here, so a match says something.
+    assert!(!picture(from.clone(), "weight-half"));
+    assert!(!picture(to.clone(), "weight-half"));
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &from,
+            &to,
+            "p",
+            &["font-weight"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "weight-half"));
+    animations.advance(start + Duration::from_millis(1500), &to);
+    assert!(picture(to.clone(), "weight-end"));
+    assert!(picture(animations.presented(&to), "weight-end"));
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};
