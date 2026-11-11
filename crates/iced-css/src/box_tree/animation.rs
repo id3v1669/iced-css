@@ -208,10 +208,11 @@ pub(super) struct Followers {
     em_line_heights: Vec<(usize, f32)>,
     /// `text-indent` in `em`: the leaf, its block's source node and the indent's pixels.
     em_indents: Vec<(usize, usize, f32)>,
-    /// For `font-weight`: text runs by arena slot, owner, text and occurrence of the two
+    /// For `font-weight`: text runs by arena slot, owner, text, whether spaces stand in, and
+    /// occurrence of those
     /// in the leaf, so another element's runs shown by an interaction styling do not
     /// shift them.
-    weighed_runs: Vec<(usize, usize, String, usize)>,
+    weighed_runs: Vec<(usize, usize, String, bool, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -1098,8 +1099,11 @@ impl BoxTree {
                 if run.spacer || !to.within(run.owner, root) {
                     continue;
                 }
-                let alike =
-                    |other: &&super::TextRun| other.owner == run.owner && other.text == run.text;
+                let alike = |other: &&super::TextRun| {
+                    other.owner == run.owner
+                        && other.spacer == run.spacer
+                        && content(&other.text) == content(&run.text)
+                };
                 let occurrence = leaf.runs[..at].iter().filter(alike).count();
                 if self
                     .texts
@@ -1236,7 +1240,7 @@ impl BoxTree {
                         && if run.spacer {
                             other.spacer && innermost(other) == innermost(run)
                         } else {
-                            other.text == run.text
+                            !other.spacer && content(&other.text) == content(&run.text)
                         }
                 };
                 let occurrence = leaf.runs[..at].iter().filter(alike).count();
@@ -1582,8 +1586,11 @@ impl BoxTree {
             for (at, run) in leaf.runs.iter().enumerate() {
                 // By content, not place: spaces for sides can differ between the two stylings.
                 // The same occurrence: `:before` and `:after` can share owner and text.
-                let alike =
-                    |other: &&super::TextRun| other.owner == run.owner && other.text == run.text;
+                let alike = |other: &&super::TextRun| {
+                    other.owner == run.owner
+                        && other.spacer == run.spacer
+                        && content(&other.text) == content(&run.text)
+                };
                 let occurrence = leaf.runs[..at].iter().filter(alike).count();
                 let shown_before = self
                     .texts
@@ -1637,8 +1644,11 @@ impl BoxTree {
                     continue;
                 }
                 // By content, not place, as `followers` finds the color's runs.
-                let alike =
-                    |other: &&super::TextRun| other.owner == run.owner && other.text == run.text;
+                let alike = |other: &&super::TextRun| {
+                    other.owner == run.owner
+                        && other.spacer == run.spacer
+                        && content(&other.text) == content(&run.text)
+                };
                 let occurrence = leaf.runs[..at].iter().filter(alike).count();
                 let old = self
                     .texts
@@ -1646,9 +1656,13 @@ impl BoxTree {
                     .and_then(Option::as_ref)
                     .and_then(|old| old.runs.iter().filter(alike).nth(occurrence));
                 if old.is_some_and(|old| old.weight == from) {
-                    followers
-                        .weighed_runs
-                        .push((arena, run.owner, run.text.clone(), occurrence));
+                    followers.weighed_runs.push((
+                        arena,
+                        run.owner,
+                        content(&run.text).to_owned(),
+                        run.spacer,
+                        occurrence,
+                    ));
                 }
             }
         }
@@ -1686,7 +1700,7 @@ impl BoxTree {
                 }
             }
         }
-        for (arena, owner, text, occurrence) in &followers.weighed_runs {
+        for (arena, owner, text, spacer, occurrence) in &followers.weighed_runs {
             let Some(leaf) = self.texts.get(*arena).and_then(Option::as_ref) else {
                 continue;
             };
@@ -1694,7 +1708,9 @@ impl BoxTree {
                 .runs
                 .iter()
                 .enumerate()
-                .filter(|(_, run)| run.owner == *owner && run.text == *text)
+                .filter(|(_, run)| {
+                    run.owner == *owner && run.spacer == *spacer && content(&run.text) == text
+                })
                 .nth(*occurrence)
                 .filter(|(_, run)| run.weight == target)
             else {
@@ -1782,6 +1798,13 @@ fn field_name(field: Field) -> Option<&'static str> {
 /// A `text-indent`'s spaces: a sized spacer of no side, with no share of the width.
 fn indent_space(run: &super::TextRun) -> bool {
     run.spacer && run.side_of.is_none() && run.percent_room.is_some_and(|room| room.1 == 0.0)
+}
+
+/// A run's text as followers compare it: without the spaces at its ends, which a negative
+/// margin beside it narrows or takes away (`pull_aside`), so the same run matches at both
+/// ends of an animation that changes the pull.
+fn content(text: &str) -> &str {
+    text.trim_matches(|character| matches!(character, ' ' | '\u{2002}'..='\u{2006}'))
 }
 
 /// A run told apart by content, not slot: its owner, text, and innermost box, which keeps

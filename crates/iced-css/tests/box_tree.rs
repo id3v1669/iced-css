@@ -4595,6 +4595,104 @@ mod animation {
     }
 
     #[test]
+    fn text_beside_a_negative_margin_follows_whatever_its_space() {
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![text("a", "before "), node("s", vec![text("t", "in")])],
+                )],
+            )
+        };
+        let start = Instant::now();
+        let before = |tree: &BoxTree| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.starts_with("before"))
+                .cloned()
+                .unwrap()
+        };
+        // Its space narrows to nothing at 16 pixels, to a sixth of an em at 32: the size
+        // still moves it.
+        let css = |size: &str| {
+            format!("#p {{ font-size:{size}; }} #s {{ display:inline; margin-left:-2px; }}")
+        };
+        let from = BoxTree::new(source(), &css("16px")).unwrap();
+        let to = from.restyled(&[&css("32px")]).unwrap();
+        assert_ne!(before(&from).text, before(&to).text);
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "p", &["font-size"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        assert_eq!(before(&animations.presented(&to)).size, 24.0);
+        // Its space there at one end, gone at the other: the color still moves it.
+        let css = |color: &str, margin: &str| {
+            format!("#p {{ color:{color}; }} #s {{ display:inline; margin-left:{margin}; }}")
+        };
+        let from = BoxTree::new(source(), &css("#000000", "-8px")).unwrap();
+        let to = from.restyled(&[&css("#ffffff", "0")]).unwrap();
+        assert_ne!(before(&from).text, before(&to).text);
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "p", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let color = before(&animations.presented(&to)).color.unwrap();
+        assert!(near(color, [0.5; 3]), "{color:?}");
+        // And the weight.
+        let css = |weight: &str, margin: &str| {
+            format!("#p {{ font-weight:{weight}; }} #s {{ display:inline; margin-left:{margin}; }}")
+        };
+        let from = BoxTree::new(source(), &css("400", "-8px")).unwrap();
+        let to = from.restyled(&[&css("800", "0")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "p", &["font-weight"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        assert_eq!(before(&animations.presented(&to)).weight, 600);
+        // An empty `:after` is not counted among side spaces that one end has and the other
+        // does not: it still follows the size.
+        let source = || {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node(
+                        "e",
+                        vec![text("a", "words "), node("c", vec![text("b", "child")])],
+                    )],
+                )],
+            )
+        };
+        let css = |size: &str, margin: &str| {
+            format!(
+                "#p {{ font-size:{size}; }} #e {{ display:inline; }} #e:after {{ content:\"\"; }}
+                 #c {{ display:inline; margin-left:{margin}; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("16px", "0")).unwrap();
+        let to = from.restyled(&[&css("32px", "8px")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "p", &["font-size"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let sizes: Vec<(String, f32)> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| !run.spacer)
+            .map(|run| (run.text.clone(), run.size))
+            .collect();
+        assert!(sizes.iter().all(|(_, size)| *size == 24.0), "{sizes:?}");
+    }
+
+    #[test]
     fn an_inline_em_outline_follows_its_font_size() {
         let source = || {
             node(
