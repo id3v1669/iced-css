@@ -8,6 +8,7 @@ use crate::animation::{
     clock::AnimationTiming,
     engine::{ProgressEngine, ProgressLimits},
 };
+use crate::evaluation::tree_layout::RunSource;
 use iced::animation::Easing;
 use iced_css_core::{
     animation::registry::AnimationSelection,
@@ -237,6 +238,189 @@ impl BoxTree {
     fn under_text(&self, projected: usize) -> bool {
         self.prepared.inline_boxes[projected].is_some()
             && self.prepared.slot[projected].is_some_and(|slot| self.prepared.anonymous[slot])
+    }
+
+    /// The element `id` names, and for `id::before` or `id::after` (or one colon) its
+    /// `:before` or `:after`, by `generated_owner` key.
+    fn target_of(&self, id: &str) -> Option<(usize, Option<usize>)> {
+        let pseudo = [
+            ("::before", 0),
+            (":before", 0),
+            ("::after", 1),
+            (":after", 1),
+        ]
+        .into_iter()
+        .find_map(|(suffix, side)| id.strip_suffix(suffix).map(|base| (base, side)));
+        match pseudo {
+            Some((base, side)) => {
+                let projected = self.element(base)?;
+                Some((projected, Some(super::generated_owner(projected, side))))
+            }
+            None => Some((self.element(id)?, None)),
+        }
+    }
+
+    fn read_any(&self, projected: usize, generated: Option<usize>, field: Field) -> Option<Value> {
+        match generated {
+            Some(key) => self.read_generated(key, field),
+            None => self.read(projected, field),
+        }
+    }
+
+    /// The arena slot of a block-level `:before` or `:after`'s own box, by key.
+    fn generated_block(&self, key: usize) -> Option<usize> {
+        let (element, side) = ((usize::MAX - key) / 2, (usize::MAX - key) % 2);
+        self.prepared.generated_boxes.iter().position(|(arena, _)| {
+            self.prepared.runs[*arena].iter().any(|run| match run {
+                RunSource::Before(at) => side == 0 && *at == element,
+                RunSource::After(at) => side == 1 && *at == element,
+                RunSource::Node(_) => false,
+            })
+        })
+    }
+
+    /// A `:before` or `:after`'s own color, background, border colors or visibility: on its
+    /// block box's paint, or on its line, its text and inline box. On its line, transparent
+    /// has no in-between: its background and border colors move from a color to a color.
+    fn read_generated(&self, key: usize, field: Field) -> Option<Value> {
+        let runs = || self.texts.iter().flatten().flat_map(|leaf| &leaf.runs);
+        let own = || runs().find(|run| run.generated == Some(key));
+        if let Some(at) = self.generated_block(key) {
+            let (arena, paint) = self.prepared.generated_boxes[at];
+            return match field {
+                // Its text draws from its runs, not its box.
+                Field::Color => own()?.color.map(Value::Color),
+                Field::Visibility => Some(Value::Visible(paint.visible)),
+                Field::Background => Some(match (paint.background, paint.background_fade) {
+                    (None, _) => Value::Fade([0.0; 3], 0.0),
+                    (Some(value), None) => Value::Color(value),
+                    (Some(value), Some(alpha)) => Value::Fade(value, alpha),
+                }),
+                Field::BorderColor(side) => match (paint.border[side], paint.border_fade[side]) {
+                    (None, _) if self.prepared.boxes[arena].border[side] > 0.0 => {
+                        Some(Value::Fade([0.0; 3], 0.0))
+                    }
+                    (None, _) => None,
+                    (Some(value), None) => Some(Value::Color(value)),
+                    (Some(value), Some(alpha)) => Some(Value::Fade(value, alpha)),
+                },
+                _ => None,
+            };
+        }
+        match field {
+            Field::Color => own()?.color.map(Value::Color),
+            Field::Visibility => Some(Value::Visible(own()?.visible)),
+            // An inside marker piece before it carries no backgrounds: any of its runs that do.
+            Field::Background => runs()
+                .filter(|run| run.generated == Some(key))
+                .find_map(|run| run.backgrounds.iter().find(|entry| entry.1 == key))
+                .map(|entry| Value::Color(entry.0)),
+            Field::BorderColor(side @ (0 | 2)) => runs()
+                .flat_map(|run| &run.inline_boxes)
+                .find(|sides| sides.owner == key)
+                .and_then(|sides| sides.border[side / 2].1)
+                .map(Value::Color),
+            Field::BorderColor(side) => runs()
+                .find(|run| run.side_of == Some((key, side)))
+                .and_then(|run| run.edge)
+                .map(|edge| Value::Color(edge.2)),
+            _ => None,
+        }
+    }
+
+    /// Lays a presented value on a `:before` or `:after` (`read_generated`).
+    fn write_generated(&mut self, key: usize, field: Field, value: Value) {
+        if let Some(at) = self.generated_block(key) {
+            let paint = &mut self.prepared.generated_boxes[at].1;
+            match (field, value) {
+                (Field::Color, Value::Color(value)) => paint.color = Some(value),
+                (Field::Visibility, Value::Visible(value)) => paint.visible = value,
+                (Field::Background, Value::Color(value)) => {
+                    paint.background = Some(value);
+                    paint.background_fade = None;
+                }
+                (Field::Background, Value::Fade(value, alpha)) => {
+                    paint.background = Some(value);
+                    paint.background_fade = Some(alpha);
+                }
+                (Field::BorderColor(side), Value::Color(value)) => {
+                    paint.border[side] = Some(value);
+                    paint.border_fade[side] = None;
+                }
+                (Field::BorderColor(side), Value::Fade(value, alpha)) => {
+                    paint.border[side] = Some(value);
+                    paint.border_fade[side] = Some(alpha);
+                }
+                _ => {}
+            }
+        }
+        for run in self
+            .texts
+            .iter_mut()
+            .flatten()
+            .flat_map(|leaf| &mut leaf.runs)
+        {
+            let ours = run.generated == Some(key);
+            let sides = run.side_of.is_some_and(|side| side.0 == key);
+            match (field, value) {
+                (Field::Color, Value::Color(value)) if ours => run.color = Some(value),
+                (Field::Visibility, Value::Visible(value)) => {
+                    if ours || sides {
+                        run.visible = value;
+                    }
+                    for decoration in run.inline_boxes.iter_mut().filter(|d| d.owner == key) {
+                        decoration.visible = value;
+                    }
+                    // Its own background under its text shows with it; hidden, the nearest
+                    // that shows beyond it, as `reveal` picks for an element.
+                    if let Some(own) = run.backgrounds.iter().position(|entry| entry.1 == key) {
+                        let was = run.backgrounds.iter().find(|entry| entry.2).copied();
+                        run.backgrounds[own].2 = value;
+                        let now = run.backgrounds.iter().find(|entry| entry.2).copied();
+                        if ours && was.map(|entry| entry.1) != now.map(|entry| entry.1) {
+                            run.background = now.map(|entry| entry.0);
+                            run.background_from = now
+                                .map(|entry| entry.1)
+                                .filter(|key| !super::is_generated(*key));
+                        }
+                    }
+                }
+                (Field::Background, Value::Color(value)) => {
+                    for entry in run.backgrounds.iter_mut().filter(|entry| entry.1 == key) {
+                        entry.0 = value;
+                    }
+                    if run
+                        .backgrounds
+                        .iter()
+                        .find(|entry| entry.2)
+                        .is_some_and(|entry| entry.1 == key)
+                        && run.background.is_some()
+                    {
+                        run.background = Some(value);
+                    }
+                    for decoration in run.inline_boxes.iter_mut().filter(|d| d.owner == key) {
+                        if decoration.background.is_some() {
+                            decoration.background = Some(value);
+                        }
+                    }
+                }
+                (Field::BorderColor(side @ (0 | 2)), Value::Color(value)) => {
+                    for decoration in run.inline_boxes.iter_mut().filter(|d| d.owner == key) {
+                        if decoration.border[side / 2].1.is_some() {
+                            decoration.border[side / 2].1 = Some(value);
+                        }
+                    }
+                }
+                (Field::BorderColor(side), Value::Color(value))
+                    if run.side_of == Some((key, side)) =>
+                {
+                    if let Some(edge) = &mut run.edge {
+                        edge.2 = value;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// A border side's computed width, on its box or on its line; a style of `none` or
@@ -796,6 +980,12 @@ impl BoxTree {
         let (sizes, rest): (Vec<_>, Vec<_>) = presentation
             .iter()
             .partition(|presented| presented.field == Field::FontSize);
+        // A `:before` or `:after`'s own first: what its element's `color` carries to it then
+        // finds it moved on, and leaves it to its own timing.
+        let (mut rest, others): (Vec<_>, Vec<_>) = rest
+            .into_iter()
+            .partition(|presented| matches!(self.target_of(&presented.id), Some((_, Some(_)))));
+        rest.extend(others);
         let (sides, rest): (Vec<_>, Vec<_>) = rest.into_iter().partition(|presented| {
             matches!(
                 presented.field,
@@ -809,6 +999,7 @@ impl BoxTree {
                 let projected = self.element(&presented.id)?;
                 Some((self.originals[projected], presented.field))
             })
+            // A `:before` or `:after` is no element: `element` finds none for it.
             .collect();
         // Fades on a line last: a layer over what the rest leaves beneath it, shown or not.
         let mut fades = Vec::new();
@@ -816,9 +1007,16 @@ impl BoxTree {
         // them shows beneath it.
         let mut presented_colors: BTreeMap<usize, [f32; 3]> = BTreeMap::new();
         for presented in rest.into_iter().chain(sizes).chain(sides) {
-            let Some(projected) = self.element(&presented.id) else {
+            let Some((projected, generated)) = self.target_of(&presented.id) else {
                 continue;
             };
+            // A `:before` or `:after`'s own colors and visibility, where its content shows.
+            if let Some(key) = generated {
+                if self.read_generated(key, presented.field) == Some(presented.target) {
+                    self.write_generated(key, presented.field, presented.now);
+                }
+                continue;
+            }
             if self.read(projected, presented.field) != Some(presented.target) {
                 continue;
             }
@@ -1972,6 +2170,17 @@ impl BoxTreeAnimations {
         transition: impl Into<Transition>,
         now: Instant,
     ) -> Result<usize, BoxTreeError> {
+        // One name per `:before` or `:after`, so either spelling continues the other's.
+        let canonical = id
+            .strip_suffix(":before")
+            .filter(|base| !base.ends_with(':'))
+            .map(|base| format!("{base}::before"))
+            .or_else(|| {
+                id.strip_suffix(":after")
+                    .filter(|base| !base.ends_with(':'))
+                    .map(|base| format!("{base}::after"))
+            });
+        let id = canonical.as_deref().unwrap_or(id);
         let Transition { timing, easing } = transition.into();
         let mut longhands = Vec::new();
         for name in properties {
@@ -1990,9 +2199,12 @@ impl BoxTreeAnimations {
         if from.source.capture != capture {
             return Ok(0);
         }
-        let (Some(before), Some(after)) = (from.element(id), to.element(id)) else {
+        let (Some((before, from_key)), Some((after, to_key))) =
+            (from.target_of(id), to.target_of(id))
+        else {
             return Ok(0);
         };
+        let generated = to_key.is_some();
         let mut started = Vec::new();
         let mut dropped = Vec::new();
         for property in longhands {
@@ -2009,8 +2221,10 @@ impl BoxTreeAnimations {
             ) {
                 continue;
             }
-            let (Some(committed), Some(target)) = (from.read(before, field), to.read(after, field))
-            else {
+            let (Some(committed), Some(target)) = (
+                from.read_any(before, from_key, field),
+                to.read_any(after, to_key, field),
+            ) else {
                 dropped.push(property);
                 continue;
             };
@@ -2022,6 +2236,7 @@ impl BoxTreeAnimations {
             // interaction styling gives, wherever a `:hover`, `:active` or `:focus` rule
             // could restyle it.
             if let Field::BorderColor(side) = field
+                && !generated
                 && from.side_width(before, side) <= 0.0
                 && to.side_width(after, side) <= 0.0
                 && !field_name(Field::BorderWidth(side))
@@ -2036,7 +2251,9 @@ impl BoxTreeAnimations {
             // Between a box and an inline, `display` changes at once and the color moves in
             // the new one: it presents as `to` paints it, a box's or on its line.
             // Section 13: an important target holds without a temporary override.
-            if mix(committed, target, 0.0).is_none() || to.important[after].contains(&property) {
+            if mix(committed, target, 0.0).is_none()
+                || (!generated && to.important[after].contains(&property))
+            {
                 dropped.push(property);
                 continue;
             }
@@ -2051,6 +2268,8 @@ impl BoxTreeAnimations {
                 start,
                 target,
                 followers: match field {
+                    // A `:before` or `:after`'s currentColor borders change at once.
+                    _ if generated => Followers::default(),
                     Field::Color => from.followers(to, after, committed, target),
                     Field::FontWeight => from.weight_followers(to, after, committed),
                     Field::FontSize => match (committed, target) {
@@ -2133,8 +2352,8 @@ impl BoxTreeAnimations {
                 self.progress(track).is_some()
                     && track.capture == tree.source.capture
                     && tree
-                        .element(&track.id)
-                        .and_then(|element| tree.read(element, track.field))
+                        .target_of(&track.id)
+                        .and_then(|(element, key)| tree.read_any(element, key, track.field))
                         == Some(track.target)
             });
         self.tracks = running;

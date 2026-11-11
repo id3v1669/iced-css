@@ -344,6 +344,9 @@ pub struct TextRun {
     /// A negative margin's pixels beside a percentage padding, taken out of the room it has
     /// at layout, where `overhang` is set (`percent_overhang`).
     pub pulled: f32,
+    /// The `:before` or `:after` whose content this is, by its `generated_owner` key; its own
+    /// side spaces carry none.
+    pub generated: Option<usize>,
     /// An inside list marker's image: once it loads, the run is spaces as wide as it.
     pub marker_image: Option<MarkerImage>,
     pub weight: u16,
@@ -1370,6 +1373,11 @@ impl BoxTree {
                         overhang: 0.0,
                         pull: 0.0,
                         pulled: 0.0,
+                        generated: match run {
+                            RunSource::Node(_) => None,
+                            RunSource::Before(at) => Some(generated_owner(at, 0)),
+                            RunSource::After(at) => Some(generated_owner(at, 1)),
+                        },
                         marker_image: None,
                         weight: style.weight,
                         italic: style.italic,
@@ -2006,6 +2014,7 @@ impl BoxTree {
                             overhang: 0.0,
                             pull: 0.0,
                             pulled: 0.0,
+                            generated: None,
                             marker_image: None,
                             backgrounds: Vec::new(),
                             weight: style.weight,
@@ -3144,6 +3153,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         overhang: 0.0,
         pull: 0.0,
         pulled: 0.0,
+        generated: None,
         marker_image: None,
         backgrounds: Vec::new(),
         underline: false,

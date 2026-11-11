@@ -4348,6 +4348,147 @@ fn a_negative_inline_margin_animates_as_its_box_pulls() {
 }
 
 #[test]
+fn a_before_animates_its_own_colors_where_it_draws() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node("p", vec![node("s", vec![text("t", "words")])])],
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let start = Instant::now();
+    let timing = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+    // Its text color halfway, as a page with the color between draws it.
+    let inline = |color: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #s {{ display:inline; }} #s:before {{ content:\"before \"; color:{color}; }}"
+        )
+    };
+    let from = BoxTree::new(source(), &inline("#ff0000")).unwrap();
+    let to = from.restyled(&[&inline("#0000ff")]).unwrap();
+    let mid = from.restyled(&[&inline("rgb(50%, 0%, 50%)")]).unwrap();
+    assert!(picture(mid, "before-color-half"));
+    assert!(!picture(to.clone(), "before-color-half"));
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(&from, &to, "s::before", &["color"], timing, start)
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &to);
+    assert!(picture(animations.presented(&to), "before-color-half"));
+    // A block one's background and border, from transparent, at half over the white page:
+    // half inside, and its border at half over its background at half (backgrounds reach
+    // under the border).
+    let block = |color: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #s:before {{ content:\"block\"; display:block; height:40px;
+                          background-color:{color}; border:6px solid {color}; }}"
+        )
+    };
+    let clear = BoxTree::new(source(), &block("transparent")).unwrap();
+    let full = clear.restyled(&[&block("#ff0000")]).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &clear,
+            &full,
+            "s::before",
+            &["background-color", "border-color"],
+            timing,
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &full);
+    assert!(picture(animations.presented(&full), "before-block-half"));
+    let prefix = format!("before-block-half-{}-", std::process::id());
+    let file = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .unwrap();
+    let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()))
+        .read_info()
+        .unwrap();
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let count = |color: [u8; 3]| {
+        bytes[..info.buffer_size()]
+            .chunks(4)
+            .filter(|pixel| (0..3).all(|at| pixel[at].abs_diff(color[at]) <= 2))
+            .count()
+    };
+    assert!(count([255, 128, 128]) > 1000, "{}", count([255, 128, 128]));
+    assert!(count([255, 64, 64]) > 1000, "{}", count([255, 64, 64]));
+    assert_eq!(count([255, 0, 0]), 0);
+    // An `:after` block's own, beside a `:before` block that keeps its color.
+    let both = |color: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #s:before {{ content:\"one\"; display:block; height:40px; background-color:#00ff00; }}
+             #s:after {{ content:\"two\"; display:block; height:40px; background-color:{color}; }}"
+        )
+    };
+    let clear = BoxTree::new(source(), &both("transparent")).unwrap();
+    let full = clear.restyled(&[&both("#ff0000")]).unwrap();
+    assert!(picture(clear.clone(), "after-block-clear"));
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &clear,
+            &full,
+            "s::after",
+            &["background-color"],
+            timing,
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &full);
+    assert!(!picture(animations.presented(&full), "after-block-clear"));
+    let snapshot = {
+        let view: Element<'_, u8> = animations.presented(&full).view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light).unwrap()
+    };
+    let path = std::env::temp_dir().join(format!("after-block-half-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(snapshot.matches_image(path.join("frame.png")).unwrap());
+    let file = std::fs::read_dir(&path)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()))
+        .read_info()
+        .unwrap();
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let count = |color: [u8; 3]| {
+        bytes[..info.buffer_size()]
+            .chunks(4)
+            .filter(|pixel| (0..3).all(|at| pixel[at].abs_diff(color[at]) <= 2))
+            .count()
+    };
+    // The `:before` still all green; the `:after` at half red.
+    assert!(count([0, 255, 0]) > 1000 && count([255, 128, 128]) > 1000);
+    assert_eq!(count([128, 255, 128]), 0);
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

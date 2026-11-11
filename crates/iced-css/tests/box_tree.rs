@@ -4809,6 +4809,278 @@ mod animation {
     }
 
     #[test]
+    fn a_before_or_after_animates_its_own_colors_and_visibility() {
+        let source = || {
+            node(
+                "page",
+                vec![node("p", vec![node("s", vec![text("t", "words")])])],
+            )
+        };
+        let start = Instant::now();
+        let halfway = |css: &dyn Fn(&str) -> String, ends: [&str; 2], id: &str, property: &str| {
+            let from = BoxTree::new(source(), &css(ends[0])).unwrap();
+            let to = from.restyled(&[&css(ends[1])]).unwrap();
+            let mut animations = BoxTreeAnimations::new();
+            let count = animations
+                .request(&from, &to, id, &[property], second(), start)
+                .unwrap();
+            animations.advance(start + Duration::from_millis(500), &to);
+            (count, animations.presented(&to))
+        };
+        let run = |tree: &BoxTree, text: &str| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.contains(text))
+                .cloned()
+                .unwrap()
+        };
+        let mid = [0.5, 0.0, 0.5];
+        // Its color, named as `s::before`; the element's own text keeps its color.
+        let css = |color: &str| {
+            format!(
+                "#s {{ display:inline; color:#000000; }} #s:before {{ content:\"GEN\"; color:{color}; }}"
+            )
+        };
+        let (count, shown) = halfway(&css, ["#ff0000", "#0000ff"], "s::before", "color");
+        assert_eq!(count, 1);
+        assert!(near(run(&shown, "GEN").color.unwrap(), mid));
+        assert_eq!(run(&shown, "words").color, Some([0.0; 3]));
+        // The element's own request leaves it be.
+        let (count, _) = halfway(&css, ["#ff0000", "#0000ff"], "s", "color");
+        assert_eq!(count, 0);
+        // `:after`, with one colon too.
+        let after = |color: &str| {
+            format!("#s {{ display:inline; }} #s:after {{ content:\"END\"; color:{color}; }}")
+        };
+        let (count, shown) = halfway(&after, ["#ff0000", "#0000ff"], "s:after", "color");
+        assert_eq!(count, 1);
+        assert!(near(run(&shown, "END").color.unwrap(), mid));
+        // Moved on to a color of its own, as a hover styling can: it stays.
+        let from = BoxTree::new(source(), &css("#ff0000")).unwrap();
+        let to = from.restyled(&[&css("#0000ff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "s::before", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let moved = to
+            .restyled(&[&css("#0000ff"), "#s:before { color:#00ff00; }"])
+            .unwrap();
+        assert_eq!(
+            run(&animations.presented(&moved), "GEN").color,
+            Some([0.0, 1.0, 0.0])
+        );
+        // Its element's `!important` is not its own.
+        let important = |color: &str| {
+            format!(
+                "#s {{ display:inline; color:#000000 !important; }} #s:before {{ content:\"GEN\"; color:{color}; }}"
+            )
+        };
+        let (count, _) = halfway(&important, ["#ff0000", "#0000ff"], "s::before", "color");
+        assert_eq!(count, 1);
+        // Its visibility: shown all the way to the end when one end shows.
+        let hidden = |visibility: &str| {
+            format!(
+                "#s {{ display:inline; }} #s:before {{ content:\"GEN\"; visibility:{visibility}; }}"
+            )
+        };
+        let (count, shown) = halfway(&hidden, ["visible", "hidden"], "s::before", "visibility");
+        assert_eq!(count, 1);
+        assert!(run(&shown, "GEN").visible);
+        assert!(run(&shown, "words").visible);
+        // Its box's side spaces show with it.
+        let sided = |visibility: &str| {
+            format!(
+                "#s {{ display:inline; }}
+                 #s:before {{ content:\"GEN\"; padding-left:8px; background-color:#ff0000; visibility:{visibility}; }}"
+            )
+        };
+        let (_, shown) = halfway(&sided, ["visible", "hidden"], "s::before", "visibility");
+        let spaces: Vec<bool> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.side_of.is_some())
+            .map(|run| run.visible)
+            .collect();
+        assert!(
+            !spaces.is_empty() && spaces.iter().all(|shows| *shows),
+            "{spaces:?}"
+        );
+        // Its background and border colors on its line, from a color to a color.
+        let boxed = |color: &str| {
+            format!(
+                "#s {{ display:inline; }}
+                 #s:before {{ content:\"GEN\"; background-color:{color}; border:2px solid {color}; }}"
+            )
+        };
+        let (count, shown) = halfway(
+            &boxed,
+            ["#ff0000", "#0000ff"],
+            "s::before",
+            "background-color",
+        );
+        assert_eq!(count, 1);
+        assert!(near(run(&shown, "GEN").background.unwrap(), mid));
+        let (count, shown) = halfway(&boxed, ["#ff0000", "#0000ff"], "s::before", "border-color");
+        assert_eq!(count, 4);
+        let content = run(&shown, "GEN");
+        let band = content
+            .inline_boxes
+            .iter()
+            .rev()
+            .find_map(|sides| sides.border[0].1)
+            .unwrap();
+        assert!(near(band, mid), "{band:?}");
+        let bars: Vec<[f32; 3]> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter_map(|run| run.edge.map(|edge| edge.2))
+            .collect();
+        assert!(
+            bars.len() == 2 && bars.iter().all(|bar| near(*bar, mid)),
+            "{bars:?}"
+        );
+        // Hidden, its own background shows nowhere: its text keeps the one around it.
+        let covered = |color: &str| {
+            format!(
+                "#s {{ display:inline; background-color:#00ff00; }}
+                 #s:before {{ content:\"GEN\"; visibility:hidden; background-color:{color}; }}"
+            )
+        };
+        let (count, shown) = halfway(
+            &covered,
+            ["#ff0000", "#0000ff"],
+            "s::before",
+            "background-color",
+        );
+        assert_eq!(count, 1);
+        assert_eq!(run(&shown, "GEN").background, Some([0.0, 1.0, 0.0]));
+        // A block one's text color.
+        let block =
+            |color: &str| format!("#s:before {{ content:\"GEN\"; display:block; color:{color}; }}");
+        let (count, shown) = halfway(&block, ["#ff0000", "#0000ff"], "s::before", "color");
+        assert_eq!(count, 1);
+        assert!(near(run(&shown, "GEN").color.unwrap(), mid));
+        // Its own background under its text, with no sides, shows while it does.
+        let plain = |visibility: &str| {
+            format!(
+                "#s {{ display:inline; }}
+                 #s:before {{ content:\"GEN\"; background-color:#ff0000; visibility:{visibility}; }}"
+            )
+        };
+        let (_, shown) = halfway(&plain, ["visible", "hidden"], "s::before", "visibility");
+        assert_eq!(run(&shown, "GEN").background, Some([1.0, 0.0, 0.0]));
+        // So while its element's own background moves too.
+        let under = |visibility: &str, color: &str| {
+            format!(
+                "#s {{ display:inline; background-color:{color}; }}
+                 #s:before {{ content:\"GEN\"; background-color:#ff0000; visibility:{visibility}; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &under("visible", "#00ff00")).unwrap();
+        let to = from.restyled(&[&under("hidden", "#ffff00")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "s::before", &["visibility"], second(), start)
+            .unwrap();
+        animations
+            .request(&from, &to, "s", &["background-color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        assert_eq!(run(&shown, "GEN").background, Some([1.0, 0.0, 0.0]));
+        assert!(near(
+            run(&shown, "words").background.unwrap(),
+            [0.5, 1.0, 0.0]
+        ));
+        // After an inside list marker: its background still found.
+        let item = || node("page", vec![node("li", vec![text("t", "item")])]);
+        let marked = |color: &str| {
+            format!(
+                "#li {{ display:list-item; list-style-position:inside; }}
+                 #li:before {{ content:\"GEN\"; padding-left:4px; background-color:{color}; }}"
+            )
+        };
+        let from = BoxTree::new(item(), &marked("#ff0000")).unwrap();
+        let to = from.restyled(&[&marked("#0000ff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        assert_eq!(
+            animations
+                .request(
+                    &from,
+                    &to,
+                    "li::before",
+                    &["background-color"],
+                    second(),
+                    start
+                )
+                .unwrap(),
+            1
+        );
+        // Either spelling continues the other's animation: back from the half.
+        let from = BoxTree::new(source(), &css("#ff0000")).unwrap();
+        let to = from.restyled(&[&css("#0000ff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "s:before", &["color"], second(), start)
+            .unwrap();
+        let later = start + Duration::from_millis(500);
+        animations.advance(later, &to);
+        animations
+            .request(&to, &from, "s::before", &["color"], second(), later)
+            .unwrap();
+        animations.advance(later + Duration::from_millis(500), &from);
+        let back = run(&animations.presented(&from), "GEN").color.unwrap();
+        assert!(near(back, [0.75, 0.0, 0.25]), "{back:?}");
+        // With its element's color moving too, its own timing, whichever was asked first.
+        let both = |color: &str| {
+            format!("#s {{ display:inline; color:{color}; }} #s:before {{ content:\"GEN\"; }}")
+        };
+        let from = BoxTree::new(source(), &both("#000000")).unwrap();
+        let to = from.restyled(&[&both("#ffffff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "s", &["color"], second(), start)
+            .unwrap();
+        animations
+            .request(
+                &from,
+                &to,
+                "s::before",
+                &["color"],
+                AnimationTiming::new(Duration::from_secs(4), Duration::ZERO),
+                start,
+            )
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        assert!(near(run(&shown, "GEN").color.unwrap(), [0.125; 3]));
+        assert!(near(run(&shown, "words").color.unwrap(), [0.5; 3]));
+        // To or from transparent on its line: at once.
+        let (count, _) = halfway(
+            &boxed,
+            ["transparent", "#0000ff"],
+            "s::before",
+            "background-color",
+        );
+        assert_eq!(count, 0);
+        // A `:before` with no content, or an element with no such id: nothing.
+        let (count, _) = halfway(&after, ["#ff0000", "#0000ff"], "s::before", "color");
+        assert_eq!(count, 0);
+        let (count, _) = halfway(&css, ["#ff0000", "#0000ff"], "x::before", "color");
+        assert_eq!(count, 0);
+        // Only its colors and visibility, for now.
+        let sized = |size: &str| {
+            format!("#s {{ display:inline; }} #s:before {{ content:\"GEN\"; font-size:{size}; }}")
+        };
+        let (count, _) = halfway(&sized, ["16px", "32px"], "s::before", "font-size");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
     fn an_inline_em_outline_follows_its_font_size() {
         let source = || {
             node(
