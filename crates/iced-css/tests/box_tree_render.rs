@@ -4489,6 +4489,120 @@ fn a_before_animates_its_own_colors_where_it_draws() {
 }
 
 #[test]
+fn a_block_before_animates_its_own_box() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || node("page", vec![node("s", vec![text("t", "after it")])]);
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let css = |width: &str, side: &str, size: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #s:before {{ content:\"block\"; display:block; background-color:#ff0000;
+                          border:{side} solid #0000ff; padding:{side}; margin:{side};
+                          width:{width}; height:{width}; font-size:{size}; }}"
+        )
+    };
+    let from = BoxTree::new(source(), &css("100px", "4px", "16px")).unwrap();
+    let to = from.restyled(&[&css("200px", "12px", "32px")]).unwrap();
+    let mid = from.restyled(&[&css("150px", "8px", "24px")]).unwrap();
+    assert!(picture(mid, "before-box-half"));
+    assert!(!picture(to.clone(), "before-box-half"));
+    let start = Instant::now();
+    for (one, two) in [(&from, &to), (&to, &from)] {
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(
+                one,
+                two,
+                "s::before",
+                &[
+                    "width",
+                    "height",
+                    "padding",
+                    "border-width",
+                    "margin",
+                    "font-size",
+                ],
+                AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+                start,
+            )
+            .unwrap();
+        assert_eq!(count, 15);
+        // Halfway, either way: as a page with the lengths between draws it.
+        animations.advance(start + Duration::from_millis(500), two);
+        assert!(picture(animations.presented(two), "before-box-half"));
+    }
+}
+
+#[test]
+fn a_before_grows_with_its_line_and_small_capitals() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node("p", vec![node("s", vec![text("t", "words")])])],
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let start = Instant::now();
+    // A sided inline one in small capitals (generated content takes them from its element),
+    // and a block one under an inherited indent.
+    for (name, css) in [
+        (
+            "grow-inline",
+            "#s { display:inline; font-variant:small-caps; }
+             #s:before { content:\"Gen \"; padding:0 5px; background-color:#ff0000; font-size:SIZE; }",
+        ),
+        (
+            "grow-block",
+            "#p { text-indent:20px; } #s:before { content:\"Block\"; display:block;
+             background-color:#ff0000; font-size:SIZE; }",
+        ),
+    ] {
+        let page = |size: &str| {
+            format!(
+                "#page {{ background-color:white; padding:20px; color:#000000; }} {}",
+                css.replace("SIZE", size)
+            )
+        };
+        let from = BoxTree::new(source(), &page("16px")).unwrap();
+        let to = from.restyled(&[&page("32px")]).unwrap();
+        let mid = from.restyled(&[&page("24px")]).unwrap();
+        let half = format!("{name}-half");
+        assert!(picture(mid, &half));
+        assert!(!picture(to.clone(), &half));
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(
+                &from,
+                &to,
+                "s::before",
+                &["font-size"],
+                AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+                start,
+            )
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        assert!(picture(animations.presented(&to), &half), "{name}");
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

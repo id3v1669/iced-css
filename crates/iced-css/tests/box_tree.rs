@@ -5072,12 +5072,70 @@ mod animation {
         assert_eq!(count, 0);
         let (count, _) = halfway(&css, ["#ff0000", "#0000ff"], "x::before", "color");
         assert_eq!(count, 0);
-        // Only its colors and visibility, for now.
+        // Its text's size.
         let sized = |size: &str| {
             format!("#s {{ display:inline; }} #s:before {{ content:\"GEN\"; font-size:{size}; }}")
         };
-        let (count, _) = halfway(&sized, ["16px", "32px"], "s::before", "font-size");
-        assert_eq!(count, 0);
+        let (count, shown) = halfway(&sized, ["16px", "32px"], "s::before", "font-size");
+        assert_eq!(count, 1);
+        assert_eq!(run(&shown, "GEN").size, 24.0);
+        assert_eq!(run(&shown, "words").size, 16.0);
+        // Its side spaces at its size, as wide as before: 5 pixels round up to 2 sixths of
+        // 24, a third of an em.
+        let sided = |size: &str| {
+            format!(
+                "#s {{ display:inline; }} #s:before {{ content:\"GEN\"; padding-left:5px; font-size:{size}; }}"
+            )
+        };
+        let (_, shown) = halfway(&sided, ["16px", "32px"], "s::before", "font-size");
+        let spaces: Vec<(String, f32)> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.side_of.is_some())
+            .map(|run| (run.text.clone(), run.size))
+            .collect();
+        assert_eq!(spaces, vec![("\u{2004}".to_owned(), 24.0)]);
+        // A padded inline right after it keeps its own spaces at its own size.
+        let sibling = || {
+            node(
+                "page",
+                vec![node(
+                    "p",
+                    vec![node("s", vec![node("b", vec![text("x", "x")])])],
+                )],
+            )
+        };
+        let css = |size: &str| {
+            format!(
+                "#s {{ display:inline; }} #s:before {{ content:\"GEN\"; font-size:{size}; }}
+                 #b {{ display:inline; padding-left:5px; }}"
+            )
+        };
+        let from = BoxTree::new(sibling(), &css("16px")).unwrap();
+        let to = from.restyled(&[&css("32px")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "s::before", &["font-size"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let beside: Vec<(String, f32)> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.side_of.is_some())
+            .map(|run| (run.text.clone(), run.size))
+            .collect();
+        let unmoved: Vec<(String, f32)> = to
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.side_of.is_some())
+            .map(|run| (run.text.clone(), run.size))
+            .collect();
+        assert_eq!(beside, unmoved);
+        assert_eq!(beside.len(), 1);
     }
 
     #[test]

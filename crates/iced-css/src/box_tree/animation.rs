@@ -304,12 +304,24 @@ impl BoxTree {
                     (Some(value), None) => Some(Value::Color(value)),
                     (Some(value), Some(alpha)) => Some(Value::Fade(value, alpha)),
                 },
+                // Its box's own lengths, as a box's; it takes no min or max sizes.
+                Field::Width => Some(Value::Length(self.prepared.boxes[arena].width)),
+                Field::Height => Some(Value::Length(self.prepared.boxes[arena].height)),
+                Field::Margin(side) => Some(Value::Length(self.prepared.boxes[arena].margin[side])),
+                Field::Padding(side) => {
+                    Some(Value::Length(self.prepared.boxes[arena].padding[side]))
+                }
+                Field::BorderWidth(side) => Some(Value::Length(Dim::Px(
+                    self.prepared.boxes[arena].border[side],
+                ))),
+                Field::FontSize => own().map(|run| Value::Length(Dim::Px(run.size))),
                 _ => None,
             };
         }
         match field {
             Field::Color => own()?.color.map(Value::Color),
             Field::Visibility => Some(Value::Visible(own()?.visible)),
+            Field::FontSize => own().map(|run| Value::Length(Dim::Px(run.size))),
             // An inside marker piece before it carries no backgrounds: any of its runs that do.
             Field::Background => runs()
                 .filter(|run| run.generated == Some(key))
@@ -330,6 +342,10 @@ impl BoxTree {
 
     /// Lays a presented value on a `:before` or `:after` (`read_generated`).
     fn write_generated(&mut self, key: usize, field: Field, value: Value) {
+        if let (Field::FontSize, Value::Length(Dim::Px(now))) = (field, value) {
+            self.resize_generated(key, now);
+            return;
+        }
         if let Some(at) = self.generated_block(key) {
             let paint = &mut self.prepared.generated_boxes[at].1;
             match (field, value) {
@@ -350,6 +366,18 @@ impl BoxTree {
                 (Field::BorderColor(side), Value::Fade(value, alpha)) => {
                     paint.border[side] = Some(value);
                     paint.border_fade[side] = Some(alpha);
+                }
+                _ => {}
+            }
+            let arena = self.prepared.generated_boxes[at].0;
+            let target = &mut self.prepared.boxes[arena];
+            match (field, value) {
+                (Field::Width, Value::Length(value)) => target.width = value,
+                (Field::Height, Value::Length(value)) => target.height = value,
+                (Field::Margin(side), Value::Length(value)) => target.margin[side] = value,
+                (Field::Padding(side), Value::Length(value)) => target.padding[side] = value,
+                (Field::BorderWidth(side), Value::Length(Dim::Px(value))) => {
+                    target.border[side] = value;
                 }
                 _ => {}
             }
@@ -419,6 +447,61 @@ impl BoxTree {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// A `:before` or `:after`'s text at the presented size `now`: its runs by their share of
+    /// the size it has (small capitals keep theirs), and the stand-in spaces beside them,
+    /// which set the line's height too, keeping a fixed side's or indent's pixels. Lengths it
+    /// gives in `em` keep their pixels.
+    fn resize_generated(&mut self, key: usize, now: f32) {
+        let Some(target) = self
+            .texts
+            .iter()
+            .flatten()
+            .flat_map(|leaf| &leaf.runs)
+            .find(|run| run.generated == Some(key))
+            .map(|run| run.size)
+            .filter(|size| *size > 0.0)
+        else {
+            return;
+        };
+        let factor = now / target;
+        for leaf in self.texts.iter_mut().flatten() {
+            // Its runs, and the stand-in spaces made from them: an end side's from the text
+            // before it, any other's (a start side's, an indent's) from the text after it.
+            let own: Vec<bool> = leaf
+                .runs
+                .iter()
+                .map(|run| run.generated == Some(key))
+                .collect();
+            if !own.contains(&true) {
+                continue;
+            }
+            let ours: Vec<bool> = (0..leaf.runs.len())
+                .map(|at| {
+                    let run = &leaf.runs[at];
+                    if !run.spacer {
+                        return own[at];
+                    }
+                    let text = |near: usize| !leaf.runs[near].spacer;
+                    let from = if run.side_of.is_some_and(|side| side.1 == 1) {
+                        (0..at).rev().find(|near| text(*near))
+                    } else {
+                        (at + 1..leaf.runs.len()).find(|near| text(*near))
+                    };
+                    from.is_some_and(|near| own[near])
+                })
+                .collect();
+            for (run, _) in leaf.runs.iter_mut().zip(&ours).filter(|(_, ours)| **ours) {
+                run.size *= factor;
+                run.line_size = run.line_size.map(|size| size * factor);
+                if run.percent_room.is_some_and(|room| room.1 == 0.0)
+                    && let Some(text) = super::room_text(run, 0.0)
+                {
+                    run.text = text;
+                }
             }
         }
     }
