@@ -4292,6 +4292,62 @@ fn a_negative_inline_margin_pulls_only_its_own_box_and_outward() {
 }
 
 #[test]
+fn a_negative_inline_margin_animates_as_its_box_pulls() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "before "),
+                    node("s", vec![text("t", "in")]),
+                    text("b", " after"),
+                ],
+            )],
+        )
+    };
+    let css = |margin: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #s {{ display:inline; background-color:#ff0000; border-left:2px solid #0000ff;
+                   padding:0 12px; margin:0 {margin}; }}"
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let from = BoxTree::new(source(), &css("-8px")).unwrap();
+    let to = from.restyled(&[&css("0")]).unwrap();
+    let mid = from.restyled(&[&css("-4px")]).unwrap();
+    assert!(picture(mid, "pull-half"));
+    assert!(!picture(to.clone(), "pull-half"));
+    let start = Instant::now();
+    for (one, two) in [(&from, &to), (&to, &from)] {
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(
+                one,
+                two,
+                "s",
+                &["margin-left", "margin-right"],
+                AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+                start,
+            )
+            .unwrap();
+        // Halfway, either way: the box pulled by 4, as a page with -4 draws it.
+        animations.advance(start + Duration::from_millis(500), two);
+        assert!(picture(animations.presented(two), "pull-half"));
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

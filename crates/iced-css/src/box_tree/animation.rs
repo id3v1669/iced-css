@@ -305,15 +305,6 @@ impl BoxTree {
                 })
             };
             match field {
-                // A negative margin pulls the box over its neighbours: no in-between, nor for
-                // the border and padding whose spaces it narrows.
-                Field::Margin(side @ (1 | 3))
-                | Field::Padding(side @ (1 | 3))
-                | Field::BorderWidth(side @ (1 | 3))
-                    if sides.margin[side] < 0.0 =>
-                {
-                    return None;
-                }
                 Field::Margin(side @ (1 | 3)) => {
                     return Some(both(sides.margin[side], sides.percent_margin[side]));
                 }
@@ -391,6 +382,11 @@ impl BoxTree {
             && self.under_text(projected)
         {
             self.inline_side(projected, field, dim);
+            if let Field::Margin(side) | Field::Padding(side) | Field::BorderWidth(side) = field
+                && matches!(side, 1 | 3)
+            {
+                self.settle_pull(projected, side);
+            }
             return;
         }
         // Its text carries a weight, not its box: `reweigh`.
@@ -472,6 +468,42 @@ impl BoxTree {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// An inline element's side as its margin now pulls it (`TextRun::overhang`): its border
+    /// and padding's spaces narrow by as much of a negative margin as they cover, and its box
+    /// draws that far past them, as the styling makes them. What a pull takes from the space
+    /// beside them stays as the target styling laid that space out.
+    fn settle_pull(&mut self, projected: usize, side: usize) {
+        let Some(sides) = self.prepared.inline_boxes[projected] else {
+            return;
+        };
+        let node = self.originals[projected];
+        let pulled = (-sides.margin[side]).max(0.0);
+        let room = sides.border[side] + sides.padding[side];
+        let percent = sides.percent_padding[side];
+        for run in self
+            .texts
+            .iter_mut()
+            .flatten()
+            .flat_map(|leaf| &mut leaf.runs)
+            .filter(|run| {
+                run.side_of == Some((node, side)) && run.percent_room.is_some_and(|r| r.2)
+            })
+        {
+            let overhang = pulled.min(room);
+            run.overhang = overhang;
+            // Beside a percentage padding, taken again out of its room at layout.
+            run.pulled = if percent > 0.0 { pulled } else { 0.0 };
+            run.percent_room = Some((
+                if percent > 0.0 { room } else { room - overhang },
+                percent,
+                true,
+            ));
+            if let Some(text) = super::room_text(run, 0.0) {
+                run.text = text;
+            }
         }
     }
 
@@ -557,8 +589,13 @@ impl BoxTree {
             return;
         }
         // Across: its spaces, resized for their room, or made beside its first or last run.
+        // A negative margin has no spaces of its own: it narrows the others (`settle_pull`).
         let room = if margin {
-            (sides.margin[side], sides.percent_margin[side], false)
+            (
+                sides.margin[side].max(0.0),
+                sides.percent_margin[side],
+                false,
+            )
         } else {
             (
                 sides.border[side] + sides.padding[side],
@@ -593,7 +630,8 @@ impl BoxTree {
                 found = true;
             }
         }
-        if found {
+        // A margin with no room makes no spaces: a negative one draws as `settle_pull` has it.
+        if found || (margin && room.0 <= 0.0 && room.1 <= 0.0) {
             return;
         }
         // Its runs on its own lines: not its margin's spaces, nor what nests in blocks.

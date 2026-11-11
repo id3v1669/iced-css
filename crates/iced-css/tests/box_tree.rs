@@ -249,7 +249,10 @@ fn a_negative_inline_margin_pulls_its_box_over_what_is_beside_it() {
     };
     let side = |runs: &[iced_css::box_tree::TextRun], across: usize| {
         runs.iter()
-            .find(|run| run.side_of.is_some_and(|side| side.1 == across))
+            .find(|run| {
+                run.side_of.is_some_and(|side| side.1 == across)
+                    && run.percent_room.is_some_and(|room| room.2)
+            })
             .map(|run| (run.percent_room.unwrap().0, run.overhang, run.pull))
     };
     // Within its border and padding: their spaces narrow by it, its box draws past them.
@@ -305,20 +308,41 @@ fn a_negative_inline_margin_pulls_its_box_over_what_is_beside_it() {
         texts.contains(&"one ".to_owned()) && texts.contains(&"two".to_owned()),
         "{texts:?}"
     );
-    // Animating to or from a negative margin, or its border and padding there: at once.
+    // Animating to or from a negative margin, or its border and padding beside one: its
+    // box's start, (room, overhang), as the presented sides pull it.
     let start = std::time::Instant::now();
-    for (one, two, property) in [
-        ("margin-left:-8px;", "margin-left:0;", "margin-left"),
-        ("margin-left:0;", "margin-left:-8px;", "margin-left"),
+    for (one, two, property, quarter, half) in [
+        // Back out from -8 over 12 of padding: -6, then -4.
         (
-            "margin-left:-8px; padding-left:12px;",
-            "margin-left:-8px; padding-left:4px;",
-            "padding-left",
+            "padding-left:12px; margin-left:-8px;",
+            "padding-left:12px; margin-left:0;",
+            "margin-left",
+            (6.0, 6.0),
+            (8.0, 4.0),
         ),
+        // Across 0 over 4 of padding: -4, all of the padding, then 0.
         (
-            "margin-left:-8px; border-left:2px solid red;",
-            "margin-left:-8px; border-left:6px solid red;",
+            "padding-left:4px; margin-left:-8px;",
+            "padding-left:4px; margin-left:8px;",
+            "margin-left",
+            (0.0, 4.0),
+            (4.0, 0.0),
+        ),
+        // Its padding shrinking beside -8: 10 then 8, of which 8 pulled.
+        (
+            "padding-left:12px; margin-left:-8px;",
+            "padding-left:4px; margin-left:-8px;",
+            "padding-left",
+            (2.0, 8.0),
+            (0.0, 8.0),
+        ),
+        // Its border widening beside -8, over 4 of padding: 7 then 8.
+        (
+            "padding-left:4px; border-left:2px solid red; margin-left:-8px;",
+            "padding-left:4px; border-left:6px solid red; margin-left:-8px;",
             "border-left-width",
+            (0.0, 7.0),
+            (0.0, 8.0),
         ),
     ] {
         let css = |side: &str| format!("#s {{ display:inline; {side} }}");
@@ -333,10 +357,41 @@ fn a_negative_inline_margin_pulls_its_box_over_what_is_beside_it() {
             animations
                 .request(&from, &to, "s", &[property], timing, start)
                 .unwrap(),
-            0,
+            1,
             "{one} {two}"
         );
+        for (at, expected) in [(250, quarter), (500, half)] {
+            animations.advance(start + std::time::Duration::from_millis(at), &to);
+            let shown = animations.presented(&to);
+            let leaves = shown.text_leaves();
+            let found = side(&leaves[0].1.runs, 3).map(|(room, overhang, _)| (room, overhang));
+            assert_eq!(found, Some(expected), "{one} {two} at {at}");
+        }
     }
+    // No margin spaces made while the margin pulls; beside a percentage padding, the pull
+    // goes to layout, halfway at half.
+    let css =
+        |margin: &str| format!("#s {{ display:inline; padding-left:10%; margin-left:{margin}; }}");
+    let from = BoxTree::new(source(), &css("-8px")).unwrap();
+    let to = from.restyled(&[&css("0")]).unwrap();
+    let mut animations = iced_css::box_tree::BoxTreeAnimations::new();
+    let timing = iced_css::animation::clock::AnimationTiming::new(
+        std::time::Duration::from_secs(1),
+        std::time::Duration::ZERO,
+    );
+    animations
+        .request(&from, &to, "s", &["margin-left"], timing, start)
+        .unwrap();
+    animations.advance(start + std::time::Duration::from_millis(500), &to);
+    let shown = animations.presented(&to);
+    let starts: Vec<(bool, f32)> = shown.text_leaves()[0]
+        .1
+        .runs
+        .iter()
+        .filter(|run| run.side_of.is_some_and(|side| side.1 == 3))
+        .map(|run| (run.percent_room.unwrap().2, run.pulled))
+        .collect();
+    assert_eq!(starts, vec![(true, 4.0)]);
     // Sized again as its font size animates: still a place to draw from.
     let css = |size: &str| {
         format!("#s {{ display:inline; font-size:{size}; padding:0 4px; margin:0 -12px; }}")
