@@ -335,6 +335,12 @@ pub struct TextRun {
     pub fades: Vec<(usize, [f32; 3], f32)>,
     /// The opacity of `edge`'s color, 1 but while it fades.
     pub edge_alpha: f32,
+    /// For a side's border and padding spaces under a negative margin: how far its box
+    /// draws past them, outward over what comes before (start) or after (end) it.
+    pub overhang: f32,
+    /// What a negative margin pulls past its box's own border and padding, in pixels: the
+    /// space beside it narrows by up to that much.
+    pub pull: f32,
     /// An inside list marker's image: once it loads, the run is spaces as wide as it.
     pub marker_image: Option<MarkerImage>,
     pub weight: u16,
@@ -1358,6 +1364,8 @@ impl BoxTree {
                         side_of: None,
                         fades: Vec::new(),
                         edge_alpha: 1.0,
+                        overhang: 0.0,
+                        pull: 0.0,
                         marker_image: None,
                         weight: style.weight,
                         italic: style.italic,
@@ -1782,11 +1790,30 @@ impl BoxTree {
                     // Up to the next space that fits: a thin border must keep its bar.
                     let step = run.size.max(1.0) / 6.0;
                     let percent_padding = sides.percent_padding[across];
-                    let inner = (room > 0.0 || percent_padding > 0.0)
-                        .then(|| spacer((room / step).ceil() * step * 1.0001))
+                    // A negative margin pulls the box over what is beside it: its border and
+                    // padding's spaces narrow by it and the box draws past them; what is
+                    // left narrows the space beside it (`pull_aside`).
+                    let pulled = (-sides.margin[across]).max(0.0);
+                    let overhang = pulled.min(room);
+                    let kept = room - overhang;
+                    let pull = pulled - overhang;
+                    let inner = (room > 0.0 || percent_padding > 0.0 || pull > 0.0)
+                        .then(|| {
+                            if kept > 0.0 || percent_padding > 0.0 {
+                                spacer((kept / step).ceil() * step * 1.0001)
+                            } else {
+                                // Nothing of its own left: a place to draw its box from.
+                                indent_run(run, run.size.max(1.0)).map(|spacer| TextRun {
+                                    text: "\u{200B}".to_owned(),
+                                    ..spacer
+                                })
+                            }
+                        })
                         .flatten()
                         .map(|spacer| TextRun {
-                            percent_room: Some((room, percent_padding, true)),
+                            percent_room: Some((kept, percent_padding, true)),
+                            overhang,
+                            pull,
                             side_of: Some((box_key(element), across)),
                             // Its own background comes with its box, over its padding too.
                             background: if box_paints[element].background.is_some() && visible {
@@ -1833,6 +1860,7 @@ impl BoxTree {
                 placed.push(run);
                 placed.extend(closing);
             }
+            pull_aside(&mut placed);
             leaf.runs = placed;
         }
         // 16.1: `text-indent` applies to the first line of a block container, so to the leaf
@@ -1962,6 +1990,8 @@ impl BoxTree {
                             side_of: None,
                             fades: Vec::new(),
                             edge_alpha: 1.0,
+                            overhang: 0.0,
+                            pull: 0.0,
                             marker_image: None,
                             backgrounds: Vec::new(),
                             weight: style.weight,
@@ -3014,6 +3044,36 @@ fn spaces(size: f32, indent: f32) -> String {
     text
 }
 
+/// What a typical space is wide, as a share of the font size, where it cannot be measured.
+const SPACE_SHARE: f32 = 0.25;
+
+/// Narrows the space beside each side that a negative margin pulls past its own border and
+/// padding (`TextRun::pull`): the one before a start side, the one after an end side. A
+/// space is taken to be `SPACE_SHARE` of its font wide; a pull wider than it goes no further.
+fn pull_aside(runs: &mut [TextRun]) {
+    for at in 0..runs.len() {
+        let (pull, side) = (runs[at].pull, runs[at].side_of.map(|side| side.1));
+        if pull <= 0.0 {
+            continue;
+        }
+        let near = if side == Some(3) {
+            (0..at).rev().find(|near| !runs[*near].text.is_empty())
+        } else {
+            (at + 1..runs.len()).find(|near| !runs[*near].text.is_empty())
+        };
+        let Some(near) = near else { continue };
+        let beside = &mut runs[near];
+        let size = beside.size;
+        let narrower = spaces(size, (SPACE_SHARE * size - pull).max(0.0));
+        if side == Some(3) && beside.text.ends_with(' ') {
+            beside.text.pop();
+            beside.text.push_str(&narrower);
+        } else if side != Some(3) && beside.text.starts_with(' ') {
+            beside.text.replace_range(..1, &narrower);
+        }
+    }
+}
+
 /// A side's or indent's spaces for its room (`TextRun::percent_room`) at the run's size,
 /// with `width` the block's content width; a paragraph's direction mark on it stays.
 fn room_text(run: &TextRun, width: f32) -> Option<String> {
@@ -3024,6 +3084,10 @@ fn room_text(run: &TextRun, width: f32) -> Option<String> {
         room = (room / step).ceil() * step * 1.0001;
     }
     let mut text = spaces(run.size, room);
+    // A box drawn past spaces it has none of keeps a place to draw from.
+    if text.is_empty() && run.overhang > 0.0 {
+        text.push('\u{200B}');
+    }
     if let Some(mark) = run
         .text
         .chars()
@@ -3047,6 +3111,8 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         side_of: None,
         fades: Vec::new(),
         edge_alpha: 1.0,
+        overhang: 0.0,
+        pull: 0.0,
         marker_image: None,
         backgrounds: Vec::new(),
         underline: false,
@@ -3773,8 +3839,11 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
             if !run.visible {
                 continue;
             }
-            // A bar draws with its own box, the innermost one, which shows when its spaces do.
-            if let (Some((start, width, edge)), Some(sides)) = (run.edge, run.inline_boxes.last()) {
+            // A bar draws with its own box, the innermost one, which shows when its spaces do;
+            // past them, under a negative margin, with the box's overhang below.
+            if let (Some((start, width, edge)), Some(sides)) = (run.edge, run.inline_boxes.last())
+                && run.overhang <= 0.0
+            {
                 let top = content_top - sides.padding[0] - sides.border[0].0;
                 let bottom = content_bottom + sides.padding[1] + sides.border[1].0;
                 let bounds = Rectangle {
@@ -3804,6 +3873,85 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
             }
             if run.line_through {
                 quad(renderer, line(0.0), color, 1.0);
+            }
+        }
+    }
+    // A negative margin pulls a box past its spaces (`TextRun::overhang`): its own box draws
+    // that strip outward, with its bar at the outer edge, after every run, so what follows
+    // inside a box around it does not cover it.
+    for (index, run) in leaf.runs.iter().enumerate() {
+        let Some((key, side)) = run.side_of.filter(|_| run.overhang > 0.0) else {
+            continue;
+        };
+        let Some(sides) = run
+            .inline_boxes
+            .iter()
+            .rev()
+            .find(|sides| sides.owner == key && sides.visible)
+        else {
+            continue;
+        };
+        // A start side's spaces come before its text: left, as the bars on a line take them
+        // (right-to-left words are as approximate as their sides).
+        let left = side == 3;
+        for area in shaped.span_bounds(index) {
+            let area = Rectangle {
+                x: area.x + corner.x,
+                y: area.y + corner.y,
+                ..area
+            };
+            let height = area.height.min(run.line_size.unwrap_or(run.size) * 1.3);
+            let content_top = area.y + (area.height - height) / 2.0;
+            let top = content_top - sides.padding[0];
+            let bottom = content_top + height + sides.padding[1];
+            let strip = Rectangle {
+                x: if left {
+                    area.x - run.overhang
+                } else {
+                    area.x + area.width
+                },
+                width: run.overhang,
+                ..area
+            };
+            if let Some(background) = sides.background {
+                let bounds = Rectangle {
+                    y: top,
+                    height: bottom - top,
+                    ..strip
+                };
+                quad(renderer, bounds, background, sides.alpha);
+            }
+            for (at, (thick, edge), band) in [
+                (top - sides.border[0].0, sides.border[0], 0),
+                (bottom, sides.border[1], 2),
+            ] {
+                if let Some(edge) = edge.filter(|_| thick > 0.0) {
+                    let bounds = Rectangle {
+                        y: at,
+                        height: thick,
+                        ..strip
+                    };
+                    let style = sides.border_style[band / 2];
+                    for (piece, shade) in band_pieces(bounds, band, style, edge) {
+                        quad(renderer, piece, shade, sides.border_alpha[band / 2]);
+                    }
+                }
+            }
+            if let (true, Some((_, width, edge))) = (run.visible, run.edge) {
+                let bounds = Rectangle {
+                    x: if left {
+                        strip.x
+                    } else {
+                        strip.x + strip.width - width
+                    },
+                    y: top - sides.border[0].0,
+                    width,
+                    height: bottom + sides.border[1].0 - (top - sides.border[0].0),
+                };
+                let bar = if left { 3 } else { 1 };
+                for (piece, shade) in band_pieces(bounds, bar, run.edge_style, edge) {
+                    quad(renderer, piece, shade, run.edge_alpha);
+                }
             }
         }
     }

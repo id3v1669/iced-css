@@ -4019,6 +4019,255 @@ fn a_border_a_hover_gives_fades_its_color_there() {
 }
 
 #[test]
+fn a_negative_inline_margin_draws_its_box_over_the_text_before() {
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "before "),
+                    node("s", vec![text("t", "in")]),
+                    text("b", " after"),
+                ],
+            )],
+        )
+    };
+    // The leftmost red and rightmost dark pixel of a page.
+    let measure = |css: &str, name: &str| {
+        let css = format!("#page {{ background-color:white; padding:20px; color:#000000; }} {css}");
+        let tree = BoxTree::new(source(), &css).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            ui.snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let mut red = (usize::MAX, 0);
+        let mut dark = 0;
+        let mut blue = (usize::MAX, 0);
+        for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
+            let x = at % width;
+            if pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60 {
+                red = (red.0.min(x), red.1.max(x));
+            }
+            if pixel[0] < 80 && pixel[1] < 80 && pixel[2] < 80 {
+                dark = dark.max(x);
+            }
+            if pixel[0] < 60 && pixel[1] < 60 && pixel[2] > 200 {
+                blue = (blue.0.min(x), blue.1 + 1);
+            }
+        }
+        (red, dark, blue)
+    };
+    let span = |side: &str| format!("#s {{ display:inline; background-color:#ff0000; {side} }}");
+    // Pulled by 8 within its 12 pixels of padding: its text where 4 of padding put it, its
+    // box 8 further out, over the word before. Snapshots draw at a scale of 2.
+    let (reference_red, reference_dark, _) = measure(&span("padding:0 4px;"), "negative-reference");
+    let (red, dark, _) = measure(&span("padding:0 12px; margin:0 -8px;"), "negative-pulled");
+    assert!(
+        (reference_red.0 as i32 - red.0 as i32 - 16).abs() <= 3,
+        "{reference_red:?} {red:?}"
+    );
+    assert!(
+        (red.1 as i32 - reference_red.1 as i32 - 16).abs() <= 3,
+        "{reference_red:?} {red:?}"
+    );
+    assert!(
+        (reference_dark as i32 - dark as i32).abs() <= 3,
+        "{reference_dark} {dark}"
+    );
+    // Pulled past its padding: the spaces beside it go, so what follows comes nearer.
+    let (past_red, past, _) = measure(&span("padding:0 4px; margin:0 -12px;"), "negative-past");
+    assert!(past + 2 < reference_dark, "{past} {reference_dark}");
+    // Its box still draws from where its padding would start, past the word before.
+    assert!(
+        past_red.0 + 2 < reference_red.0,
+        "{past_red:?} {reference_red:?}"
+    );
+    // A start border draws at the box's pulled edge: 8 further out.
+    let (_, _, plain) = measure(&span("border-left:4px solid #0000ff;"), "negative-bar");
+    let (_, _, pulled) = measure(
+        &span("border-left:4px solid #0000ff; padding-left:8px; margin-left:-8px;"),
+        "negative-bar-pulled",
+    );
+    assert!(
+        (plain.0 as i32 - pulled.0 as i32 - 16).abs() <= 3,
+        "{plain:?} {pulled:?}"
+    );
+    // One bar, at the pulled edge: as many blue pixels as the bar unpulled.
+    assert!(pulled.1 <= plain.1 + plain.1 / 8, "{plain:?} {pulled:?}");
+}
+
+#[test]
+fn a_negative_inline_margin_pulls_only_its_own_box_and_outward() {
+    // Extents of red, blue and dark pixels: (leftmost, rightmost) of each.
+    let measure = |source: Node, css: &str, name: &str| {
+        let css = format!("#page {{ background-color:white; padding:20px; color:#000000; }} {css}");
+        let tree = BoxTree::new(source, &css).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            ui.snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let mut extents = [(usize::MAX, 0); 3];
+        for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
+            let x = at % width;
+            let which = if pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60 {
+                0
+            } else if pixel[0] < 60 && pixel[1] < 60 && pixel[2] > 200 {
+                1
+            } else if pixel[0] < 80 && pixel[1] < 80 && pixel[2] < 80 {
+                2
+            } else {
+                continue;
+            };
+            extents[which] = (extents[which].0.min(x), extents[which].1.max(x));
+        }
+        extents
+    };
+    let nested = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "before "),
+                    node(
+                        "x",
+                        vec![node("s", vec![text("t", "in")]), text("b", " after")],
+                    ),
+                ],
+            )],
+        )
+    };
+    // A box around it keeps its own edges: the pull is the inner box's alone.
+    let outer = "#x { display:inline; border:2px solid #0000ff; }";
+    let plain = measure(
+        nested(),
+        &format!("{outer} #s {{ display:inline; }}"),
+        "pull-outer",
+    );
+    let pulled = measure(
+        nested(),
+        &format!(
+            "{outer} #s {{ display:inline; background-color:#ff0000; padding-left:8px; margin-left:-8px; }}"
+        ),
+        "pull-outer-pulled",
+    );
+    assert!(
+        (plain[1].0 as i32 - pulled[1].0 as i32).abs() <= 2,
+        "{plain:?} {pulled:?}"
+    );
+    // Nor when it is hidden: nothing of it draws, and the box around it stays.
+    let hidden = measure(
+        nested(),
+        &format!(
+            "{outer} #s {{ display:inline; visibility:hidden; padding-left:8px; margin-left:-8px; }}"
+        ),
+        "pull-outer-hidden",
+    );
+    assert!(
+        (plain[1].0 as i32 - hidden[1].0 as i32).abs() <= 2,
+        "{plain:?} {hidden:?}"
+    );
+    // Its own top band draws past its spaces too.
+    let banded =
+        |side: &str| format!("#s {{ display:inline; border-top:2px solid #0000ff; {side} }}");
+    let flat = measure(nested(), &banded("padding-left:4px;"), "pull-band");
+    let pulled = measure(
+        nested(),
+        &banded("padding-left:12px; margin-left:-8px;"),
+        "pull-band-pulled",
+    );
+    assert!(
+        (flat[1].0 as i32 - pulled[1].0 as i32 - 16).abs() <= 3,
+        "{flat:?} {pulled:?}"
+    );
+    // Its end pulled into what follows inside a box with a background: still drawn.
+    let outer = "#x { display:inline; background-color:#0000ff; color:#ffffff; }";
+    let end =
+        |side: &str| format!("{outer} #s {{ display:inline; background-color:#ff0000; {side} }}");
+    let reference = measure(nested(), &end("padding-right:4px;"), "pull-end");
+    let pulled = measure(
+        nested(),
+        &end("padding-right:12px; margin-right:-8px;"),
+        "pull-end-pulled",
+    );
+    assert!(
+        (pulled[0].1 as i32 - reference[0].1 as i32 - 16).abs() <= 3,
+        "{reference:?} {pulled:?}"
+    );
+    // In a right-to-left paragraph, left-to-right words keep their order: its start is
+    // still on the left of its text, and the box draws further left, not over its text.
+    let rtl = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "before "),
+                    node("s", vec![text("t", "in")]),
+                    text("b", " after"),
+                ],
+            )],
+        )
+    };
+    let side = |side: &str| {
+        format!("#p {{ direction:rtl; }} #s {{ display:inline; background-color:#ff0000; {side} }}")
+    };
+    let reference = measure(rtl(), &side("padding-left:4px;"), "pull-rtl");
+    let pulled = measure(
+        rtl(),
+        &side("padding-left:12px; margin-left:-8px;"),
+        "pull-rtl-pulled",
+    );
+    assert!(
+        (reference[0].0 as i32 - pulled[0].0 as i32 - 16).abs() <= 3,
+        "{reference:?} {pulled:?}"
+    );
+    assert!(
+        (pulled[0].1 as i32 - reference[0].1 as i32).abs() <= 2,
+        "{reference:?} {pulled:?}"
+    );
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

@@ -229,6 +229,148 @@ fn positioned_boxes_paint_in_tree_order_with_their_descendants() {
 }
 
 #[test]
+fn a_negative_inline_margin_pulls_its_box_over_what_is_beside_it() {
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "before "),
+                    node("s", vec![text("t", "in")]),
+                    text("b", " after"),
+                ],
+            )],
+        )
+    };
+    let runs = |css: &str| {
+        let tree = BoxTree::new(source(), css).unwrap();
+        tree.text_leaves()[0].1.runs.clone()
+    };
+    let side = |runs: &[iced_css::box_tree::TextRun], across: usize| {
+        runs.iter()
+            .find(|run| run.side_of.is_some_and(|side| side.1 == across))
+            .map(|run| (run.percent_room.unwrap().0, run.overhang, run.pull))
+    };
+    // Within its border and padding: their spaces narrow by it, its box draws past them.
+    let pulled = runs("#s { display:inline; padding:0 12px; margin:0 -8px; }");
+    assert_eq!(side(&pulled, 3), Some((4.0, 8.0, 0.0)));
+    assert_eq!(side(&pulled, 1), Some((4.0, 8.0, 0.0)));
+    // The words beside it keep their spaces.
+    assert!(pulled.iter().any(|run| run.text == "before "));
+    assert!(pulled.iter().any(|run| run.text == " after"));
+    // Past them: the space beside narrows, here all of it.
+    let past = runs("#s { display:inline; padding:0 4px; margin:0 -12px; }");
+    assert_eq!(side(&past, 3), Some((0.0, 4.0, 8.0)));
+    // With none of its border and padding's room left, a zero-width space to draw from.
+    assert!(
+        past.iter()
+            .any(|run| run.side_of.is_some() && run.text == "\u{200B}")
+    );
+    assert!(past.iter().any(|run| run.text == "before"));
+    assert!(past.iter().any(|run| run.text == "after"));
+    // A little past them: narrower, not gone: a sixth of the 16 pixel font is left.
+    let little = runs("#s { display:inline; margin:0 -1.2px; }");
+    assert!(
+        little.iter().any(|run| run.text == "before\u{2006}"),
+        "{:?}",
+        little.iter().map(|run| &run.text).collect::<Vec<_>>()
+    );
+    // The space nearest it narrows, not an earlier one.
+    let nested = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "one "),
+                    node("x", vec![text("c", "two ")]),
+                    node("s", vec![text("t", "in")]),
+                ],
+            )],
+        )
+    };
+    let tree = BoxTree::new(
+        nested(),
+        "#x, #s { display:inline; } #s { margin-left:-8px; }",
+    )
+    .unwrap();
+    let texts: Vec<String> = tree.text_leaves()[0]
+        .1
+        .runs
+        .iter()
+        .map(|run| run.text.clone())
+        .collect();
+    assert!(
+        texts.contains(&"one ".to_owned()) && texts.contains(&"two".to_owned()),
+        "{texts:?}"
+    );
+    // Animating to or from a negative margin, or its border and padding there: at once.
+    let start = std::time::Instant::now();
+    for (one, two, property) in [
+        ("margin-left:-8px;", "margin-left:0;", "margin-left"),
+        ("margin-left:0;", "margin-left:-8px;", "margin-left"),
+        (
+            "margin-left:-8px; padding-left:12px;",
+            "margin-left:-8px; padding-left:4px;",
+            "padding-left",
+        ),
+        (
+            "margin-left:-8px; border-left:2px solid red;",
+            "margin-left:-8px; border-left:6px solid red;",
+            "border-left-width",
+        ),
+    ] {
+        let css = |side: &str| format!("#s {{ display:inline; {side} }}");
+        let from = BoxTree::new(source(), &css(one)).unwrap();
+        let to = from.restyled(&[&css(two)]).unwrap();
+        let mut animations = iced_css::box_tree::BoxTreeAnimations::new();
+        let timing = iced_css::animation::clock::AnimationTiming::new(
+            std::time::Duration::from_secs(1),
+            std::time::Duration::ZERO,
+        );
+        assert_eq!(
+            animations
+                .request(&from, &to, "s", &[property], timing, start)
+                .unwrap(),
+            0,
+            "{one} {two}"
+        );
+    }
+    // Sized again as its font size animates: still a place to draw from.
+    let css = |size: &str| {
+        format!("#s {{ display:inline; font-size:{size}; padding:0 4px; margin:0 -12px; }}")
+    };
+    let from = BoxTree::new(source(), &css("16px")).unwrap();
+    let to = from.restyled(&[&css("32px")]).unwrap();
+    let mut animations = iced_css::box_tree::BoxTreeAnimations::new();
+    let timing = iced_css::animation::clock::AnimationTiming::new(
+        std::time::Duration::from_secs(1),
+        std::time::Duration::ZERO,
+    );
+    animations
+        .request(&from, &to, "s", &["font-size"], timing, start)
+        .unwrap();
+    animations.advance(start + std::time::Duration::from_millis(500), &to);
+    let shown = animations.presented(&to);
+    let sides: Vec<String> = shown.text_leaves()[0]
+        .1
+        .runs
+        .iter()
+        .filter(|run| run.side_of.is_some())
+        .map(|run| run.text.clone())
+        .collect();
+    assert_eq!(sides, vec!["\u{200B}".to_owned(); 2]);
+    // A positive margin is spaces of its own, as before.
+    let positive = runs("#s { display:inline; margin:0 8px; }");
+    assert!(
+        positive
+            .iter()
+            .all(|run| run.overhang == 0.0 && run.pull == 0.0)
+    );
+}
+
+#[test]
 fn text_measures_at_a_whole_pixel_and_empty_text_takes_no_line() {
     let root = node("page", vec![text("empty", "  "), text2("copy")]);
     let tree = BoxTree::new(root, "#copy { width:33.3px; display:block; }").unwrap();

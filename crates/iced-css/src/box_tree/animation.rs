@@ -304,6 +304,15 @@ impl BoxTree {
                 })
             };
             match field {
+                // A negative margin pulls the box over its neighbours: no in-between, nor for
+                // the border and padding whose spaces it narrows.
+                Field::Margin(side @ (1 | 3))
+                | Field::Padding(side @ (1 | 3))
+                | Field::BorderWidth(side @ (1 | 3))
+                    if sides.margin[side] < 0.0 =>
+                {
+                    return None;
+                }
                 Field::Margin(side @ (1 | 3)) => {
                     return Some(both(sides.margin[side], sides.percent_margin[side]));
                 }
