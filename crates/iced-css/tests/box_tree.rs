@@ -361,6 +361,67 @@ fn a_negative_inline_margin_pulls_its_box_over_what_is_beside_it() {
         .map(|run| run.text.clone())
         .collect();
     assert_eq!(sides, vec!["\u{200B}".to_owned(); 2]);
+    // Beside a percentage padding, taken out of its room at layout: the words keep their
+    // space.
+    let percent = runs("#s { display:inline; padding:0 10%; margin:0 -8px; }");
+    let spacers: Vec<(f32, f32)> = percent
+        .iter()
+        .filter(|run| run.side_of.is_some())
+        .map(|run| (run.pulled, run.pull))
+        .collect();
+    assert_eq!(spacers, vec![(8.0, 0.0); 2]);
+    assert!(percent.iter().any(|run| run.text == "before "));
+    // Until layout, and where no width applies, out of the fixed part: here its border.
+    let bordered = runs(
+        "#s { display:inline; border-left:4px solid red; padding-left:10%; margin-left:-8px; }",
+    );
+    assert_eq!(side(&bordered, 3), Some((4.0, 4.0, 0.0)));
+    // A box around it whose padding animates takes nothing of its pull.
+    let wrapped = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("c", "before "),
+                    node(
+                        "a",
+                        vec![node("s", vec![text("t", "in")]), text("d", " after")],
+                    ),
+                ],
+            )],
+        )
+    };
+    let css = |padding: &str| {
+        format!(
+            "#a {{ display:inline; padding-left:{padding}; }}
+             #s {{ display:inline; padding-left:10%; margin-left:-8px; }}"
+        )
+    };
+    // Animating out: its spaces made anew from the inner box's, the first in it.
+    let from = BoxTree::new(wrapped(), &css("10px")).unwrap();
+    let to = from.restyled(&[&css("0")]).unwrap();
+    let mut animations = iced_css::box_tree::BoxTreeAnimations::new();
+    let timing = iced_css::animation::clock::AnimationTiming::new(
+        std::time::Duration::from_secs(1),
+        std::time::Duration::ZERO,
+    );
+    let begin = std::time::Instant::now();
+    animations
+        .request(&from, &to, "a", &["padding-left"], timing, begin)
+        .unwrap();
+    animations.advance(begin + std::time::Duration::from_millis(500), &to);
+    let shown = animations.presented(&to);
+    // Its own start spaces carry the pull; the animated box's carry none.
+    let mut pulls: Vec<f32> = shown.text_leaves()[0]
+        .1
+        .runs
+        .iter()
+        .filter(|run| run.side_of.is_some_and(|side| side.1 == 3))
+        .map(|run| run.pulled)
+        .collect();
+    pulls.sort_by(f32::total_cmp);
+    assert_eq!(pulls, vec![0.0, 8.0]);
     // A positive margin is spaces of its own, as before.
     let positive = runs("#s { display:inline; margin:0 8px; }");
     assert!(

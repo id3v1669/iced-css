@@ -4112,6 +4112,30 @@ fn a_negative_inline_margin_draws_its_box_over_the_text_before() {
         (plain.0 as i32 - pulled.0 as i32 - 16).abs() <= 3,
         "{plain:?} {pulled:?}"
     );
+    // Beside a percentage padding, out of that padding: box and text both 8 further out
+    // than with the padding alone, the space before them kept.
+    let (percent_red, percent_dark, _) = measure(&span("padding:0 0 0 10%;"), "negative-percent");
+    let (pulled_red, pulled_dark, _) = measure(
+        &span("padding:0 0 0 10%; margin-left:-8px;"),
+        "negative-percent-pulled",
+    );
+    assert!(
+        (percent_red.0 as i32 - pulled_red.0 as i32 - 16).abs() <= 3,
+        "{percent_red:?} {pulled_red:?}"
+    );
+    assert!(
+        (percent_dark as i32 - pulled_dark as i32 - 16).abs() <= 3,
+        "{percent_dark} {pulled_dark}"
+    );
+    // A padding narrower than the pull: all of it, no more, the box drawn from where its
+    // text now starts.
+    let (thin_red, _, _) = measure(&span("padding:0 0 0 0.5%;"), "negative-thin");
+    let (taken_red, _, _) = measure(
+        &span("padding:0 0 0 0.5%; margin-left:-8px;"),
+        "negative-thin-pulled",
+    );
+    let moved = thin_red.0 as i32 - taken_red.0 as i32;
+    assert!((6..=13).contains(&moved), "{thin_red:?} {taken_red:?}");
     // One bar, at the pulled edge: as many blue pixels as the bar unpulled.
     assert!(pulled.1 <= plain.1 + plain.1 / 8, "{plain:?} {pulled:?}");
 }

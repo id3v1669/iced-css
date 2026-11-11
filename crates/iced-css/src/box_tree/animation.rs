@@ -683,6 +683,10 @@ impl BoxTree {
             inline_boxes,
             visible: if margin { base.visible } else { paint.visible },
             owner: if margin { margin_owner } else { node },
+            // Its own box's sides: nothing of another's negative margin.
+            overhang: 0.0,
+            pull: 0.0,
+            pulled: 0.0,
             ..base.clone()
         };
         if let Some(text) = super::room_text(&spacer, 0.0) {

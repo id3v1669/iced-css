@@ -341,6 +341,9 @@ pub struct TextRun {
     /// What a negative margin pulls past its box's own border and padding, in pixels: the
     /// space beside it narrows by up to that much.
     pub pull: f32,
+    /// A negative margin's pixels beside a percentage padding, taken out of the room it has
+    /// at layout, where `overhang` is set (`percent_overhang`).
+    pub pulled: f32,
     /// An inside list marker's image: once it loads, the run is spaces as wide as it.
     pub marker_image: Option<MarkerImage>,
     pub weight: u16,
@@ -1366,6 +1369,7 @@ impl BoxTree {
                         edge_alpha: 1.0,
                         overhang: 0.0,
                         pull: 0.0,
+                        pulled: 0.0,
                         marker_image: None,
                         weight: style.weight,
                         italic: style.italic,
@@ -1793,10 +1797,14 @@ impl BoxTree {
                     // A negative margin pulls the box over what is beside it: its border and
                     // padding's spaces narrow by it and the box draws past them; what is
                     // left narrows the space beside it (`pull_aside`).
+                    // Beside a percentage padding, whose room is known only at layout, it is
+                    // taken again there, out of that room alone; until then, and where no
+                    // width applies, out of its fixed part.
                     let pulled = (-sides.margin[across]).max(0.0);
+                    let later = if percent_padding > 0.0 { pulled } else { 0.0 };
                     let overhang = pulled.min(room);
                     let kept = room - overhang;
-                    let pull = pulled - overhang;
+                    let pull = if later > 0.0 { 0.0 } else { pulled - overhang };
                     let inner = (room > 0.0 || percent_padding > 0.0 || pull > 0.0)
                         .then(|| {
                             if kept > 0.0 || percent_padding > 0.0 {
@@ -1811,9 +1819,14 @@ impl BoxTree {
                         })
                         .flatten()
                         .map(|spacer| TextRun {
-                            percent_room: Some((kept, percent_padding, true)),
+                            percent_room: Some((
+                                if later > 0.0 { room } else { kept },
+                                percent_padding,
+                                true,
+                            )),
                             overhang,
                             pull,
+                            pulled: later,
                             side_of: Some((box_key(element), across)),
                             // Its own background comes with its box, over its padding too.
                             background: if box_paints[element].background.is_some() && visible {
@@ -1992,6 +2005,7 @@ impl BoxTree {
                             edge_alpha: 1.0,
                             overhang: 0.0,
                             pull: 0.0,
+                            pulled: 0.0,
                             marker_image: None,
                             backgrounds: Vec::new(),
                             weight: style.weight,
@@ -2258,6 +2272,9 @@ impl BoxTree {
                 let Some(text) = room_text(run, width) else {
                     continue;
                 };
+                if run.pulled > 0.0 {
+                    run.overhang = percent_overhang(run, width);
+                }
                 if run.text != text {
                     run.text = text;
                     changed = true;
@@ -3074,18 +3091,31 @@ fn pull_aside(runs: &mut [TextRun]) {
     }
 }
 
+/// What a negative margin beside a percentage padding takes out of the room it has at
+/// `width` (`TextRun::pulled`): no more than that room.
+fn percent_overhang(run: &TextRun, width: f32) -> f32 {
+    match run.percent_room {
+        Some((fixed, percent, _)) if run.pulled > 0.0 => {
+            run.pulled.min((fixed + percent / 100.0 * width).max(0.0))
+        }
+        _ => 0.0,
+    }
+}
+
 /// A side's or indent's spaces for its room (`TextRun::percent_room`) at the run's size,
 /// with `width` the block's content width; a paragraph's direction mark on it stays.
 fn room_text(run: &TextRun, width: f32) -> Option<String> {
     let (fixed, percent, rounded) = run.percent_room?;
     let mut room = fixed + percent / 100.0 * width;
+    let over = percent_overhang(run, width);
+    room -= over;
     if rounded {
         let step = run.size.max(1.0) / 6.0;
         room = (room / step).ceil() * step * 1.0001;
     }
     let mut text = spaces(run.size, room);
     // A box drawn past spaces it has none of keeps a place to draw from.
-    if text.is_empty() && run.overhang > 0.0 {
+    if text.is_empty() && (run.overhang > 0.0 || over > 0.0) {
         text.push('\u{200B}');
     }
     if let Some(mark) = run
@@ -3113,6 +3143,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         edge_alpha: 1.0,
         overhang: 0.0,
         pull: 0.0,
+        pulled: 0.0,
         marker_image: None,
         backgrounds: Vec::new(),
         underline: false,
