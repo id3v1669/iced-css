@@ -1233,6 +1233,15 @@ impl BoxTree {
                     continue;
                 }
                 self.write_generated(key, presented.field, presented.now);
+                // Its currentColor borders, where they still show the target.
+                for follower in &presented.followers.boxes {
+                    for side in (0..4).filter(|side| follower.borders[*side]) {
+                        let field = Field::BorderColor(side);
+                        if self.read_generated(key, field) == Some(presented.target) {
+                            self.write_generated(key, field, presented.now);
+                        }
+                    }
+                }
                 continue;
             }
             if self.read(projected, presented.field) != Some(presented.target) {
@@ -2533,7 +2542,25 @@ impl BoxTreeAnimations {
                 start,
                 target,
                 followers: match field {
-                    // A `:before` or `:after`'s currentColor borders change at once.
+                    // A `:before` or `:after`'s borders that show its color at both ends:
+                    // its currentColor ones.
+                    Field::Color if generated => match from_key {
+                        Some(one) => Followers {
+                            boxes: vec![Follower {
+                                node: one,
+                                // The other end is checked as it presents: what still shows
+                                // the target moves.
+                                borders: std::array::from_fn(|side| {
+                                    from.read_generated(one, Field::BorderColor(side))
+                                        == Some(committed)
+                                }),
+                                outline: false,
+                                marker: false,
+                            }],
+                            ..Followers::default()
+                        },
+                        None => Followers::default(),
+                    },
                     _ if generated => Followers::default(),
                     Field::Color => from.followers(to, after, committed, target),
                     Field::FontWeight => from.weight_followers(to, after, committed),

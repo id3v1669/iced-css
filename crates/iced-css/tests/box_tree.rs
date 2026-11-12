@@ -5200,6 +5200,51 @@ mod animation {
             .map(|layer| (usize::from(layer.0 > usize::MAX / 2), layer.2))
             .collect();
         assert_eq!(layers, vec![(0, 0.5), (1, 0.5)]);
+        // Its currentColor borders move with its color; one given its own color stays.
+        let current = |color: &str| {
+            format!(
+                "#s {{ display:inline; }}
+                 #s:before {{ content:\"GEN\"; color:{color}; border:2px solid;
+                              border-top-color:#ff0000; border-bottom-color:#0000ff; }}"
+            )
+        };
+        let (count, shown) = halfway(&current, ["#ff0000", "#0000ff"], "s::before", "color");
+        assert_eq!(count, 1);
+        let own = *run(&shown, "GEN").inline_boxes.last().unwrap();
+        // Red, then blue of their own: neither shows its color at both ends.
+        assert_eq!(own.border[0].1, Some([1.0, 0.0, 0.0]));
+        assert_eq!(own.border[1].1, Some([0.0, 0.0, 1.0]));
+        // Given a color of its own by another styling, as a hover can: it stays.
+        let from = BoxTree::new(source(), &current("#ff0000")).unwrap();
+        let to = from.restyled(&[&current("#0000ff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "s::before", &["color"], second(), start)
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let moved = to
+            .restyled(&[
+                &current("#0000ff"),
+                "#s:before { border-left-color:#00ff00; }",
+            ])
+            .unwrap();
+        let left = animations
+            .presented(&moved)
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .find_map(|run| run.edge.filter(|edge| edge.0).map(|edge| edge.2));
+        assert_eq!(left, Some([0.0, 1.0, 0.0]));
+        let bars: Vec<[f32; 3]> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter_map(|run| run.edge.map(|edge| edge.2))
+            .collect();
+        assert!(
+            bars.len() == 2 && bars.iter().all(|bar| near(*bar, mid)),
+            "{bars:?}"
+        );
         // A `:before` with no content, or an element with no such id: nothing.
         let (count, _) = halfway(&after, ["#ff0000", "#0000ff"], "s::before", "color");
         assert_eq!(count, 0);

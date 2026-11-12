@@ -4740,6 +4740,46 @@ fn an_inline_before_fades_its_background_on_its_line() {
 }
 
 #[test]
+fn a_block_before_carries_its_current_color_border() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || node("page", vec![node("s", vec![text("t", "after it")])]);
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let css = |color: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; }}
+             #s:before {{ content:\"block\"; display:block; height:40px; color:{color}; border:6px solid; }}"
+        )
+    };
+    let from = BoxTree::new(source(), &css("#ff0000")).unwrap();
+    let to = from.restyled(&[&css("#0000ff")]).unwrap();
+    let mid = from.restyled(&[&css("rgb(50%, 0%, 50%)")]).unwrap();
+    assert!(picture(mid, "current-border-half"));
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    animations
+        .request(
+            &from,
+            &to,
+            "s::before",
+            &["color"],
+            AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+            start,
+        )
+        .unwrap();
+    animations.advance(start + Duration::from_millis(500), &to);
+    // Its text and its border both at the color between.
+    assert!(picture(animations.presented(&to), "current-border-half"));
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};
