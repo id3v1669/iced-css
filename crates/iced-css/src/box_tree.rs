@@ -1191,6 +1191,12 @@ impl BoxTree {
                 Some("middle") => RowAlign::Center,
                 _ => RowAlign::Right,
             };
+            // 10.8.1: on the line's baseline unless aligned to its top, middle or bottom.
+            value.line_baseline = !matches!(
+                vertical_aligns[owner].filter(|_| !prepared.anonymous[arena]),
+                Some("top" | "text-top" | "middle" | "bottom" | "text-bottom")
+            );
+            value.clips = prepared.clipped[arena] || prepared.scrolls[arena];
             value.caption_below = captions_below[owner];
             value.fixed_table = paints[owner].fixed_table && !prepared.anonymous[arena];
             if value.inline_row.is_some() {
@@ -2229,8 +2235,9 @@ impl BoxTree {
         height: Option<f32>,
         measure: &mut dyn FnMut(usize, f32) -> Option<f32>,
         split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
+        baseline: &mut dyn FnMut(usize, f32) -> Option<f32>,
     ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
-        self.prepared.layout_slots(
+        self.prepared.layout_slots_baselines(
             FlowViewport {
                 left: 0.0,
                 top: 0.0,
@@ -2248,6 +2255,7 @@ impl BoxTree {
                 measure(arena, used.ceil())
             },
             &mut |arena, narrow, until, wide| split(arena, narrow.ceil(), until, wide.ceil()),
+            &mut |arena, used| baseline(arena, used.ceil()),
         )
     }
 
@@ -3698,6 +3706,63 @@ fn line_height_of(leaf: &TextLeaf) -> text::LineHeight {
         TextLineHeight::Multiplier(factor) => text::LineHeight::Relative(factor),
         TextLineHeight::Px(px) => text::LineHeight::Absolute(Pixels(px)),
     }
+}
+
+/// The baseline of a laid-out leaf's last line below its top, as cosmic-text places it:
+/// the line's top, half of what its height leaves over its fonts' ascent and descent, and
+/// the ascent, over the runs on that line, from their primary faces' own metrics (glyphs a
+/// fallback face draws are not counted).
+fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    shaped: &Renderer::Paragraph,
+) -> Option<f32> {
+    use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system, to_attributes};
+    let pieces: Vec<(usize, Rectangle)> = (0..leaf.runs.len())
+        .flat_map(|at| {
+            shaped
+                .span_bounds(at)
+                .into_iter()
+                .map(move |area| (at, area))
+        })
+        .collect();
+    let top = pieces
+        .iter()
+        .map(|piece| piece.1.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    if !top.is_finite() {
+        return None;
+    }
+    let base = renderer.default_font();
+    let mut fonts = font_system().write().ok()?;
+    let fonts = fonts.raw();
+    let (mut ascent, mut descent, mut line) = (0.0_f32, 0.0_f32, 0.0_f32);
+    for &(at, area) in pieces.iter().filter(|piece| (piece.1.y - top).abs() < 0.5) {
+        let run = &leaf.runs[at];
+        if run.text.is_empty() {
+            continue;
+        }
+        let attrs = to_attributes(font_of(base, run));
+        // Its primary face: a run whose family is not there gives the line nothing.
+        let Some(font) = fonts
+            .db()
+            .query(&fontdb::Query {
+                families: &[attrs.family],
+                weight: attrs.weight,
+                stretch: attrs.stretch,
+                style: attrs.style,
+            })
+            .and_then(|id| fonts.get_font(id, attrs.weight))
+        else {
+            continue;
+        };
+        let metrics = font.metrics();
+        let scale = run.size / f32::from(metrics.units_per_em);
+        ascent = ascent.max(metrics.ascent * scale);
+        descent = descent.max(-metrics.descent * scale);
+        line = line.max(area.height);
+    }
+    (line > 0.0).then(|| top + (line - (ascent + descent)) / 2.0 + ascent)
 }
 
 fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
@@ -5215,6 +5280,7 @@ where
             // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
             let (elements, slots, children) = (&mut self.elements, &self.slots, &mut tree.children);
             let current = &self.tree;
+            let mut baselines: BTreeMap<(usize, u32), Option<f32>> = BTreeMap::new();
             self.slot_geometry = current
                 .layout_arena(
                     available.width,
@@ -5244,6 +5310,15 @@ where
                         let (_, second, first_height) = split_leaf(renderer, leaf, narrow, until)?;
                         let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
                         Some(first_height + rest.min_bounds().height)
+                    },
+                    // Once per leaf and width in a pass: rows ask again for nested boxes.
+                    &mut |arena, width| {
+                        *baselines
+                            .entry((arena, width.to_bits()))
+                            .or_insert_with(|| {
+                                let leaf = current.texts[arena].as_ref()?;
+                                last_baseline(renderer, leaf, &paragraph(renderer, leaf, width))
+                            })
                     },
                 )
                 .unwrap_or_default();
@@ -6308,7 +6383,13 @@ mod tests {
         )
         .unwrap();
         let geometry = tree
-            .layout_arena(800.0, None, &mut |_, _| Some(20.0), &mut |_, _, _, _| None)
+            .layout_arena(
+                800.0,
+                None,
+                &mut |_, _| Some(20.0),
+                &mut |_, _, _, _| None,
+                &mut |_, _| None,
+            )
             .unwrap();
         let spacers = |tree: &BoxTree| {
             tree.texts

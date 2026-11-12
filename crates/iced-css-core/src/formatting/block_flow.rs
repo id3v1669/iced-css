@@ -99,6 +99,11 @@ pub struct FlowBox {
     /// Where an inline-block sits in its line: top, middle, or at the bottom, which also
     /// stands in for the baseline.
     pub line_align: RowAlign,
+    /// 10.8.1: an inline-block or a piece of text in a row on the line's baseline
+    /// (`vertical-align: baseline`), not at `line_align`.
+    pub line_baseline: bool,
+    /// `overflow` other than `visible`: 10.8.1, its baseline is its bottom margin edge.
+    pub clips: bool,
     /// A caption placed below the table (`caption-side: bottom`).
     pub caption_below: bool,
     /// `table-layout: fixed`: the first row alone sets the columns of a table with a width.
@@ -146,6 +151,8 @@ impl Default for FlowBox {
             row_span: 1,
             cell_align: RowAlign::Left,
             line_align: RowAlign::Right,
+            line_baseline: false,
+            clips: false,
             caption_below: false,
             fixed_table: false,
             hidden_row: false,
@@ -507,6 +514,11 @@ struct Solver<'a> {
     text_height: &'a mut dyn FnMut(usize, f32) -> Option<f32>,
     /// See [`layout_block_flow_split`].
     text_split: &'a mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
+    /// See [`layout_block_flow_baselines`].
+    text_baseline: &'a mut dyn FnMut(usize, f32) -> Option<f32>,
+    /// A row of inline-blocks' last line's baseline, from the row's bottom, which moves with
+    /// it (its parent sets its top afterwards).
+    row_baselines: std::collections::BTreeMap<usize, f32>,
 }
 
 /// Lays out the tree rooted at index 0 as one block formatting context root.
@@ -551,6 +563,30 @@ pub fn layout_block_flow_split(
     text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
     text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
 ) -> Result<Vec<FlowGeometry>, FlowError> {
+    layout_block_flow_baselines(
+        boxes,
+        viewport,
+        limits,
+        text_height,
+        text_split,
+        &mut |_, _| None,
+    )
+}
+
+/// Lays out as [`layout_block_flow_split`], asking `text_baseline(node, width)` for a
+/// leaf's last line's baseline below its content top at that width, which a row of
+/// inline-blocks lines its pieces up on (10.8.1). `None` takes its bottom instead.
+///
+/// # Errors
+/// As [`layout_block_flow`].
+pub fn layout_block_flow_baselines(
+    boxes: &[FlowBox],
+    viewport: FlowViewport,
+    limits: FlowLimits,
+    text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
+    text_baseline: &mut dyn FnMut(usize, f32) -> Option<f32>,
+) -> Result<Vec<FlowGeometry>, FlowError> {
     if boxes.is_empty() || boxes.len() > limits.boxes.get() {
         return Err(FlowError::Boxes);
     }
@@ -564,6 +600,8 @@ pub fn layout_block_flow_split(
         last_flowed: 0.0,
         text_height,
         text_split,
+        text_baseline,
+        row_baselines: std::collections::BTreeMap::new(),
     };
     let containing = Containing {
         left: viewport.left,
@@ -585,6 +623,8 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
         last_flowed: 0.0,
         text_height: &mut |_, _| None,
         text_split: &mut |_, _, _, _| None,
+        text_baseline: &mut |_, _| None,
+        row_baselines: std::collections::BTreeMap::new(),
     }
     .measure(node)
 }
@@ -1750,6 +1790,47 @@ impl Solver<'_> {
         Ok((used.margin_left, used.margin_right, mt, mb, bottom))
     }
 
+    /// 10.8.1: the baseline of a laid-out box's last line box in normal flow, as an absolute
+    /// y; `None` for a box with none, or that clips its overflow. A row of inline-blocks
+    /// keeps its last line's; an inline-table takes its first row's (17.5.3).
+    fn last_baseline(&mut self, node: usize) -> Option<f32> {
+        let value = &self.boxes[node];
+        if value.clips {
+            return None;
+        }
+        if value.inline_row.is_some() {
+            let offset = self.row_baselines.get(&node).copied()?;
+            return Some(self.geometry[node].border.bottom + offset);
+        }
+        if matches!(value.table, Some(TableRole::Table { .. })) {
+            return self.first_row_baseline(node);
+        }
+        if value.content.is_some() && value.children.is_empty() {
+            let content = self.geometry[node].content;
+            let baseline = (self.text_baseline)(node, content.right - content.left)?;
+            return Some(content.top + baseline);
+        }
+        let children: Vec<usize> = value
+            .children
+            .iter()
+            .rev()
+            .copied()
+            .filter(|child| self.boxes[*child].float.is_none() && !self.boxes[*child].out_of_flow)
+            .collect();
+        children
+            .into_iter()
+            .find_map(|child| self.last_baseline(child))
+    }
+
+    /// A table's first shown row's baseline, in the order rows lay out (head, body, foot):
+    /// of its cells, the first that has one.
+    fn first_row_baseline(&mut self, node: usize) -> Option<f32> {
+        let (rows, _) = table_parts(self.boxes, node);
+        let row = rows.into_iter().find(|row| !self.boxes[*row].hidden_row)?;
+        let cells = self.boxes[row].children.clone();
+        cells.into_iter().find_map(|cell| self.last_baseline(cell))
+    }
+
     /// Lines of inline-blocks (9.4.2): they fill a line, then wrap, and an overlong box
     /// keeps a line to itself.
     fn layout_inline_row(
@@ -1767,6 +1848,8 @@ impl Solver<'_> {
             mt: f32,
             height: f32,
             margin: [f32; 4],
+            /// Its baseline below its top margin edge, on the line's baseline.
+            baseline: Option<f32>,
         }
         let mut items = Vec::new();
         for &child in &self.boxes[node].children.clone() {
@@ -1775,20 +1858,37 @@ impl Solver<'_> {
             }
             let (ml, mr, mt, mb, bottom) = self.shrink_box(child, cb)?;
             let border_width = self.geometry[child].border.right;
+            let height = mt + bottom + mb;
+            // 10.8.1: its last line's, even past its box, or its bottom margin edge without one.
+            let baseline = self.boxes[child].line_baseline.then(|| {
+                let top = self.geometry[child].border.top - mt;
+                self.last_baseline(child)
+                    .map_or(height, |baseline| baseline - top)
+            });
             items.push(Item {
                 node: child,
                 width: ml + border_width + mr,
                 ml,
                 mt,
-                height: mt + bottom + mb,
+                height,
                 margin: [mt, mr, mb, ml],
+                baseline,
             });
         }
         // 9.5: lines stay clear of floats. Every line is checked as tall as the tallest
         // box in the row, so a line can only be shorter than it had to be, never overlap.
-        let tallest = items
+        // On a shared baseline a line can be taller than its tallest box: as tall as the
+        // most any reaches above it and below it together, at most.
+        let reach = items
             .iter()
-            .fold(0.0_f32, |most, item| most.max(item.height));
+            .filter_map(|item| item.baseline)
+            .fold(0.0_f32, f32::max)
+            + items
+                .iter()
+                .filter_map(|item| item.baseline.map(|baseline| item.height - baseline))
+                .fold(0.0_f32, f32::max);
+        let tallest = items.iter().fold(reach, |most, item| most.max(item.height));
+        let mut last_baseline = None;
         let float_error = |error| FlowError::Float { node, error };
         let (full_left, full_right) = (cb.left, cb.left + cb.width);
         let mut y = flow.y;
@@ -1818,9 +1918,18 @@ impl Solver<'_> {
                 used += items[end].width;
                 end += 1;
             }
+            // Those on the baseline share it: as far down as the deepest above it reaches.
+            let above = items[start..end]
+                .iter()
+                .filter_map(|item| item.baseline)
+                .fold(0.0_f32, f32::max);
+            let below = items[start..end]
+                .iter()
+                .filter_map(|item| item.baseline.map(|baseline| item.height - baseline))
+                .fold(0.0_f32, f32::max);
             let line = items[start..end]
                 .iter()
-                .fold(0.0_f32, |tallest, item| tallest.max(item.height));
+                .fold(above + below, |tallest, item| tallest.max(item.height));
             let mut x = near
                 + match align {
                     RowAlign::Left => 0.0,
@@ -1835,19 +1944,30 @@ impl Solver<'_> {
             };
             for index in order {
                 let item = &items[index];
-                let room_above = match self.boxes[item.node].line_align {
-                    RowAlign::Left => 0.0,
-                    RowAlign::Center => (line - item.height) / 2.0,
-                    RowAlign::Right => line - item.height,
+                let room_above = match (item.baseline, self.boxes[item.node].line_align) {
+                    (Some(baseline), _) => above - baseline,
+                    (None, RowAlign::Left) => 0.0,
+                    (None, RowAlign::Center) => (line - item.height) / 2.0,
+                    (None, RowAlign::Right) => line - item.height,
                 };
                 self.translate(item.node, x + item.ml, y + room_above + item.mt);
                 self.geometry[item.node].margin = item.margin;
                 x += item.width;
             }
+            last_baseline = items[start..end]
+                .iter()
+                .any(|item| item.baseline.is_some())
+                .then_some(y + above);
             y += line;
             start = end;
         }
         flow.y = y;
+        // From the row's bottom.
+        match last_baseline {
+            Some(baseline) => self.row_baselines.insert(node, baseline - flow.y),
+            // Laid out again with none: no earlier one stays.
+            None => self.row_baselines.remove(&node),
+        };
         // The anonymous block itself holds the whole run.
         let area = rect(cb.left, cb.left + cb.width, flow.y, flow.y);
         self.geometry[node] = FlowGeometry {

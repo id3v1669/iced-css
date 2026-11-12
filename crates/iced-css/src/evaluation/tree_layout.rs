@@ -30,7 +30,7 @@ use iced_css_core::{
         block::{AutoLength, Direction},
         block_flow::{
             Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
-            RowAlign, TableRole, layout_block_flow_split, preferred_content_widths,
+            RowAlign, TableRole, layout_block_flow_baselines, preferred_content_widths,
         },
         clearance::ClearSide,
         display::{Display, Float, Position},
@@ -1094,6 +1094,22 @@ impl PreparedTree {
         text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
         text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
     ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
+        self.layout_slots_baselines(viewport, limits, text_height, text_split, &mut |_, _| None)
+    }
+
+    /// Lays the tree out as [`Self::layout_slots`], asking `text_baseline(slot, width)` for
+    /// a leaf's last line's baseline, which rows of inline-blocks line up on.
+    ///
+    /// # Errors
+    /// Returns flow and absolute placement errors.
+    pub fn layout_slots_baselines(
+        &self,
+        viewport: FlowViewport,
+        limits: FlowLimits,
+        text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
+        text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
+        text_baseline: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
         use TreeLayoutError as E;
         let Self {
             boxes,
@@ -1117,9 +1133,15 @@ impl PreparedTree {
         if boxes.is_empty() {
             return Ok(Vec::new());
         }
-        let mut geometry =
-            layout_block_flow_split(boxes, viewport, limits, text_height, text_split)
-                .map_err(E::Flow)?;
+        let mut geometry = layout_block_flow_baselines(
+            boxes,
+            viewport,
+            limits,
+            text_height,
+            text_split,
+            text_baseline,
+        )
+        .map_err(E::Flow)?;
         // Arena order is preorder, so every box's ancestors have settled before it. A
         // relative offset moves a subtree after flow; floats and later flow do not react.
         let auto = [Dim::Auto; 4];
@@ -1149,6 +1171,7 @@ impl PreparedTree {
                         limits,
                         text_height,
                         text_split,
+                        text_baseline,
                     )
                     .map_err(|error| error.at(index))?;
                 }
@@ -1230,6 +1253,7 @@ fn place_absolute(
     limits: FlowLimits,
     text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
     text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
+    text_baseline: &mut dyn FnMut(usize, f32) -> Option<f32>,
 ) -> Result<(), AbsoluteFailure> {
     let value = &boxes[arena];
     let (block, direction) =
@@ -1296,7 +1320,7 @@ fn place_absolute(
         root.margin = [Dim::Px(0.0); 4];
         // The percentages' basis is the containing block, not this synthetic viewport.
         root.padding = padding.map(Dim::Px);
-        layout_block_flow_split(
+        layout_block_flow_baselines(
             &arena_copy,
             FlowViewport {
                 left: 0.0,
@@ -1309,6 +1333,7 @@ fn place_absolute(
             &mut |local_node, narrow, until, wide| {
                 text_split(nodes[local_node], narrow, until, wide)
             },
+            &mut |local_node, used| text_baseline(nodes[local_node], used),
         )
     };
     let specified = match value.height {

@@ -4780,6 +4780,147 @@ fn a_block_before_carries_its_current_color_border() {
 }
 
 #[test]
+fn an_inline_block_sits_on_the_line_baseline() {
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "xxx "),
+                    node("b", vec![text("t", "xxx")]),
+                    text("c", " xxx"),
+                ],
+            )],
+        )
+    };
+    // The lowest row of black and of blue pixels.
+    let measured = |source: Node, css: &str, name: &str| {
+        let css = format!("#page {{ background-color:white; padding:20px; color:#000000; }} {css}");
+        let tree = BoxTree::new(source, &css).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            ui.snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let (mut black, mut blue) = (0, 0);
+        for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
+            let y = at / width;
+            let (r, g, b) = (
+                i32::from(pixel[0]),
+                i32::from(pixel[1]),
+                i32::from(pixel[2]),
+            );
+            // Dark gray, and clearly blue, antialiased edges too.
+            if r < 128 && g < 128 && b < 128 && (b - r).abs() < 40 {
+                black = black.max(y);
+            }
+            if b > 150 && r < 110 && g < 110 {
+                blue = blue.max(y);
+            }
+        }
+        (black, blue)
+    };
+    let bottoms = |css: &str, name: &str| measured(source(), css, name);
+    // A bigger font and a deep bottom padding: its text still on the line's baseline.
+    let (black, blue) = bottoms(
+        "#b { display:inline-block; color:#0000ff; font-size:28px; padding-bottom:30px; }",
+        "baseline-block",
+    );
+    assert!(black.abs_diff(blue) <= 2, "{black} {blue}");
+    // Aligned to the bottom instead, its box fills the line and the text beside it sits at
+    // the line's top: off the shared baseline.
+    let (black, blue) = bottoms(
+        "#b { display:inline-block; color:#0000ff; font-size:28px; padding-bottom:30px;
+              vertical-align:bottom; }",
+        "bottom-block",
+    );
+    assert!(blue > black + 10, "{black} {blue}");
+    // A run whose font family is missing gives its line nothing; the rest of it does.
+    let missing = node(
+        "page",
+        vec![node(
+            "p",
+            vec![
+                text("a", "xxx "),
+                node(
+                    "b",
+                    vec![node("odd", vec![text("t", "xx")]), text("u", "xx")],
+                ),
+                text("c", " xxx"),
+            ],
+        )],
+    );
+    let (black, blue) = measured(
+        missing,
+        "#b { display:inline-block; color:#0000ff; padding-bottom:30px; }
+         #odd { display:inline; font-family:NoSuchFamilyAnywhere; }",
+        "missing-block",
+    );
+    assert!(black.abs_diff(blue) <= 2, "{black} {blue}");
+    // Inside an absolutely positioned box too.
+    let (black, blue) = bottoms(
+        "#p { position:absolute; left:20px; top:20px; }
+         #b { display:inline-block; color:#0000ff; font-size:28px; padding-bottom:30px; }",
+        "absolute-block",
+    );
+    assert!(black.abs_diff(blue) <= 2, "{black} {blue}");
+    // A tall line height, which centers each line's text in more room: still on it.
+    let (black, blue) = bottoms(
+        "#b { display:inline-block; color:#0000ff; font-size:28px; line-height:3; }",
+        "tall-block",
+    );
+    assert!(black.abs_diff(blue) <= 2, "{black} {blue}");
+    // Its last line in a smaller font than its first: that line's baseline.
+    let mixed = node(
+        "page",
+        vec![node(
+            "p",
+            vec![
+                text("a", "xxx "),
+                node(
+                    "b",
+                    vec![node("big", vec![text("t", "XX")]), text("u", " xx")],
+                ),
+                text("c", " xxx"),
+            ],
+        )],
+    );
+    let (black, blue) = measured(
+        mixed,
+        "#b { display:inline-block; color:#0000ff; width:60px; }
+         #big { display:inline; font-size:40px; }",
+        "mixed-block",
+    );
+    assert!(black.abs_diff(blue) <= 2, "{black} {blue}");
+    // An inline-block with no line, or that clips: its bottom margin edge on the baseline.
+    let (black, empty) = bottoms(
+        "#b { display:inline-block; color:#0000ff; font-size:28px; overflow:hidden;
+              padding-bottom:30px; }",
+        "clipping-block",
+    );
+    assert!(empty < black, "{empty} {black}");
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

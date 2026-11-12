@@ -1040,6 +1040,298 @@ fn inline_blocks_fill_lines_wrap_and_align_bottoms() {
 }
 
 #[test]
+fn inline_blocks_share_the_line_baseline() {
+    let text = |height: f32, width: f32| FlowBox {
+        establishes_bfc: true,
+        line_baseline: true,
+        content: Some(FlowContent {
+            height,
+            preferred_width: width,
+            preferred_min_width: width,
+        }),
+        ..FlowBox::default()
+    };
+    // Its text 30 tall with its baseline at 24, and 10 of padding below.
+    let mut boxed = inline_block(40.0, 30.0);
+    boxed.height = Dim::Auto;
+    boxed.line_baseline = true;
+    boxed.padding[2] = Dim::Px(10.0);
+    let inner = FlowBox {
+        content: Some(FlowContent {
+            height: 30.0,
+            preferred_width: 40.0,
+            preferred_min_width: 40.0,
+        }),
+        ..FlowBox::default()
+    };
+    // One that clips: its bottom margin edge for its baseline.
+    let mut clipped = inline_block(10.0, 10.0);
+    clipped.line_baseline = true;
+    clipped.clips = true;
+    // One aligned to the line's bottom.
+    let bottom = inline_block(10.0, 50.0);
+    let mut boxes = vec![
+        FlowBox::default(),
+        row_of(RowAlign::Left),
+        text(20.0, 30.0),
+        boxed,
+        inner,
+        clipped,
+        bottom,
+    ];
+    for (parent, child) in [(0, 1), (1, 2), (1, 3), (3, 4), (1, 5), (1, 6)] {
+        boxes[parent].children.push(child);
+    }
+    let baselines = [(2, 15.0), (4, 24.0)];
+    let g = layout_block_flow_baselines(
+        &boxes,
+        viewport(),
+        limits(),
+        &mut |_, _| None,
+        &mut |_, _, _, _| None,
+        &mut |node, _| {
+            baselines
+                .iter()
+                .find(|entry| entry.0 == node)
+                .map(|entry| entry.1)
+        },
+    )
+    .unwrap();
+    // 24 above the baseline at most, 16 below: the text at 9, the box at 0, the clipped
+    // one at 14; the bottom one fills the 50 the line takes.
+    assert_eq!(g[2].border.top, 9.0);
+    assert_eq!(g[3].border.top, 0.0);
+    assert_eq!(g[5].border.top, 14.0);
+    assert_eq!((g[6].border.top, g[1].border.bottom), (0.0, 50.0));
+    // One high on its baseline, one low: the line takes both reaches, 28 above and 28 below.
+    let mut boxes = vec![
+        FlowBox::default(),
+        row_of(RowAlign::Left),
+        text(30.0, 10.0),
+        text(30.0, 10.0),
+    ];
+    for (parent, child) in [(0, 1), (1, 2), (1, 3)] {
+        boxes[parent].children.push(child);
+    }
+    let reach = [(2, 2.0), (3, 28.0)];
+    let g = layout_block_flow_baselines(
+        &boxes,
+        viewport(),
+        limits(),
+        &mut |_, _| None,
+        &mut |_, _, _, _| None,
+        &mut |node, _| {
+            reach
+                .iter()
+                .find(|entry| entry.0 == node)
+                .map(|entry| entry.1)
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        (g[2].border.top, g[3].border.top, g[1].border.bottom),
+        (26.0, 0.0, 56.0)
+    );
+    // A box out of flow last in an inline-block gives no line: the one before it does.
+    let mut holder = inline_block(40.0, 40.0);
+    holder.line_baseline = true;
+    let mut floated = text(10.0, 10.0);
+    floated.out_of_flow = true;
+    let mut boxes = vec![
+        FlowBox::default(),
+        row_of(RowAlign::Left),
+        holder,
+        text(10.0, 10.0),
+        floated,
+        text(20.0, 10.0),
+    ];
+    for (parent, child) in [(0, 1), (1, 2), (2, 3), (2, 4), (1, 5)] {
+        boxes[parent].children.push(child);
+    }
+    let marks = [(3, 8.0), (4, 9.0), (5, 18.0)];
+    let g = layout_block_flow_baselines(
+        &boxes,
+        viewport(),
+        limits(),
+        &mut |_, _| None,
+        &mut |_, _, _, _| None,
+        &mut |node, _| {
+            marks
+                .iter()
+                .find(|entry| entry.0 == node)
+                .map(|entry| entry.1)
+        },
+    )
+    .unwrap();
+    // Its baseline at 8: 10 above the text's 18.
+    assert_eq!((g[2].border.top, g[5].border.top), (10.0, 0.0));
+    let run = |boxes: &mut Vec<FlowBox>, links: &[(usize, usize)], marks: &[(usize, f32)]| {
+        for &(parent, child) in links {
+            boxes[parent].children.push(child);
+        }
+        layout_block_flow_baselines(
+            boxes,
+            viewport(),
+            limits(),
+            &mut |_, _| None,
+            &mut |_, _, _, _| None,
+            &mut |node, _| {
+                marks
+                    .iter()
+                    .find(|entry| entry.0 == node)
+                    .map(|entry| entry.1)
+            },
+        )
+        .unwrap()
+    };
+    // A line its baseline makes taller than any box in it keeps clear of a float that
+    // starts below the tallest: here one at 35, wider than the one above it.
+    let mut boxes = vec![
+        FlowBox::default(),
+        float(FloatSide::Left, 60.0, 35.0),
+        float(FloatSide::Left, 80.0, 35.0),
+        row_of(RowAlign::Left),
+        text(30.0, 10.0),
+        text(30.0, 10.0),
+    ];
+    let g = run(
+        &mut boxes,
+        &[(0, 1), (0, 2), (0, 3), (3, 4), (3, 5)],
+        &[(4, 2.0), (5, 28.0)],
+    );
+    assert_eq!(g[2].border.top, 35.0);
+    assert_eq!(g[4].border.left, 80.0);
+    // An inline-block holding a row of its own: that row's last line's baseline, even when
+    // its last box there clips.
+    let mut holder = FlowBox {
+        establishes_bfc: true,
+        line_baseline: true,
+        width: Dim::Px(40.0),
+        ..FlowBox::default()
+    };
+    holder.padding[0] = Dim::Px(5.0);
+    let mut shut = inline_block(10.0, 30.0);
+    shut.line_baseline = true;
+    shut.clips = true;
+    let mut boxes = vec![
+        FlowBox::default(),
+        row_of(RowAlign::Left),
+        holder,
+        row_of(RowAlign::Left),
+        text(10.0, 10.0),
+        shut,
+        text(20.0, 10.0),
+    ];
+    let g = run(
+        &mut boxes,
+        &[(0, 1), (1, 2), (2, 3), (3, 4), (3, 5), (1, 6)],
+        &[(4, 8.0), (6, 18.0)],
+    );
+    // Inside: the clipped box's 30 on the baseline, the text 22 down; the holder's baseline
+    // 5 + 30 = 35 below its top, the outer text's 18: the holder at 0, the text at 17.
+    assert_eq!((g[4].border.top, g[5].border.top), (27.0, 5.0));
+    assert_eq!((g[2].border.top, g[6].border.top), (0.0, 17.0));
+    // An inline-table: its first row's baseline, not its last.
+    let mut table = table_of([0.0, 0.0], Dim::Px(30.0));
+    table.line_baseline = true;
+    let mut boxes = vec![
+        FlowBox::default(),
+        row_of(RowAlign::Left),
+        table,
+        row(),
+        cell(Dim::Auto, 20.0),
+        text(10.0, 10.0),
+        row(),
+        cell(Dim::Auto, 20.0),
+        text(10.0, 10.0),
+        text(20.0, 10.0),
+    ];
+    let g = run(
+        &mut boxes,
+        &[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (2, 6),
+            (6, 7),
+            (7, 8),
+            (1, 9),
+        ],
+        &[(5, 8.0), (8, 8.0), (9, 18.0)],
+    );
+    // The first row's 8: the table 10 down, the text at the top.
+    assert_eq!((g[2].border.top, g[9].border.top), (10.0, 0.0));
+    // A hidden first row gives none: the next one does.
+    boxes.iter_mut().for_each(|value| value.children.clear());
+    boxes[3].hidden_row = true;
+    let g = run(
+        &mut boxes,
+        &[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (2, 6),
+            (6, 7),
+            (7, 8),
+            (1, 9),
+        ],
+        &[(5, 2.0), (8, 8.0), (9, 18.0)],
+    );
+    assert_eq!(g[9].border.top, 0.0);
+    // A footer group first in the source still lays out last: the body's row is first.
+    let mut table = table_of([0.0, 0.0], Dim::Px(30.0));
+    table.line_baseline = true;
+    let group = |role: TableRole| FlowBox {
+        table: Some(role),
+        ..FlowBox::default()
+    };
+    let mut boxes = vec![
+        FlowBox::default(),
+        row_of(RowAlign::Left),
+        table,
+        group(TableRole::FooterGroup),
+        row(),
+        cell(Dim::Auto, 20.0),
+        text(10.0, 10.0),
+        group(TableRole::BodyGroup),
+        row(),
+        cell(Dim::Auto, 20.0),
+        text(10.0, 10.0),
+        text(20.0, 10.0),
+    ];
+    let g = run(
+        &mut boxes,
+        &[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (5, 6),
+            (2, 7),
+            (7, 8),
+            (8, 9),
+            (9, 10),
+            (1, 11),
+        ],
+        &[(6, 2.0), (10, 8.0), (11, 18.0)],
+    );
+    // The body row on top, its 8 on the text's 18: the table 10 down.
+    assert_eq!((g[2].border.top, g[11].border.top), (10.0, 0.0));
+    assert_eq!(
+        g[2].border.top + (g[8].border.top - g[2].border.top) + 8.0,
+        18.0
+    );
+    // Without baselines told, bottoms stand in, as before.
+    let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
+    assert_eq!(g[2].border.bottom, g[11].border.bottom);
+}
+
+#[test]
 fn inline_block_lines_center_right_and_keep_margins_and_shrink() {
     let mut first = inline_block(20.0, 10.0);
     first.margin[3] = Dim::Px(5.0);

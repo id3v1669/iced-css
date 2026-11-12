@@ -76,7 +76,7 @@ style change without a request applies at once. Time comes from luminate; a
 ## Known limits
 
 Approximated or missing: text beside an `inline-block` or `inline-table` sits in the line as
-one box, so lines break around whole pieces, spaces at their ends are lost and boxes align at their bottoms for `baseline` (`top` and `middle` work); `border-collapse` overlaps the cells on each grid line by that line's widest border, even where a cell's own border there is narrower, and a positioned cell moves the whole table's borders to where it paints;
+one box, so lines break around whole pieces, spaces at their ends are lost and those on the `baseline` share it, an inline-block's its last line's (its bottom margin edge with none, or when it clips) and an inline-table's its first row's, placed from the primary faces' own ascent and descent as the renderer's text system has them (glyphs a fallback face draws are not counted, and text in an inline-block that wraps past a float takes its baseline as if it did not) (`BoxTree::layout_text` has no fonts and lines bottoms up instead); `top`, `middle` and `bottom` work too, other values take the baseline; `border-collapse` overlaps the cells on each grid line by that line's widest border, even where a cell's own border there is narrower, and a positioned cell moves the whole table's borders to where it paints;
 `justify` stretches lines to the widest line rather than the box (iced 0.14 lays justified text out at its widest line's width), leaves a line split at a float's end unstretched, and is start-aligned in rtl;
 one line height and alignment per paragraph; text widens past
 floats once per paragraph. Inline generated content takes `display`, `clear` and
