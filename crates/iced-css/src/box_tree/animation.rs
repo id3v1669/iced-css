@@ -318,6 +318,55 @@ impl BoxTree {
                 _ => None,
             };
         }
+        // Its sides on its line: its box's bands above and below, and its spaces across, a
+        // side's border and padding in one (its bar the border's width) and its margin in
+        // another. A side with none of these, or that a negative margin pulls, has no
+        // in-between.
+        let spaces = |side: usize, inner: bool| {
+            runs().find(|run| {
+                run.side_of == Some((key, side))
+                    && run.percent_room.is_some_and(|room| room.2 == inner)
+            })
+        };
+        let length = |pixels: f32, percent: f32| {
+            Some(Value::Length(match (pixels, percent) {
+                (_, 0.0) => Dim::Px(pixels),
+                (0.0, _) => Dim::Percent(percent),
+                _ => Dim::Mix(pixels, percent),
+            }))
+        };
+        let pulled = |side: usize| {
+            spaces(side, true)
+                .is_some_and(|run| run.overhang > 0.0 || run.pull > 0.0 || run.pulled > 0.0)
+        };
+        let decoration = || {
+            runs()
+                .flat_map(|run| &run.inline_boxes)
+                .find(|sides| sides.owner == key)
+        };
+        match field {
+            Field::Padding(side @ (0 | 2)) => {
+                return length(decoration()?.padding[side / 2], 0.0);
+            }
+            Field::BorderWidth(side @ (0 | 2)) => {
+                return length(decoration()?.border[side / 2].0, 0.0);
+            }
+            Field::Padding(side) if !pulled(side) => {
+                let run = spaces(side, true)?;
+                let (fixed, percent, _) = run.percent_room?;
+                let bar = run.edge.map_or(0.0, |edge| edge.1);
+                return length(fixed - bar, percent);
+            }
+            Field::BorderWidth(side) if !pulled(side) => {
+                return length(spaces(side, true)?.edge?.1, 0.0);
+            }
+            Field::Margin(side @ (1 | 3)) if !pulled(side) => {
+                let (fixed, percent, _) = spaces(side, false)?.percent_room?;
+                return length(fixed, percent);
+            }
+            Field::Margin(_) | Field::Padding(_) | Field::BorderWidth(_) => return None,
+            _ => {}
+        }
         match field {
             Field::Color => own()?.color.map(Value::Color),
             Field::Visibility => Some(Value::Visible(own()?.visible)),
@@ -338,6 +387,16 @@ impl BoxTree {
                 .map(|edge| Value::Color(edge.2)),
             _ => None,
         }
+    }
+
+    /// A `:before` or `:after`'s side bar across, on its line: its width.
+    fn generated_bar(&self, key: usize, side: usize) -> Option<f32> {
+        self.texts
+            .iter()
+            .flatten()
+            .flat_map(|leaf| &leaf.runs)
+            .find(|run| run.side_of == Some((key, side)) && run.edge.is_some())
+            .and_then(|run| run.edge.map(|edge| edge.1))
     }
 
     /// Lays a presented value on a `:before` or `:after` (`read_generated`).
@@ -390,6 +449,58 @@ impl BoxTree {
         {
             let ours = run.generated == Some(key);
             let sides = run.side_of.is_some_and(|side| side.0 == key);
+            let parts = |dim: Dim| match dim {
+                Dim::Px(pixels) => (pixels, 0.0),
+                Dim::Percent(percent) => (0.0, percent),
+                Dim::Mix(pixels, percent) => (pixels, percent),
+                Dim::Auto => (0.0, 0.0),
+            };
+            // Its sides on its line (`read_generated`).
+            match (field, value) {
+                (Field::Padding(side @ (0 | 2)), Value::Length(Dim::Px(pixels))) => {
+                    for decoration in run.inline_boxes.iter_mut().filter(|d| d.owner == key) {
+                        decoration.padding[side / 2] = pixels;
+                    }
+                }
+                (Field::BorderWidth(side @ (0 | 2)), Value::Length(Dim::Px(pixels))) => {
+                    for decoration in run.inline_boxes.iter_mut().filter(|d| d.owner == key) {
+                        decoration.border[side / 2].0 = pixels;
+                    }
+                }
+                (Field::Padding(side), Value::Length(dim))
+                    if run.side_of == Some((key, side))
+                        && run.percent_room.is_some_and(|room| room.2) =>
+                {
+                    let (pixels, percent) = parts(dim);
+                    let bar = run.edge.map_or(0.0, |edge| edge.1);
+                    run.percent_room = Some((bar + pixels, percent.max(0.0), true));
+                    if let Some(text) = super::room_text(run, 0.0) {
+                        run.text = text;
+                    }
+                }
+                (Field::BorderWidth(side), Value::Length(Dim::Px(pixels)))
+                    if run.side_of == Some((key, side)) =>
+                {
+                    if let (Some(edge), Some(room)) = (&mut run.edge, &mut run.percent_room) {
+                        room.0 += pixels - edge.1;
+                        edge.1 = pixels;
+                    }
+                    if let Some(text) = super::room_text(run, 0.0) {
+                        run.text = text;
+                    }
+                }
+                (Field::Margin(side), Value::Length(dim))
+                    if run.side_of == Some((key, side))
+                        && run.percent_room.is_some_and(|room| !room.2) =>
+                {
+                    let (pixels, percent) = parts(dim);
+                    run.percent_room = Some((pixels.max(0.0), percent.max(0.0), false));
+                    if let Some(text) = super::room_text(run, 0.0) {
+                        run.text = text;
+                    }
+                }
+                _ => {}
+            }
             match (field, value) {
                 (Field::Color, Value::Color(value)) if ours => run.color = Some(value),
                 (Field::Visibility, Value::Visible(value)) => {
@@ -2334,6 +2445,15 @@ impl BoxTreeAnimations {
             // Between a box and an inline, `display` changes at once and the color moves in
             // the new one: it presents as `to` paints it, a box's or on its line.
             // Section 13: an important target holds without a temporary override.
+            // A `:before` or `:after`'s padding across, with a bar at one end only: a border
+            // that shows no color has none, and its width reads as padding.
+            if let (Some(one), Some(two), Field::Padding(side @ (1 | 3))) =
+                (from_key, to_key, field)
+                && from.generated_bar(one, side).is_some() != to.generated_bar(two, side).is_some()
+            {
+                dropped.push(property);
+                continue;
+            }
             if mix(committed, target, 0.0).is_none()
                 || (!generated && to.important[after].contains(&property))
             {

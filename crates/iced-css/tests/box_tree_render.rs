@@ -4603,6 +4603,61 @@ fn a_before_grows_with_its_line_and_small_capitals() {
 }
 
 #[test]
+fn an_inline_before_animates_its_sides_on_its_line() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![text("a", "before "), node("s", vec![text("t", "words")])],
+            )],
+        )
+    };
+    let picture = |tree: BoxTree, name: &str| {
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .unwrap()
+    };
+    let css = |padding: &str, border: &str, margin: &str| {
+        format!(
+            "#page {{ background-color:white; padding:20px; color:#000000; }}
+             #p {{ line-height:40px; }}
+             #s {{ display:inline; }}
+             #s:before {{ content:\"GEN\"; background-color:#ff0000;
+                          padding:{padding}; border:{border} solid #0000ff; margin:0 {margin}; }}"
+        )
+    };
+    let from = BoxTree::new(source(), &css("2px 6px", "2px", "4px")).unwrap();
+    let to = from.restyled(&[&css("6px 18px", "6px", "12px")]).unwrap();
+    let mid = from.restyled(&[&css("4px 12px", "4px", "8px")]).unwrap();
+    assert!(picture(mid, "before-sides-half"));
+    assert!(!picture(to.clone(), "before-sides-half"));
+    let start = Instant::now();
+    for (one, two) in [(&from, &to), (&to, &from)] {
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(
+                one,
+                two,
+                "s::before",
+                &["padding", "border-width", "margin-left", "margin-right"],
+                AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+                start,
+            )
+            .unwrap();
+        assert_eq!(count, 10);
+        // Halfway, either way: as a page with the sides between draws it.
+        animations.advance(start + Duration::from_millis(500), two);
+        assert!(picture(animations.presented(two), "before-sides-half"));
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};

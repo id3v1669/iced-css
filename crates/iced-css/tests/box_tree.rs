@@ -5096,6 +5096,81 @@ mod animation {
             .map(|run| (run.text.clone(), run.size))
             .collect();
         assert_eq!(spaces, vec![("\u{2004}".to_owned(), 24.0)]);
+        // Its sides on its line: across only where it has spaces at both ends, not where a
+        // negative margin pulls it; above and below, its box's bands.
+        let sides = |side: &str| {
+            format!("#s {{ display:inline; }} #s:before {{ content:\"GEN\"; {side} }}")
+        };
+        for (one, two, property, expected) in [
+            // With no sides at one end, no box on its line there either: at once.
+            ("padding:0;", "padding:4px 10px;", "padding", 0),
+            ("padding:2px 4px;", "padding:4px 10px;", "padding", 4),
+            (
+                "border:0 solid red;",
+                "border:2px solid red;",
+                "border-width",
+                0,
+            ),
+            (
+                "border:1px solid red;",
+                "border:3px solid red;",
+                "border-width",
+                4,
+            ),
+            // Spaces at both ends but a bar at one only: no bar to grow across, only its
+            // bands above and below.
+            (
+                "padding:0 4px; border:0 solid red;",
+                "padding:0 4px; border:2px solid red;",
+                "border-width",
+                2,
+            ),
+            // Its padding where a negative margin pulls a side with nothing else: at once.
+            ("padding:0 4px;", "padding:0; margin:0 -4px;", "padding", 0),
+            // A transparent border at one end: its padding across at once, above and below
+            // still moving (here not at all).
+            (
+                "padding:0 4px; margin:0 2px; border:2px solid transparent;",
+                "padding:0 4px; margin:0 2px; border:2px solid red;",
+                "padding",
+                0,
+            ),
+            // Its padding where a negative margin pulls it: at once.
+            (
+                "padding:0 8px; margin:0 -4px;",
+                "padding:0 12px; margin:0 -4px;",
+                "padding",
+                0,
+            ),
+            ("margin:0;", "margin:0 8px;", "margin", 0),
+            ("margin:0 4px;", "margin:0 8px;", "margin", 2),
+            (
+                "padding:0 8px; margin:0 -4px;",
+                "padding:0 8px; margin:0 -2px;",
+                "margin",
+                0,
+            ),
+        ] {
+            let (count, _) = halfway(&|v: &str| sides(v), [one, two], "s::before", property);
+            assert_eq!(count, expected, "{one} {two}");
+        }
+        let (_, shown) = halfway(
+            &|v: &str| sides(v),
+            ["padding:2px 4px;", "padding:6px 12px;"],
+            "s::before",
+            "padding",
+        );
+        let content = run(&shown, "GEN");
+        let own = content.inline_boxes.last().unwrap();
+        assert_eq!(own.padding, [4.0, 4.0]);
+        let across: Vec<f32> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.side_of.is_some())
+            .map(|run| run.percent_room.unwrap().0)
+            .collect();
+        assert_eq!(across, vec![8.0, 8.0]);
         // A padded inline right after it keeps its own spaces at its own size.
         let sibling = || {
             node(
