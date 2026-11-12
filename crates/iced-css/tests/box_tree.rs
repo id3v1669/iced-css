@@ -5059,14 +5059,147 @@ mod animation {
         let shown = animations.presented(&to);
         assert!(near(run(&shown, "GEN").color.unwrap(), [0.125; 3]));
         assert!(near(run(&shown, "words").color.unwrap(), [0.5; 3]));
-        // To or from transparent on its line: at once.
-        let (count, _) = halfway(
-            &boxed,
-            ["transparent", "#0000ff"],
+        // To or from transparent on its line: a layer at its opacity, its box's and its
+        // bands above and below.
+        for ends in [["transparent", "#0000ff"], ["#0000ff", "transparent"]] {
+            let (count, shown) = halfway(&boxed, ends, "s::before", "background-color");
+            assert_eq!(count, 1);
+            let own = run(&shown, "GEN")
+                .inline_boxes
+                .iter()
+                .rev()
+                .find(|sides| sides.background.is_some())
+                .copied()
+                .unwrap();
+            assert_eq!((own.background, own.alpha), (Some([0.0, 0.0, 1.0]), 0.5));
+            let (count, shown) = halfway(&boxed, ends, "s::before", "border-color");
+            // Above and below; across a transparent bar keeps no width: at once.
+            assert_eq!(count, 2);
+            let own = *run(&shown, "GEN").inline_boxes.last().unwrap();
+            assert_eq!(own.border[0].1, Some([0.0, 0.0, 1.0]));
+            assert_eq!(own.border_alpha, [0.5; 2]);
+        }
+        // Over its element's own opaque background: a layer on its text and its spaces.
+        let over = |color: &str| {
+            format!(
+                "#s {{ display:inline; background-color:#00ff00; }}
+                 #s:before {{ content:\"GEN\"; padding:0 4px; background-color:{color}; }}"
+            )
+        };
+        let (_, shown) = halfway(
+            &over,
+            ["transparent", "#ff0000"],
             "s::before",
             "background-color",
         );
-        assert_eq!(count, 0);
+        // Each run's background and its layers.
+        type Layered = (Option<[f32; 3]>, Vec<([f32; 3], f32)>);
+        let layered: Vec<Layered> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| {
+                run.generated.is_some() || run.side_of.is_some_and(|at| at.0 > usize::MAX / 2)
+            })
+            .map(|run| {
+                (
+                    run.background,
+                    run.fades.iter().map(|layer| (layer.1, layer.2)).collect(),
+                )
+            })
+            .collect();
+        assert!(
+            layered.len() == 3
+                && layered
+                    .iter()
+                    .all(|entry| *entry == (Some([0.0, 1.0, 0.0]), vec![([1.0, 0.0, 0.0], 0.5)])),
+            "{layered:?}"
+        );
+        // Its margin's spaces, outside its box, take none.
+        let spaced = |color: &str| {
+            format!(
+                "#s {{ display:inline; }}
+                 #s:before {{ content:\"GEN\"; padding:0 4px; margin:0 8px; background-color:{color}; }}"
+            )
+        };
+        let (_, shown) = halfway(
+            &spaced,
+            ["transparent", "#ff0000"],
+            "s::before",
+            "background-color",
+        );
+        let margins: Vec<usize> = shown
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| leaf.runs.iter())
+            .filter(|run| run.side_of.is_some() && run.percent_room.is_some_and(|room| !room.2))
+            .map(|run| run.fades.len())
+            .collect();
+        assert_eq!(margins, vec![0, 0]);
+        // Nor does an inside list marker before its box.
+        let item = || node("page", vec![node("li", vec![text("t", "item")])]);
+        let marked = |color: &str| {
+            format!(
+                "#li {{ display:list-item; list-style-position:inside; }}
+                 #li:before {{ content:\"GEN\"; padding:0 4px; background-color:{color}; }}"
+            )
+        };
+        let from = BoxTree::new(item(), &marked("transparent")).unwrap();
+        let to = from.restyled(&[&marked("#ff0000")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(
+                &from,
+                &to,
+                "li::before",
+                &["background-color"],
+                second(),
+                start,
+            )
+            .unwrap();
+        animations.advance(start + Duration::from_millis(500), &to);
+        let shown = animations.presented(&to);
+        let marker = shown.text_leaves()[0].1.runs[0].clone();
+        assert!(
+            marker.generated.is_some() && marker.fades.is_empty(),
+            "{marker:?}"
+        );
+        // Hidden, none.
+        let hidden = |color: &str| {
+            format!(
+                "#s {{ display:inline; }} #s:before {{ content:\"GEN\"; visibility:hidden; background-color:{color}; }}"
+            )
+        };
+        let (count, shown) = halfway(
+            &hidden,
+            ["transparent", "#ff0000"],
+            "s::before",
+            "background-color",
+        );
+        assert_eq!(count, 1);
+        assert!(run(&shown, "GEN").fades.is_empty());
+        // With its element fading too: its element's layer beneath its own.
+        let both = |color: &str| {
+            format!(
+                "#s {{ display:inline; background-color:{color}; }}
+                 #s:before {{ content:\"GEN\"; background-color:{color}; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &both("transparent")).unwrap();
+        let to = from.restyled(&[&both("#0000ff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        for id in ["s::before", "s"] {
+            animations
+                .request(&from, &to, id, &["background-color"], second(), start)
+                .unwrap();
+        }
+        animations.advance(start + Duration::from_millis(500), &to);
+        let layers: Vec<(usize, f32)> = run(&animations.presented(&to), "GEN")
+            .fades
+            .iter()
+            .map(|layer| (usize::from(layer.0 > usize::MAX / 2), layer.2))
+            .collect();
+        assert_eq!(layers, vec![(0, 0.5), (1, 0.5)]);
         // A `:before` with no content, or an element with no such id: nothing.
         let (count, _) = halfway(&after, ["#ff0000", "#0000ff"], "s::before", "color");
         assert_eq!(count, 0);

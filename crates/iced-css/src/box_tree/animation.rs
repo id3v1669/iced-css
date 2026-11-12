@@ -372,15 +372,25 @@ impl BoxTree {
             Field::Visibility => Some(Value::Visible(own()?.visible)),
             Field::FontSize => own().map(|run| Value::Length(Dim::Px(run.size))),
             // An inside marker piece before it carries no backgrounds: any of its runs that do.
-            Field::Background => runs()
-                .filter(|run| run.generated == Some(key))
-                .find_map(|run| run.backgrounds.iter().find(|entry| entry.1 == key))
-                .map(|entry| Value::Color(entry.0)),
-            Field::BorderColor(side @ (0 | 2)) => runs()
-                .flat_map(|run| &run.inline_boxes)
-                .find(|sides| sides.owner == key)
-                .and_then(|sides| sides.border[side / 2].1)
-                .map(Value::Color),
+            // Transparent is a fade at none, a layer on its line.
+            Field::Background => {
+                own()?;
+                Some(
+                    runs()
+                        .filter(|run| run.generated == Some(key))
+                        .find_map(|run| run.backgrounds.iter().find(|entry| entry.1 == key))
+                        .map_or(Value::Fade([0.0; 3], 0.0), |entry| Value::Color(entry.0)),
+                )
+            }
+            // Above and below, where its band has a width.
+            Field::BorderColor(side @ (0 | 2)) => {
+                let (width, color) = decoration()?.border[side / 2];
+                match color {
+                    Some(color) => Some(Value::Color(color)),
+                    None if width > 0.0 => Some(Value::Fade([0.0; 3], 0.0)),
+                    None => None,
+                }
+            }
             Field::BorderColor(side) => runs()
                 .find(|run| run.side_of == Some((key, side)))
                 .and_then(|run| run.edge)
@@ -1206,9 +1216,23 @@ impl BoxTree {
             };
             // A `:before` or `:after`'s own colors and visibility, where its content shows.
             if let Some(key) = generated {
-                if self.read_generated(key, presented.field) == Some(presented.target) {
-                    self.write_generated(key, presented.field, presented.now);
+                if self.read_generated(key, presented.field) != Some(presented.target) {
+                    continue;
                 }
+                // On its line, to or from transparent: a layer, as an inline element's.
+                if matches!(
+                    presented.field,
+                    Field::Background | Field::BorderColor(0 | 2)
+                ) && self.generated_block(key).is_none()
+                    && (matches!(presented.target, Value::Fade(..))
+                        || matches!(presented.now, Value::Fade(..)))
+                {
+                    if let Some((color, alpha)) = rgba(presented.now) {
+                        fades.push((projected, Some(key), presented.field, color, alpha));
+                    }
+                    continue;
+                }
+                self.write_generated(key, presented.field, presented.now);
                 continue;
             }
             if self.read(projected, presented.field) != Some(presented.target) {
@@ -1220,7 +1244,7 @@ impl BoxTree {
                     || matches!(presented.now, Value::Fade(..)))
             {
                 if let Some((color, alpha)) = rgba(presented.now) {
-                    fades.push((projected, presented.field, color, alpha));
+                    fades.push((projected, None, presented.field, color, alpha));
                 }
                 continue;
             }
@@ -1278,8 +1302,8 @@ impl BoxTree {
         // Outermost first: an inner one's layer goes over theirs.
         let fading: BTreeSet<usize> = fades
             .iter()
-            .filter(|fade| fade.1 == Field::Background)
-            .map(|fade| self.originals[fade.0])
+            .filter(|fade| fade.2 == Field::Background)
+            .map(|fade| fade.1.unwrap_or(self.originals[fade.0]))
             .collect();
         let nodes = self.source.construction.nodes();
         let depth = |node: usize| {
@@ -1288,7 +1312,10 @@ impl BoxTree {
             })
             .count()
         };
-        fades.sort_by_cached_key(|fade| depth(self.originals[fade.0]));
+        // A `:before` or `:after` inside its element.
+        fades.sort_by_cached_key(|fade| {
+            depth(self.originals[fade.0]) + usize::from(fade.1.is_some())
+        });
         let beneath = Beneath {
             presented: presented_colors,
             // Only for backgrounds fading inside one another.
@@ -1299,8 +1326,8 @@ impl BoxTree {
             },
             fading,
         };
-        for (projected, field, color, alpha) in fades {
-            self.inline_fade(projected, field, color, alpha, &beneath);
+        for (projected, generated, field, color, alpha) in fades {
+            self.inline_fade(projected, generated, (field, color, alpha), &beneath);
         }
     }
 
@@ -1751,21 +1778,56 @@ impl BoxTree {
 
     /// An inline element's background or border color on its way to or from transparent:
     /// a layer of `color` at `alpha` where its box paints, over what shows beneath it.
+    /// For a `:before` or `:after` (`generated`, by key), its runs and side spaces are what
+    /// lies in it, nothing nests in it, and its bars across keep no width when transparent.
     fn inline_fade(
         &mut self,
         projected: usize,
-        field: Field,
-        color: [f32; 3],
-        alpha: f32,
+        generated: Option<usize>,
+        (field, color, alpha): (Field, [f32; 3], f32),
         beneath: &Beneath,
     ) {
         let (presented, fading, blocks) = (&beneath.presented, &beneath.fading, &beneath.blocks);
-        if !self.paints[projected].visible {
+        // A `:before` or `:after` with a box holds the runs that wear it: its text and its
+        // border and padding's spaces, not its margin's, nor an inside marker before it.
+        let decorated = generated.is_some_and(|key| {
+            self.texts
+                .iter()
+                .flatten()
+                .flat_map(|leaf| &leaf.runs)
+                .any(|run| run.inline_boxes.iter().any(|sides| sides.owner == key))
+        });
+        let wears = move |run: &super::TextRun, key: usize| {
+            if decorated {
+                run.inline_boxes.iter().any(|sides| sides.owner == key)
+            } else {
+                run.generated == Some(key)
+            }
+        };
+        let visible = match generated {
+            Some(key) => self
+                .texts
+                .iter()
+                .flatten()
+                .flat_map(|leaf| &leaf.runs)
+                .find(|run| wears(run, key) && !run.spacer)
+                .is_some_and(|run| run.visible),
+            None => self.paints[projected].visible,
+        };
+        if !visible {
             return;
         }
-        let node = self.originals[projected];
-        let inside = self.chain_test(projected);
-        let width = self.prepared.inline_boxes[projected].map_or([0.0; 4], |sides| sides.border);
+        let node = generated.unwrap_or(self.originals[projected]);
+        let chain = self.chain_test(projected);
+        let inside = |key: usize| generated.is_none() && chain(key);
+        let holds = |run: &super::TextRun| match generated {
+            Some(key) => wears(run, key),
+            None => chain(run.owner),
+        };
+        let width = match generated {
+            Some(_) => [0.0; 4],
+            None => self.prepared.inline_boxes[projected].map_or([0.0; 4], |sides| sides.border),
+        };
         let source = Arc::clone(&self.source);
         let nodes = source.construction.nodes();
         // Whether a box around it lies inside another around it: nearer to it.
@@ -1792,7 +1854,7 @@ impl BoxTree {
                         sides.background = Some(color);
                         sides.alpha = alpha;
                     }
-                    if !inside(run.owner) {
+                    if !holds(run) {
                         continue;
                     }
                     // Beneath it, the nearest opaque background around it; one nearer covers

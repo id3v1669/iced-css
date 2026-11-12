@@ -4658,6 +4658,88 @@ fn an_inline_before_animates_its_sides_on_its_line() {
 }
 
 #[test]
+fn an_inline_before_fades_its_background_on_its_line() {
+    use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![text("a", "before "), node("s", vec![text("t", "words")])],
+            )],
+        )
+    };
+    let start = Instant::now();
+    for (name, sides) in [("fade-sided", "padding:4px 8px;"), ("fade-plain", "")] {
+        let css = |color: &str| {
+            format!(
+                "#page {{ background-color:white; padding:20px; color:#000000; }}
+                 #p {{ line-height:40px; }} #s {{ display:inline; }}
+                 #s:before {{ content:\"GEN \"; {sides} background-color:{color}; }}"
+            )
+        };
+        let clear = BoxTree::new(source(), &css("transparent")).unwrap();
+        let full = clear.restyled(&[&css("#ff0000")]).unwrap();
+        let half = |one: &BoxTree, two: &BoxTree, path: &std::path::Path| {
+            let mut animations = BoxTreeAnimations::new();
+            assert_eq!(
+                animations
+                    .request(
+                        one,
+                        two,
+                        "s::before",
+                        &["background-color"],
+                        AnimationTiming::new(Duration::from_secs(1), Duration::ZERO),
+                        start,
+                    )
+                    .unwrap(),
+                1
+            );
+            animations.advance(start + Duration::from_millis(500), two);
+            let view: Element<'_, u8> = animations.presented(two).view();
+            let mut ui = simulator(view);
+            ui.snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path)
+                .unwrap()
+        };
+        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let frame = path.join("frame.png");
+        // Halfway the same both ways.
+        assert!(half(&clear, &full, &frame));
+        assert!(half(&full, &clear, &frame), "{name}");
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut reader =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()))
+                .read_info()
+                .unwrap();
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let count = |color: [u8; 3]| {
+            bytes[..info.buffer_size()]
+                .chunks(4)
+                .filter(|pixel| (0..3).all(|at| pixel[at].abs_diff(color[at]) <= 2))
+                .count()
+        };
+        // The red at half over the white page, nothing at full.
+        assert!(
+            count([255, 128, 128]) > 200,
+            "{name} {}",
+            count([255, 128, 128])
+        );
+        assert_eq!(count([255, 0, 0]), 0, "{name}");
+    }
+}
+
+#[test]
 fn every_inline_box_fades_as_it_shows() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};
