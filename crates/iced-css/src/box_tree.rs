@@ -3844,14 +3844,15 @@ fn line_height_of(leaf: &TextLeaf) -> text::LineHeight {
 
 /// The baseline of a laid-out leaf's last line below its top, as cosmic-text places it:
 /// the line's top, half of what its height leaves over its fonts' ascent and descent, and
-/// the ascent, over the runs on that line, from their primary faces' own metrics (glyphs a
-/// fallback face draws are not counted).
+/// the ascent, over the runs on that line, from the metrics of the faces that draw them (a
+/// run that wraps onto the line counts the faces of all its text).
 fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
     shaped: &Renderer::Paragraph,
 ) -> Option<f32> {
     use iced::advanced::graphics::text::{cosmic_text, font_system, to_attributes};
+    use unicode_script::{Script, UnicodeScript};
     let pieces: Vec<(usize, Rectangle)> = (0..leaf.runs.len())
         .flat_map(|at| {
             shaped
@@ -3877,24 +3878,68 @@ fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
             continue;
         }
         let attrs = to_attributes(font_of(base, run));
-        // Its first face, as cosmic-text shapes it: the family's at its weight, else the
-        // common fallbacks, else the closest match (script fallbacks are not asked for).
+        // Its faces as cosmic-text shapes it: the family's at its weight, else the common
+        // fallbacks and those for its scripts, else the closest match. Each character takes
+        // the first that has it, and the first takes what none has.
+        let scripts = run
+            .text
+            .chars()
+            .map(|c| c.script())
+            .fold(Vec::new(), |mut all, script| {
+                if !matches!(
+                    script,
+                    Script::Common | Script::Inherited | Script::Latin | Script::Unknown
+                ) && !all.contains(&script)
+                {
+                    all.push(script);
+                }
+                all
+            });
+        let mut missing: Vec<char> = run
+            .text
+            .chars()
+            .filter(|c| {
+                !c.is_whitespace()
+                    && !matches!(
+                        c,
+                        '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}'
+                            | '\u{FEFF}'
+                    )
+            })
+            .collect();
         let keys = fonts.get_font_matches(&attrs);
-        let Some(font) = cosmic_text::fallback::FontFallbackIter::new(
+        let families = [&attrs.family];
+        let mut faces = cosmic_text::fallback::FontFallbackIter::new(
             fonts,
             &keys,
-            &[&attrs.family],
-            &[],
+            &families,
+            &scripts,
             &run.text,
             attrs.weight,
-        )
-        .next() else {
+        );
+        let Some(first) = faces.next() else {
             continue;
         };
-        let metrics = font.metrics();
-        let scale = run.size / f32::from(metrics.units_per_em);
-        ascent = ascent.max(metrics.ascent * scale);
-        descent = descent.max(-metrics.descent * scale);
+        let mut used = Vec::new();
+        let mut face = Some(first.clone());
+        while let Some(font) = face.filter(|_| !missing.is_empty()) {
+            let map = font.as_swash().charmap();
+            let before = missing.len();
+            missing.retain(|c| map.map(*c) == 0);
+            if missing.len() < before {
+                used.push(font);
+            }
+            face = faces.next();
+        }
+        if used.is_empty() || !missing.is_empty() {
+            used.push(first);
+        }
+        for font in used {
+            let metrics = font.metrics();
+            let scale = run.size / f32::from(metrics.units_per_em);
+            ascent = ascent.max(metrics.ascent * scale);
+            descent = descent.max(-metrics.descent * scale);
+        }
         line = line.max(area.height);
     }
     (line > 0.0).then(|| top + (line - (ascent + descent)) / 2.0 + ascent)

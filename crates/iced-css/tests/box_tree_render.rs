@@ -6028,3 +6028,63 @@ fn a_negative_word_spacing_narrows_each_space() {
         );
     }
 }
+
+#[test]
+fn a_fallback_face_moves_an_inline_blocks_baseline() {
+    // A Han character the default face lacks: its fallback face's ascent and descent set
+    // where the line's glyphs sit, and so the inline-block's baseline, beside a face that
+    // draws the rest of its run.
+    let root = node(
+        "page",
+        vec![
+            text("a", "x "),
+            node(
+                "b",
+                vec![
+                    node("r", vec![text("rx", "x")]),
+                    node("g", vec![text("gx", "x汉")]),
+                ],
+            ),
+        ],
+    );
+    let sheet = "#page { background-color:white; color:#0000ff; line-height:30px; }
+                 #b { display:inline-block; }
+                 #r { display:inline; color:#ff0000; }
+                 #g { display:inline; color:#00ff00; }";
+    let view: Element<'_, u8> = BoxTree::new(root, sheet).unwrap().view();
+    let path = std::env::temp_dir().join(format!("fallback-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(
+        simulator(view)
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(path.join("frame.png"))
+            .unwrap()
+    );
+    let file = std::fs::read_dir(&path)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+    let mut reader = decoder.read_info().unwrap();
+    let width = reader.info().width as usize;
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let bottom = |keep: &dyn Fn(&[u8]) -> bool| {
+        bytes[..info.buffer_size()]
+            .chunks(4)
+            .enumerate()
+            .filter(|(_, pixel)| keep(pixel))
+            .map(|(at, _)| at / width)
+            .max()
+            .unwrap()
+    };
+    let blue = bottom(&|pixel| pixel[2] > 150 && pixel[0] < 80 && pixel[1] < 80);
+    let red = bottom(&|pixel| pixel[0] > 150 && pixel[1] < 80 && pixel[2] < 80);
+    let _ = std::fs::remove_dir_all(&path);
+    // The two x's share the line's baseline.
+    assert!(blue.abs_diff(red) <= 1, "blue {blue} red {red}");
+}
