@@ -3725,8 +3725,10 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     presses: Vec<(String, Message)>,
     /// Shaped text, its top-left corner relative to the layout, and its color, by arena.
     paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
-    /// The text past a shorter float, its corner and its leaf, by arena slot.
-    rest_paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, TextLeaf)>,
+    /// The text after the first paragraph's, by arena slot: past a shorter float or a
+    /// hanging first line, or each line of right-to-left text aligned left or centered.
+    /// Each with its corner and its leaf.
+    rest_paragraphs: BTreeMap<usize, Vec<(Renderer::Paragraph, Point, TextLeaf)>>,
     /// Holds the background images while they draw.
     allocations: Vec<image::Allocation>,
     /// The projected indices whose background image loaded.
@@ -4357,6 +4359,43 @@ fn hung<Renderer: text::Renderer<Font = iced::Font>>(
             wide,
         },
     })
+}
+
+/// The lines of right-to-left text aligned left or centered, each with the width it lays
+/// out in: iced aligns such a paragraph's lines right within its widest, so each line is a
+/// paragraph of its own. `None` for any other text, and for text with a forced break.
+fn rtl_lines<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    width: f32,
+) -> Option<Vec<(TextLeaf, f32)>> {
+    let text = leaf.text();
+    if !text.starts_with('\u{200F}')
+        || !matches!(leaf.align, "left" | "center")
+        || forces_break(&text)
+    {
+        return None;
+    }
+    let mut lines = Vec::new();
+    let mut rest = leaf.clone();
+    let mut room = if leaf.hang > 0.0 {
+        (width + leaf.hang).ceil()
+    } else {
+        width
+    };
+    while let Some((mut line, after, _)) = split_first_line(renderer, &rest, room) {
+        // 16.6.1: spaces at the end of a line are removed; in its own paragraph a line's
+        // last space would show at its visual start, the left.
+        if let Some(last) = line.runs.iter_mut().rev().find(|run| !run.text.is_empty()) {
+            let kept = last.text.trim_end_matches(' ').len();
+            last.text.truncate(kept);
+        }
+        lines.push((line, room));
+        rest = after;
+        room = width;
+    }
+    lines.push((rest, room));
+    Some(lines)
 }
 
 /// A leaf's height at `width`, its first line hanging.
@@ -5012,6 +5051,8 @@ where
                 let rest = self
                     .rest_paragraphs
                     .get(&arena)
+                    .into_iter()
+                    .flatten()
                     .map(|(shaped, corner, leaf)| (shaped, *corner, leaf));
                 for (shaped, corner, leaf) in std::iter::once((shaped, *corner, leaf)).chain(rest) {
                     let local = Point::new(point.x - corner.x, point.y - corner.y);
@@ -5363,6 +5404,7 @@ where
             .chain(
                 self.rest_paragraphs
                     .values()
+                    .flatten()
                     .map(|(shaped, corner, leaf)| (leaf, shaped, *corner)),
             );
         for (leaf, shaped, corner) in shaped {
@@ -5681,6 +5723,25 @@ where
             let parts = geometry.leaf_after.and_then(|after| {
                 split_leaf(renderer, leaf, width, after.top - place.top).map(|parts| (after, parts))
             });
+            // Right-to-left text aligned left or centered: a line at a time, each where its
+            // own width puts it (its first line hanging out to the right).
+            if let Some(lines) = rtl_lines(renderer, leaf, width) {
+                let mut top = place.top;
+                let mut rest = Vec::new();
+                for (index, (line, room)) in lines.into_iter().enumerate() {
+                    let shaped: Renderer::Paragraph = paragraph(renderer, &line, room);
+                    let corner = block_corner(shaped.min_bounds().width, place, room, top);
+                    top += shaped.min_bounds().height;
+                    if index == 0 {
+                        self.paragraphs
+                            .insert(arena, (shaped, corner, Color::BLACK));
+                    } else {
+                        rest.push((shaped, corner, line));
+                    }
+                }
+                self.rest_paragraphs.insert(arena, rest);
+                continue;
+            }
             // A hanging first line lays out wider, out past the start edge (left, or right
             // in a right-to-left block). It never widens past a float: layout gives it no
             // `leaf_after`.
@@ -5709,7 +5770,7 @@ where
                         place.top + hung.first_height,
                     );
                     self.rest_paragraphs
-                        .insert(arena, (shaped_rest, corner_rest, rest));
+                        .insert(arena, vec![(shaped_rest, corner_rest, rest)]);
                 }
                 continue;
             }
@@ -5728,7 +5789,7 @@ where
                 self.paragraphs
                     .insert(arena, (shaped_first, corner_first, Color::BLACK));
                 self.rest_paragraphs
-                    .insert(arena, (shaped_rest, corner_rest, second));
+                    .insert(arena, vec![(shaped_rest, corner_rest, second)]);
                 continue;
             }
             // A paragraph aligns its lines within its widest line and draws from that
@@ -6389,7 +6450,9 @@ where
                                 }
                                 renderer.fill_paragraph(shaped, corner, *color, clip);
                             }
-                            if let Some((shaped, corner, leaf)) = self.rest_paragraphs.get(&arena) {
+                            for (shaped, corner, leaf) in
+                                self.rest_paragraphs.get(&arena).into_iter().flatten()
+                            {
                                 let corner = Point::new(origin.x + corner.x, origin.y + corner.y);
                                 draw_run_decorations(leaf, shaped, renderer, corner);
                                 renderer.fill_paragraph(shaped, corner, Color::BLACK, clip);

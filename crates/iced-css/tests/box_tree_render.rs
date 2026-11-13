@@ -5810,3 +5810,98 @@ fn a_negative_text_indent_hangs_the_first_line() {
         let _ = std::fs::remove_file(std::env::temp_dir().join(file));
     }
 }
+
+#[test]
+fn wrapped_right_to_left_lines_take_their_alignment() {
+    // Each line's leftmost and rightmost dark pixels, at the snapshot's scale of 2.
+    let draw = |words: &'static str, css: &str, name: &str| -> Vec<(usize, usize)> {
+        let root = node("page", vec![node("p", vec![text("a", words)])]);
+        let sheet = format!(
+            "#page {{ background-color:white; padding-left:60px; width:200px; color:black; }}
+             #p {{ line-height:20px; direction:rtl; {css} }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        let path = std::env::temp_dir().join(format!("rtl-align-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            simulator(view)
+                .snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let mut lines: Vec<Option<(usize, usize)>> = vec![None; 8];
+        for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
+            let line = at / width / 40;
+            if pixel[0] < 100 && pixel[1] < 100 && pixel[2] < 100 && line < lines.len() {
+                let x = at % width;
+                lines[line] =
+                    Some(lines[line].map_or((x, x), |(near, far)| (near.min(x), far.max(x))));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&path);
+        lines.into_iter().flatten().collect()
+    };
+    const WORDS: &str = "words that wrap onto more lines of uneven lengths in a narrow box";
+    const HEBREW: &str = "שלום עולם זה טקסט ארוך שעובר לשורות רבות באורכים שונים בתיבה צרה";
+    for words in [WORDS, HEBREW] {
+        // Start-aligned, every line ends at the right edge, 260px in; their starts differ.
+        let start = draw(words, "", "start");
+        assert!(start.len() >= 3, "{start:?}");
+        assert!(
+            start.iter().all(|line| (510..=520).contains(&line.1)),
+            "{start:?}"
+        );
+        // Aligned left, every line starts at the left edge, 60px in, and the last, shorter,
+        // ends well before the right one.
+        let left = draw(words, "text-align:left;", "left");
+        assert_eq!(left.len(), start.len());
+        assert!(
+            left.iter().all(|line| (118..=128).contains(&line.0)),
+            "{left:?}"
+        );
+        assert!(left.last().unwrap().1 < 480, "{left:?}");
+        // Centered, each line's middle is the box's, 160px in.
+        let center = draw(words, "text-align:center;", "center");
+        assert!(
+            center
+                .iter()
+                .all(|line| (line.0 + line.1).abs_diff(640) <= 10),
+            "{center:?}"
+        );
+        // A hanging first line still starts at the left edge.
+        let hung = draw(words, "text-align:left; text-indent:-40px;", "hung");
+        assert!(
+            hung.iter().all(|line| (118..=128).contains(&line.0)),
+            "{hung:?}"
+        );
+        // The lines after it lay out in the box: they end inside its right edge.
+        assert!(hung[1..].iter().all(|line| line.1 <= 520), "{hung:?}");
+    }
+    // Text with forced breaks still aligns its lines right among themselves: they all end
+    // where the widest does, wherever `text-align` puts that.
+    let broken = draw(
+        "first line\nsecond longer line\nthird",
+        "text-align:left; white-space:pre;",
+        "broken",
+    );
+    assert_eq!(broken.len(), 3, "{broken:?}");
+    let end = broken[0].1;
+    assert!(
+        broken.iter().all(|line| line.1.abs_diff(end) <= 4),
+        "{broken:?}"
+    );
+}
