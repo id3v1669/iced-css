@@ -629,7 +629,26 @@ impl BoxTree {
 
     /// A border side's computed width, on its box or on its line; a style of `none` or
     /// `hidden` computes it to 0.
+    /// The outer cells, by arena slot, whose `side` draws the border of the collapsed table
+    /// `projected` is, which won there.
+    fn table_sides(&self, projected: usize, side: usize) -> impl Iterator<Item = usize> + '_ {
+        let slot = self.prepared.slot[projected];
+        self.prepared
+            .table_borders
+            .iter()
+            .filter(move |entry| Some(entry.2) == slot && entry.1 == side)
+            .map(|entry| entry.0)
+    }
+
     fn side_width(&self, projected: usize, side: usize) -> f32 {
+        // A collapsed table's border is as wide as its outer cells draw it.
+        if let Some(width) = self
+            .table_sides(projected, side)
+            .map(|cell| self.prepared.boxes[cell].border[side])
+            .reduce(f32::max)
+        {
+            return width;
+        }
         if self.under_text(projected) {
             return self.prepared.inline_boxes[projected].map_or(0.0, |sides| sides.border[side]);
         }
@@ -640,6 +659,12 @@ impl BoxTree {
     }
 
     fn read(&self, projected: usize, field: Field) -> Option<Value> {
+        // A collapsed table's border draws on the outer cells it won: its color is theirs.
+        if let Field::BorderColor(side) = field
+            && let Some(cell) = self.table_sides(projected, side).next()
+        {
+            return self.read(self.prepared.positions[cell].0, field);
+        }
         let paint = &self.paints[projected];
         // An inline element's background lies under its text; transparent is a fade at none.
         let opaque =
@@ -765,6 +790,16 @@ impl BoxTree {
     }
 
     fn write(&mut self, projected: usize, field: Field, value: Value) {
+        // A collapsed table's border color moves on the outer cells that draw it.
+        if let Field::BorderColor(side) = field {
+            let cells: Vec<usize> = self.table_sides(projected, side).collect();
+            if !cells.is_empty() {
+                for cell in cells {
+                    self.write(self.prepared.positions[cell].0, field, value);
+                }
+                return;
+            }
+        }
         if let (Field::Margin(_) | Field::Padding(_) | Field::BorderWidth(_), Value::Length(dim)) =
             (field, value)
             && self.under_text(projected)

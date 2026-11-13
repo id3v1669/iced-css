@@ -3329,7 +3329,7 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
         _ => BorderStyle::None,
     };
     let (rows, _) = table_parts(&prepared.boxes, table);
-    let (placed, _) = table_grid(&prepared.boxes, &rows);
+    let (placed, columns) = table_grid(&prepared.boxes, &rows);
     // In an rtl table the first column is on the right, so its far side is its left.
     let rtl = prepared.boxes[table].direction == Direction::Rtl;
     let (near, far) = if rtl { (3, 1) } else { (1, 3) };
@@ -3380,6 +3380,61 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
     for item in &placed {
         if !prepared.anonymous[item.cell] {
             paints[prepared.positions[item.cell].0].collapsed_cell = Some(table);
+        }
+    }
+    // On its outer edges the table's own border competes with the outer cells', and loses
+    // a tie. Where it wins, the cell draws it; `hidden` there leaves none.
+    if !prepared.anonymous[table] {
+        let owner = prepared.positions[table].0;
+        let (start, end) = if rtl { (1, 3) } else { (3, 1) };
+        for item in &placed {
+            let cell_owner = prepared.positions[item.cell].0;
+            if prepared.anonymous[item.cell] || !paints[cell_owner].visible {
+                continue;
+            }
+            for (outer, side) in [
+                (item.row == 0, 0),
+                (item.row + item.row_span == rows.len(), 2),
+                (item.column == 0, start),
+                (item.column + item.col_span == columns, end),
+            ] {
+                if !outer {
+                    continue;
+                }
+                let order = BorderOrder {
+                    inline_start: item.column,
+                    block_start: item.row,
+                };
+                let (Ok(cell), Ok(own)) = (
+                    BorderCandidate::new(
+                        style_of(paints[cell_owner].border_style[side]),
+                        prepared.boxes[item.cell].border[side],
+                        BorderOrigin::Cell,
+                        order,
+                    ),
+                    BorderCandidate::new(
+                        style_of(paints[owner].border_style[side]),
+                        prepared.boxes[table].border[side],
+                        BorderOrigin::Table,
+                        order,
+                    ),
+                ) else {
+                    continue;
+                };
+                match resolve_collapsed_border(&[cell, own], limits) {
+                    Ok(CollapsedBorder::Winner { index: 1, .. }) => {
+                        paints[cell_owner].border[side] = paints[owner].border[side];
+                        paints[cell_owner].border_style[side] = paints[owner].border_style[side];
+                        prepared.boxes[item.cell].border[side] = own.width();
+                        prepared.table_borders.push((item.cell, side, table));
+                    }
+                    Ok(CollapsedBorder::Suppressed) => {
+                        paints[cell_owner].border[side] = None;
+                        prepared.boxes[item.cell].border[side] = 0.0;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
     let mut losers = Vec::new();
@@ -7345,6 +7400,83 @@ mod tests {
                 "#p { color:#ff0000; outline:1px solid; } #c { color:#0000ff; outline:inherit; }"
             ),
             Some((1.0, [0.0, 0.0, 1.0]))
+        );
+    }
+
+    #[test]
+    fn a_collapsed_tables_border_competes_on_its_outer_edges() {
+        let (red, blue) = (Some([1.0, 0.0, 0.0]), Some([0.0, 0.0, 1.0]));
+        // The left cell's left, top and shared right side; its table's left.
+        let sides = |table: &str, cell: &str| {
+            let tree = BoxTree::new(
+                node(
+                    "t",
+                    vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+                ),
+                &format!(
+                    "#t {{ display:table; border-collapse:collapse; border:{table}; }}
+                     #r {{ display:table-row; }}
+                     #a, #b {{ display:table-cell; width:20px; height:20px; border:{cell}; }}"
+                ),
+            )
+            .unwrap();
+            let a = tree.prepared.slot[2].unwrap();
+            (
+                (tree.paints[2].border[3], tree.prepared.boxes[a].border[3]),
+                tree.paints[2].border[0],
+                tree.paints[2].border[1],
+                tree.paints[0].border[3],
+            )
+        };
+        // 17.6.2.1: wider wins; on a tie the cell's; `hidden` leaves none. Inner edges are
+        // the cells' alone, and the table draws none of its own.
+        assert_eq!(
+            sides("4px solid #00f", "2px solid #f00"),
+            ((blue, 4.0), blue, red, None)
+        );
+        assert_eq!(
+            sides("2px solid #00f", "2px solid #f00"),
+            ((red, 2.0), red, red, None)
+        );
+        assert_eq!(
+            sides("2px solid #00f", "2px dotted #f00"),
+            ((blue, 2.0), blue, red, None)
+        );
+        assert_eq!(
+            sides("2px hidden #00f", "4px solid #f00"),
+            ((None, 0.0), None, red, None)
+        );
+        // The cell draws the table's style too.
+        let styled = BoxTree::new(
+            node(
+                "t",
+                vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+            ),
+            "#t { display:table; border-collapse:collapse; border:4px dotted #00f; }
+             #r { display:table-row; }
+             #a, #b { display:table-cell; width:20px; height:20px; border:2px solid #f00; }",
+        )
+        .unwrap();
+        assert_eq!(styled.paints[2].border_style[3], "dotted");
+        assert_eq!(styled.paints[2].border_style[1], "solid");
+        // A hidden cell has no say, and keeps its own width.
+        let hidden = BoxTree::new(
+            node(
+                "t",
+                vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+            ),
+            "#t { display:table; border-collapse:collapse; border:4px solid #00f; }
+             #r { display:table-row; }
+             #a, #b { display:table-cell; width:20px; height:20px; border:2px solid #f00; }
+             #a { visibility:hidden; }",
+        )
+        .unwrap();
+        let a = hidden.prepared.slot[2].unwrap();
+        assert_eq!(hidden.prepared.boxes[a].border[3], 2.0);
+        // Without cell borders, the cells draw the table's.
+        assert_eq!(
+            sides("3px solid #00f", "none"),
+            ((blue, 3.0), blue, None, None)
         );
     }
 

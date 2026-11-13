@@ -2428,18 +2428,18 @@ fn collapsed_borders_share_a_line_and_keep_the_table_flush() {
     .unwrap();
     let g = tree.layout(200.0, None).unwrap();
     let edge = |index: usize| g[index].unwrap().border;
-    // Cells are 14 wide by 9 tall, and overlap by their shared 2px border.
-    assert_eq!((edge(2).left, edge(2).right), (0.0, 14.0));
-    assert_eq!((edge(3).left, edge(3).right), (12.0, 26.0));
-    assert_eq!((edge(2).top, edge(5).top), (0.0, 7.0));
-    assert_eq!((edge(0).right, edge(0).bottom), (26.0, 16.0));
-    // The table's own border gives way to its outer cells'.
+    // 17.6.2.1: on the outer edges the table's wider 7px border wins, and the outer cells
+    // draw it; inside they overlap by their shared 2px border.
+    assert_eq!((edge(2).left, edge(2).right), (0.0, 19.0));
+    assert_eq!((edge(3).left, edge(3).right), (17.0, 36.0));
+    assert_eq!((edge(2).top, edge(5).top), (0.0, 12.0));
+    assert_eq!((edge(0).right, edge(0).bottom), (36.0, 26.0));
     assert_eq!(tree.paints()[0].border[0], None);
     assert_eq!(tree.paints()[2].border[0], Some([0.0, 0.0, 0.0]));
 }
 
 #[test]
-fn collapse_without_cell_borders_keeps_the_table_border_and_no_spacing() {
+fn collapse_without_cell_borders_draws_the_table_border_on_its_cells_and_no_spacing() {
     let root = node(
         "t",
         vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
@@ -2452,9 +2452,12 @@ fn collapse_without_cell_borders_keeps_the_table_border_and_no_spacing() {
     )
     .unwrap();
     let g = tree.layout(200.0, None).unwrap();
-    assert_eq!(g[2].unwrap().border.left, 3.0);
+    // The outer cells draw the table's 3px border, which wins over none.
+    assert_eq!(g[2].unwrap().border.left, 0.0);
+    assert_eq!(g[2].unwrap().content.left, 3.0);
     assert_eq!(g[3].unwrap().border.left, 13.0);
-    assert!(tree.paints()[0].border[0].is_some());
+    assert!(tree.paints()[2].border[3].is_some());
+    assert!(tree.paints()[0].border[0].is_none());
 }
 
 #[test]
@@ -3412,6 +3415,41 @@ mod animation {
         ] {
             assert_eq!(run(rule), 0, "{rule}");
         }
+    }
+
+    #[test]
+    fn a_collapsed_tables_border_color_moves_on_its_outer_cells() {
+        let source = || {
+            node(
+                "t",
+                vec![node("r", vec![node("a", vec![]), node("b", vec![])])],
+            )
+        };
+        let css = |color: &str| {
+            format!(
+                "#t {{ display:table; border-collapse:collapse; border:4px solid {color}; }}
+                 #r {{ display:table-row; }}
+                 #a, #b {{ display:table-cell; width:20px; height:20px;
+                           border:1px solid #000000; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &css("#ff0000")).unwrap();
+        let to = from.restyled(&[&css("#0000ff")]).unwrap();
+        let start = Instant::now();
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(&from, &to, "t", &["border-color"], second(), start)
+            .unwrap();
+        assert_eq!(count, 4);
+        animations.advance(start + Duration::from_millis(500), &to);
+        let half = animations.presented(&to).paints()[2];
+        // Its left side, the table's, halfway from red to blue; its right, its own, black.
+        let left = half.border[3].unwrap();
+        assert!(left[0] > 0.1 && left[2] > 0.1 && left[1] < 0.01, "{left:?}");
+        assert_eq!(half.border[1], Some([0.0, 0.0, 0.0]));
+        animations.advance(start + Duration::from_millis(1500), &to);
+        let end = animations.presented(&to).paints()[2];
+        assert_eq!(end.border[3], Some([0.0, 0.0, 1.0]));
     }
 
     #[test]
