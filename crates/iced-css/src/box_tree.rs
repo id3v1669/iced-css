@@ -1580,14 +1580,23 @@ impl BoxTree {
                         let wide_fixed = format!("\u{a0}{}", extra.text);
                         run.text = run.text.replace(' ', &wide).replace('\u{a0}', &wide_fixed);
                     }
-                    if small_caps && run.marker_image.is_none() {
-                        tagged.extend(
-                            small_capitals(&run)
-                                .into_iter()
-                                .map(|part| (part, at, start)),
-                        );
+                    // Less by drawing each space smaller.
+                    let parts = if style.word_spacing < 0.0 && run.marker_image.is_none() {
+                        narrow_spaces(&run, style.word_spacing)
                     } else {
-                        tagged.push((run, at, start));
+                        vec![run]
+                    };
+                    for run in parts {
+                        let spaces = run.text.chars().all(|c| matches!(c, ' ' | '\u{a0}'));
+                        if small_caps && run.marker_image.is_none() && !spaces {
+                            tagged.extend(
+                                small_capitals(&run)
+                                    .into_iter()
+                                    .map(|part| (part, at, start)),
+                            );
+                        } else {
+                            tagged.push((run, at, start));
+                        }
                     }
                 }
             }
@@ -3086,6 +3095,42 @@ fn holds_rtl(text: &str) -> bool {
                 | '\u{1E800}'..='\u{1EFFF}'
         )
     })
+}
+
+/// A run with its spaces and no-break spaces in runs of their own, `spacing` (negative)
+/// narrower each: drawn at a smaller size, a space taken as a quarter of the font size
+/// wide and narrowing no further than to none. Their line keeps its height.
+fn narrow_spaces(run: &TextRun, spacing: f32) -> Vec<TextRun> {
+    let scale = (1.0 + spacing / (run.size * 0.25)).max(0.0);
+    let narrow = TextRun {
+        text: String::new(),
+        size: (run.size * scale).max(0.5),
+        line_size: Some(run.line_size.unwrap_or(run.size)),
+        ..run.clone()
+    };
+    let mut parts: Vec<TextRun> = Vec::new();
+    let mut spaces = None;
+    for character in run.text.chars() {
+        let here = matches!(character, ' ' | '\u{a0}');
+        if spaces != Some(here) {
+            parts.push(if here {
+                narrow.clone()
+            } else {
+                TextRun {
+                    text: String::new(),
+                    ..run.clone()
+                }
+            });
+            spaces = Some(here);
+        }
+        if let Some(part) = parts.last_mut() {
+            part.text.push(character);
+        }
+    }
+    if parts.is_empty() {
+        parts.push(run.clone());
+    }
+    parts
 }
 
 /// A run in capitals, with what was lowercase at a smaller size.

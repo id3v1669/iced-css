@@ -5945,3 +5945,86 @@ fn a_press_on_a_hanging_line_goes_to_its_run() {
         vec![2]
     );
 }
+
+#[test]
+fn a_negative_word_spacing_narrows_each_space() {
+    use iced::advanced::renderer::Headless;
+    // The ink's width, at the snapshot's scale of 2.
+    let ink = |words: &'static str, css: &str, name: &str| {
+        let root = node("page", vec![node("p", vec![text("a", words)])]);
+        let sheet = format!(
+            "#page {{ background-color:white; color:black; }} #p {{ white-space:nowrap; {css} }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        let path = std::env::temp_dir().join(format!("spacing-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            simulator(view)
+                .snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let xs: Vec<usize> = bytes[..info.buffer_size()]
+            .chunks(4)
+            .enumerate()
+            .filter(|(_, pixel)| pixel[0] < 100 && pixel[1] < 100 && pixel[2] < 100)
+            .map(|(at, _)| at % width)
+            .collect();
+        let _ = std::fs::remove_dir_all(&path);
+        xs.iter().max().unwrap() - xs.iter().min().unwrap()
+    };
+    const SPACED: &str = "mm mm mm mm mm mm mm";
+    let plain = ink(SPACED, "", "plain");
+    let tighter = ink(SPACED, "word-spacing:-2px;", "tighter");
+    // Six spaces, 2px narrower each: 24 pixels at scale 2.
+    assert!(
+        (tighter as i64 - (plain as i64 - 24)).abs() <= 4,
+        "{plain} {tighter}"
+    );
+    // Far more than a space is wide: none left, as the words written together.
+    let none = ink(SPACED, "word-spacing:-100px;", "none");
+    let together = ink("mmmmmmmmmmmmmm", "", "together");
+    assert!(none.abs_diff(together) <= 4, "{none} {together}");
+    // The line keeps its height.
+    let renderer = iced_test::futures::futures::executor::block_on(
+        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
+    )
+    .unwrap();
+    let height = |words: &'static str, css: &str| {
+        let sheet = format!("#p {{ {css} }}");
+        let root = node("page", vec![node("p", vec![text("a", words)])]);
+        let block = BoxTree::new(root, &sheet)
+            .unwrap()
+            .layout_with(&renderer, 1024.0, None)
+            .unwrap()[1]
+            .unwrap()
+            .border;
+        block.bottom - block.top
+    };
+    assert_eq!(height(SPACED, "word-spacing:-100px;"), height(SPACED, ""));
+    // So does a line of spaces alone, in small capitals too.
+    const BLANK: &str = "a\n      \nb";
+    for caps in ["", "font-variant:small-caps;"] {
+        assert_eq!(
+            height(
+                BLANK,
+                &format!("white-space:pre; word-spacing:-100px; {caps}")
+            ),
+            height(BLANK, &format!("white-space:pre; {caps}"))
+        );
+    }
+}
