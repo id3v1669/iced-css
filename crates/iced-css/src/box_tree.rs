@@ -379,6 +379,9 @@ pub struct TextLeaf {
     pub line_height: TextLineHeight,
     /// A percentage `text-indent` this leaf's first line takes once its width is known.
     pub percent_indent: Option<PercentIndent>,
+    /// How far a negative `text-indent` pulls the first line out past the left edge, in
+    /// pixels: that line lays out this much wider. Left-to-right blocks only.
+    pub hang: f32,
 }
 
 /// A percentage `text-indent`, resolved against the width the leaf lays out in.
@@ -1412,6 +1415,7 @@ impl BoxTree {
                 wraps: !matches!(lead.white_space, "pre" | "nowrap"),
                 line_height: lead.line_height,
                 percent_indent: None,
+                hang: 0.0,
             })
         };
         let texts: Vec<Option<TextLeaf>> = (0..prepared.boxes.len()).map(build_leaf).collect();
@@ -1908,7 +1912,7 @@ impl BoxTree {
             let percent = styles[owner].text_indent_percent;
             let Some(leaf) = texts[arena]
                 .as_mut()
-                .filter(|leaf| (indent > 0.0 || percent > 0.0) && !leaf.is_empty())
+                .filter(|leaf| (indent != 0.0 || percent != 0.0) && !leaf.is_empty())
             else {
                 continue;
             };
@@ -1931,12 +1935,31 @@ impl BoxTree {
             if !leads(arena) || !line_leads {
                 continue;
             }
+            // A piece of a line of inline-blocks is sized before any indent: a share of its
+            // width would wrap its first word, and a hanging line would leave its piece.
+            let in_row = prepared.anonymous[arena]
+                && parent_of[arena]
+                    .is_some_and(|parent| prepared.boxes[parent].inline_row.is_some());
+            if indent < 0.0 || percent < 0.0 {
+                // A negative indent hangs the first line out to the left. A right-to-left
+                // block's would hang to the right: its direction mark leaves its lines
+                // unsplittable, and `hung` declines it.
+                if in_row {
+                    continue;
+                }
+                if percent < 0.0 {
+                    let fallback = leaf.runs.first().map_or(0, |run| run.owner);
+                    leaf.percent_indent = Some(PercentIndent {
+                        percent,
+                        owner: projection.original_index(owner).unwrap_or(fallback),
+                        inserted: false,
+                    });
+                } else {
+                    leaf.hang = -indent;
+                }
+                continue;
+            }
             if percent > 0.0 {
-                // A piece of a line of inline-blocks is sized before any indent: a share of
-                // its width would wrap its first word. It takes none.
-                let in_row = prepared.anonymous[arena]
-                    && parent_of[arena]
-                        .is_some_and(|parent| prepared.boxes[parent].inline_row.is_some());
                 if in_row {
                     continue;
                 }
@@ -2035,6 +2058,7 @@ impl BoxTree {
                         wraps: false,
                         line_height: style.line_height,
                         percent_indent: None,
+                        hang: 0.0,
                     },
                 ))
             })
@@ -2258,10 +2282,13 @@ impl BoxTree {
                 &mut |arena, width| {
                     current.texts[arena]
                         .as_ref()
-                        .map(|leaf| paragraph(renderer, leaf, width).min_bounds().height)
+                        .map(|leaf| leaf_height(renderer, leaf, width))
                 },
                 &mut |arena, narrow, until, wide| {
-                    let leaf = current.texts[arena].as_ref()?;
+                    // A hanging first line stays beside the floats as it is.
+                    let leaf = current.texts[arena]
+                        .as_ref()
+                        .filter(|leaf| leaf.hang <= 0.0)?;
                     let (_, second, first_height) = split_leaf(renderer, leaf, narrow, until)?;
                     let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
                     Some(first_height + rest.min_bounds().height)
@@ -2271,7 +2298,7 @@ impl BoxTree {
                         .entry((arena, width.to_bits()))
                         .or_insert_with(|| {
                             let leaf = current.texts[arena].as_ref()?;
-                            last_baseline(renderer, leaf, &paragraph(renderer, leaf, width))
+                            leaf_baseline(renderer, leaf, width)
                         })
                 },
             )?;
@@ -2375,6 +2402,13 @@ impl BoxTree {
             let Some(mut indent) = leaf.percent_indent else {
                 continue;
             };
+            // A negative one hangs the first line by that share of the width.
+            if indent.percent < 0.0 {
+                let hang = -indent.percent / 100.0 * (place.right - place.left).max(0.0);
+                changed |= leaf.hang != hang;
+                leaf.hang = hang;
+                continue;
+            }
             let is_mark = |mark: &char| matches!(mark, '\u{200E}' | '\u{200F}');
             let old = indent.inserted.then(|| leaf.runs.remove(0));
             // The paragraph's direction mark goes back where `styled` put it...
@@ -4119,18 +4153,11 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
     }
 }
 
-/// Splits a leaf where its lines at `narrow` first start at or below `until`, for text
-/// that widens past a float. Returns the two parts and the first part's height.
-fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
-    renderer: &Renderer,
-    leaf: &TextLeaf,
-    narrow: f32,
-    until: f32,
-) -> Option<(TextLeaf, TextLeaf, f32)> {
-    let whole = leaf.text();
-    // Forced breaks give several buffer lines, whose offsets do not add up. Bidirectional
-    // text reorders per line and its second part would re-detect its base direction.
-    if whole.chars().any(|character| {
+/// Whether text's lines can be split apart. Forced breaks give several buffer lines, whose
+/// offsets do not add up. Bidirectional text reorders per line and its second part would
+/// re-detect its base direction.
+fn splittable(text: &str) -> bool {
+    !text.chars().any(|character| {
         matches!(
             character,
             '\n' | '\r' | '\x0B' | '\x0C' | '\u{85}' | '\u{2028}' | '\u{2029}'
@@ -4141,7 +4168,19 @@ fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
                 | '\u{10800}'..='\u{10FFF}'
                 | '\u{1E800}'..='\u{1EFFF}'
         )
-    }) {
+    })
+}
+
+/// Splits a leaf where its lines at `narrow` first start at or below `until`, for text
+/// that widens past a float. Returns the two parts and the first part's height.
+fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    narrow: f32,
+    until: f32,
+) -> Option<(TextLeaf, TextLeaf, f32)> {
+    let whole = leaf.text();
+    if !splittable(&whole) {
         return None;
     }
     // Lines start at x = 0 only when left aligned, so scan an aligned-left copy. The same
@@ -4208,6 +4247,92 @@ fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
         .min_bounds()
         .height;
     Some((first, second, first_height))
+}
+
+/// A leaf whose first line hangs (`TextLeaf::hang`), laid out at `width`.
+struct Hung {
+    /// The first line, laid out `wide`.
+    first: TextLeaf,
+    /// The lines after it, laid out at `width` below it.
+    rest: Option<TextLeaf>,
+    first_height: f32,
+    wide: f32,
+}
+
+/// Splits off a hanging first line: `None` when the leaf does not hang, or holds text whose
+/// lines cannot be split (forced breaks, right-to-left text), which then does not hang.
+fn hung<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    width: f32,
+) -> Option<Hung> {
+    if leaf.hang <= 0.0 || leaf.is_empty() || !splittable(&leaf.text()) {
+        return None;
+    }
+    let wide = (width + leaf.hang).ceil();
+    // Past the first line's top the second line starts; a single line hangs whole.
+    Some(match split_leaf(renderer, leaf, wide, 1.0) {
+        Some((first, rest, first_height)) => Hung {
+            first,
+            rest: Some(rest),
+            first_height,
+            wide,
+        },
+        None => Hung {
+            first: leaf.clone(),
+            rest: None,
+            first_height: paragraph::<Renderer>(renderer, leaf, wide)
+                .min_bounds()
+                .height,
+            wide,
+        },
+    })
+}
+
+/// A leaf's height at `width`, its first line hanging.
+fn leaf_height<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    width: f32,
+) -> f32 {
+    match hung(renderer, leaf, width) {
+        Some(Hung {
+            rest: Some(rest),
+            first_height,
+            ..
+        }) => {
+            first_height
+                + paragraph::<Renderer>(renderer, &rest, width)
+                    .min_bounds()
+                    .height
+        }
+        Some(Hung { first_height, .. }) => first_height,
+        None => {
+            paragraph::<Renderer>(renderer, leaf, width)
+                .min_bounds()
+                .height
+        }
+    }
+}
+
+/// [`last_baseline`] of a leaf at `width`, its first line hanging.
+fn leaf_baseline<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    width: f32,
+) -> Option<f32> {
+    match hung(renderer, leaf, width) {
+        Some(Hung {
+            rest: Some(rest),
+            first_height,
+            ..
+        }) => last_baseline(renderer, &rest, &paragraph(renderer, &rest, width))
+            .map(|baseline| first_height + baseline),
+        Some(Hung { first, wide, .. }) => {
+            last_baseline(renderer, &first, &paragraph(renderer, &first, wide))
+        }
+        None => last_baseline(renderer, leaf, &paragraph(renderer, leaf, width)),
+    }
 }
 
 /// The narrowest width a leaf can wrap to: its widest single word.
@@ -5359,10 +5484,13 @@ where
                         }
                         current.texts[arena]
                             .as_ref()
-                            .map(|leaf| paragraph(renderer, leaf, width).min_bounds().height)
+                            .map(|leaf| leaf_height(renderer, leaf, width))
                     },
                     &mut |arena, narrow, until, wide| {
-                        let leaf = current.texts[arena].as_ref()?;
+                        // A hanging first line stays beside the floats as it is.
+                        let leaf = current.texts[arena]
+                            .as_ref()
+                            .filter(|leaf| leaf.hang <= 0.0)?;
                         let (_, second, first_height) = split_leaf(renderer, leaf, narrow, until)?;
                         let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
                         Some(first_height + rest.min_bounds().height)
@@ -5373,7 +5501,7 @@ where
                             .entry((arena, width.to_bits()))
                             .or_insert_with(|| {
                                 let leaf = current.texts[arena].as_ref()?;
-                                last_baseline(renderer, leaf, &paragraph(renderer, leaf, width))
+                                leaf_baseline(renderer, leaf, width)
                             })
                     },
                 )
@@ -5410,14 +5538,31 @@ where
                 }
                 let place = geometry.leaf_band.unwrap_or(geometry.content);
                 let width = (place.right - place.left).ceil();
-                let size = paragraph(renderer, leaf, width).min_bounds();
                 // Where paint puts the lines: right ones overflow leftward, centered ones
-                // spill half each way.
-                let (from, to) = match leaf.align {
-                    "right" => (width - size.width, place.right - place.left),
-                    "center" => ((width - size.width) / 2.0, (width + size.width) / 2.0),
-                    _ => (0.0, size.width),
+                // spill half each way; a hanging first line starts left of the box.
+                let extent = |block: f32, left: f32, room: f32, far: f32| match leaf.align {
+                    "right" => (left + room - block, far),
+                    "center" => (left + (room - block) / 2.0, left + (room + block) / 2.0),
+                    _ => (left, left + block),
                 };
+                if let Some(hung) = hung(renderer, leaf, width) {
+                    let first: Renderer::Paragraph = paragraph(renderer, &hung.first, hung.wide);
+                    let hang = hung.wide - width;
+                    let (mut from, mut to) =
+                        extent(first.min_bounds().width, -hang, hung.wide, width);
+                    let mut height = hung.first_height;
+                    if let Some(rest) = &hung.rest {
+                        let rest: Renderer::Paragraph = paragraph(renderer, rest, width);
+                        let size = rest.min_bounds();
+                        let (near, far) = extent(size.width, 0.0, width, place.right - place.left);
+                        from = from.min(near);
+                        to = to.max(far);
+                        height += size.height;
+                    }
+                    return Some(TextExtent { height, from, to });
+                }
+                let size = paragraph(renderer, leaf, width).min_bounds();
+                let (from, to) = extent(size.width, 0.0, width, place.right - place.left);
                 Some(TextExtent {
                     height: size.height,
                     from,
@@ -5464,6 +5609,35 @@ where
             let parts = geometry.leaf_after.and_then(|after| {
                 split_leaf(renderer, leaf, width, after.top - place.top).map(|parts| (after, parts))
             });
+            // A hanging first line lays out wider, from left of the box.
+            // (It never widens past a float: layout gives it no `leaf_after`.)
+            if let Some(hung) = hung(renderer, leaf, width) {
+                let hanging = FlowRect {
+                    left: place.left - (hung.wide - width),
+                    ..place
+                };
+                let shaped_first: Renderer::Paragraph = paragraph(renderer, &hung.first, hung.wide);
+                let corner_first = block_corner(
+                    shaped_first.min_bounds().width,
+                    hanging,
+                    hung.wide,
+                    place.top,
+                );
+                self.paragraphs
+                    .insert(arena, (shaped_first, corner_first, Color::BLACK));
+                if let Some(rest) = hung.rest {
+                    let shaped_rest: Renderer::Paragraph = paragraph(renderer, &rest, width);
+                    let corner_rest = block_corner(
+                        shaped_rest.min_bounds().width,
+                        place,
+                        width,
+                        place.top + hung.first_height,
+                    );
+                    self.rest_paragraphs
+                        .insert(arena, (shaped_rest, corner_rest, rest));
+                }
+                continue;
+            }
             if let Some((after, (first, second, first_height))) = parts {
                 let wide = (after.right - after.left).ceil();
                 let shaped_first: Renderer::Paragraph = paragraph(renderer, &first, width);

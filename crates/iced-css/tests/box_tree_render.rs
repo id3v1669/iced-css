@@ -5465,3 +5465,251 @@ fn a_column_spanning_cells_edge_is_resolved_per_stretch() {
     assert!(draw(false, &name));
     assert!(draw(true, &name));
 }
+
+#[test]
+fn a_negative_text_indent_hangs_the_first_line() {
+    use iced::advanced::renderer::Headless;
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![text(
+                    "a",
+                    "words that wrap onto more lines once a hanging first line pulls them out",
+                )],
+            )],
+        )
+    };
+    let sheet = |css: &str| {
+        format!(
+            "#page {{ background-color:white; padding-left:60px; width:200px; color:black; }}
+             #p {{ line-height:20px; {css} }}"
+        )
+    };
+    // Each line's leftmost dark pixel, at the snapshot's scale of 2, and the tree.
+    let draw = |css: &str, name: &str, reference: &str| -> (Vec<Option<usize>>, bool) {
+        let tree = BoxTree::new(source(), &sheet(css)).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        let path = std::env::temp_dir().join(format!("hang-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        let shot = ui.snapshot(&Theme::Light).unwrap();
+        let same = shot
+            .matches_image(
+                std::env::temp_dir().join(format!("hang-{}-{reference}.png", std::process::id())),
+            )
+            .unwrap();
+        assert!(shot.matches_image(path.join("frame.png")).unwrap());
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let mut lines = vec![None::<usize>; 6];
+        for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
+            let line = at / width / 40;
+            if pixel[0] < 100 && pixel[1] < 100 && pixel[2] < 100 && line < lines.len() {
+                let x = at % width;
+                lines[line] = Some(lines[line].map_or(x, |most: usize| most.min(x)));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&path);
+        (lines, same)
+    };
+    let starts = |lines: &[Option<usize>]| lines.iter().flatten().copied().collect::<Vec<_>>();
+    // Without an indent every line starts at the content edge, 60px in.
+    let (plain, _) = draw("", "plain", "plain");
+    let plain = starts(&plain);
+    assert!(plain.len() >= 3, "{plain:?}");
+    assert!(plain.iter().all(|x| (118..=126).contains(x)), "{plain:?}");
+    // At -40px the first line starts 40px left of it, the rest stay.
+    let (hung, _) = draw("text-indent:-40px;", "pixels", "hung");
+    let hung = starts(&hung);
+    assert!((38..=46).contains(&hung[0]), "{hung:?}");
+    assert!(
+        hung[1..].iter().all(|x| (118..=126).contains(x)),
+        "{hung:?}"
+    );
+    // A percentage is of the block's width: -20% of 200px is the same 40px.
+    let (_, same) = draw("text-indent:-20%;", "percent", "hung");
+    assert!(same);
+    // Right-to-left text does not hang: as without the indent.
+    let (_, _) = draw("direction:rtl;", "rtl-plain", "rtl");
+    let (_, same) = draw("direction:rtl; text-indent:-40px;", "rtl", "rtl");
+    assert!(same);
+    // Laid out outside the widget, as tall as the widget draws it.
+    let renderer = iced_test::futures::futures::executor::block_on(
+        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
+    )
+    .unwrap();
+    let height = |css: &str| {
+        let tree = BoxTree::new(source(), &sheet(css)).unwrap();
+        let block = tree.layout_with(&renderer, 1024.0, None).unwrap()[1]
+            .unwrap()
+            .border;
+        block.bottom - block.top
+    };
+    let lines = |height: f32| (height / 20.0).round() as usize;
+    assert_eq!(lines(height("")), plain.len());
+    assert_eq!(lines(height("text-indent:-40px;")), hung.len());
+    // Text that takes two lines in its box fits on one when it hangs: a percentage's hang,
+    // sized once the width is known, lays out again.
+    let short = || node("page", vec![node("p", vec![text("a", "a few words here")])]);
+    let float = BoxTree::new(short(), "#p { float:left; }").unwrap();
+    let long = float.layout_with(&renderer, 1024.0, None).unwrap()[1]
+        .unwrap()
+        .content;
+    let long = long.right - long.left;
+    let fit = |css: &str| {
+        let sheet = format!(
+            "#page {{ width:{}px; }} #p {{ line-height:20px; {css} }}",
+            (long * 0.8).floor()
+        );
+        let block = BoxTree::new(short(), &sheet)
+            .unwrap()
+            .layout_with(&renderer, 1024.0, None)
+            .unwrap()[1]
+            .unwrap()
+            .border;
+        block.bottom - block.top
+    };
+    assert_eq!(fit(""), 40.0);
+    assert_eq!(fit("text-indent:-50%;"), 20.0);
+    // Beside a shorter float its lines keep the band beside it, as without the float in a
+    // box that narrow.
+    let beside = |page: &str, float: bool| {
+        let mut children = Vec::new();
+        if float {
+            children.push(node("f", vec![]));
+        }
+        children.push(node(
+            "p",
+            vec![text(
+                "a",
+                "words that wrap onto many more lines once a hanging first line pulls them \
+                 out beside a short float that ends after the first of them",
+            )],
+        ));
+        let sheet = format!(
+            "#page {{ width:{page}; }} #f {{ float:left; width:60px; height:10px; }}
+             #p {{ line-height:20px; text-indent:-20px; }}"
+        );
+        let laid = BoxTree::new(node("page", children), &sheet)
+            .unwrap()
+            .layout_with(&renderer, 1024.0, None)
+            .unwrap();
+        let block = laid[laid.len() - 2].unwrap().border;
+        block.bottom - block.top
+    };
+    assert!(beside("200px", false) > 60.0);
+    assert_eq!(beside("260px", true), beside("200px", false));
+    // The widget draws it as tall: rows its red background covers.
+    let drawn = |page: &str, float: bool, name: &str| {
+        let mut children = Vec::new();
+        if float {
+            children.push(node("f", vec![]));
+        }
+        children.push(node(
+            "p",
+            vec![text(
+                "a",
+                "words that wrap onto many more lines once a hanging first line pulls them \
+                 out beside a short float that ends after the first of them",
+            )],
+        ));
+        let sheet = format!(
+            "#page {{ width:{page}; background-color:white; }}
+             #f {{ float:left; width:60px; height:10px; }}
+             #p {{ line-height:20px; text-indent:-20px; background-color:#ff0000; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(node("page", children), &sheet).unwrap().view();
+        let path = std::env::temp_dir().join(format!("hang-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            simulator(view)
+                .snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let mut rows = std::collections::BTreeSet::new();
+        for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
+            if pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60 {
+                rows.insert(at / width);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&path);
+        rows.len()
+    };
+    assert_eq!(
+        drawn("260px", true, "float"),
+        drawn("200px", false, "narrow")
+    );
+    // Text with a forced break does not hang.
+    let broken = |css: &str, name: &str| {
+        let root = node("p", vec![text("a", "one line\nand another")]);
+        let sheet = format!(
+            "#p {{ background-color:white; padding-left:60px; width:200px; color:black;
+                   white-space:pre; {css} }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        simulator(view)
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("hang-{}-broken.png", std::process::id());
+    assert!(broken("", &name));
+    assert!(broken("text-indent:-40px;", &name));
+    // An inline-block whose first line hangs lines up on its last line's baseline: the
+    // text beside it sits by its bottom line.
+    let row = BoxTree::new(
+        node(
+            "p",
+            vec![
+                text("a", "x "),
+                node(
+                    "b",
+                    vec![text("t", "words that wrap onto more lines in a narrow box")],
+                ),
+            ],
+        ),
+        "#p { width:400px; line-height:20px; }
+         #b { display:inline-block; width:120px; text-indent:-20px; }",
+    )
+    .unwrap();
+    let laid = row.layout_with(&renderer, 1024.0, None).unwrap();
+    let (beside, boxed) = (laid[1].unwrap().border, laid[2].unwrap().border);
+    assert!(boxed.bottom - boxed.top > 40.0, "{boxed:?}");
+    assert!(
+        (beside.bottom - boxed.bottom).abs() < 6.0,
+        "{beside:?} {boxed:?}"
+    );
+    for reference in ["plain", "hung", "rtl", "broken"] {
+        let file = format!("hang-{}-{reference}.png", std::process::id());
+        let _ = std::fs::remove_file(std::env::temp_dir().join(file));
+    }
+}
