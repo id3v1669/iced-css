@@ -5469,27 +5469,19 @@ fn a_column_spanning_cells_edge_is_resolved_per_stretch() {
 #[test]
 fn a_negative_text_indent_hangs_the_first_line() {
     use iced::advanced::renderer::Headless;
-    let source = || {
-        node(
-            "page",
-            vec![node(
-                "p",
-                vec![text(
-                    "a",
-                    "words that wrap onto more lines once a hanging first line pulls them out",
-                )],
-            )],
-        )
-    };
+    const WORDS: &str = "words that wrap onto more lines once a hanging first line pulls them out";
+    let source = |words: &'static str| node("page", vec![node("p", vec![text("a", words)])]);
     let sheet = |css: &str| {
         format!(
             "#page {{ background-color:white; padding-left:60px; width:200px; color:black; }}
              #p {{ line-height:20px; {css} }}"
         )
     };
-    // Each line's leftmost dark pixel, at the snapshot's scale of 2, and the tree.
-    let draw = |css: &str, name: &str, reference: &str| -> (Vec<Option<usize>>, bool) {
-        let tree = BoxTree::new(source(), &sheet(css)).unwrap();
+    // Each line's leftmost and rightmost dark pixels, at the snapshot's scale of 2, and
+    // whether it draws as `reference` first did.
+    type Lines = Vec<Option<(usize, usize)>>;
+    let draw = |words: &'static str, css: &str, name: &str, reference: &str| -> (Lines, bool) {
+        let tree = BoxTree::new(source(words), &sheet(css)).unwrap();
         let view: Element<'_, u8> = tree.view();
         let mut ui = simulator(view);
         let path = std::env::temp_dir().join(format!("hang-{}-{name}", std::process::id()));
@@ -5514,25 +5506,39 @@ fn a_negative_text_indent_hangs_the_first_line() {
         let width = reader.info().width as usize;
         let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
         let info = reader.next_frame(&mut bytes).unwrap();
-        let mut lines = vec![None::<usize>; 6];
+        let mut lines: Lines = vec![None; 6];
         for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
             let line = at / width / 40;
             if pixel[0] < 100 && pixel[1] < 100 && pixel[2] < 100 && line < lines.len() {
                 let x = at % width;
-                lines[line] = Some(lines[line].map_or(x, |most: usize| most.min(x)));
+                lines[line] =
+                    Some(lines[line].map_or((x, x), |(near, far)| (near.min(x), far.max(x))));
             }
         }
         let _ = std::fs::remove_dir_all(&path);
         (lines, same)
     };
-    let starts = |lines: &[Option<usize>]| lines.iter().flatten().copied().collect::<Vec<_>>();
+    let starts = |lines: &Lines| {
+        lines
+            .iter()
+            .flatten()
+            .map(|line| line.0)
+            .collect::<Vec<_>>()
+    };
+    let ends = |lines: &Lines| {
+        lines
+            .iter()
+            .flatten()
+            .map(|line| line.1)
+            .collect::<Vec<_>>()
+    };
     // Without an indent every line starts at the content edge, 60px in.
-    let (plain, _) = draw("", "plain", "plain");
+    let (plain, _) = draw(WORDS, "", "plain", "plain");
     let plain = starts(&plain);
     assert!(plain.len() >= 3, "{plain:?}");
     assert!(plain.iter().all(|x| (118..=126).contains(x)), "{plain:?}");
     // At -40px the first line starts 40px left of it, the rest stay.
-    let (hung, _) = draw("text-indent:-40px;", "pixels", "hung");
+    let (hung, _) = draw(WORDS, "text-indent:-40px;", "pixels", "hung");
     let hung = starts(&hung);
     assert!((38..=46).contains(&hung[0]), "{hung:?}");
     assert!(
@@ -5540,19 +5546,110 @@ fn a_negative_text_indent_hangs_the_first_line() {
         "{hung:?}"
     );
     // A percentage is of the block's width: -20% of 200px is the same 40px.
-    let (_, same) = draw("text-indent:-20%;", "percent", "hung");
+    let (_, same) = draw(WORDS, "text-indent:-20%;", "percent", "hung");
     assert!(same);
-    // Right-to-left text does not hang: as without the indent.
-    let (_, _) = draw("direction:rtl;", "rtl-plain", "rtl");
-    let (_, same) = draw("direction:rtl; text-indent:-40px;", "rtl", "rtl");
-    assert!(same);
+    // A right-to-left block's lines end at its right edge, 260px in; its first line hangs
+    // out past it to the right.
+    let (flush, _) = draw(WORDS, "direction:rtl;", "rtl-plain", "rtl");
+    let flush = ends(&flush);
+    assert!(flush.iter().all(|x| (512..=520).contains(x)), "{flush:?}");
+    let (right, same) = draw(WORDS, "direction:rtl; text-indent:-40px;", "rtl", "rtl");
+    assert!(!same);
+    let right = ends(&right);
+    assert!((592..=600).contains(&right[0]), "{right:?}");
+    assert!(
+        right[1..].iter().all(|x| (512..=520).contains(x)),
+        "{right:?}"
+    );
+    // So does right-to-left text, whose lines read from their right: the second starts
+    // where the first ends.
+    const HEBREW: &str = "שלום עולם זה טקסט ארוך שעובר לשורות רבות כשהשורה הראשונה תלויה";
+    let (flush, _) = draw(HEBREW, "direction:rtl;", "hebrew-plain", "hebrew");
+    let flush = ends(&flush);
+    assert!(flush.len() >= 3, "{flush:?}");
+    assert!(flush.iter().all(|x| (510..=520).contains(x)), "{flush:?}");
+    let (right, _) = draw(
+        HEBREW,
+        "direction:rtl; text-indent:-40px;",
+        "hebrew",
+        "hebrew",
+    );
+    let right = ends(&right);
+    assert!((590..=600).contains(&right[0]), "{right:?}");
+    assert!(
+        right[1..].iter().all(|x| (510..=520).contains(x)),
+        "{right:?}"
+    );
+    // Its lines after the first keep the block's direction: a line of English words and a
+    // last Hebrew one reads from the right, so the Hebrew word, red here, sits at its left.
+    let mixed = BoxTree::new(
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "שלום one two three four five six seven eight nine "),
+                    node("r", vec![text("b", "עולם")]),
+                ],
+            )],
+        ),
+        &sheet("direction:rtl; text-indent:-40px; } #r { display:inline; color:#ff0000;"),
+    )
+    .unwrap();
+    let view: Element<'_, u8> = mixed.view();
+    let path = std::env::temp_dir().join(format!("hang-{}-mixed", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(
+        simulator(view)
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(path.join("frame.png"))
+            .unwrap()
+    );
+    let file = std::fs::read_dir(&path)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+    let mut reader = decoder.read_info().unwrap();
+    let width = reader.info().width as usize;
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let pixels: Vec<(usize, usize, &[u8])> = bytes[..info.buffer_size()]
+        .chunks(4)
+        .enumerate()
+        .map(|(at, pixel)| (at % width, at / width / 40, pixel))
+        .collect();
+    let red = |pixel: &[u8]| pixel[0] > 200 && pixel[1] < 80 && pixel[2] < 80;
+    let dark = |pixel: &[u8]| pixel[0] < 100 && pixel[1] < 100 && pixel[2] < 100;
+    let red_line = pixels.iter().find(|(_, _, pixel)| red(pixel)).unwrap().1;
+    assert!(red_line > 0, "the red word wraps");
+    let on_line = |keep: &dyn Fn(&[u8]) -> bool| {
+        pixels
+            .iter()
+            .filter(|(_, line, pixel)| *line == red_line && keep(pixel))
+            .map(|(x, _, _)| *x)
+            .collect::<Vec<_>>()
+    };
+    let (reds, darks) = (on_line(&red), on_line(&dark));
+    assert!(!darks.is_empty(), "English words share the red word's line");
+    assert!(
+        reds.iter().max() < darks.iter().min(),
+        "{:?} {:?}",
+        reds.iter().max(),
+        darks.iter().min()
+    );
+    let _ = std::fs::remove_dir_all(&path);
     // Laid out outside the widget, as tall as the widget draws it.
     let renderer = iced_test::futures::futures::executor::block_on(
         iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
     )
     .unwrap();
     let height = |css: &str| {
-        let tree = BoxTree::new(source(), &sheet(css)).unwrap();
+        let tree = BoxTree::new(source(WORDS), &sheet(css)).unwrap();
         let block = tree.layout_with(&renderer, 1024.0, None).unwrap()[1]
             .unwrap()
             .border;
@@ -5708,7 +5805,7 @@ fn a_negative_text_indent_hangs_the_first_line() {
         (beside.bottom - boxed.bottom).abs() < 6.0,
         "{beside:?} {boxed:?}"
     );
-    for reference in ["plain", "hung", "rtl", "broken"] {
+    for reference in ["plain", "hung", "rtl", "broken", "hebrew"] {
         let file = format!("hang-{}-{reference}.png", std::process::id());
         let _ = std::fs::remove_file(std::env::temp_dir().join(file));
     }

@@ -1941,9 +1941,7 @@ impl BoxTree {
                 && parent_of[arena]
                     .is_some_and(|parent| prepared.boxes[parent].inline_row.is_some());
             if indent < 0.0 || percent < 0.0 {
-                // A negative indent hangs the first line out to the left. A right-to-left
-                // block's would hang to the right: its direction mark leaves its lines
-                // unsplittable, and `hung` declines it.
+                // A negative indent hangs the first line out past the start edge.
                 if in_row {
                     continue;
                 }
@@ -4157,16 +4155,26 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
 /// offsets do not add up. Bidirectional text reorders per line and its second part would
 /// re-detect its base direction.
 fn splittable(text: &str) -> bool {
-    !text.chars().any(|character| {
-        matches!(
-            character,
-            '\n' | '\r' | '\x0B' | '\x0C' | '\u{85}' | '\u{2028}' | '\u{2029}'
-                | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}'
+    !forces_break(text)
+        && !text.chars().any(|character| {
+            matches!(
+                character,
+                '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}'
                 | '\u{590}'..='\u{8FF}'
                 | '\u{FB1D}'..='\u{FDFF}'
                 | '\u{FE70}'..='\u{FEFF}'
                 | '\u{10800}'..='\u{10FFF}'
                 | '\u{1E800}'..='\u{1EFFF}'
+            )
+        })
+}
+
+/// Whether text holds a forced line break.
+fn forces_break(text: &str) -> bool {
+    text.chars().any(|character| {
+        matches!(
+            character,
+            '\n' | '\r' | '\x0B' | '\x0C' | '\u{85}' | '\u{2028}' | '\u{2029}'
         )
     })
 }
@@ -4211,6 +4219,17 @@ fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
         }
         y += 1.0;
     };
+    let (first, second) = cut_leaf(leaf, cut)?;
+    let first_height = paragraph::<Renderer>(renderer, &first, narrow)
+        .min_bounds()
+        .height;
+    Some((first, second, first_height))
+}
+
+/// A leaf's runs before and after the byte offset `cut` into its text, `None` unless it
+/// falls on a character boundary inside it.
+fn cut_leaf(leaf: &TextLeaf, cut: usize) -> Option<(TextLeaf, TextLeaf)> {
+    let whole = leaf.text();
     if cut == 0 || cut >= whole.len() || !whole.is_char_boundary(cut) {
         return None;
     }
@@ -4243,7 +4262,58 @@ fn split_leaf<Renderer: text::Renderer<Font = iced::Font>>(
         runs: second,
         ..leaf.clone()
     };
-    let first_height = paragraph::<Renderer>(renderer, &first, narrow)
+    Some((first, second))
+}
+
+/// Splits a leaf after its first line at `wide`, whatever the direction of its text: the
+/// lines hold consecutive text, so the second starts at the lowest offset on it. The second
+/// part opens with the paragraph's direction mark too. `None` for a single line.
+fn split_first_line<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    wide: f32,
+) -> Option<(TextLeaf, TextLeaf, f32)> {
+    // Every line starts at x = 0 when aligned left; the breaks are the same.
+    let scanning = TextLeaf {
+        align: "left",
+        ..leaf.clone()
+    };
+    let shaped = paragraph::<Renderer>(renderer, &scanning, wide);
+    let height = shaped.min_bounds().height;
+    let offset_at = |x: f32, y: f32| {
+        shaped
+            .hit_test(Point::new(x, y))
+            .map(|text::Hit::CharOffset(offset)| offset)
+    };
+    let start = offset_at(0.0, 0.5)?;
+    let mut y = 1.0;
+    while offset_at(0.0, y)? == start {
+        y += 1.0;
+        if y >= height {
+            return None;
+        }
+    }
+    let mut cut = usize::MAX;
+    let mut x = 0.0;
+    while x <= wide {
+        if let Some(offset) = offset_at(x, y) {
+            cut = cut.min(offset);
+        }
+        x += 1.0;
+    }
+    let (first, mut second) = cut_leaf(leaf, cut)?;
+    let mark = leaf
+        .text()
+        .chars()
+        .next()
+        .filter(|mark| matches!(mark, '\u{200E}' | '\u{200F}'));
+    if let (Some(mark), Some(run)) = (
+        mark,
+        second.runs.iter_mut().find(|run| !run.text.is_empty()),
+    ) {
+        run.text.insert(0, mark);
+    }
+    let first_height = paragraph::<Renderer>(renderer, &first, wide)
         .min_bounds()
         .height;
     Some((first, second, first_height))
@@ -4259,19 +4329,19 @@ struct Hung {
     wide: f32,
 }
 
-/// Splits off a hanging first line: `None` when the leaf does not hang, or holds text whose
-/// lines cannot be split (forced breaks, right-to-left text), which then does not hang.
+/// Splits off a hanging first line: `None` when the leaf does not hang, or holds a forced
+/// break, whose buffer lines' offsets do not add up, and then does not hang.
 fn hung<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
     width: f32,
 ) -> Option<Hung> {
-    if leaf.hang <= 0.0 || leaf.is_empty() || !splittable(&leaf.text()) {
+    if leaf.hang <= 0.0 || leaf.is_empty() || forces_break(&leaf.text()) {
         return None;
     }
     let wide = (width + leaf.hang).ceil();
-    // Past the first line's top the second line starts; a single line hangs whole.
-    Some(match split_leaf(renderer, leaf, wide, 1.0) {
+    // A single line hangs whole.
+    Some(match split_first_line(renderer, leaf, wide) {
         Some((first, rest, first_height)) => Hung {
             first,
             rest: Some(rest),
@@ -5539,7 +5609,7 @@ where
                 let place = geometry.leaf_band.unwrap_or(geometry.content);
                 let width = (place.right - place.left).ceil();
                 // Where paint puts the lines: right ones overflow leftward, centered ones
-                // spill half each way; a hanging first line starts left of the box.
+                // spill half each way; a hanging first line starts past the start edge.
                 let extent = |block: f32, left: f32, room: f32, far: f32| match leaf.align {
                     "right" => (left + room - block, far),
                     "center" => (left + (room - block) / 2.0, left + (room + block) / 2.0),
@@ -5547,9 +5617,11 @@ where
                 };
                 if let Some(hung) = hung(renderer, leaf, width) {
                     let first: Renderer::Paragraph = paragraph(renderer, &hung.first, hung.wide);
-                    let hang = hung.wide - width;
+                    let rtl =
+                        boxes[arena].direction == iced_css_core::formatting::block::Direction::Rtl;
+                    let left = if rtl { 0.0 } else { width - hung.wide };
                     let (mut from, mut to) =
-                        extent(first.min_bounds().width, -hang, hung.wide, width);
+                        extent(first.min_bounds().width, left, hung.wide, left + hung.wide);
                     let mut height = hung.first_height;
                     if let Some(rest) = &hung.rest {
                         let rest: Renderer::Paragraph = paragraph(renderer, rest, width);
@@ -5609,11 +5681,14 @@ where
             let parts = geometry.leaf_after.and_then(|after| {
                 split_leaf(renderer, leaf, width, after.top - place.top).map(|parts| (after, parts))
             });
-            // A hanging first line lays out wider, from left of the box.
-            // (It never widens past a float: layout gives it no `leaf_after`.)
+            // A hanging first line lays out wider, out past the start edge (left, or right
+            // in a right-to-left block). It never widens past a float: layout gives it no
+            // `leaf_after`.
             if let Some(hung) = hung(renderer, leaf, width) {
+                let rtl = self.tree.prepared.boxes[arena].direction
+                    == iced_css_core::formatting::block::Direction::Rtl;
                 let hanging = FlowRect {
-                    left: place.left - (hung.wide - width),
+                    left: place.left - if rtl { 0.0 } else { hung.wide - width },
                     ..place
                 };
                 let shaped_first: Renderer::Paragraph = paragraph(renderer, &hung.first, hung.wide);
