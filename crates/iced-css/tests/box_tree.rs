@@ -7302,3 +7302,79 @@ fn an_empty_inline_with_sides_holds_a_zero_width_place() {
         "{texts:?}"
     );
 }
+
+#[test]
+fn table_parts_inside_an_inline_get_an_inline_table() {
+    let tree = |inline: &str| {
+        BoxTree::new(
+            node(
+                "p",
+                vec![
+                    text("x", "before "),
+                    node("s", vec![node("a", vec![]), node("b", vec![])]),
+                    text("y", " after"),
+                ],
+            ),
+            &format!(
+                "#p {{ width:400px; }} #s {{ display:{inline}; }}
+                 #a, #b {{ display:table-cell; width:20px; height:10px; }}"
+            ),
+        )
+        .unwrap()
+    };
+    // 17.2.1: in an inline element, the cells' anonymous table is an inline-table: on the
+    // line, the text after it beside it, both cells sharing it. (Text here has no fonts,
+    // so no width.)
+    let g = tree("inline").layout(400.0, None).unwrap();
+    let (a, b, after) = (
+        g[3].unwrap().border,
+        g[4].unwrap().border,
+        g[5].unwrap().border,
+    );
+    assert_eq!((a.top, a.right), (b.top, b.left));
+    assert_eq!(after.left, b.right);
+    // In a block, a block-level table: the text after it starts a line of its own.
+    let g = tree("block").layout(400.0, None).unwrap();
+    assert_eq!(g[5].unwrap().border.left, 0.0);
+}
+
+#[test]
+fn cells_in_different_inlines_get_inline_tables_of_their_own() {
+    let tree = BoxTree::new(
+        node(
+            "p",
+            vec![
+                node("s", vec![node("a", vec![])]),
+                node("t", vec![node("b", vec![])]),
+            ],
+        ),
+        "#s, #t { display:inline; }
+         #a, #b { display:table-cell; width:20px; }
+         #a { height:10px; } #b { height:30px; }",
+    )
+    .unwrap();
+    let g = tree.layout(400.0, None).unwrap();
+    // One table each: the shorter cell keeps its height rather than its neighbour's row's.
+    let (a, b) = (g[2].unwrap().border, g[4].unwrap().border);
+    assert_eq!(a.bottom - a.top, 10.0, "{a:?}");
+    assert_eq!(b.bottom - b.top, 30.0, "{b:?}");
+}
+
+#[test]
+fn a_table_inside_an_inline_stays_block_level() {
+    let tree = BoxTree::new(
+        node(
+            "p",
+            vec![
+                node("s", vec![node("t", vec![node("a", vec![])])]),
+                text("y", " after"),
+            ],
+        ),
+        "#s { display:inline; } #t { display:table; }
+         #a { display:table-cell; width:20px; height:10px; }",
+    )
+    .unwrap();
+    let g = tree.layout(400.0, None).unwrap();
+    // A `table` element is block-level wherever it is: the text after it starts a line.
+    assert_eq!(g[4].unwrap().border.left, 0.0);
+}

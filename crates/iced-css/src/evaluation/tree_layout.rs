@@ -827,11 +827,31 @@ pub fn prepare_captured_tree(
             Display::InlineBlock | Display::InlineTable
         );
         let table_role = table_role_of(resolution.display);
+        // 17.2.1: a table part that needs an anonymous table inside an inline element gets an
+        // inline-table: it sits in a line of inline-blocks, as an `inline-table` does.
+        let inline_table = parent.is_some_and(|parent| inline_element[parent])
+            && table_role.is_some_and(|role| !matches!(role, TableRole::Table { .. }))
+            && parent_slot.is_some_and(|target| {
+                !matches!(
+                    build.boxes[target].table,
+                    Some(
+                        TableRole::Table { .. }
+                            | TableRole::HeaderGroup
+                            | TableRole::BodyGroup
+                            | TableRole::FooterGroup
+                            | TableRole::Row
+                    )
+                )
+            });
         // 17.2.1: a misplaced table part, or a non-table box in one, gets anonymous parts.
-        let parent_slot = parent_slot.map(|target| build.table_parent(target, index, table_role));
+        let parent_slot = if inline_table {
+            parent_slot
+        } else {
+            parent_slot.map(|target| build.table_parent(target, index, table_role))
+        };
         // 9.2.2: inline-blocks in a run form lines of their own, and text beside them takes
         // a box in those lines. So a line never breaks between words of different pieces.
-        if in_row
+        if (in_row || inline_table)
             && let Some(target) = parent_slot
             && !build.open[target].is_some_and(|group| inline_rows.contains(&group))
         {
@@ -869,6 +889,25 @@ pub fn prepare_captured_tree(
                 build.runs[piece] = earlier;
             }
         }
+        // The inline-table goes in the line, open there for the siblings after it; one that
+        // another inline element opened ends.
+        let parent_slot = if inline_table {
+            parent_slot.map(|target| {
+                let group = build.open[target]
+                    .filter(|group| inline_rows.contains(group))
+                    .unwrap_or(target);
+                if let Some(open) = build.open[group]
+                    && build.anonymous[open]
+                    && build.boxes[open].table.is_some()
+                    && source_parent[build.positions[open].0] != parent
+                {
+                    build.open[group] = None;
+                }
+                build.table_parent(group, index, table_role)
+            })
+        } else {
+            parent_slot
+        };
         if parent.is_some()
             && table_role.is_none()
             && !in_row
