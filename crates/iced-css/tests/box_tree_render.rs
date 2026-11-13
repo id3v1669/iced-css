@@ -5764,23 +5764,31 @@ fn a_negative_text_indent_hangs_the_first_line() {
         drawn("260px", true, "float"),
         drawn("200px", false, "narrow")
     );
-    // Text with a forced break does not hang.
-    let broken = |css: &str, name: &str| {
-        let root = node("p", vec![text("a", "one line\nand another")]);
-        let sheet = format!(
-            "#p {{ background-color:white; padding-left:60px; width:200px; color:black;
-                   white-space:pre; {css} }}"
-        );
-        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
-        simulator(view)
-            .snapshot(&Theme::Light)
+    // Text with forced breaks hangs its first line only, and a blank line keeps its
+    // height.
+    const BROKEN: &str = "one line\nand another";
+    let (broken, _) = draw(
+        BROKEN,
+        "white-space:pre; text-indent:-40px;",
+        "broken",
+        "broken",
+    );
+    let broken = starts(&broken);
+    assert_eq!(broken.len(), 2, "{broken:?}");
+    assert!((38..=46).contains(&broken[0]), "{broken:?}");
+    assert!((118..=126).contains(&broken[1]), "{broken:?}");
+    let blank = |css: &str| {
+        let root = node("page", vec![node("p", vec![text("a", "one\n\nthree\n")])]);
+        let sheet = format!("#p {{ line-height:20px; white-space:pre; {css} }}");
+        let block = BoxTree::new(root, &sheet)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .layout_with(&renderer, 1024.0, None)
+            .unwrap()[1]
             .unwrap()
+            .border;
+        block.bottom - block.top
     };
-    let name = format!("hang-{}-broken.png", std::process::id());
-    assert!(broken("", &name));
-    assert!(broken("text-indent:-40px;", &name));
+    assert_eq!(blank("text-indent:-40px;"), blank(""));
     // An inline-block whose first line hangs lines up on its last line's baseline: the
     // text beside it sits by its bottom line.
     let row = BoxTree::new(
@@ -5891,17 +5899,49 @@ fn wrapped_right_to_left_lines_take_their_alignment() {
         // The lines after it lay out in the box: they end inside its right edge.
         assert!(hung[1..].iter().all(|line| line.1 <= 520), "{hung:?}");
     }
-    // Text with forced breaks still aligns its lines right among themselves: they all end
-    // where the widest does, wherever `text-align` puts that.
+    // Text with forced breaks aligns each line too.
     let broken = draw(
         "first line\nsecond longer line\nthird",
         "text-align:left; white-space:pre;",
         "broken",
     );
     assert_eq!(broken.len(), 3, "{broken:?}");
-    let end = broken[0].1;
     assert!(
-        broken.iter().all(|line| line.1.abs_diff(end) <= 4),
+        broken.iter().all(|line| (118..=128).contains(&line.0)),
         "{broken:?}"
+    );
+}
+
+#[test]
+fn a_press_on_a_hanging_line_goes_to_its_run() {
+    let pressed = |css: &str, at: Point| {
+        let root = node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("lead", "lead "),
+                    node(
+                        "s",
+                        vec![text("t", "words that wrap onto more lines once it hangs")],
+                    ),
+                ],
+            )],
+        );
+        let sheet = format!(
+            "#page {{ padding-left:60px; width:200px; }}
+             #p {{ line-height:20px; {css} }}
+             #s {{ display:inline; margin-left:1%; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let view: Element<'_, u8> = tree.interactive().on_press("s", 2).on_press("p", 3).into();
+        click(view, at)
+    };
+    // Well into the first line, past "lead ", the words of `s`, whether the line hangs or
+    // not. A margin too narrow for a space leaves an empty run before them.
+    assert_eq!(pressed("", Point::new(130.0, 10.0)), vec![2]);
+    assert_eq!(
+        pressed("text-indent:-40px;", Point::new(90.0, 10.0)),
+        vec![2]
     );
 }

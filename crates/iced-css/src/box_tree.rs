@@ -4321,101 +4321,95 @@ fn split_first_line<Renderer: text::Renderer<Font = iced::Font>>(
     Some((first, second, first_height))
 }
 
-/// A leaf whose first line hangs (`TextLeaf::hang`), laid out at `width`.
-struct Hung {
-    /// The first line, laid out `wide`.
-    first: TextLeaf,
-    /// The lines after it, laid out at `width` below it.
-    rest: Option<TextLeaf>,
-    first_height: f32,
-    wide: f32,
-}
-
-/// Splits off a hanging first line: `None` when the leaf does not hang, or holds a forced
-/// break, whose buffer lines' offsets do not add up, and then does not hang.
-fn hung<Renderer: text::Renderer<Font = iced::Font>>(
-    renderer: &Renderer,
-    leaf: &TextLeaf,
-    width: f32,
-) -> Option<Hung> {
-    if leaf.hang <= 0.0 || leaf.is_empty() || forces_break(&leaf.text()) {
-        return None;
-    }
-    let wide = (width + leaf.hang).ceil();
-    // A single line hangs whole.
-    Some(match split_first_line(renderer, leaf, wide) {
-        Some((first, rest, first_height)) => Hung {
-            first,
-            rest: Some(rest),
-            first_height,
-            wide,
-        },
-        None => Hung {
-            first: leaf.clone(),
-            rest: None,
-            first_height: paragraph::<Renderer>(renderer, leaf, wide)
-                .min_bounds()
-                .height,
-            wide,
-        },
-    })
-}
-
-/// The lines of right-to-left text aligned left or centered, each with the width it lays
-/// out in: iced aligns such a paragraph's lines right within its widest, so each line is a
-/// paragraph of its own. `None` for any other text, and for text with a forced break.
-fn rtl_lines<Renderer: text::Renderer<Font = iced::Font>>(
+/// A leaf laid out a paragraph at a time where one paragraph would not do, top to bottom,
+/// each piece with the width it lays out in: a hanging first line (`TextLeaf::hang`), and
+/// each line of right-to-left text aligned left or centered, as iced aligns such a
+/// paragraph's lines right within its widest. Forced breaks part it first, as the shaper
+/// parts its lines. `None` when one paragraph does.
+fn pieces<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
     width: f32,
 ) -> Option<Vec<(TextLeaf, f32)>> {
+    use iced::advanced::graphics::text::cosmic_text::BidiParagraphs;
     let text = leaf.text();
-    if !text.starts_with('\u{200F}')
-        || !matches!(leaf.align, "left" | "center")
-        || forces_break(&text)
-    {
+    let per_line = text.starts_with('\u{200F}') && matches!(leaf.align, "left" | "center");
+    if (leaf.hang <= 0.0 && !per_line) || leaf.is_empty() {
         return None;
     }
-    let mut lines = Vec::new();
-    let mut rest = leaf.clone();
-    let mut room = if leaf.hang > 0.0 {
-        (width + leaf.hang).ceil()
-    } else {
-        width
-    };
-    while let Some((mut line, after, _)) = split_first_line(renderer, &rest, room) {
-        // 16.6.1: spaces at the end of a line are removed; in its own paragraph a line's
-        // last space would show at its visual start, the left.
-        if let Some(last) = line.runs.iter_mut().rev().find(|run| !run.text.is_empty()) {
-            let kept = last.text.trim_end_matches(' ').len();
-            last.text.truncate(kept);
+    let start = text.as_ptr() as usize;
+    let mut pieces = Vec::new();
+    for (index, part) in BidiParagraphs::new(&text).enumerate() {
+        let from = part.as_ptr() as usize - start;
+        let mut rest = slice_leaf(leaf, from..from + part.len());
+        let hangs = index == 0 && leaf.hang > 0.0;
+        let mut room = if hangs {
+            (width + leaf.hang).ceil()
+        } else {
+            width
+        };
+        if hangs || per_line {
+            while let Some((mut line, after, _)) = split_first_line(renderer, &rest, room) {
+                // 16.6.1: spaces at the end of a line are removed; in its own paragraph a
+                // right-to-left line's last space would show at its visual start, the left.
+                if per_line
+                    && let Some(last) = line.runs.iter_mut().rev().find(|run| !run.text.is_empty())
+                {
+                    let kept = last.text.trim_end_matches(' ').len();
+                    last.text.truncate(kept);
+                }
+                pieces.push((line, room));
+                rest = after;
+                room = width;
+                if !per_line {
+                    break;
+                }
+            }
         }
-        lines.push((line, room));
-        rest = after;
-        room = width;
+        pieces.push((rest, room));
     }
-    lines.push((rest, room));
-    Some(lines)
+    Some(pieces)
 }
 
-/// A leaf's height at `width`, its first line hanging.
+/// A leaf over the byte range `range` of its text: every run, cut to it. The shaper skips
+/// empty runs, and keeping them keeps each span's index the run's in the whole leaf.
+fn slice_leaf(leaf: &TextLeaf, range: std::ops::Range<usize>) -> TextLeaf {
+    let mut seen = 0;
+    let runs = leaf
+        .runs
+        .iter()
+        .map(|run| {
+            let (begin, end) = (seen, seen + run.text.len());
+            seen = end;
+            let from = range.start.clamp(begin, end) - begin;
+            let to = range.end.clamp(begin, end) - begin;
+            TextRun {
+                text: run.text[from..to.max(from)].to_owned(),
+                ..run.clone()
+            }
+        })
+        .collect();
+    TextLeaf {
+        runs,
+        ..leaf.clone()
+    }
+}
+
+/// A leaf's height at `width`, laid out as [`pieces`] lays it out.
 fn leaf_height<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
     width: f32,
 ) -> f32 {
-    match hung(renderer, leaf, width) {
-        Some(Hung {
-            rest: Some(rest),
-            first_height,
-            ..
-        }) => {
-            first_height
-                + paragraph::<Renderer>(renderer, &rest, width)
+    match pieces(renderer, leaf, width) {
+        Some(pieces) => pieces
+            .iter()
+            .map(|(piece, room)| {
+                paragraph::<Renderer>(renderer, piece, *room)
                     .min_bounds()
                     .height
-        }
-        Some(Hung { first_height, .. }) => first_height,
+            })
+            .sum(),
         None => {
             paragraph::<Renderer>(renderer, leaf, width)
                 .min_bounds()
@@ -4424,24 +4418,26 @@ fn leaf_height<Renderer: text::Renderer<Font = iced::Font>>(
     }
 }
 
-/// [`last_baseline`] of a leaf at `width`, its first line hanging.
+/// [`last_baseline`] of a leaf at `width`, laid out as [`pieces`] lays it out.
 fn leaf_baseline<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
     width: f32,
 ) -> Option<f32> {
-    match hung(renderer, leaf, width) {
-        Some(Hung {
-            rest: Some(rest),
-            first_height,
-            ..
-        }) => last_baseline(renderer, &rest, &paragraph(renderer, &rest, width))
-            .map(|baseline| first_height + baseline),
-        Some(Hung { first, wide, .. }) => {
-            last_baseline(renderer, &first, &paragraph(renderer, &first, wide))
-        }
-        None => last_baseline(renderer, leaf, &paragraph(renderer, leaf, width)),
-    }
+    let Some(pieces) = pieces(renderer, leaf, width) else {
+        return last_baseline(renderer, leaf, &paragraph(renderer, leaf, width));
+    };
+    let ((last, room), above) = pieces.split_last()?;
+    let above: f32 = above
+        .iter()
+        .map(|(piece, room)| {
+            paragraph::<Renderer>(renderer, piece, *room)
+                .min_bounds()
+                .height
+        })
+        .sum();
+    last_baseline(renderer, last, &paragraph(renderer, last, *room))
+        .map(|baseline| above + baseline)
 }
 
 /// The narrowest width a leaf can wrap to: its widest single word.
@@ -5657,18 +5653,14 @@ where
                     "center" => (left + (room - block) / 2.0, left + (room + block) / 2.0),
                     _ => (left, left + block),
                 };
-                if let Some(hung) = hung(renderer, leaf, width) {
-                    let first: Renderer::Paragraph = paragraph(renderer, &hung.first, hung.wide);
+                if let Some(pieces) = pieces(renderer, leaf, width) {
                     let rtl =
                         boxes[arena].direction == iced_css_core::formatting::block::Direction::Rtl;
-                    let left = if rtl { 0.0 } else { width - hung.wide };
-                    let (mut from, mut to) =
-                        extent(first.min_bounds().width, left, hung.wide, left + hung.wide);
-                    let mut height = hung.first_height;
-                    if let Some(rest) = &hung.rest {
-                        let rest: Renderer::Paragraph = paragraph(renderer, rest, width);
-                        let size = rest.min_bounds();
-                        let (near, far) = extent(size.width, 0.0, width, place.right - place.left);
+                    let (mut from, mut to, mut height) = (f32::INFINITY, f32::NEG_INFINITY, 0.0);
+                    for (piece, room) in &pieces {
+                        let size = paragraph::<Renderer>(renderer, piece, *room).min_bounds();
+                        let left = if rtl { 0.0 } else { width - room };
+                        let (near, far) = extent(size.width, left, *room, left + room);
                         from = from.min(near);
                         to = to.max(far);
                         height += size.height;
@@ -5723,55 +5715,32 @@ where
             let parts = geometry.leaf_after.and_then(|after| {
                 split_leaf(renderer, leaf, width, after.top - place.top).map(|parts| (after, parts))
             });
-            // Right-to-left text aligned left or centered: a line at a time, each where its
-            // own width puts it (its first line hanging out to the right).
-            if let Some(lines) = rtl_lines(renderer, leaf, width) {
+            // A paragraph at a time where one would not do, each where its own width puts
+            // it: a hanging line reaches out past the start edge (left, or right in a
+            // right-to-left block). It never widens past a float: layout gives it no
+            // `leaf_after`.
+            if let Some(pieces) = pieces(renderer, leaf, width) {
+                let rtl = self.tree.prepared.boxes[arena].direction
+                    == iced_css_core::formatting::block::Direction::Rtl;
                 let mut top = place.top;
                 let mut rest = Vec::new();
-                for (index, (line, room)) in lines.into_iter().enumerate() {
-                    let shaped: Renderer::Paragraph = paragraph(renderer, &line, room);
-                    let corner = block_corner(shaped.min_bounds().width, place, room, top);
+                for (index, (piece, room)) in pieces.into_iter().enumerate() {
+                    let shaped: Renderer::Paragraph = paragraph(renderer, &piece, room);
+                    let shift = if rtl { 0.0 } else { room - width };
+                    let line_place = FlowRect {
+                        left: place.left - shift,
+                        ..place
+                    };
+                    let corner = block_corner(shaped.min_bounds().width, line_place, room, top);
                     top += shaped.min_bounds().height;
                     if index == 0 {
                         self.paragraphs
                             .insert(arena, (shaped, corner, Color::BLACK));
                     } else {
-                        rest.push((shaped, corner, line));
+                        rest.push((shaped, corner, piece));
                     }
                 }
                 self.rest_paragraphs.insert(arena, rest);
-                continue;
-            }
-            // A hanging first line lays out wider, out past the start edge (left, or right
-            // in a right-to-left block). It never widens past a float: layout gives it no
-            // `leaf_after`.
-            if let Some(hung) = hung(renderer, leaf, width) {
-                let rtl = self.tree.prepared.boxes[arena].direction
-                    == iced_css_core::formatting::block::Direction::Rtl;
-                let hanging = FlowRect {
-                    left: place.left - if rtl { 0.0 } else { hung.wide - width },
-                    ..place
-                };
-                let shaped_first: Renderer::Paragraph = paragraph(renderer, &hung.first, hung.wide);
-                let corner_first = block_corner(
-                    shaped_first.min_bounds().width,
-                    hanging,
-                    hung.wide,
-                    place.top,
-                );
-                self.paragraphs
-                    .insert(arena, (shaped_first, corner_first, Color::BLACK));
-                if let Some(rest) = hung.rest {
-                    let shaped_rest: Renderer::Paragraph = paragraph(renderer, &rest, width);
-                    let corner_rest = block_corner(
-                        shaped_rest.min_bounds().width,
-                        place,
-                        width,
-                        place.top + hung.first_height,
-                    );
-                    self.rest_paragraphs
-                        .insert(arena, vec![(shaped_rest, corner_rest, rest)]);
-                }
                 continue;
             }
             if let Some((after, (first, second, first_height))) = parts {
