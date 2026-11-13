@@ -4876,6 +4876,25 @@ fn an_inline_block_sits_on_the_line_baseline() {
         "missing-block",
     );
     assert!(black.abs_diff(blue) <= 2, "{black} {blue}");
+    // In another family, whose faces' metrics differ: the faces the text is drawn in, as
+    // the ink shows, share it.
+    for family in ["monospace", "serif"] {
+        let (black, blue) = bottoms(
+            &format!(
+                "#b {{ display:inline-block; color:#0000ff; font-size:28px; font-family:{family};
+                      padding-bottom:30px; }}"
+            ),
+            &format!("{family}-block"),
+        );
+        assert!(black.abs_diff(blue) <= 2, "{family} {black} {blue}");
+    }
+    // At a weight a family may not have.
+    let (black, blue) = bottoms(
+        "#b { display:inline-block; color:#0000ff; font-size:28px; font-weight:900;
+              padding-bottom:30px; }",
+        "heavy-block",
+    );
+    assert!(black.abs_diff(blue) <= 2, "{black} {blue}");
     // Inside an absolutely positioned box too.
     let (black, blue) = bottoms(
         "#p { position:absolute; left:20px; top:20px; }
@@ -4918,6 +4937,147 @@ fn an_inline_block_sits_on_the_line_baseline() {
         "clipping-block",
     );
     assert!(empty < black, "{empty} {black}");
+}
+
+#[test]
+fn layout_with_a_renderer_matches_the_widget() {
+    use iced::advanced::renderer::Headless;
+    let source = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![
+                    text("a", "xxx "),
+                    node("b", vec![text("t", "xxx")]),
+                    text("c", " xxx"),
+                ],
+            )],
+        )
+    };
+    let css = "#page { background-color:white; padding:20px; color:#000000; }
+               #b { display:inline-block; background-color:#ff0000; font-size:28px;
+                    padding-bottom:30px; }";
+    let tree = BoxTree::new(source(), css).unwrap();
+    let renderer = iced_test::futures::futures::executor::block_on(
+        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
+    )
+    .unwrap();
+    // Page, paragraph, its first text, then the inline-block.
+    let laid = tree.layout_with(&renderer, 1024.0, None).unwrap();
+    let boxed = laid[3].unwrap().border;
+    // Where the widget draws it: its red, at the snapshot's scale of 2.
+    let view: Element<'_, u8> = tree.clone().view();
+    let mut ui = simulator(view);
+    let path = std::env::temp_dir().join(format!("layout-with-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(path.join("frame.png"))
+            .unwrap()
+    );
+    let file = std::fs::read_dir(&path)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+    let mut reader = decoder.read_info().unwrap();
+    let width = reader.info().width as usize;
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let (mut top, mut bottom) = (usize::MAX, 0);
+    for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
+        if pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60 {
+            top = top.min(at / width);
+            bottom = bottom.max(at / width);
+        }
+    }
+    assert!(
+        (boxed.top * 2.0 - top as f32).abs() <= 2.0
+            && (boxed.bottom * 2.0 - bottom as f32).abs() <= 3.0,
+        "{boxed:?} {top} {bottom}"
+    );
+    // A percentage indent, sized once the block's width is known: as tall as the widget
+    // draws it.
+    let long = || {
+        node(
+            "page",
+            vec![node(
+                "p",
+                vec![text(
+                    "a",
+                    "words that wrap onto more lines once a wide first-line indent pushes them",
+                )],
+            )],
+        )
+    };
+    let indented = BoxTree::new(
+        long(),
+        "#page { background-color:white; width:300px; }
+         #p { background-color:#ff0000; text-indent:60%; }",
+    )
+    .unwrap();
+    let block = indented.layout_with(&renderer, 1024.0, None).unwrap()[1]
+        .unwrap()
+        .border;
+    let view: Element<'_, u8> = indented.view();
+    let mut ui = simulator(view);
+    let path = std::env::temp_dir().join(format!("layout-with-indent-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(path.join("frame.png"))
+            .unwrap()
+    );
+    let file = std::fs::read_dir(&path)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+    let mut reader = decoder.read_info().unwrap();
+    let width = reader.info().width as usize;
+    let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut bytes).unwrap();
+    let red_bottom = bytes[..info.buffer_size()]
+        .chunks(4)
+        .enumerate()
+        .filter(|(_, pixel)| pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60)
+        .map(|(at, _)| at / width)
+        .max()
+        .unwrap();
+    assert!(
+        (block.bottom * 2.0 - red_bottom as f32).abs() <= 3.0,
+        "{block:?} {red_bottom}"
+    );
+    // With taller text beside it, bottoms up (as `layout_text` lines them) it sits lower
+    // than on the baseline.
+    let small = BoxTree::new(
+        source(),
+        "#p { font-size:40px; } #b { display:inline-block; font-size:16px; }",
+    )
+    .unwrap();
+    let on_baseline = small.layout_with(&renderer, 1024.0, None).unwrap()[3]
+        .unwrap()
+        .border;
+    let bottoms = small
+        .layout_text(1024.0, None, &mut |leaf, _| {
+            leaf.runs
+                .iter()
+                .map(|run| run.size * 1.3)
+                .fold(0.0, f32::max)
+        })
+        .unwrap()[3]
+        .unwrap()
+        .border;
+    assert!(on_baseline.top < bottoms.top, "{on_baseline:?} {bottoms:?}");
 }
 
 #[test]

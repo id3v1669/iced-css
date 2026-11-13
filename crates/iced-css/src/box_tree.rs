@@ -2227,6 +2227,61 @@ impl BoxTree {
         )
     }
 
+    /// Lays out as the widget does, with `renderer`'s text: each text block's height,
+    /// shrink-to-fit widths and the baselines rows of inline-blocks line up on come from its
+    /// paragraphs and their fonts, and text widens past floats. It matches a widget viewed
+    /// with no hosted widgets, given the same `height` the widget is (its viewport's); a list
+    /// marker image is not loaded, so the marker keeps its fallback text.
+    ///
+    /// # Errors
+    /// Returns a layout failure at this size.
+    pub fn layout_with<Renderer: text::Renderer<Font = iced::Font>>(
+        &self,
+        renderer: &Renderer,
+        width: f32,
+        height: Option<f32>,
+    ) -> Result<Vec<Option<FlowGeometry>>, TreeLayoutError> {
+        let mut tree = self.clone();
+        tree.set_text_widths(|leaf| {
+            let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
+            (narrowest_width(renderer, leaf), longest)
+        });
+        // A percentage `text-indent` or inline side needs its block's width: a second layout
+        // gives its spacers room, when the first changed one.
+        let mut geometry = Vec::new();
+        for pass in 0..2 {
+            let current = &tree;
+            let mut baselines: BTreeMap<(usize, u32), Option<f32>> = BTreeMap::new();
+            geometry = current.layout_arena(
+                width,
+                height,
+                &mut |arena, width| {
+                    current.texts[arena]
+                        .as_ref()
+                        .map(|leaf| paragraph(renderer, leaf, width).min_bounds().height)
+                },
+                &mut |arena, narrow, until, wide| {
+                    let leaf = current.texts[arena].as_ref()?;
+                    let (_, second, first_height) = split_leaf(renderer, leaf, narrow, until)?;
+                    let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
+                    Some(first_height + rest.min_bounds().height)
+                },
+                &mut |arena, width| {
+                    *baselines
+                        .entry((arena, width.to_bits()))
+                        .or_insert_with(|| {
+                            let leaf = current.texts[arena].as_ref()?;
+                            last_baseline(renderer, leaf, &paragraph(renderer, leaf, width))
+                        })
+                },
+            )?;
+            if pass == 1 || !tree.apply_percent_indents(&geometry) {
+                break;
+            }
+        }
+        Ok(tree.prepared.by_projected(&geometry))
+    }
+
     /// Lays out by arena slot, with `measure(arena, width)` giving each leaf's height and
     /// `split` its height when it widens past a float.
     fn layout_arena(
@@ -3717,7 +3772,7 @@ fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
     leaf: &TextLeaf,
     shaped: &Renderer::Paragraph,
 ) -> Option<f32> {
-    use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system, to_attributes};
+    use iced::advanced::graphics::text::{cosmic_text, font_system, to_attributes};
     let pieces: Vec<(usize, Rectangle)> = (0..leaf.runs.len())
         .flat_map(|at| {
             shaped
@@ -3743,17 +3798,18 @@ fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
             continue;
         }
         let attrs = to_attributes(font_of(base, run));
-        // Its primary face: a run whose family is not there gives the line nothing.
-        let Some(font) = fonts
-            .db()
-            .query(&fontdb::Query {
-                families: &[attrs.family],
-                weight: attrs.weight,
-                stretch: attrs.stretch,
-                style: attrs.style,
-            })
-            .and_then(|id| fonts.get_font(id, attrs.weight))
-        else {
+        // Its first face, as cosmic-text shapes it: the family's at its weight, else the
+        // common fallbacks, else the closest match (script fallbacks are not asked for).
+        let keys = fonts.get_font_matches(&attrs);
+        let Some(font) = cosmic_text::fallback::FontFallbackIter::new(
+            fonts,
+            &keys,
+            &[&attrs.family],
+            &[],
+            &run.text,
+            attrs.weight,
+        )
+        .next() else {
             continue;
         };
         let metrics = font.metrics();
