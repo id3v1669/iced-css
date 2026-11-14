@@ -356,6 +356,8 @@ fn g9a_one_float_legacy_bit_parity() {
             assert_eq!(owner.before(), legacy.before());
             assert_eq!(owner.before_content(), legacy.before_content());
             assert_eq!(owner.before_padding(), legacy.before_padding());
+            assert_eq!(owner.tail_views().count(), 2);
+            assert_eq!(legacy.tail_views().count(), 2);
             for (a, b) in owner.tail_views().zip(legacy.tail_views()) {
                 assert_eq!(a.vertical(), b.vertical());
                 assert_eq!(a.content_vertical(), b.content_vertical());

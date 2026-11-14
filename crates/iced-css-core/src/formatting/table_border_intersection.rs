@@ -114,9 +114,18 @@ pub fn intersect_table_borders<'boundary, 'grid>(
                     .ok_or(TableIntersectionError::Bytes)
             };
             bytes(count)?;
-            segments
-                .try_reserve_exact(1)
-                .map_err(|_| TableIntersectionError::Allocation)?;
+            // Grow by doubling, within what the limits allow, so pushes do not each copy the
+            // whole output.
+            if segments.len() == segments.capacity() {
+                let most = limits
+                    .segments
+                    .get()
+                    .min(limits.retained_bytes.get() / size_of::<CollapsedBorderSegment>());
+                let grow = segments.len().max(4).min(most - segments.len()).max(1);
+                segments
+                    .try_reserve_exact(grow)
+                    .map_err(|_| TableIntersectionError::Allocation)?;
+            }
             bytes(segments.capacity())?;
             segments.push(CollapsedBorderSegment {
                 start,
@@ -131,6 +140,8 @@ pub fn intersect_table_borders<'boundary, 'grid>(
             j += 1;
         }
     }
+    // What the doubling left over is not retained.
+    segments.shrink_to_fit();
     Ok(TableBorderIntersection {
         boundaries,
         segments,

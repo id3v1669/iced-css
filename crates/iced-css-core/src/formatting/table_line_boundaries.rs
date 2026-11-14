@@ -87,9 +87,18 @@ fn emit(
             .ok_or(TableBoundaryError::Bytes)
     };
     bytes(count)?;
-    output
-        .try_reserve_exact(1)
-        .map_err(|_| TableBoundaryError::Allocation)?;
+    // Grow by doubling, within what the limits allow, so pushes do not each copy the
+    // whole output.
+    if output.len() == output.capacity() {
+        let most = limits
+            .segments
+            .get()
+            .min(limits.retained_bytes.get() / size_of::<GridInterval>());
+        let grow = output.len().max(4).min(most - output.len()).max(1);
+        output
+            .try_reserve_exact(grow)
+            .map_err(|_| TableBoundaryError::Allocation)?;
+    }
     bytes(output.capacity())?;
     output.push(GridInterval { start, end });
     Ok(())
@@ -181,6 +190,8 @@ pub fn table_line_boundaries(
             break;
         }
     }
+    // What the doubling left over is not retained.
+    intervals.shrink_to_fit();
     Ok(TableLineBoundaries {
         _grid: grid,
         axis,

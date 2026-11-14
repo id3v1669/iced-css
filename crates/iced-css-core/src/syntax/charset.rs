@@ -95,3 +95,35 @@ where
     }
     Ok(None)
 }
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+
+    #[test]
+    fn generated_label_table_is_searchable_and_resolves_every_label() {
+        assert_eq!(data::CHARSETS.len(), 258);
+        assert_eq!(data::LABELS.len(), 887);
+        for pair in data::LABELS.windows(2) {
+            assert!(pair[0].0 < pair[1].0, "{} !< {}", pair[0].0, pair[1].0);
+        }
+        let mut reached = vec![false; data::CHARSETS.len()];
+        for &(label, record) in data::LABELS {
+            assert!(!label.is_empty());
+            assert!(!label.bytes().any(|b| b.is_ascii_uppercase()), "{label}");
+            assert!(record < data::CHARSETS.len(), "{label}");
+            reached[record] = true;
+            for probe in [label.to_owned(), label.to_ascii_uppercase()] {
+                let found = lookup_iana_charset(probe.as_bytes(), NonZeroUsize::MAX)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{probe} unreachable"));
+                let expected = &data::CHARSETS[record];
+                assert_eq!(
+                    (found.mib, found.name),
+                    (expected.mib, expected.name),
+                    "{probe}"
+                );
+            }
+        }
+        assert!(reached.iter().all(|r| *r));
+    }
+}

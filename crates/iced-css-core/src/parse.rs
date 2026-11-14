@@ -34,10 +34,17 @@ pub struct Stylesheet {
     pub rules: Vec<Rule>,
 }
 
+/// A stylesheet syntax error, located as cssparser reports it.
+///
+/// The two location fields use different bases; `Display` prints both
+/// 1-based.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
     pub message: String,
+    /// 0-based line: the first line of the input is 0.
     pub line: u32,
+    /// 1-based column within the line, counted in UTF-16 code units
+    /// (not bytes or chars).
     pub column: u32,
 }
 
@@ -89,7 +96,12 @@ fn parse_rules<'i>(parser: &mut Parser<'i, '_>) -> Result<Stylesheet, Error<'i>>
             Token::Delim('.') => {}
             other => return error(parser, format!("unsupported selector start: {other:?}")),
         }
-        let class = parser.expect_ident_cloned().map_err(Error::from)?;
+        // A class selector is the '.' immediately followed by its name: no
+        // whitespace or comment in between.
+        let class = match parser.next_including_whitespace_and_comments()?.clone() {
+            Token::Ident(class) => class,
+            other => return error(parser, format!("expected class name after '.': {other:?}")),
+        };
         parser.expect_curly_bracket_block().map_err(Error::from)?;
         let declarations = parser.parse_nested_block(parse_declarations)?;
 
@@ -143,10 +155,11 @@ fn parse_value<'i>(name: &str, parser: &mut Parser<'i, '_>) -> Result<Property, 
         "padding-bottom" => Property::PaddingBottom(parse_padding_value(parser)?),
         "padding-left" => Property::PaddingLeft(parse_padding_value(parser)?),
         _ => {
-            // Consume (and thereby syntax-check) the rest of the value.
-            while !parser.is_exhausted() {
-                let _ = parser.next()?;
+            if parser.is_exhausted() {
+                return error(parser, "empty value");
             }
+            // Consume (and thereby syntax-check) the rest of the value.
+            check_value_tokens(parser)?;
             Property::Unsupported(name.to_string())
         }
     };
@@ -156,6 +169,29 @@ fn parse_value<'i>(name: &str, parser: &mut Parser<'i, '_>) -> Result<Property, 
     }
 
     Ok(property)
+}
+
+/// Consumes the rest of a value, rejecting the tokens that are parse
+/// errors in css-syntax: bad strings and URLs and unmatched closers,
+/// including inside nested blocks.
+fn check_value_tokens<'i>(parser: &mut Parser<'i, '_>) -> Result<(), Error<'i>> {
+    while !parser.is_exhausted() {
+        match parser.next()?.clone() {
+            token @ (Token::BadString(_)
+            | Token::BadUrl(_)
+            | Token::CloseParenthesis
+            | Token::CloseSquareBracket
+            | Token::CloseCurlyBracket) => {
+                return error(parser, format!("invalid token in value: {token:?}"));
+            }
+            Token::Function(_)
+            | Token::ParenthesisBlock
+            | Token::SquareBracketBlock
+            | Token::CurlyBracketBlock => parser.parse_nested_block(check_value_tokens)?,
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn parse_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
@@ -168,6 +204,11 @@ fn parse_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
 
 fn parse_signed_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
     match parser.next()?.clone() {
+        // cssparser overflows out-of-range numbers to infinity.
+        Token::Dimension { value, .. }
+        | Token::Percentage {
+            unit_value: value, ..
+        } if !value.is_finite() => error(parser, "length out of range"),
         Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("px") => {
             Ok(Length::Px(value))
         }
@@ -508,6 +549,54 @@ mod tests {
     }
 
     #[test]
+    fn malformed_unsupported_value_is_an_error() {
+        for css in [
+            ".a { color: red) ; width: 10px; }",
+            ".a { color: ] ; }",
+            ".a { color: ; }",
+            ".a { color: }",
+            ".a { color: rgb(1, 2]) ; }",
+            ".a { content: \"abc\n\"; }",
+            ".a { background: url(a b); }",
+        ] {
+            assert!(parse(css).is_err(), "{css}");
+        }
+        assert_eq!(
+            parse(".a { color: rgb(1, 2, 3) [x] {y}; }").unwrap().rules[0].declarations,
+            vec![Property::Unsupported("color".to_string())]
+        );
+    }
+
+    #[test]
+    fn class_name_must_follow_the_dot() {
+        assert!(parse(". btn { width: 10px; }").is_err());
+        assert!(parse("./* x */btn { width: 10px; }").is_err());
+        assert!(parse(".\nbtn { width: 10px; }").is_err());
+        assert_eq!(
+            parse(".btn { width: 10px; }").unwrap().rules[0].class,
+            "btn"
+        );
+    }
+
+    #[test]
+    fn out_of_range_length_is_an_error() {
+        for css in [
+            ".a { width: 1e39px; }",
+            ".a { width: 1e41%; }",
+            ".a { margin: -1e39px; }",
+            ".a { padding: 1e39px; }",
+        ] {
+            let err = parse(css).unwrap_err();
+            assert!(
+                err.message.contains("out of range"),
+                "{css}: {}",
+                err.message
+            );
+        }
+        assert!(parse(".a { width: 3e38px; }").is_ok());
+    }
+
+    #[test]
     fn empty_value_is_an_error() {
         assert!(parse(".btn { width: 50px; height:").is_err());
         assert!(parse(".btn { width: 50px; height: }").is_err());
@@ -575,5 +664,13 @@ mod tests {
         let err = parse(".a { width: banana; }").unwrap_err();
         assert!(err.message.contains("banana"), "{}", err.message);
         assert_eq!(err.line, 0);
+        // column is 1-based, in UTF-16 code units: the error is reported
+        // just past "banana", at 1-based column 19 of line 0 ...
+        assert_eq!(err.column, 19);
+        // ... and a non-BMP character before it counts as two units, so a
+        // five-char comment holding one adds 6 columns, not 5.
+        let err = parse(".a { /*\u{1F600}*/width: banana; }").unwrap_err();
+        assert_eq!((err.line, err.column), (0, 25));
+        assert!(err.to_string().contains("line 1, column 25"), "{err}");
     }
 }

@@ -72,6 +72,41 @@ fn descendant_search_backtracks_after_a_nearer_ancestor_fails() {
     );
 }
 #[test]
+fn descendant_search_walks_each_compound_once_however_deep() {
+    // 40 nested containers: retrying every placement of four of them is C(39, 4) tries.
+    let mut nodes = vec![node("row", "", None, None)];
+    for at in 0..40 {
+        nodes.push(node("container", "", Some(at), None));
+    }
+    nodes.push(node("text", "", Some(40), None));
+    let tree = Tree(nodes);
+    let deep = "container container container container text";
+    let tried = |input: &str| matches_selector(&selectors(input)[0], &tree, 41, None, limits());
+    assert_eq!(tried(&format!("button {deep}")), Ok(false));
+    assert_eq!(tried(&format!("row {deep}")), Ok(true));
+    assert_eq!(tried(&format!("row > {deep}")), Ok(true));
+    assert_eq!(tried(&format!("row > container > {deep}")), Ok(true));
+    assert_eq!(tried(&format!("button > container > {deep}")), Ok(false));
+}
+#[test]
+fn a_later_descendant_walk_is_not_lost_to_an_earlier_one() {
+    // Each `.a` is tried for `row >`, and `.b` above the nearer `.a` still counts.
+    let tree = Tree(vec![
+        node("row", "", None, None),
+        node("container", "a", Some(0), None),
+        node("container", "b", Some(1), None),
+        node("container", "a", Some(2), None),
+        node("container", "a", Some(3), None),
+        node("text", "", Some(4), None),
+    ]);
+    let tried = |input: &str| matches_selector(&selectors(input)[0], &tree, 5, None, limits());
+    assert_eq!(tried("row > .a .b .a text"), Ok(true));
+    assert_eq!(tried(".b .a .a > text"), Ok(true));
+    assert_eq!(tried(".a .b .a .a .a text"), Ok(false));
+    assert_eq!(tried(".b > .a > .a text"), Ok(true));
+    assert_eq!(tried("row .b > .a > text"), Ok(false));
+}
+#[test]
 fn child_and_adjacent_combinators_follow_source_element_relations() {
     let tree = Tree(vec![
         node("row", "", None, None),

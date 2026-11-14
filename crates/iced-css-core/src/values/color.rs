@@ -167,6 +167,12 @@ pub(super) fn parse_color_budget(
         work: *work,
         limits,
     };
+    // Charge the scan even when the colour fails: shorthands retry other roles.
+    let result = parse_color_tokens(&mut parser);
+    *work = parser.work;
+    result
+}
+fn parse_color_tokens(parser: &mut Parser<'_>) -> Result<Color, ColorError> {
     let (start, token) = parser.next()?.ok_or(ColorError::Invalid)?;
     let color = match token.kind {
         TokenKind::Ident => {
@@ -218,6 +224,40 @@ pub(super) fn parse_color_budget(
     if parser.next()?.is_some() {
         return Err(ColorError::Invalid);
     }
-    *work = parser.work;
     Ok(color)
+}
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use std::num::NonZeroUsize;
+
+    fn limits() -> ColorLimits {
+        let n = |n| NonZeroUsize::new(n).unwrap();
+        ColorLimits {
+            syntax: StringLimits {
+                work: n(100_000),
+                retained_bytes: n(4096),
+            },
+            numeric: NumericLimits {
+                digits: n(256),
+                work: n(100_000),
+            },
+        }
+    }
+
+    #[test]
+    fn failed_colours_charge_the_shared_work_budget() {
+        for input in ["none", "#12", "hsl(1, 2%, 3%)", "rgb(1, 2, x)", "red blue"] {
+            let mut work = 100_000;
+            assert_eq!(
+                parse_color_budget(input, limits(), &mut work),
+                Err(ColorError::Invalid),
+                "{input}"
+            );
+            assert!(work < 100_000, "{input} scanned for free");
+        }
+        let mut work = 100_000;
+        parse_color_budget("red", limits(), &mut work).unwrap();
+        assert!(work < 100_000);
+    }
 }

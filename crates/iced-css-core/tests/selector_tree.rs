@@ -247,3 +247,72 @@ fn indexed_membership_agrees_with_existing_dfs_validator_for_all_four_node_paren
     // Four choices of root times sixteen labelled trees on four vertices.
     assert_eq!(accepted, 64);
 }
+
+#[test]
+fn structural_faults_are_reported_by_kind() {
+    let build = |nodes: &[SourceNode]| {
+        let elements: Vec<_> = nodes.iter().map(|node| element(node, "x")).collect();
+        SelectorTree::new(&elements, DocumentLanguage::Unknown, limits()).err()
+    };
+    assert_eq!(build(&nodes()), None);
+    let mut duplicate = nodes();
+    duplicate[3].instance = duplicate[1].instance;
+    assert_eq!(
+        build(&duplicate),
+        Some(SelectorTreeError::DuplicateInstance)
+    );
+    let mut css_ids = nodes();
+    css_ids[1].metadata.set_attribute("id", "a");
+    css_ids[3].metadata.set_attribute("id", "a");
+    assert_eq!(build(&css_ids), Some(SelectorTreeError::DuplicateCssId));
+    css_ids[3].metadata.set_attribute("id", "b");
+    assert_eq!(build(&css_ids), None);
+    let mut child = nodes();
+    let repeated = child[1].instance;
+    child[0].children.push(repeated);
+    assert_eq!(build(&child), Some(SelectorTreeError::DuplicateChild));
+    let mut missing = nodes();
+    missing[0].children.pop();
+    assert_eq!(build(&missing), Some(SelectorTreeError::Nonreciprocal));
+    let mut foreign = nodes();
+    let adopted = foreign[1].instance;
+    foreign[2].children.push(adopted);
+    assert_eq!(build(&foreign), Some(SelectorTreeError::Nonreciprocal));
+    // The last node is still listed as a child but absent from the view.
+    assert_eq!(
+        build(&nodes()[..3]),
+        Some(SelectorTreeError::UnknownInstance)
+    );
+}
+
+#[test]
+fn wide_trees_build_within_near_linear_work() {
+    const COUNT: usize = 4000;
+    let mut allocator = IdAllocator::new(NonZeroU64::new(COUNT as u64).unwrap());
+    let ids: Vec<_> = (0..COUNT).map(|_| allocator.allocate().unwrap()).collect();
+    let mut nodes: Vec<_> = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            let mut metadata = Metadata::default();
+            metadata.set_attribute("id", &format!("e{index}"));
+            SourceNode {
+                instance: *id,
+                parent: (index > 0).then_some(ids[0]),
+                children: vec![],
+                metadata,
+            }
+        })
+        .collect();
+    nodes[0].children = ids[1..].to_vec();
+    let elements: Vec<_> = nodes.iter().map(|node| element(node, "x")).collect();
+    let bounded = SelectorTreeLimits {
+        entries: NonZeroUsize::new(2 * COUNT).unwrap(),
+        retained_bytes: NonZeroUsize::new(usize::MAX).unwrap(),
+        // About 1_000_000 units; pairwise duplicate and child-list scans
+        // need over COUNT^2 / 2 = 8_000_000 for the instances alone.
+        work: NonZeroUsize::new(250 * COUNT).unwrap(),
+    };
+    let tree = SelectorTree::new(&elements, DocumentLanguage::Unknown, bounded).unwrap();
+    assert_eq!(tree.root(), tree.node(0).unwrap());
+}

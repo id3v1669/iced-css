@@ -158,3 +158,34 @@ fn digit_limits_cover_whole_limb_carries_and_existing_inputs() {
         }
     }
 }
+#[test]
+fn i32_saturation_and_byte_clipping_hold_at_their_boundaries() {
+    for (input, expected) in [
+        ("0", 0),
+        ("-0", 0),
+        ("2147483647", i32::MAX),
+        ("2147483648", i32::MAX),
+        ("-2147483647", -2147483647),
+        ("-2147483648", i32::MIN),
+        ("-2147483649", i32::MIN),
+        ("123456789012345678901234567890", i32::MAX),
+        ("-123456789012345678901234567890", i32::MIN),
+        ("1000000000", 1_000_000_000),
+        ("-1000000001", -1_000_000_001),
+    ] {
+        assert_eq!(integer(input).saturating_i32(), expected, "{input}");
+    }
+    for (input, expected) in [
+        ("0", 0),
+        ("-1", 0),
+        ("-123456789012345678901234567890", 0),
+        ("254", 254),
+        ("255", 255),
+        ("256", 255),
+        ("999999999", 255),
+        ("1000000000", 255),
+        ("123456789012345678901234567890", 255),
+    ] {
+        assert_eq!(integer(input).clamped_byte(), expected, "{input}");
+    }
+}

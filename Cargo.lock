@@ -1700,6 +1700,7 @@ dependencies = [
  "ring",
  "rustls",
  "ttf-parser",
+ "unicode-linebreak",
  "unicode-script",
  "webpki-roots",
 ]
@@ -1729,7 +1730,6 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced-css",
- "iced-css-core",
  "iced_test",
 ]
 

@@ -494,9 +494,13 @@ pub struct PreparedTree {
     /// A collapsed cell's side that gives way along all of its edge and draws nothing,
     /// as (cell, side), by arena slot, sorted.
     pub collapsed_losers: Vec<(usize, usize)>,
-    /// A collapsed cell's outer side that draws its table's border, which won there, as
-    /// (cell, side, table), by arena slot.
+    /// A collapsed cell's side that draws the border of its table, row or row group, which
+    /// won there, as (cell, side, table or row or row group), by arena slot.
     pub table_borders: Vec<(usize, usize, usize)>,
+    /// 17.6.2: the border widths of rows, row groups, columns and column groups, which their
+    /// boxes do not keep: only a collapsed table's cells draw them, where they win. As
+    /// (projected index, widths), sorted by index; all zero is left out.
+    pub layer_borders: Vec<(usize, [f32; 4])>,
     /// A line of inline-blocks whose first line takes a percentage `text-indent`, of its
     /// block's containing block's width, as (row, percent), by arena slot.
     pub row_indents: Vec<(usize, f32)>,
@@ -607,6 +611,7 @@ pub fn prepare_captured_tree(
     let mut inline_parent: Vec<Option<usize>> = vec![None; count];
     let mut inline_boxes: Vec<Option<InlineBoxSides>> = vec![None; count];
     let mut table_columns: Vec<(usize, usize, Option<usize>)> = Vec::new();
+    let mut layer_borders: Vec<(usize, [f32; 4])> = Vec::new();
     // Each projected row's parent element, by projected index.
     let mut source_parent: Vec<Option<usize>> = vec![None; count];
     // The table arena slot of each column group that sits directly in a table.
@@ -810,6 +815,7 @@ pub fn prepare_captured_tree(
                 // no box, so closing it generates nothing.
                 if in_table.is_some() {
                     ancestors.push(index);
+                    layer_borders.push((index, rows[index].border_widths()));
                 }
             } else if let Some((table, group)) = in_table.map(|table| (table, None)).or_else(|| {
                 parent.and_then(|group| group_table[group].map(|table| (table, Some(group))))
@@ -822,6 +828,7 @@ pub fn prepare_captured_tree(
                     .width;
                 build.boxes[table].column_widths.push(width);
                 table_columns.push((table, index, group));
+                layer_borders.push((index, rows[index].border_widths()));
             }
             continue;
         }
@@ -991,10 +998,12 @@ pub fn prepare_captured_tree(
                         value.margin = [Dim::Px(0.0); 4];
                     }
                 }
-                // 17.5.1 layers paint backgrounds only; nothing else applies to them.
+                // 17.5.1 layers paint backgrounds only; nothing else applies to them, but
+                // for their borders in a collapsed table (17.6.2), which its cells draw.
                 _ => {
                     value.margin = [Dim::Px(0.0); 4];
                     value.padding = [Dim::Px(0.0); 4];
+                    layer_borders.push((index, value.border));
                     value.border = [0.0; 4];
                 }
             }
@@ -1068,6 +1077,8 @@ pub fn prepare_captured_tree(
         open: _,
         generated_boxes,
     } = build;
+    layer_borders.retain(|entry| entry.1 != [0.0; 4]);
+    layer_borders.sort_unstable_by_key(|entry| entry.0);
     Ok(PreparedTree {
         boxes,
         offsets,
@@ -1084,6 +1095,7 @@ pub fn prepare_captured_tree(
         thin_sides: Vec::new(),
         collapsed_losers: Vec::new(),
         table_borders: Vec::new(),
+        layer_borders,
         row_indents: Vec::new(),
         clipped,
         scrolls,
@@ -1176,6 +1188,7 @@ impl PreparedTree {
             thin_sides: _,
             collapsed_losers: _,
             table_borders: _,
+            layer_borders: _,
             row_indents: _,
             clipped: _,
             scrolls: _,
@@ -1228,6 +1241,11 @@ impl PreparedTree {
                 }
                 Position::Static => {}
             }
+        }
+        // A relative offset or an absolute box's percentages can overflow what flow kept
+        // finite.
+        if let Some(node) = geometry.iter().position(|item| !item.is_finite()) {
+            return Err(E::Flow(FlowError::Nonfinite { node }));
         }
         Ok(geometry)
     }
@@ -1350,10 +1368,12 @@ fn place_absolute(
     })
     .map_err(AbsoluteFailure::Width)?;
     // The contents form a new BFC: lay the subtree out alone, once to learn its 10.6.7
-    // height and again with the used height so percentages see a definite basis.
+    // height and again at the used height. That height is a definite basis for
+    // percentages only when it does not depend on content (10.5): a specified height, or
+    // `top` and `bottom` both set; otherwise min and max pin it and percentages stay auto.
     let nodes = subtree(boxes, arena);
     let local = |node: usize| nodes.iter().position(|candidate| *candidate == node);
-    let mut solve = |height: Dim| -> Result<Vec<FlowGeometry>, FlowError> {
+    let mut solve = |height: Dim, pinned: Dim| -> Result<Vec<FlowGeometry>, FlowError> {
         let mut arena_copy: Vec<FlowBox> = nodes.iter().map(|&node| boxes[node].clone()).collect();
         for item in &mut arena_copy {
             item.children = item.children.iter().filter_map(|&c| local(c)).collect();
@@ -1366,8 +1386,8 @@ fn place_absolute(
         root.min_width = Dim::Auto;
         root.max_width = Dim::Auto;
         root.height = height;
-        root.min_height = Dim::Auto;
-        root.max_height = Dim::Auto;
+        root.min_height = pinned;
+        root.max_height = pinned;
         root.margin = [Dim::Px(0.0); 4];
         // The percentages' basis is the containing block, not this synthetic viewport.
         root.padding = padding.map(Dim::Px);
@@ -1395,7 +1415,7 @@ fn place_absolute(
         }
         other => other,
     };
-    let first = solve(Dim::Auto).map_err(AbsoluteFailure::Flow)?;
+    let first = solve(Dim::Auto, Dim::Auto).map_err(AbsoluteFailure::Flow)?;
     let content_height = first[0].content.bottom - first[0].content.top;
     let height = absolute_height(AbsoluteHeightInput {
         containing_height: cb_height,
@@ -1417,7 +1437,13 @@ fn place_absolute(
         },
     })
     .map_err(AbsoluteFailure::Height)?;
-    let second = solve(Dim::Px(height.height)).map_err(AbsoluteFailure::Flow)?;
+    let definite = specified != Dim::Auto || (offset[0] != Dim::Auto && offset[2] != Dim::Auto);
+    let second = if definite {
+        solve(Dim::Px(height.height), Dim::Auto)
+    } else {
+        solve(Dim::Auto, Dim::Px(height.height))
+    }
+    .map_err(AbsoluteFailure::Flow)?;
     let dx = block.left + width.left + width.margin_left;
     let dy = block.top + height.top + height.margin_top;
     for (index, &node) in nodes.iter().enumerate() {
@@ -1461,9 +1487,45 @@ fn parent_content(
     parent_of(boxes, arena).map_or((viewport.width, viewport.height), |parent| {
         let content: FlowRect = geometry[parent].content;
         // 9.3.2: a percentage of an auto-height containing block computes to auto.
-        let height = (boxes[parent].height != Dim::Auto).then_some(content.bottom - content.top);
+        let height = containing_height(boxes, geometry, arena, viewport);
         (content.right - content.left, height)
     })
+}
+
+/// The height of `arena`'s containing block when it is definite, as core decides it: a
+/// line of inline-blocks hands its block's containing block through, a cell or caption
+/// lays out against none, and a percentage of an indefinite basis is auto (10.5).
+fn containing_height(
+    boxes: &[FlowBox],
+    geometry: &[FlowGeometry],
+    arena: usize,
+    viewport: FlowViewport,
+) -> Option<f32> {
+    let Some(parent) = parent_of(boxes, arena) else {
+        return viewport.height;
+    };
+    let value = &boxes[parent];
+    if value.inline_row.is_some() {
+        return containing_height(boxes, geometry, parent, viewport);
+    }
+    if value.out_of_flow {
+        let content: FlowRect = geometry[parent].content;
+        return (value.height != Dim::Auto).then_some(content.bottom - content.top);
+    }
+    let basis = if matches!(value.table, Some(TableRole::Cell | TableRole::Caption)) {
+        None
+    } else {
+        containing_height(boxes, geometry, parent, viewport)
+    };
+    let vertical = |dim: Dim| match dim {
+        Dim::Auto => None,
+        Dim::Px(number) => Some(number),
+        Dim::Percent(number) => basis.map(|height| height * number / 100.0),
+        Dim::Mix(pixels, percent) => basis.map(|height| pixels + height * percent / 100.0),
+    };
+    let height = vertical(value.height)?;
+    let capped = vertical(value.max_height).map_or(height, |limit| height.min(limit));
+    Some(capped.max(vertical(value.min_height).unwrap_or(0.0)))
 }
 
 fn relative_shift(direction: Direction, offset: [Dim; 4], basis: (f32, Option<f32>)) -> (f32, f32) {
@@ -1676,58 +1738,25 @@ fn list_marker(kind: &str, ordinal: usize) -> Option<String> {
     }
 }
 
-/// 12.4.1, 12.5.1: a counter value in a list style. Styles with no representation for a
-/// value, and the Greek, Armenian and Georgian ones here, fall back to decimal.
+/// 12.4.1, 12.5.1: a counter value in a list style, as core's `format_counter` writes it.
+/// Unknown styles, and values a style cannot represent, fall back to decimal.
 fn counter_label(kind: &str, value: i32) -> String {
-    let alpha = |base: u8| {
-        let mut rest = value;
-        let mut out = Vec::new();
-        while rest > 0 {
-            rest -= 1;
-            out.push(base + (rest % 26) as u8);
-            rest /= 26;
-        }
-        out.reverse();
-        String::from_utf8_lossy(&out).into_owned()
+    use iced_css_core::values::{
+        CounterLimits, CounterStyle, Integer, NumericLimits, format_counter,
     };
-    let roman = || {
-        const TABLE: [(i32, &str); 13] = [
-            (1000, "m"),
-            (900, "cm"),
-            (500, "d"),
-            (400, "cd"),
-            (100, "c"),
-            (90, "xc"),
-            (50, "l"),
-            (40, "xl"),
-            (10, "x"),
-            (9, "ix"),
-            (5, "v"),
-            (4, "iv"),
-            (1, "i"),
-        ];
-        let mut rest = value;
-        let mut out = String::new();
-        for (amount, text) in TABLE {
-            while rest >= amount {
-                out.push_str(text);
-                rest -= amount;
-            }
-        }
-        out
+    let numeric = NumericLimits {
+        digits: NonZeroUsize::new(16).expect("nonzero"),
+        work: NonZeroUsize::new(4096).expect("nonzero"),
     };
-    match kind {
-        "none" => String::new(),
-        "disc" => "\u{2022}".to_owned(),
-        "circle" => "\u{25e6}".to_owned(),
-        "square" => "\u{25aa}".to_owned(),
-        "decimal-leading-zero" if (0..10).contains(&value) => format!("0{value}"),
-        "lower-alpha" | "lower-latin" if value > 0 => alpha(b'a'),
-        "upper-alpha" | "upper-latin" if value > 0 => alpha(b'A'),
-        "lower-roman" if (1..4000).contains(&value) => roman(),
-        "upper-roman" if (1..4000).contains(&value) => roman().to_uppercase(),
-        _ => value.to_string(),
-    }
+    let limits = CounterLimits {
+        numeric,
+        retained_bytes: NonZeroUsize::new(1024).expect("nonzero"),
+    };
+    let style = CounterStyle::parse(kind).unwrap_or(CounterStyle::Decimal);
+    Integer::parse(&value.to_string(), numeric)
+        .ok()
+        .and_then(|integer| format_counter(&integer, style, limits).ok())
+        .unwrap_or_else(|| value.to_string())
 }
 
 /// What 12.4 needs to know about one element or pseudo-element.
@@ -1974,6 +2003,11 @@ pub struct TextStyle {
     pub family: Option<String>,
     pub underline: bool,
     pub line_through: bool,
+    /// 16.3.1: the row whose `text-decoration` draws the underline, when an ancestor's:
+    /// its color and font size draw the line. `None` for a row's own or none.
+    pub underline_from: Option<usize>,
+    /// As `underline_from`, for the line through.
+    pub line_through_from: Option<usize>,
     /// `left`, `center` or `right`, after the initial value's direction.
     pub align: &'static str,
     pub white_space: &'static str,
@@ -2298,11 +2332,25 @@ pub fn evaluate_tree_paint<'r>(
         let (mut underline, mut line_through) = carried.map_or((false, false), |style| {
             (style.underline, style.line_through)
         });
+        // A carried line keeps the color and size of the box that set it.
+        let from = |on: bool, from: Option<usize>| on.then(|| from.or(parent_index)).flatten();
+        let (mut underline_from, mut line_through_from) = carried.map_or((None, None), |style| {
+            (
+                from(style.underline, style.underline_from),
+                from(style.line_through, style.line_through_from),
+            )
+        });
         if let DefaultedValueRef::Compute(SpecifiedValue::TextDecoration(own)) =
             defaulted("text-decoration")?
         {
             underline |= own.underline();
             line_through |= own.line_through();
+            if own.underline() {
+                underline_from = None;
+            }
+            if own.line_through() {
+                line_through_from = None;
+            }
         }
         let parent_align = parent_index.map(|parent| aligns[parent]);
         let align = compute_text_align(&winners, parent_align).map_err(|_| E::Paint {
@@ -2334,6 +2382,8 @@ pub fn evaluate_tree_paint<'r>(
             family,
             underline,
             line_through,
+            underline_from,
+            line_through_from,
             align: match align {
                 ComputedTextAlign::Right => "right",
                 ComputedTextAlign::Center => "center",
@@ -2895,11 +2945,23 @@ pub fn evaluate_tree_paint<'r>(
                 _ => owner.italic,
             };
             let (mut underline, mut line_through) = (owner.underline, owner.line_through);
+            // The element's lines run through its generated content in its color and size.
+            let from = |on: bool, from: Option<usize>| on.then(|| from.unwrap_or(index));
+            let (mut underline_from, mut line_through_from) = (
+                from(owner.underline, owner.underline_from),
+                from(owner.line_through, owner.line_through_from),
+            );
             if let DefaultedValueRef::Compute(SpecifiedValue::TextDecoration(own)) =
                 cascaded("text-decoration")?
             {
                 underline |= own.underline();
                 line_through |= own.line_through();
+                if own.underline() {
+                    underline_from = None;
+                }
+                if own.line_through() {
+                    line_through_from = None;
+                }
             }
             let pseudo_color = compute_color(
                 &winners,
@@ -3092,6 +3154,8 @@ pub fn evaluate_tree_paint<'r>(
                     italic,
                     underline,
                     line_through,
+                    underline_from,
+                    line_through_from,
                     family,
                     white_space,
                     text_transform,

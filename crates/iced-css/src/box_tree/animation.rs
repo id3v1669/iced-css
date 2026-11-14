@@ -2059,6 +2059,15 @@ impl BoxTree {
         for leaf in self.texts.iter_mut().flatten() {
             for run in &mut leaf.runs {
                 let owner = edge_owner(run);
+                // A line an ancestor set changes color with it (16.3.1).
+                for from in [&mut run.underline_from, &mut run.line_through_from]
+                    .into_iter()
+                    .flatten()
+                {
+                    if from.1 == target && followers.boxes.iter().any(|f| f.node == from.0) {
+                        from.1 = now;
+                    }
+                }
                 for sides in &mut run.inline_boxes {
                     if follows(sides.owner, InlineSide::Top) {
                         swap(&mut sides.border[0].1);
@@ -2457,7 +2466,7 @@ impl BoxTreeAnimations {
     ///
     /// Returns the animations started. Nothing starts for a property that did not change, is
     /// not animatable or not yet supported here, is won by `!important` in `to`, or has no
-    /// in-between (`auto`; a transparent border color on a side that draws nothing, or on a
+    /// in-between (`auto`; a `font-size` of 0 at either end; a transparent border color on a side that draws nothing, or on a
     /// collapsed cell's side that gives way along all of its edge): those take `to`'s value
     /// at once. A border color on a side with no width still starts while a width animates
     /// there, or where an interaction styling could give it one: a `:hover`, `:active` or
@@ -2465,7 +2474,8 @@ impl BoxTreeAnimations {
     /// either, whatever it declares.
     ///
     /// # Errors
-    /// Returns an unknown property name or a refused timing. Nothing changes then.
+    /// Returns an unknown property name or a refused timing. Nothing changes then, except
+    /// that time moves on to `now` once the timing is accepted.
     pub fn request(
         &mut self,
         from: &BoxTree,
@@ -2499,6 +2509,8 @@ impl BoxTreeAnimations {
             seen.push(*longhand);
             new
         });
+        // Refused before anything moves: time, sources or tracks.
+        timing.accept(now).map_err(failed)?;
         self.engine.advance(now);
         let capture = to.source.capture;
         if from.source.capture != capture {
@@ -2565,7 +2577,15 @@ impl BoxTreeAnimations {
                 dropped.push(property);
                 continue;
             }
-            if mix(committed, target, 0.0).is_none()
+            // A `font-size` of 0 at either end leaves its text no share of it to keep, so
+            // nothing would move in between: at once.
+            let zero_size = matches!(
+                (field, committed, target),
+                (Field::FontSize, Value::Length(Dim::Px(a)), Value::Length(Dim::Px(b)))
+                    if a <= 0.0 || b <= 0.0
+            );
+            if zero_size
+                || mix(committed, target, 0.0).is_none()
                 || (!generated && to.important[after].contains(&property))
             {
                 dropped.push(property);
@@ -2625,7 +2645,8 @@ impl BoxTreeAnimations {
         if started.is_empty() && !self.sources.contains_key(id) {
             return Ok(0);
         }
-        if !self.sources.contains_key(id) {
+        let registered = !self.sources.contains_key(id);
+        if registered {
             let source = self.engine.register_source().map_err(failed)?;
             self.sources.insert(id.to_owned(), source);
         }
@@ -2633,10 +2654,20 @@ impl BoxTreeAnimations {
         let work = NonZeroUsize::new(100_000).expect("positive");
         if !started.is_empty() {
             let chosen: Vec<PropertyId> = started.iter().map(|track| track.property).collect();
-            let selection = AnimationSelection::new(&chosen, work).map_err(failed)?;
-            self.engine
-                .start_progress(source, &selection, timing, now)
-                .map_err(failed)?;
+            let begun = AnimationSelection::new(&chosen, work)
+                .map_err(failed)
+                .and_then(|selection| {
+                    self.engine
+                        .start_progress(source, &selection, timing, now)
+                        .map_err(failed)
+                });
+            if let Err(error) = begun {
+                // A source registered for this request holds nothing: let it go again.
+                if registered && let Some(source) = self.sources.remove(id) {
+                    let _ = self.engine.remove_source(&source);
+                }
+                return Err(error);
+            }
         }
         if !dropped.is_empty() {
             let selection = AnimationSelection::new(&dropped, work).map_err(failed)?;
@@ -2649,6 +2680,12 @@ impl BoxTreeAnimations {
         });
         let count = started.len();
         self.tracks.append(&mut started);
+        // Only dropped properties, and none left running: the source holds nothing.
+        if !self.tracks.iter().any(|track| track.id == id)
+            && let Some(source) = self.sources.remove(id)
+        {
+            let _ = self.engine.remove_source(&source);
+        }
         Ok(count)
     }
 
@@ -2763,4 +2800,68 @@ struct Beneath {
     presented: BTreeMap<usize, [f32; 3]>,
     fading: BTreeSet<usize>,
     blocks: Vec<Option<[f32; 3]>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capture::{CapturedElement, adapters};
+    use iced::Theme;
+    use iced_css_core::source::AttributeLimits;
+    use std::time::Duration;
+
+    fn trees(from: &str, to: &str) -> (BoxTree, BoxTree) {
+        type Node = CapturedElement<'static, (), Theme, iced::Renderer>;
+        let bound = NonZeroUsize::new(1000).expect("positive");
+        let limits = AttributeLimits {
+            entries: bound,
+            retained_bytes: bound,
+            work: bound,
+        };
+        let root: Node = adapters::text("words", super::super::capture_limits())
+            .unwrap()
+            .style_id("box", limits)
+            .unwrap()
+            .erase();
+        let from = BoxTree::new(root, from).unwrap();
+        let to = from.restyled(&[to]).unwrap();
+        (from, to)
+    }
+
+    #[test]
+    fn a_refused_timing_leaves_no_source() {
+        let (from, to) = trees("#box { color:#000000; }", "#box { color:#ffffff; }");
+        let mut animations = BoxTreeAnimations::new();
+        let refused = AnimationTiming::new(Duration::MAX, Duration::ZERO);
+        let now = Instant::now();
+        assert!(
+            animations
+                .request(&from, &to, "box", &["color"], refused, now)
+                .is_err()
+        );
+        assert!(animations.sources.is_empty());
+        assert_eq!(animations.engine.live_source_count(), 0);
+    }
+
+    #[test]
+    fn a_request_that_only_drops_lets_its_source_go() {
+        let (from, to) = trees("#box { font-size:16px; }", "#box { font-size:32px; }");
+        let zero = to.restyled(&["#box { font-size:0px; }"]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let second = AnimationTiming::new(Duration::from_secs(1), Duration::ZERO);
+        let now = Instant::now();
+        let count = animations
+            .request(&from, &to, "box", &["font-size"], second, now)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(animations.engine.live_source_count(), 1);
+        // A size of 0 applies at once: the running one is dropped and nothing is left.
+        let count = animations
+            .request(&to, &zero, "box", &["font-size"], second, now)
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(animations.tracks.is_empty());
+        assert!(animations.sources.is_empty());
+        assert_eq!(animations.engine.live_source_count(), 0);
+    }
 }

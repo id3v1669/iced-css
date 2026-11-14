@@ -72,3 +72,12 @@ fn closures_and_async_expression_bodies_keep_outer_scope() {
     };
     assert_eq!(width(element), 37.0);
 }
+#[iced_css::style(inline=".outer { width: 37px; }",policy=Compile)]
+fn temporary_receiver(name: &str) -> f32 {
+    // The text borrows a temporary that lives to the end of this statement.
+    width(container(iced::widget::text(name.to_uppercase().as_str())).style_classes(["outer"]))
+}
+#[test]
+fn receiver_temporaries_live_to_the_end_of_the_statement() {
+    assert_eq!(temporary_receiver("a"), 37.0);
+}

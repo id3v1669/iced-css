@@ -14,6 +14,21 @@
 //!     iced::widget::container(iced::widget::Space::new()).style_classes(classes).into()
 //! }
 //! ```
+//! The annotation has no type information: it rewrites every one-argument
+//! `.style_classes(..)` method call in the function body, whatever the receiver,
+//! including one on a type of your own that happens to have a method of that name.
+//! Such a receiver fails to compile unless it converts into an `iced::Element`;
+//! call it from a function outside the annotated body instead:
+//! ```compile_fail
+//! struct Marker;
+//! impl Marker {
+//!     fn style_classes(self, _: [&str; 1]) -> usize { 1 }
+//! }
+//! #[iced_css::style(inline=".x {width:37px;}",policy=Compile)]
+//! fn view() -> usize {
+//!     Marker.style_classes(["x"])
+//! }
+//! ```
 //! Runtime conditions do not remove invalid source as compiler cfg guards do:
 //! ```compile_fail
 //! #[iced_css::style(inline=".x {width:37px;}",policy=Compile)]

@@ -4,6 +4,7 @@ fn limits() -> FlowLimits {
     FlowLimits {
         boxes: NonZeroUsize::new(100).unwrap(),
         depth: NonZeroUsize::new(16).unwrap(),
+        work: NonZeroUsize::new(100_000).unwrap(),
     }
 }
 fn viewport() -> FlowViewport {
@@ -148,6 +149,54 @@ fn empty_box_collapses_through_all_margins() {
     assert!(g[2].collapsed_through);
     assert_eq!(g[2].border.top, 16.0);
     assert_eq!(g[3].border.top, 19.0);
+}
+
+#[test]
+fn floats_ending_above_the_highest_float_top_still_bound_later_ones() {
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            float(FloatSide::Left, 50.0, 10.0),
+            float(FloatSide::Left, 60.0, 10.0),
+            float(FloatSide::Left, 100.0, 0.0),
+            float(FloatSide::Left, 30.0, 5.0),
+            float(FloatSide::Right, 30.0, 5.0),
+            float(FloatSide::Left, 50.0, 5.0),
+        ],
+        &[(0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6)],
+    );
+    assert_eq!((g[1].border.left, vertical(&g[1])), (0.0, (0.0, 10.0)));
+    assert_eq!((g[2].border.left, vertical(&g[2])), (0.0, (10.0, 20.0)));
+    // Zero high below the second, it ends where rule 6 now starts every later float.
+    assert_eq!((g[3].border.left, vertical(&g[3])), (0.0, (20.0, 20.0)));
+    assert_eq!((g[4].border.left, vertical(&g[4])), (0.0, (20.0, 25.0)));
+    assert_eq!((g[5].border.left, vertical(&g[5])), (70.0, (20.0, 25.0)));
+    assert_eq!((g[6].border.left, vertical(&g[6])), (0.0, (25.0, 30.0)));
+}
+
+#[test]
+fn float_after_collapsed_through_box_sits_at_its_top_border_edge() {
+    // The user's U1=A, as the clearance owners rule: not below the larger bottom margin.
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            margins(6.0, 9.0, FlowBox::default()),
+            float(FloatSide::Left, 20.0, 5.0),
+            float(FloatSide::Left, 20.0, 5.0),
+            h(1.0),
+            margins(0.0, 4.0, FlowBox::default()),
+            float(FloatSide::Right, 20.0, 5.0),
+        ],
+        &[(0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6)],
+    );
+    assert!(g[1].collapsed_through);
+    assert_eq!(g[1].border.top, 6.0);
+    assert_eq!(vertical(&g[2]), (6.0, 11.0));
+    assert_eq!(vertical(&g[3]), (6.0, 11.0));
+    assert_eq!(g[4].border.top, 9.0);
+    assert!(g[5].collapsed_through);
+    assert_eq!(g[5].border.top, 10.0);
+    assert_eq!(vertical(&g[6]), (10.0, 15.0));
 }
 
 #[test]
@@ -349,6 +398,52 @@ fn malformed_trees_and_limits_are_rejected() {
         layout_block_flow(&orphan, viewport(), limits()),
         Err(FlowError::Tree { node: 1 })
     ));
+    let detached_cycle = vec![
+        FlowBox::default(),
+        FlowBox {
+            children: vec![2],
+            ..FlowBox::default()
+        },
+        FlowBox {
+            children: vec![1],
+            ..FlowBox::default()
+        },
+    ];
+    assert!(matches!(
+        layout_block_flow(&detached_cycle, viewport(), limits()),
+        Err(FlowError::Tree { node: 1 })
+    ));
+    let self_loop = vec![
+        FlowBox::default(),
+        FlowBox {
+            children: vec![1],
+            ..FlowBox::default()
+        },
+    ];
+    assert!(matches!(
+        layout_block_flow(&self_loop, viewport(), limits()),
+        Err(FlowError::Tree { .. })
+    ));
+    assert_eq!(
+        layout_block_flow(&[], viewport(), limits()),
+        Err(FlowError::Boxes)
+    );
+    let one = FlowLimits {
+        boxes: NonZeroUsize::MIN,
+        ..limits()
+    };
+    let pair = vec![
+        FlowBox {
+            children: vec![1],
+            ..FlowBox::default()
+        },
+        FlowBox::default(),
+    ];
+    assert_eq!(
+        layout_block_flow(&pair, viewport(), one),
+        Err(FlowError::Boxes)
+    );
+    assert!(layout_block_flow(&[FlowBox::default()], viewport(), one).is_ok());
     let chain = vec![
         FlowBox {
             children: vec![1],
@@ -452,6 +547,59 @@ fn shrink_to_fit_preferred_width_sums_a_row_of_floats() {
 }
 
 #[test]
+fn shrink_to_fit_preferred_width_adds_content_beside_a_float() {
+    let text = || FlowBox {
+        content: Some(FlowContent {
+            height: 10.0,
+            preferred_width: 40.0,
+            preferred_min_width: 40.0,
+        }),
+        ..FlowBox::default()
+    };
+    let shrink = || FlowBox {
+        float: Some(FloatSide::Left),
+        ..FlowBox::default()
+    };
+    let links = [(0, 1), (1, 2), (1, 3)];
+    let wide = float(FloatSide::Left, 50.0, 20.0);
+    // Text sits beside the float, so the longest line holds both.
+    let g = tree(
+        vec![FlowBox::default(), shrink(), wide.clone(), text()],
+        &links,
+    );
+    assert_eq!(g[1].border.right, 90.0);
+    assert_eq!(g[3].border.top, 0.0);
+    // So does a box that establishes a formatting context.
+    let block = FlowBox {
+        establishes_bfc: true,
+        width: Dim::Px(40.0),
+        ..h(10.0)
+    };
+    let g = tree(
+        vec![FlowBox::default(), shrink(), wide.clone(), block],
+        &links,
+    );
+    assert_eq!(g[1].border.right, 90.0);
+    assert_eq!((g[3].border.top, g[3].border.left), (0.0, 50.0));
+    // A plain block lies under the float, and cleared text starts below it.
+    let plain = FlowBox {
+        width: Dim::Px(40.0),
+        ..h(10.0)
+    };
+    let g = tree(
+        vec![FlowBox::default(), shrink(), wide.clone(), plain],
+        &links,
+    );
+    assert_eq!(g[1].border.right, 50.0);
+    let cleared = FlowBox {
+        clear: ClearSide::Left,
+        ..text()
+    };
+    let g = tree(vec![FlowBox::default(), shrink(), wide, cleared], &links);
+    assert_eq!(g[1].border.right, 50.0);
+}
+
+#[test]
 fn float_in_an_open_parent_waits_for_the_parent_top() {
     let g = tree(
         vec![
@@ -518,6 +666,27 @@ fn auto_height_never_goes_negative() {
     );
     assert_eq!(g[3].border.top, -40.0);
     assert_eq!(g[1].border.bottom, 0.0);
+}
+
+#[test]
+fn empty_box_with_clearance_collapses_its_own_margins_into_the_next_run() {
+    for (top, bottom, next) in [(10.0, 30.0, 70.0), (30.0, 10.0, 50.0), (0.0, 30.0, 80.0)] {
+        let clearing = FlowBox {
+            clear: ClearSide::Both,
+            ..margins(top, bottom, FlowBox::default())
+        };
+        let g = tree(
+            vec![
+                FlowBox::default(),
+                float(FloatSide::Left, 40.0, 50.0),
+                clearing,
+                h(5.0),
+            ],
+            &[(0, 1), (0, 2), (0, 3)],
+        );
+        assert_eq!(g[2].border.top, 50.0);
+        assert_eq!(g[3].border.top, next);
+    }
 }
 
 #[test]
@@ -879,6 +1048,32 @@ fn table_columns_rows_and_spacing() {
 }
 
 #[test]
+fn a_cell_width_below_its_content_minimum_does_not_narrow_the_column() {
+    let narrow = FlowBox {
+        content: Some(FlowContent {
+            height: 1.0,
+            preferred_width: 300.0,
+            preferred_min_width: 60.0,
+        }),
+        ..cell(Dim::Px(10.0), 1.0)
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            table_of([0.0, 0.0], Dim::Auto),
+            row(),
+            narrow,
+            cell(Dim::Px(20.0), 1.0),
+        ],
+        &[(0, 1), (1, 2), (2, 3), (2, 4)],
+    );
+    // The first column is its content's 60 minimum, not the 10 the cell asks for.
+    assert_eq!((g[3].border.left, g[3].border.right), (0.0, 60.0));
+    assert_eq!((g[4].border.left, g[4].border.right), (60.0, 80.0));
+    assert_eq!(g[1].border.right, 80.0);
+}
+
+#[test]
 fn a_wide_table_shares_extra_room_and_a_narrow_one_shrinks_to_minimums() {
     let wide = table_of([0.0, 0.0], Dim::Px(90.0));
     let g = tree(
@@ -1037,6 +1232,31 @@ fn inline_blocks_fill_lines_wrap_and_align_bottoms() {
     assert_eq!((g[5].border.left, g[5].border.top), (0.0, 25.0));
     assert_eq!((g[2].border.top, g[2].border.bottom), (5.0, 32.0));
     assert_eq!(g[6].border.top, 32.0);
+}
+
+#[test]
+fn inline_blocks_that_may_not_wrap_stay_on_one_line() {
+    let strip = FlowBox {
+        row_no_wrap: true,
+        ..row_of(RowAlign::Left)
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            strip,
+            inline_block(40.0, 10.0),
+            inline_block(40.0, 20.0),
+            inline_block(40.0, 7.0),
+            h(1.0),
+        ],
+        &[(0, 1), (1, 2), (1, 3), (1, 4), (0, 5)],
+    );
+    // 120 of boxes in the same width the wrapping row above breaks in.
+    assert_eq!(g[2].border.left, 0.0);
+    assert_eq!(g[3].border.left, 40.0);
+    assert_eq!((g[4].border.left, g[4].border.top), (80.0, 13.0));
+    assert_eq!((g[1].border.top, g[1].border.bottom), (0.0, 20.0));
+    assert_eq!(g[5].border.top, 20.0);
 }
 
 #[test]
@@ -1481,7 +1701,50 @@ fn a_caption_can_sit_below_the_grid() {
     );
     assert_eq!(g[4].border.top, 0.0);
     assert_eq!(g[2].border.top, 3.0);
-    assert_eq!(g[1].border.bottom, 10.0);
+    // 17.4: the caption lies outside the table's box, and what follows clears it.
+    assert_eq!(g[1].border.bottom, 3.0);
+    assert_eq!(g[2].border.bottom, 10.0);
+}
+
+#[test]
+fn captions_lie_outside_the_tables_box_with_their_margins() {
+    let caption = |below| FlowBox {
+        table: Some(TableRole::Caption),
+        establishes_bfc: true,
+        caption_below: below,
+        height: Dim::Px(7.0),
+        margin: [Dim::Px(1.0), Dim::Px(2.0), Dim::Px(8.0), Dim::Px(3.0)],
+        ..FlowBox::default()
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox {
+                border: [1.0; 4],
+                padding: [Dim::Px(4.0); 4],
+                height: Dim::Px(20.0),
+                ..table_of([0.0, 0.0], Dim::Px(50.0))
+            },
+            caption(false),
+            row(),
+            cell(Dim::Auto, 3.0),
+            caption(true),
+            h(1.0),
+        ],
+        &[(0, 1), (1, 2), (1, 3), (3, 4), (1, 5), (0, 6)],
+    );
+    // Above: as wide as the table's border box less its own margins, from the table's
+    // border edge, with its bottom margin between it and the table's border.
+    assert_eq!((g[2].border.left, g[2].border.right), (3.0, 58.0));
+    assert_eq!((g[2].border.top, g[2].border.bottom), (1.0, 8.0));
+    assert_eq!(g[2].margin, [1.0, 2.0, 8.0, 3.0]);
+    // The table's border, padding and height hold the grid alone.
+    assert_eq!((g[1].border.top, g[1].border.bottom), (16.0, 46.0));
+    assert_eq!((g[1].content.top, g[1].content.bottom), (21.0, 41.0));
+    assert_eq!(g[4].border.top, 21.0);
+    // Below: under the table's border, and the next block under its bottom margin.
+    assert_eq!((g[5].border.top, g[5].border.bottom), (47.0, 54.0));
+    assert_eq!(g[6].border.top, 62.0);
 }
 
 #[test]
@@ -1640,6 +1903,32 @@ fn colspan_takes_columns_and_shares_its_shortfall() {
     assert_eq!((g[3].border.left, g[3].border.right), (2.0, 64.0));
     assert_eq!((g[4].border.left, g[8].border.left), (66.0, 66.0));
     assert_eq!(g[1].border.right, 73.0);
+}
+
+#[test]
+fn spans_stop_adding_columns_past_the_grids_limit() {
+    // Twelve cells of the widest span: ten fill the limit, the rest take one slot each.
+    let mut boxes = vec![FlowBox::default(), table_of([0.0, 0.0], Dim::Auto), row()];
+    boxes[0].children.push(1);
+    boxes[1].children.push(2);
+    for index in 3..15 {
+        boxes.push(spanned(usize::MAX, 1, Dim::Auto, 1.0));
+        boxes[2].children.push(index);
+    }
+    let (placed, columns) = table_grid(&boxes, 1, &[2]);
+    assert_eq!(columns, MAX_COLUMNS + 2);
+    assert_eq!(placed[9].col_span, MAX_SPAN);
+    assert_eq!((placed[10].column, placed[10].col_span), (MAX_COLUMNS, 1));
+    assert_eq!(
+        (placed[11].column, placed[11].col_span),
+        (MAX_COLUMNS + 1, 1)
+    );
+    // A span that starts under the limit ends at it.
+    boxes[3].col_span = 1;
+    let (placed, columns) = table_grid(&boxes, 1, &[2]);
+    assert_eq!((placed[10].column, placed[10].col_span), (9001, 999));
+    assert_eq!(columns, MAX_COLUMNS + 1);
+    layout_block_flow(&boxes, viewport(), limits()).unwrap();
 }
 
 #[test]
@@ -1933,4 +2222,199 @@ fn mixed_heights_take_a_share_of_a_definite_height_and_must_be_finite() {
             Err(FlowError::Nonfinite { node: 0 })
         );
     }
+}
+
+/// Each level holds a float, a second float below it and a box that starts a formatting
+/// context around the next level: that box fits beside the first float, turns out to
+/// reach the second, and is laid out again below, so every level doubles the work.
+fn doubling_levels(levels: usize) -> Vec<FlowBox> {
+    let mut boxes = vec![FlowBox::default()];
+    let mut parent = 0;
+    for _ in 0..levels {
+        let first = boxes.len();
+        boxes.push(float(FloatSide::Left, 1.0, 10.0));
+        boxes.push(FlowBox {
+            clear: ClearSide::Left,
+            ..float(FloatSide::Left, 2.0, 10.0)
+        });
+        boxes.push(FlowBox {
+            establishes_bfc: true,
+            ..FlowBox::default()
+        });
+        boxes[parent].children.extend(first..first + 3);
+        parent = first + 2;
+    }
+    boxes
+}
+
+#[test]
+fn nested_retries_beside_floats_stop_at_the_work_limit() {
+    let wide = FlowLimits {
+        depth: NonZeroUsize::new(64).unwrap(),
+        ..limits()
+    };
+    // 2^30 layouts of the innermost level without the limit.
+    assert_eq!(
+        layout_block_flow(&doubling_levels(30), viewport(), wide),
+        Err(FlowError::Work)
+    );
+    // Three levels are 3 * (1 + 2 + 4) boxes laid out: well inside it.
+    let g = layout_block_flow(&doubling_levels(3), viewport(), wide).unwrap();
+    assert_eq!((g[3].border.top, g[3].border.left), (10.0, 2.0));
+    let exact = FlowLimits {
+        work: NonZeroUsize::new(21).unwrap(),
+        ..wide
+    };
+    assert!(layout_block_flow(&doubling_levels(3), viewport(), exact).is_ok());
+    let short = FlowLimits {
+        work: NonZeroUsize::new(20).unwrap(),
+        ..wide
+    };
+    assert_eq!(
+        layout_block_flow(&doubling_levels(3), viewport(), short),
+        Err(FlowError::Work)
+    );
+}
+
+#[test]
+fn only_the_first_header_and_footer_groups_move() {
+    let group = |role| FlowBox {
+        table: Some(role),
+        ..FlowBox::default()
+    };
+    let mut boxes = vec![FlowBox::default(), table_of([0.0, 0.0], Dim::Auto)];
+    let mut rows = Vec::new();
+    for role in [
+        TableRole::FooterGroup,
+        TableRole::HeaderGroup,
+        TableRole::BodyGroup,
+        TableRole::HeaderGroup,
+        TableRole::FooterGroup,
+    ] {
+        let at = boxes.len();
+        boxes.push(group(role));
+        boxes.push(row());
+        boxes.push(spanned(1, 10, Dim::Auto, 1.0));
+        boxes[1].children.push(at);
+        boxes[at].children.push(at + 1);
+        boxes[at + 1].children.push(at + 2);
+        rows.push(at + 1);
+    }
+    boxes[0].children.push(1);
+    // The first header leads and the first footer ends; the later ones are row groups
+    // in source order (17.2).
+    let (parts, _) = table_parts(&boxes, 1);
+    assert_eq!(parts, vec![rows[1], rows[2], rows[3], rows[4], rows[0]]);
+    // Each still ends its own rowspans.
+    let (placed, _) = table_grid(&boxes, 1, &parts);
+    assert!(placed.iter().all(|item| item.row_span == 1));
+    let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
+    let tops: Vec<f32> = rows.iter().map(|row| g[*row].border.top).collect();
+    assert_eq!(tops, vec![4.0, 0.0, 1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn a_shrink_to_fit_box_makes_room_for_its_rows_indent() {
+    let indented = FlowBox {
+        first_indent: 20.0,
+        ..row_of(RowAlign::Left)
+    };
+    let shrink = FlowBox {
+        float: Some(FloatSide::Left),
+        ..FlowBox::default()
+    };
+    let mut boxes = vec![
+        FlowBox::default(),
+        shrink,
+        indented,
+        inline_block(30.0, 10.0),
+        inline_block(30.0, 10.0),
+    ];
+    let links = [(0, 1), (1, 2), (2, 3), (2, 4)];
+    for &(parent, child) in &links {
+        boxes[parent].children.push(child);
+    }
+    // The first line holds the indent and the first box at the narrowest.
+    assert_eq!(preferred_content_widths(&boxes, 2), (50.0, 80.0));
+    let g = layout_block_flow(&boxes, viewport(), limits()).unwrap();
+    assert_eq!(g[1].border.right, 80.0);
+    assert_eq!((g[3].border.left, g[4].border.left), (20.0, 50.0));
+    assert_eq!(g[4].border.top, 0.0);
+    // A negative indent sizes as without it.
+    boxes[2].first_indent = -20.0;
+    assert_eq!(preferred_content_widths(&boxes, 2), (30.0, 60.0));
+}
+
+#[test]
+fn clear_past_a_float_in_an_open_parent_keeps_the_parent_with_its_float() {
+    let clearing = FlowBox {
+        clear: ClearSide::Left,
+        ..margins(150.0, 0.0, h(10.0))
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            FlowBox::default(),
+            float(FloatSide::Left, 50.0, 100.0),
+            clearing,
+        ],
+        &[(0, 1), (1, 2), (1, 3)],
+    );
+    // Moving the parent down with the margin would move the float past the box's
+    // hypothetical top, so clearance (of zero) stops the margin joining the parent's.
+    assert_eq!(vertical(&g[2]), (0.0, 100.0));
+    assert_eq!(g[3].clearance, Some(0.0));
+    assert_eq!(vertical(&g[3]), (150.0, 160.0));
+    assert_eq!(vertical(&g[1]), (0.0, 160.0));
+}
+
+#[test]
+fn an_empty_sibling_after_a_cleared_empty_box_keeps_its_margin_in_the_parent() {
+    let parent = margins(0.0, 5.0, FlowBox::default());
+    let empty = FlowBox {
+        clear: ClearSide::Both,
+        ..margins(0.0, 10.0, FlowBox::default())
+    };
+    let g = tree(
+        vec![
+            FlowBox::default(),
+            float(FloatSide::Left, 40.0, 50.0),
+            parent,
+            empty,
+            FlowBox::default(),
+            h(1.0),
+        ],
+        &[(0, 1), (0, 2), (2, 3), (2, 4), (0, 5)],
+    );
+    assert!(g[4].collapsed_through);
+    // As with the cleared box last: its margin stays inside the parent.
+    assert_eq!(g[2].border.bottom, 60.0);
+    assert_eq!(g[5].border.top, 65.0);
+}
+
+#[test]
+fn geometry_that_overflows_f32_is_an_error() {
+    let thick = FlowBox {
+        border: [f32::MAX, 0.0, f32::MAX, 0.0],
+        ..FlowBox::default()
+    };
+    let mut boxes = vec![FlowBox::default(), thick];
+    boxes[0].children.push(1);
+    assert!(matches!(
+        layout_block_flow(&boxes, viewport(), limits()),
+        Err(FlowError::Nonfinite { .. })
+    ));
+    // A finite percentage of a finite basis can overflow too.
+    let boxes = [FlowBox {
+        height: Dim::Percent(1e37),
+        ..FlowBox::default()
+    }];
+    let tall = FlowViewport {
+        height: Some(800.0),
+        ..viewport()
+    };
+    assert!(matches!(
+        layout_block_flow(&boxes, tall, limits()),
+        Err(FlowError::Nonfinite { .. })
+    ));
 }

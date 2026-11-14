@@ -588,7 +588,8 @@ fn white_space_modes_and_float_inside_a_run() {
     let leaves = tree.text_leaves();
     assert_eq!(leaves.len(), 1);
     assert_eq!(leaves[0].1.text(), "a  b\n c tail");
-    assert!(!leaves[0].1.wraps);
+    // The text after the `pre` run may break, so the leaf wraps.
+    assert!(leaves[0].1.wraps);
     let g = tree.layout_text(100.0, None, &mut |_, _| 20.0).unwrap();
     // The float is hoisted before the run: same top, and the run yields room.
     assert_eq!(g[2].unwrap().border.top, 0.0);
@@ -620,6 +621,36 @@ fn inherited_decoration_stops_at_floats() {
     };
     assert!(run("x"));
     assert!(!run("y"));
+}
+
+#[test]
+fn a_carried_decoration_keeps_the_color_and_size_of_its_box() {
+    let root = node(
+        "p",
+        vec![text("a", "red "), node("child", vec![text("b", "blue")])],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#p { text-decoration:underline; color:#ff0000; font-size:10px; }
+         #child { display:inline; color:#0000ff; font-size:30px; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let runs = &leaves[0].1.runs;
+    let run = |wanted: &str| runs.iter().find(|run| run.text.trim() == wanted).unwrap();
+    // The box that sets the line draws it in its own color and size, under both runs.
+    let line = |wanted: &str| {
+        let run = run(wanted);
+        assert!(run.underline);
+        run.underline_from
+            .map_or((run.color.unwrap(), run.size), |(_, color, size)| {
+                (color, size)
+            })
+    };
+    assert_eq!(line("red"), ([1.0, 0.0, 0.0], 10.0));
+    assert_eq!(line("blue"), ([1.0, 0.0, 0.0], 10.0));
+    assert_eq!(run("blue").color, Some([0.0, 0.0, 1.0]));
+    assert_eq!(run("blue").line_through_from, None);
 }
 
 #[test]
@@ -688,11 +719,14 @@ mod interactive {
             }
         }
         fn send(&mut self, event: mouse::Event, at: Point) -> Vec<u8> {
+            self.send_event(Event::Mouse(event), at)
+        }
+        fn send_event(&mut self, event: Event, at: Point) -> Vec<u8> {
             let mut messages = Vec::new();
             let mut shell = Shell::new(&mut messages);
             self.element.as_widget_mut().update(
                 &mut self.tree,
-                &Event::Mouse(event),
+                &event,
                 Layout::new(&self.node),
                 mouse::Cursor::Available(at),
                 &(),
@@ -766,6 +800,34 @@ mod interactive {
         assert_eq!(rig.slot().y, 30.0);
         let off = Point::new(5.0, 150.0);
         rig.send(mouse::Event::CursorMoved { position: off }, off);
+        assert_eq!(rig.slot().y, 10.0);
+    }
+
+    #[test]
+    fn a_finger_presses_and_lifts_as_the_left_button_does() {
+        use iced::touch;
+        let root = node("page", vec![node("top", vec![]), node("slot", vec![])]);
+        let tree =
+            BoxTree::new(root, "#top { height:10px; } #top:active { height:50px; }").unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(1.0))
+            .on_press("top", 7)
+            .into();
+        let mut rig = Rig::new(view);
+        let on = Point::new(5.0, 5.0);
+        let id = touch::Finger(0);
+        let pressed = Event::Touch(touch::Event::FingerPressed { id, position: on });
+        assert_eq!(rig.send_event(pressed.clone(), on), vec![7]);
+        assert!(rig.captured);
+        assert_eq!(rig.slot().y, 50.0);
+        let lifted = Event::Touch(touch::Event::FingerLifted { id, position: on });
+        assert!(rig.send_event(lifted, on).is_empty());
+        assert_eq!(rig.slot().y, 10.0);
+        rig.send_event(pressed, on);
+        assert_eq!(rig.slot().y, 50.0);
+        let lost = Event::Touch(touch::Event::FingerLost { id, position: on });
+        rig.send_event(lost, on);
         assert_eq!(rig.slot().y, 10.0);
     }
 
@@ -944,6 +1006,71 @@ mod interactive {
         assert_eq!(rig.node.children()[0].size().height, 0.0);
         assert_eq!(rig.node.children()[1].size().height, 7.0);
         assert_eq!(rig.node.children()[1].bounds().y, 10.0);
+    }
+
+    #[test]
+    fn a_boxless_widget_with_a_child_still_operates_and_overlays() {
+        struct Walk;
+        impl iced::advanced::widget::Operation for Walk {
+            fn traverse(
+                &mut self,
+                operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation),
+            ) {
+                operate(self);
+            }
+        }
+        let root = node("page", vec![node("top", vec![]), node("menu", vec![])]);
+        let tree = BoxTree::new(root, "#menu { display:none; }").unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("menu", iced::widget::button(space(5.0)).on_press(1_u8))
+            .widget("missing", iced::widget::container(space(5.0)))
+            .widget("page", iced::widget::button(space(5.0)))
+            .into();
+        let mut rig = Rig::new(view);
+        assert!(
+            rig.node
+                .children()
+                .iter()
+                .all(|child| child.size() == Size::ZERO)
+        );
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(100.0, 200.0));
+        rig.element
+            .as_widget_mut()
+            .operate(&mut rig.tree, Layout::new(&rig.node), &(), &mut Walk);
+        assert!(
+            rig.element
+                .as_widget_mut()
+                .overlay(
+                    &mut rig.tree,
+                    Layout::new(&rig.node),
+                    &(),
+                    &viewport,
+                    iced::Vector::ZERO,
+                )
+                .is_none()
+        );
+        // Tab walks every hosted widget, the boxless ones too.
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        rig.element.as_widget_mut().update(
+            &mut rig.tree,
+            &Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Tab),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: None,
+                repeat: false,
+            }),
+            Layout::new(&rig.node),
+            mouse::Cursor::Unavailable,
+            &(),
+            &mut clipboard::Null,
+            &mut shell,
+            &viewport,
+        );
     }
 
     #[test]
@@ -1176,6 +1303,96 @@ mod interactive {
         let view: View<'_> = tree.interactive().on_press("a", 9).into();
         let mut rig = Rig::new(view);
         key(&mut rig, Named::Tab, false);
+        assert!(key(&mut rig, Named::Enter, false).is_empty());
+    }
+
+    #[test]
+    fn focus_and_scroll_follow_their_elements_into_a_rebuilt_view() {
+        use iced::keyboard::key::Named;
+        let css = "#list { overflow:auto; height:50px; }
+                   #tall { height:100px; }
+                   #new, #more, #a, #b { height:10px; }";
+        let root = node(
+            "page",
+            vec![
+                node("a", vec![]),
+                node("b", vec![]),
+                node("list", vec![node("tall", vec![]), node("slot", vec![])]),
+            ],
+        );
+        let tree = BoxTree::new(root, css).unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(10.0))
+            .on_press("a", 1)
+            .on_press("b", 2)
+            .into();
+        let mut rig = Rig::new(view);
+        assert_eq!(rig.slot().y, 120.0);
+        rig.send(wheel(-30.0), Point::new(5.0, 30.0));
+        assert_eq!(rig.slot().y, 90.0);
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(key(&mut rig, Named::Enter, false), vec![1]);
+        // Source nodes are postorder: a box before #a and one more in #list renumber
+        // #a, #list and the root.
+        let root = node(
+            "page",
+            vec![
+                node("new", vec![]),
+                node("a", vec![]),
+                node("b", vec![]),
+                node(
+                    "list",
+                    vec![
+                        node("tall", vec![]),
+                        node("slot", vec![]),
+                        node("more", vec![]),
+                    ],
+                ),
+            ],
+        );
+        let grown = BoxTree::new(root, css).unwrap();
+        let mut next: View<'_> = grown
+            .interactive()
+            .widget("slot", space(10.0))
+            .on_press("new", 3)
+            .on_press("a", 1)
+            .on_press("b", 2)
+            .into();
+        rig.tree.diff(&next);
+        rig.node = next.as_widget_mut().layout(&mut rig.tree, &(), &limits());
+        rig.element = next;
+        // #list is still scrolled by 30, below the new 10px box.
+        assert_eq!(rig.slot().y, 100.0);
+        // And #a still has the focus, not the box that took its number.
+        assert_eq!(key(&mut rig, Named::Enter, false), vec![1]);
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(key(&mut rig, Named::Enter, false), vec![2]);
+    }
+
+    #[test]
+    fn another_page_in_the_same_place_takes_no_focus_from_the_last() {
+        use iced::keyboard::key::Named;
+        let css = "#a, #b, #x, #y { height:10px; }";
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![]), node("b", vec![])]),
+            css,
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().on_press("a", 1).on_press("b", 2).into();
+        let mut rig = Rig::new(view);
+        key(&mut rig, Named::Tab, false);
+        assert_eq!(key(&mut rig, Named::Enter, false), vec![1]);
+        // Same shape, other elements: the focused node's number names #x now.
+        let other = BoxTree::new(
+            node("page", vec![node("x", vec![]), node("y", vec![])]),
+            css,
+        )
+        .unwrap();
+        let mut next: View<'_> = other.interactive().on_press("x", 3).on_press("y", 4).into();
+        rig.tree.diff(&next);
+        rig.node = next.as_widget_mut().layout(&mut rig.tree, &(), &limits());
+        rig.element = next;
         assert!(key(&mut rig, Named::Enter, false).is_empty());
     }
 
@@ -1664,6 +1881,62 @@ mod interactive {
     }
 
     #[test]
+    fn a_hosted_widget_draws_within_its_clipping_box() {
+        struct Probe(std::rc::Rc<std::cell::Cell<Option<Rectangle>>>);
+        impl iced::advanced::Widget<u8, Theme, ()> for Probe {
+            fn size(&self) -> Size<iced::Length> {
+                Size::new(iced::Length::Fill, iced::Length::Fixed(20.0))
+            }
+            fn layout(
+                &mut self,
+                _: &mut Tree,
+                _: &(),
+                limits: &Limits,
+            ) -> iced::advanced::layout::Node {
+                iced::advanced::layout::Node::new(limits.resolve(
+                    iced::Length::Fill,
+                    20.0,
+                    Size::ZERO,
+                ))
+            }
+            fn draw(
+                &self,
+                _: &Tree,
+                _: &mut (),
+                _: &Theme,
+                _: &iced::advanced::renderer::Style,
+                _: Layout<'_>,
+                _: mouse::Cursor,
+                viewport: &Rectangle,
+            ) {
+                self.0.set(Some(*viewport));
+            }
+        }
+        let root = node("page", vec![node("clip", vec![node("slot", vec![])])]);
+        let tree = BoxTree::new(root, "#clip { overflow:hidden; height:5px; }").unwrap();
+        let seen = std::rc::Rc::new(std::cell::Cell::new(None));
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", iced::Element::new(Probe(seen.clone())))
+            .into();
+        let rig = Rig::new(view);
+        let slot = rig.slot();
+        assert_eq!(slot.height, 20.0);
+        rig.element.as_widget().draw(
+            &rig.tree,
+            &mut (),
+            &Theme::Light,
+            &iced::advanced::renderer::Style::default(),
+            Layout::new(&rig.node),
+            mouse::Cursor::Unavailable,
+            &Rectangle::new(Point::ORIGIN, Size::new(100.0, 200.0)),
+        );
+        let viewport = seen.get().expect("the widget is drawn");
+        assert_eq!(viewport.y, slot.y);
+        assert_eq!(viewport.height, 5.0);
+    }
+
+    #[test]
     fn draw_with_clips_widgets_and_text_runs_without_panicking() {
         let root = node(
             "page",
@@ -1904,6 +2177,38 @@ fn inside_marker_images_take_a_run_of_their_own() {
 }
 
 #[test]
+fn the_core_types_in_the_signatures_are_named_here() {
+    let limits: iced_css::capture::AttributeLimits = iced_css::box_tree::attribute_limits();
+    let refused: Result<_, iced_css::capture::AttributeError> =
+        adapters::text::<iced::Theme, ()>("x", capture_limits())
+            .unwrap()
+            .style_id("x", limits);
+    assert!(refused.is_ok());
+    let tree = BoxTree::new(node("page", vec![]), "#page { height:10px; }").unwrap();
+    let boxes: Vec<Option<iced_css::box_tree::FlowGeometry>> = tree.layout(100.0, None).unwrap();
+    let border: iced_css::box_tree::FlowRect = boxes[0].unwrap().border;
+    assert_eq!(border.bottom - border.top, 10.0);
+}
+
+#[test]
+fn trees_differing_in_marker_images_or_sheets_are_not_equal() {
+    let tree = |css: &str, base: &str| {
+        let root = node("page", vec![node("one", vec![text("a", "item")])]);
+        BoxTree::with_base(root, css, std::path::Path::new(base)).unwrap()
+    };
+    let css = "#one { display:list-item; list-style-image:url(dot.png); }";
+    assert!(tree(css, "a") == tree(css, "a"));
+    // Only the outside marker's image differs.
+    assert!(tree(css, "a") != tree(css, "b"));
+    // A `:hover` rule that matches nothing yet changes what the tree can become.
+    let plain = tree("#one { display:block; }", "a");
+    let hover = plain
+        .restyled(&["#one { display:block; } #one:hover { color:red; }"])
+        .unwrap();
+    assert!(plain != hover);
+}
+
+#[test]
 fn list_items_get_outside_markers_by_type_and_ordinal() {
     let root = node(
         "page",
@@ -2092,6 +2397,35 @@ fn vertical_align_and_caption_side_reach_the_table() {
 }
 
 #[test]
+fn nowrap_keeps_a_line_of_inline_blocks_on_one_line() {
+    let page = || {
+        node(
+            "page",
+            vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+        )
+    };
+    let boxes = "#a, #b, #c { display:inline-block; width:40px; height:10px; }";
+    let g = BoxTree::new(page(), boxes)
+        .unwrap()
+        .layout(100.0, None)
+        .unwrap();
+    assert_eq!(
+        (g[3].unwrap().border.left, g[3].unwrap().border.top),
+        (0.0, 10.0)
+    );
+    let css = format!("#page {{ white-space:nowrap; }} {boxes}");
+    let g = BoxTree::new(page(), &css)
+        .unwrap()
+        .layout(100.0, None)
+        .unwrap();
+    assert_eq!(
+        (g[3].unwrap().border.left, g[3].unwrap().border.top),
+        (80.0, 0.0)
+    );
+    assert_eq!(g[0].unwrap().border.bottom, 10.0);
+}
+
+#[test]
 fn row_and_text_alignment_come_from_the_block_container() {
     let root = node("page", vec![node("a", vec![]), node("b", vec![])]);
     let tree = BoxTree::new(
@@ -2244,6 +2578,33 @@ fn a_reset_reaches_later_siblings_and_counters_nest_outermost_first() {
     .unwrap();
     let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
     assert_eq!(texts, vec!["05", "1.2", "3"]);
+}
+
+#[test]
+fn counter_styles_format_as_core_does() {
+    let root = node(
+        "page",
+        vec![
+            node("a", vec![]),
+            node("b", vec![]),
+            node("c", vec![]),
+            node("d", vec![]),
+            node("e", vec![]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { counter-reset:n 3 z 27 m -1; }
+         #a:before { content:counter(n, lower-greek); }
+         #b:before { content:counter(n, armenian); }
+         #c:before { content:counter(n, georgian); }
+         #d:before { content:counter(z, lower-alpha); }
+         #e:before { content:counter(m, decimal-leading-zero); }",
+    )
+    .unwrap();
+    let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+    // Latin past 26 falls back to decimal, and a negative leading-zero value pads.
+    assert_eq!(texts, vec!["\u{3b3}", "\u{533}", "\u{10d2}", "27", "-01"]);
 }
 
 #[test]
@@ -2458,6 +2819,107 @@ fn collapse_without_cell_borders_draws_the_table_border_on_its_cells_and_no_spac
     assert_eq!(g[3].unwrap().border.left, 13.0);
     assert!(tree.paints()[2].border[3].is_some());
     assert!(tree.paints()[0].border[0].is_none());
+}
+
+#[test]
+fn collapse_draws_row_group_and_column_borders_on_the_cells_along_them() {
+    // 17.6.2.1: a row's border lies on its cells' sides, and wins over none there.
+    let rows = |extra: &str| {
+        let root = node(
+            "t",
+            vec![
+                node("r1", vec![node("a", vec![]), node("b", vec![])]),
+                node("r2", vec![node("c", vec![]), node("d", vec![])]),
+            ],
+        );
+        BoxTree::new(
+            root,
+            &format!(
+                "#t {{ display:table; border-collapse:collapse; }}
+                 #r1, #r2 {{ display:table-row; }}
+                 #r1 {{ border-bottom:4px solid #ff0000; }}
+                 #a, #b, #c, #d {{ display:table-cell; width:10px; height:5px; }}
+                 {extra}"
+            ),
+        )
+        .unwrap()
+    };
+    let tree = rows("");
+    let g = tree.layout(200.0, None).unwrap();
+    let red = Some([1.0, 0.0, 0.0]);
+    assert_eq!(
+        (tree.paints()[2].border[2], tree.paints()[3].border[2]),
+        (red, red)
+    );
+    assert_eq!(
+        (tree.paints()[2].border[1], tree.paints()[5].border[0]),
+        (None, None)
+    );
+    // The border takes room: the next row starts below it.
+    assert_eq!(
+        (g[2].unwrap().border.bottom, g[5].unwrap().content.top),
+        (9.0, 9.0)
+    );
+    assert_eq!(g[0].unwrap().border.bottom, 14.0);
+    // A cell's border as wide and of the same style keeps the edge, and a wider row's
+    // takes it back.
+    let tree = rows("#a { border-bottom:4px solid #00ff00; }");
+    assert_eq!(tree.paints()[2].border[2], Some([0.0, 1.0, 0.0]));
+    let tree = rows("#a { border-bottom:2px solid #00ff00; }");
+    assert_eq!(tree.paints()[2].border[2], red);
+    // `hidden` on the row leaves none there, of the cells' either.
+    let tree = rows("#r1 { border-bottom-style:hidden; } #c { border-top:2px solid; }");
+    assert_eq!(
+        (tree.paints()[2].border[2], tree.paints()[5].border[0]),
+        (None, None)
+    );
+    // Separated borders: a row has none.
+    let tree = rows("#t { border-collapse:separate; }");
+    assert_eq!(tree.paints()[2].border_style[2], "none");
+    assert_eq!(
+        tree.layout(200.0, None).unwrap()[0].unwrap().border.bottom,
+        10.0
+    );
+
+    // A row group's border goes around its rows, a column's down its cells.
+    let root = node(
+        "t",
+        vec![
+            node("col", vec![]),
+            node(
+                "g",
+                vec![
+                    node("r1", vec![node("a", vec![]), node("b", vec![])]),
+                    node("r2", vec![node("c", vec![]), node("d", vec![])]),
+                ],
+            ),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#t { display:table; border-collapse:collapse; }
+         #col { display:table-column; border-right:3px solid #00ff00; }
+         #g { display:table-row-group; border:2px solid #0000ff; }
+         #r1, #r2 { display:table-row; }
+         #a, #b, #c, #d { display:table-cell; width:10px; height:5px; }",
+    )
+    .unwrap();
+    let g = tree.layout(200.0, None).unwrap();
+    let (green, blue) = (Some([0.0, 1.0, 0.0]), Some([0.0, 0.0, 1.0]));
+    let paints = tree.paints();
+    // a: the group's top and left, the column's right, nothing below inside the group.
+    assert_eq!(paints[4].border, [blue, green, None, blue]);
+    assert_eq!(paints[8].border, [None, blue, blue, None]);
+    assert_eq!(paints[7].border[1], green);
+    // The column's 3px sits between the cells, the group's 2px around them.
+    assert_eq!(
+        (g[4].unwrap().content.left, g[5].unwrap().content.left),
+        (2.0, 15.0)
+    );
+    assert_eq!(
+        (g[0].unwrap().border.right, g[0].unwrap().border.bottom),
+        (27.0, 14.0)
+    );
 }
 
 #[test]
@@ -4297,9 +4759,12 @@ mod animation {
         let to = from.restyled(&["#box { font-size:0px; }"]).unwrap();
         let mut animations = BoxTreeAnimations::new();
         let start = Instant::now();
-        animations
+        // Nothing would move in between: it applies at once, with no track left running.
+        let count = animations
             .request(&from, &to, "box", &["font-size"], second(), start)
             .unwrap();
+        assert_eq!(count, 0);
+        assert!(!animations.is_animating());
         animations.advance(start + Duration::from_millis(500), &to);
         let shown = animations.presented(&to);
         for (_, leaf) in shown.text_leaves() {
@@ -4307,6 +4772,36 @@ mod animation {
                 assert!(run.size.is_finite(), "{:?}", run.size);
             }
         }
+        // And from 0 as well.
+        let count = animations
+            .request(&to, &from, "box", &["font-size"], second(), start)
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(!animations.is_animating());
+    }
+
+    #[test]
+    fn a_refused_timing_changes_nothing() {
+        let from = BoxTree::new(
+            node("page", vec![node("box", vec![])]),
+            "#box { width:10px; }",
+        )
+        .unwrap();
+        let to = from.restyled(&["#box { width:30px; }"]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        let start = Instant::now();
+        let refused = AnimationTiming::new(Duration::MAX, Duration::ZERO);
+        assert!(
+            animations
+                .request(&from, &to, "box", &["width"], refused, start)
+                .is_err()
+        );
+        assert!(!animations.is_animating());
+        // A later request on the same element still starts from scratch.
+        let count = animations
+            .request(&from, &to, "box", &["width"], second(), start)
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]
@@ -7013,6 +7508,7 @@ fn vertical_align_places_inline_blocks_in_their_line() {
     assert_eq!(top_of("middle"), 15.0);
     assert_eq!(top_of("top"), 0.0);
     assert_eq!(top_of("text-top"), 0.0);
+    assert_eq!(top_of("text-bottom"), 30.0);
 }
 
 #[test]
@@ -7465,4 +7961,84 @@ fn only_a_lines_first_row_of_inline_blocks_takes_its_indent() {
     .unwrap();
     let g = tree.layout(400.0, None).unwrap();
     assert_eq!(g[2].unwrap().border.left, 0.0);
+}
+
+#[test]
+fn capitalize_finds_its_words_across_the_runs_of_a_leaf() {
+    let leaf_text = |root, css: &str| {
+        let tree = BoxTree::new(root, css).unwrap();
+        tree.text_leaves()[0].1.text()
+    };
+    let css = "#page { text-transform:capitalize; } #b { display:inline; font-weight:bold; }";
+    // An apostrophe inside a word starts no word.
+    let root = node("page", vec![text("copy", "don't stop")]);
+    assert_eq!(leaf_text(root, css), "Don't Stop");
+    // Neither does an inline element's edge.
+    let root = node(
+        "page",
+        vec![
+            text("head", "w"),
+            node("b", vec![text("mid", "or")]),
+            text("tail", "d two"),
+        ],
+    );
+    assert_eq!(leaf_text(root, css), "Word Two");
+    // Nor a combining mark.
+    let root = node("page", vec![text("copy", "cafe\u{301}s open")]);
+    assert_eq!(leaf_text(root, css), "Cafe\u{301}s Open");
+    // Punctuation before a word is passed over.
+    let root = node("page", vec![text("copy", "\"quoted\" well-known")]);
+    assert_eq!(leaf_text(root, css), "\"Quoted\" Well-Known");
+}
+
+#[test]
+fn a_paragraphs_line_height_and_wrapping_are_its_blocks_not_its_first_inlines() {
+    use iced_css::evaluation::tree_layout::TextLineHeight;
+    let leaf = |css: &str| {
+        let root = node(
+            "page",
+            vec![node(
+                "p",
+                vec![node("s", vec![text("a", "Tel:")]), text("b", " long text")],
+            )],
+        );
+        let tree = BoxTree::new(root, css).unwrap();
+        let leaves = tree.text_leaves();
+        assert_eq!(leaves.len(), 1);
+        (leaves[0].1.line_height, leaves[0].1.wraps)
+    };
+    // 10.8.1: the block's strut, not a leading inline's line height.
+    assert_eq!(
+        leaf("#p { line-height:40px; } #s { display:inline; line-height:10px; }"),
+        (TextLineHeight::Px(40.0), true)
+    );
+    // 16.6: a leading inline's `nowrap` does not stop the text after it wrapping.
+    assert!(leaf("#s { display:inline; white-space:nowrap; }").1);
+    // Text that is `nowrap` throughout stays on its line, whichever box says so.
+    assert!(!leaf("#p { white-space:nowrap; } #s { display:inline; }").1);
+    assert!(!leaf("#s { display:inline; } #a, #b { white-space:nowrap; }").1);
+}
+
+#[test]
+fn restyled_accepts_many_author_sheets() {
+    let tree = BoxTree::new(page(), CSS).unwrap();
+    let sheets: Vec<String> = (0..60)
+        .map(|index| format!("#card {{ height:{index}px; }}"))
+        .collect();
+    let refs: Vec<&str> = sheets.iter().map(String::as_str).collect();
+    assert!(tree.restyled(&refs).is_ok());
+}
+
+#[test]
+fn a_captured_radio_keeps_only_its_label_as_text() {
+    let radio = adapters::radio("Pick", 1u8, None, |_| (), capture_limits())
+        .unwrap()
+        .erase();
+    let tree = BoxTree::new(node("page", vec![radio]), "").unwrap();
+    let texts: Vec<String> = tree
+        .text_leaves()
+        .iter()
+        .flat_map(|(_, leaf)| leaf.runs.iter().map(|run| run.text.clone()))
+        .collect();
+    assert_eq!(texts.concat(), "Pick");
 }

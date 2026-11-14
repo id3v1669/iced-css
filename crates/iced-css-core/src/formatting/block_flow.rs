@@ -123,6 +123,9 @@ pub struct FlowBox {
     /// with this alignment. Each line aligns its boxes' bottom margin edges: the baseline
     /// of an empty inline-block, and an approximation for one holding text.
     pub inline_row: Option<RowAlign>,
+    /// 16.6: an `inline_row` whose block container's `white-space` allows no break
+    /// (`nowrap`, `pre`): every box stays on one line, past the edge if it must.
+    pub row_no_wrap: bool,
     /// Absolutely positioned: takes no part in flow; the result holds only its static
     /// position, in `border.left` and `border.top`, for the caller's 10.3.7/10.6.4 pass.
     pub out_of_flow: bool,
@@ -163,6 +166,7 @@ impl Default for FlowBox {
             collapsed_gaps: None,
             column_widths: Vec::new(),
             inline_row: None,
+            row_no_wrap: false,
             out_of_flow: false,
             establishes_bfc: false,
             width: Dim::Auto,
@@ -229,6 +233,21 @@ impl FlowGeometry {
             rect.bottom += dy;
         }
     }
+
+    /// Every published edge and margin is finite: sums of lengths near the top of the
+    /// f32 range, or percentages of them, overflow even when each input is finite.
+    #[must_use]
+    pub fn is_finite(&self) -> bool {
+        let rects = [self.border, self.padding, self.content]
+            .into_iter()
+            .chain(self.leaf_band)
+            .chain(self.leaf_after);
+        let edges = rects.flat_map(|rect| [rect.left, rect.right, rect.top, rect.bottom]);
+        edges
+            .chain(self.margin)
+            .chain(self.clearance)
+            .all(f32::is_finite)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -244,16 +263,23 @@ pub struct FlowViewport {
 pub struct FlowLimits {
     pub boxes: NonZeroUsize,
     pub depth: NonZeroUsize,
+    /// Boxes laid out, counting each again when its subtree is: a box that starts a
+    /// formatting context beside floats is laid out once per place tried, and nesting
+    /// multiplies those, so `boxes` and `depth` alone do not bound the work.
+    pub work: NonZeroUsize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FlowError {
     Boxes,
     Depth,
+    /// [`FlowLimits::work`] ran out.
+    Work,
     /// A child index is out of range, repeated, or the root.
     Tree {
         node: usize,
     },
+    /// An input length is not finite, or an output edge overflowed to infinity.
     Nonfinite {
         node: usize,
     },
@@ -303,6 +329,11 @@ struct Flow {
     /// Open boxes whose top border edge waits on an adjoining margin's resolution.
     unsettled: Vec<usize>,
     floats: Vec<PlacedFloat>,
+    /// The highest outer top of `floats`: by 9.5.1 rule 6 no later float goes above it.
+    float_top: f32,
+    /// Those of `floats` reaching below `float_top`, the only ones that can narrow a later
+    /// float's band, so placing one does not scan every float the context holds.
+    reaching: Vec<PlacedFloat>,
     /// The lowest earlier block outer top, for 9.5.1 rule 5.
     block_limit: f32,
     /// Floats and static positions inside an open parent: 9.5.1 rule 4 needs that
@@ -314,6 +345,10 @@ struct Flow {
     /// The open run ends in an empty box with clearance, whose bottom margin must not
     /// collapse with its parent's (8.3.1).
     clearance_through: bool,
+    /// The top border edge of the collapsed-through box the open run ends in. A float
+    /// after it goes there rather than below its bottom margin: 9.5.1's hypothetical top
+    /// of that box's border box (8.3.1), the user's U1=A, as the clearance owners place it.
+    through_top: Option<f32>,
 }
 
 impl Flow {
@@ -323,16 +358,20 @@ impl Flow {
             pending: MarginExtrema::default(),
             unsettled: Vec::new(),
             floats: Vec::new(),
+            float_top: f32::NEG_INFINITY,
+            reaching: Vec::new(),
             block_limit: y,
             deferred: Vec::new(),
             open_through: Vec::new(),
             clearance_through: false,
+            through_top: None,
         }
     }
     fn position(&self) -> f32 {
         self.y + self.pending.collapsed()
     }
     fn adjoin(&mut self, value: f32, node: usize) -> Result<(), FlowError> {
+        self.through_top = None;
         self.pending
             .extend(&[value], NonZeroUsize::MIN)
             .map_err(|error| FlowError::Margin { node, error })
@@ -344,22 +383,6 @@ impl Flow {
         lowest_clearance_float_bottom(&self.floats, clear, limit)
             .map_err(|error| FlowError::Clear { node, error })
     }
-}
-
-/// The gap between each pair of neighbouring tracks. Positive spacing is the same
-/// everywhere. A negative one overlaps only tracks at least that wide, so an empty column
-/// or row is not overlapped past its neighbour.
-fn track_gaps(tracks: &[f32], spacing: f32) -> Vec<f32> {
-    tracks
-        .windows(2)
-        .map(|pair| {
-            if spacing < 0.0 && (pair[0] < -spacing || pair[1] < -spacing) {
-                0.0
-            } else {
-                spacing
-            }
-        })
-        .collect()
 }
 
 /// A table's spacing along one axis: `uniform`, or a collapsed table's own gap per inner
@@ -375,19 +398,21 @@ impl Spacing {
     /// tracks at least that wide, so an empty column or row is not overlapped past its
     /// neighbour.
     fn between(&self, tracks: &[f32]) -> Vec<f32> {
-        match &self.lines {
-            Some(lines) if lines.len() + 1 == tracks.len() => tracks
-                .windows(2)
-                .zip(lines)
-                .map(|(pair, &gap)| {
-                    if gap < 0.0 && (pair[0] < -gap || pair[1] < -gap) {
-                        0.0
-                    } else {
-                        gap
-                    }
-                })
-                .collect(),
-            _ => track_gaps(tracks, self.uniform),
+        (0..tracks.len().saturating_sub(1))
+            .map(|index| self.gap_after(tracks, index))
+            .collect()
+    }
+
+    /// The gap between `tracks[index]` and the next one, as [`Self::between`] gives it.
+    fn gap_after(&self, tracks: &[f32], index: usize) -> f32 {
+        let gap = match &self.lines {
+            Some(lines) if lines.len() + 1 == tracks.len() => lines[index],
+            _ => self.uniform,
+        };
+        if gap < 0.0 && (tracks[index] < -gap || tracks[index + 1] < -gap) {
+            0.0
+        } else {
+            gap
         }
     }
 
@@ -414,6 +439,11 @@ impl Spacing {
 /// The most columns one cell can span; HTML's own limit.
 const MAX_SPAN: usize = 1000;
 
+/// The column past which a cell spans only its own slot. Spans multiply the column count
+/// past what the box limit bounds, and every table pass allocates per column; with this a
+/// grid is never wider than this many columns plus one per cell.
+const MAX_COLUMNS: usize = 10_000;
+
 /// One cell's place in the table grid.
 #[derive(Debug, Clone, Copy)]
 pub struct GridCell {
@@ -424,17 +454,27 @@ pub struct GridCell {
     pub row_span: usize,
 }
 
-/// A table's rows in layout order (head, body, foot) and its captions.
+/// A table's rows in layout order (head, body, foot) and its captions. Only the first
+/// header and footer groups move; later ones are row groups where they stand (17.2).
 pub fn table_parts(boxes: &[FlowBox], table: usize) -> (Vec<usize>, Vec<usize>) {
     let (mut head, mut body, mut foot, mut captions) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut header, mut footer) = (false, false);
     for &child in &boxes[table].children {
         let inner = || boxes[child].children.iter().copied();
         match boxes[child].table {
             Some(TableRole::Row) => body.push(child),
-            Some(TableRole::HeaderGroup) => head.extend(inner()),
-            Some(TableRole::BodyGroup) => body.extend(inner()),
-            Some(TableRole::FooterGroup) => foot.extend(inner()),
+            Some(TableRole::HeaderGroup) if !header => {
+                header = true;
+                head.extend(inner());
+            }
+            Some(TableRole::FooterGroup) if !footer => {
+                footer = true;
+                foot.extend(inner());
+            }
+            Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup) => {
+                body.extend(inner());
+            }
             Some(TableRole::Caption) => captions.push(child),
             _ => {}
         }
@@ -445,22 +485,23 @@ pub fn table_parts(boxes: &[FlowBox], table: usize) -> (Vec<usize>, Vec<usize>) 
 }
 
 /// For each row, the index past the last row of its row group. Rows directly in the
-/// table form a group with their neighbours (17.2.1's anonymous group).
-fn group_ends(boxes: &[FlowBox], rows: &[usize]) -> Vec<usize> {
-    let mut group_of = vec![None; boxes.len()];
-    for (index, candidate) in boxes.iter().enumerate() {
+/// table form a group with their neighbours (17.2.1's anonymous group). Only the table's
+/// own children are visited, not the whole arena.
+fn group_ends(boxes: &[FlowBox], table: usize, rows: &[usize]) -> Vec<usize> {
+    let mut group_of = std::collections::HashMap::new();
+    for &child in &boxes[table].children {
         if matches!(
-            candidate.table,
+            boxes[child].table,
             Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
         ) {
-            for &row in &candidate.children {
-                group_of[row] = Some(index);
+            for &row in &boxes[child].children {
+                group_of.insert(row, child);
             }
         }
     }
     let mut ends = vec![rows.len(); rows.len()];
     for index in (0..rows.len().saturating_sub(1)).rev() {
-        if group_of[rows[index]] == group_of[rows[index + 1]] {
+        if group_of.get(&rows[index]) == group_of.get(&rows[index + 1]) {
             ends[index] = ends[index + 1];
         } else {
             ends[index] = index + 1;
@@ -470,8 +511,9 @@ fn group_ends(boxes: &[FlowBox], rows: &[usize]) -> Vec<usize> {
 }
 
 /// 17.5: cells claim grid slots row by row, skipping slots a rowspan from above holds.
-pub fn table_grid(boxes: &[FlowBox], rows: &[usize]) -> (Vec<GridCell>, usize) {
-    let ends = group_ends(boxes, rows);
+/// `rows` are `table`'s, as [`table_parts`] orders them.
+pub fn table_grid(boxes: &[FlowBox], table: usize, rows: &[usize]) -> (Vec<GridCell>, usize) {
+    let ends = group_ends(boxes, table, rows);
     let mut held: Vec<usize> = Vec::new();
     let mut placed = Vec::new();
     let mut columns = 0;
@@ -482,7 +524,10 @@ pub fn table_grid(boxes: &[FlowBox], rows: &[usize]) -> (Vec<GridCell>, usize) {
                 column += 1;
             }
             let value = &boxes[cell];
-            let col_span = value.col_span.clamp(1, MAX_SPAN);
+            let col_span = value
+                .col_span
+                .clamp(1, MAX_SPAN)
+                .min(MAX_COLUMNS.saturating_sub(column).max(1));
             // A rowspan stops at the end of its row group, or a span past any sane table
             // at the limit of what can be represented.
             let row_span = value.row_span.clamp(1, ends[row_index] - row_index);
@@ -514,6 +559,8 @@ struct Solver<'a> {
     geometry: Vec<FlowGeometry>,
     /// The height the last finished box's contents flowed to, whatever its `height` says.
     last_flowed: f32,
+    /// What is left of [`FlowLimits::work`].
+    work: usize,
     /// A leaf's content height at its used width, overriding the static measurement.
     text_height: &'a mut dyn FnMut(usize, f32) -> Option<f32>,
     /// See [`layout_block_flow_split`].
@@ -604,6 +651,7 @@ pub fn layout_block_flow_baselines(
         boxes,
         geometry: vec![FlowGeometry::default(); boxes.len()],
         last_flowed: 0.0,
+        work: limits.work.get(),
         text_height,
         text_split,
         text_baseline,
@@ -617,6 +665,9 @@ pub fn layout_block_flow_baselines(
         direction: boxes[0].direction,
     };
     solver.layout_root(containing, viewport.top)?;
+    if let Some(node) = solver.geometry.iter().position(|item| !item.is_finite()) {
+        return Err(FlowError::Nonfinite { node });
+    }
     Ok(solver.geometry)
 }
 
@@ -627,6 +678,7 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
         boxes,
         geometry: Vec::new(),
         last_flowed: 0.0,
+        work: 0,
         text_height: &mut |_, _| None,
         text_split: &mut |_, _, _, _| None,
         text_baseline: &mut |_, _, _| None,
@@ -675,6 +727,17 @@ fn validate(boxes: &[FlowBox]) -> Result<(), FlowError> {
     if let Some(node) = seen.iter().position(|reached| !reached) {
         return Err(FlowError::Tree { node });
     }
+    // Every box has one parent at most, so the root's part is a tree; a cycle apart from
+    // it would pass the checks above, but layout never reaches it.
+    let mut reached = vec![false; boxes.len()];
+    let mut stack = vec![0];
+    while let Some(node) = stack.pop() {
+        reached[node] = true;
+        stack.extend(&boxes[node].children);
+    }
+    if let Some(node) = reached.iter().position(|reached| !reached) {
+        return Err(FlowError::Tree { node });
+    }
     Ok(())
 }
 
@@ -714,21 +777,29 @@ impl Solver<'_> {
     fn measure(&self, node: usize) -> (f32, f32) {
         let value = &self.boxes[node];
         if value.inline_row.is_some() {
-            // A row wraps only as it must: its longest line holds every box.
-            let (mut minimum, mut preferred) = (0.0_f32, 0.0_f32);
+            // A row wraps only as it must: its longest line holds every box. One that
+            // may not wrap is never narrower than that. A positive indent widens the
+            // first line, which holds the first box at the narrowest; a negative one
+            // sizes as without it.
+            let indent = value.first_indent.max(0.0);
+            let (mut minimum, mut preferred, mut lead) = (0.0_f32, indent, indent);
             for &child in &value.children {
                 if self.boxes[child].float.is_none() && !self.boxes[child].out_of_flow {
                     let (child_min, child_preferred) = self.outer_measure(child);
-                    minimum = minimum.max(child_min);
+                    minimum = minimum.max(lead + child_min);
+                    lead = 0.0;
                     preferred += child_preferred;
                 }
+            }
+            if value.row_no_wrap {
+                minimum = preferred;
             }
             return (minimum, preferred.max(minimum));
         }
         if let Some(TableRole::Table { spacing }) = value.table {
             let (rows, captions) = self.table_parts(node);
             let across = self.spacing(node, 0, spacing[0]);
-            let (mins, prefs) = self.table_columns(&rows, &across);
+            let (mins, prefs) = self.table_columns(node, &rows, &across);
             let gaps = across.total(&mins);
             let mut minimum = (mins.iter().sum::<f32>() + gaps).max(0.0);
             let mut preferred = (prefs.iter().sum::<f32>() + gaps).max(minimum);
@@ -750,10 +821,18 @@ impl Solver<'_> {
             }
             let (child_min, child_preferred) = self.outer_measure(child);
             minimum = minimum.max(child_min);
-            if self.boxes[child].float.is_some() {
+            let value = &self.boxes[child];
+            if value.float.is_some() {
                 row += child_preferred;
             } else {
-                preferred = preferred.max(row).max(child_preferred);
+                // 9.5: content and new formatting contexts sit beside the floats before
+                // them; an uncleared one shares their line, a plain block lies under them.
+                let beside = value.clear == ClearSide::None
+                    && (value.inline_row.is_some()
+                        || value.establishes_bfc
+                        || (value.children.is_empty() && value.content.is_some()));
+                let line = if beside { row + child_preferred } else { row };
+                preferred = preferred.max(line).max(child_preferred);
                 row = 0.0;
             }
         }
@@ -766,8 +845,8 @@ impl Solver<'_> {
         table_parts(self.boxes, table)
     }
 
-    fn table_grid(&self, rows: &[usize]) -> (Vec<GridCell>, usize) {
-        table_grid(self.boxes, rows)
+    fn table_grid(&self, table: usize, rows: &[usize]) -> (Vec<GridCell>, usize) {
+        table_grid(self.boxes, table, rows)
     }
 
     /// A table's spacing along `axis` (0 across, 1 down), from its uniform value.
@@ -783,8 +862,13 @@ impl Solver<'_> {
 
     /// Each column's narrowest and preferred width (17.5.2.2): single-column cells first,
     /// then each spanning cell's shortfall shared evenly over its columns.
-    fn table_columns(&self, rows: &[usize], spacing: &Spacing) -> (Vec<f32>, Vec<f32>) {
-        let (placed, columns) = self.table_grid(rows);
+    fn table_columns(
+        &self,
+        table: usize,
+        rows: &[usize],
+        spacing: &Spacing,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let (placed, columns) = self.table_grid(table, rows);
         let (mut mins, mut prefs) = (vec![0.0_f32; columns], vec![0.0_f32; columns]);
         for item in placed.iter().filter(|item| item.col_span == 1) {
             let (minimum, preferred) = self.outer_measure(item.cell);
@@ -825,7 +909,7 @@ impl Solver<'_> {
         }
         let (rows, _) = self.table_parts(node);
         let across = self.spacing(node, 0, spacing[0]);
-        let (mins, _) = self.table_columns(&rows, &across);
+        let (mins, _) = self.table_columns(node, &rows, &across);
         let gaps = across.total(&mins);
         let columns = self.fixed_columns(
             node,
@@ -847,7 +931,7 @@ impl Solver<'_> {
         spacing: &Spacing,
         basis: f32,
     ) -> Vec<Option<f32>> {
-        let (placed, _) = self.table_grid(rows);
+        let (placed, _) = self.table_grid(node, rows);
         let mut known: Vec<Option<f32>> = vec![None; count];
         for (slot, dim) in known.iter_mut().zip(&self.boxes[node].column_widths) {
             *slot = match *dim {
@@ -900,7 +984,8 @@ impl Solver<'_> {
             .collect()
     }
 
-    /// Lays out rows and captions in `inner`; returns the content bottom.
+    /// Lays out the rows in `inner`; returns the content bottom. Captions are the
+    /// caller's: they lie outside the table's own box.
     fn layout_table(
         &mut self,
         node: usize,
@@ -908,10 +993,10 @@ impl Solver<'_> {
         inner: Containing,
         content_top: f32,
     ) -> Result<f32, FlowError> {
-        let (rows, captions) = self.table_parts(node);
+        let (rows, _) = self.table_parts(node);
         let across = self.spacing(node, 0, spacing[0]);
         let down = self.spacing(node, 1, spacing[1]);
-        let (mins, prefs) = self.table_columns(&rows, &across);
+        let (mins, prefs) = self.table_columns(node, &rows, &across);
         let count = mins.len();
         let available = (inner.width - across.total(&mins)).max(0.0);
         let edge = [spacing[0].max(0.0), spacing[1].max(0.0)];
@@ -991,20 +1076,11 @@ impl Solver<'_> {
             )?;
             Ok::<f32, FlowError>(bottom)
         };
-        // 17.4: a caption is a block above the table's grid, as wide as the table.
-        let (below, above): (Vec<usize>, Vec<usize>) = captions
-            .into_iter()
-            .partition(|caption| self.boxes[*caption].caption_below);
-        for caption in above {
-            let height = cell_box(self, caption, inner.width, inner.width)?;
-            self.translate(caption, inner.left, y);
-            y += height;
-        }
         let grid_top = y;
         if !rows.is_empty() {
             y += edge[1];
         }
-        let (placed, _) = self.table_grid(&rows);
+        let (placed, _) = self.table_grid(node, &rows);
         let column_gaps = across.between(&mins);
         // First every cell at its width, which gives the rows their heights.
         let mut heights: Vec<f32> = rows
@@ -1025,19 +1101,54 @@ impl Solver<'_> {
                 heights[item.row] = heights[item.row].max(bottom);
             }
         }
-        // 17.5.3: a rowspan's extra height goes to its last row.
+        // 17.5.3: a rowspan's extra height goes to its last row. Each row's height and
+        // the gap after it are summed in a Fenwick tree, so a span's room is one query
+        // and growing a row two updates, not a walk over the rows per cell.
+        let after = |heights: &[f32], row: usize| {
+            let gap = if row + 1 < heights.len() {
+                down.gap_after(heights, row)
+            } else {
+                0.0
+            };
+            heights[row] + gap
+        };
+        let mut through: Vec<f32> = (0..heights.len()).map(|row| after(&heights, row)).collect();
+        let mut sums = vec![0.0_f64; heights.len() + 1];
+        let add = |sums: &mut [f64], row: usize, delta: f64| {
+            let mut at = row + 1;
+            while at < sums.len() {
+                sums[at] += delta;
+                at += at & at.wrapping_neg();
+            }
+        };
+        let before = |sums: &[f64], row: usize| {
+            let (mut at, mut total) = (row, 0.0_f64);
+            while at > 0 {
+                total += sums[at];
+                at -= at & at.wrapping_neg();
+            }
+            total
+        };
+        for (row, &value) in through.iter().enumerate() {
+            add(&mut sums, row, f64::from(value));
+        }
         let mut order: Vec<usize> = (0..placed.len()).collect();
         order.sort_by_key(|index| placed[*index].row_span);
         for index in order {
             let item = placed[index];
             if item.row_span > 1 {
-                let range = item.row..item.row + item.row_span;
-                let gaps = down.between(&heights);
-                let span = heights[range.clone()].iter().sum::<f32>()
-                    + gaps[item.row..range.end - 1].iter().sum::<f32>();
+                let last = item.row + item.row_span - 1;
+                let span = (before(&sums, last) - before(&sums, item.row)) as f32 + heights[last];
                 let shortfall = measures[index].1 - span;
                 if shortfall > 0.0 {
-                    heights[range.end - 1] += shortfall;
+                    heights[last] += shortfall;
+                    // Its gaps on either side may stop being overlapped.
+                    let first = last.saturating_sub(1);
+                    for (row, old) in through.iter_mut().enumerate().take(last + 1).skip(first) {
+                        let value = after(&heights, row);
+                        add(&mut sums, row, f64::from(value) - f64::from(*old));
+                        *old = value;
+                    }
                 }
             }
         }
@@ -1064,10 +1175,20 @@ impl Solver<'_> {
             tops.push(y);
             y += height + row_gaps.get(index).copied().unwrap_or(0.0);
         }
+        // The room before each column, summed once rather than once per cell.
+        let running = |tracks: &[f32]| -> Vec<f32> {
+            let mut total = 0.0_f32;
+            let mut before = Vec::with_capacity(tracks.len() + 1);
+            before.push(total);
+            for track in tracks {
+                total += track;
+                before.push(total);
+            }
+            before
+        };
+        let (widths_before, gaps_before) = (running(&widths), running(&column_gaps));
         for (item, (width, _, cell_natural)) in placed.iter().zip(measures) {
-            let before: f32 = widths[..item.column].iter().sum::<f32>()
-                + edge[0]
-                + column_gaps[..item.column].iter().sum::<f32>();
+            let before: f32 = widths_before[item.column] + edge[0] + gaps_before[item.column];
             let left = match inner.direction {
                 Direction::Ltr => inner.left + before,
                 Direction::Rtl => inner.left + inner.width - before - width,
@@ -1128,11 +1249,6 @@ impl Solver<'_> {
                 ..FlowGeometry::default()
             };
         }
-        for caption in below {
-            let height = cell_box(self, caption, inner.width, inner.width)?;
-            self.translate(caption, inner.left, y);
-            y += height;
-        }
         for &child in &self.boxes[node].children.clone() {
             if matches!(
                 self.boxes[child].table,
@@ -1171,6 +1287,11 @@ impl Solver<'_> {
             _ => None,
         };
         let (minimum, preferred) = match value.width {
+            // 17.5.2.2: a cell's width is its minimum only when it exceeds its content's.
+            Dim::Px(width) if matches!(value.table, Some(TableRole::Cell)) => {
+                let width = width.max(self.measure(node).0);
+                (width, width)
+            }
             Dim::Px(width) => (width, width),
             _ => self.measure(node),
         };
@@ -1258,6 +1379,7 @@ impl Solver<'_> {
         cb: Containing,
     ) -> Result<(), FlowError> {
         for &child in &self.boxes[node].children.clone() {
+            self.work = self.work.checked_sub(1).ok_or(FlowError::Work)?;
             if let Some(align) = self.boxes[child].inline_row {
                 let top = flow.position();
                 self.layout_inline_row(child, align, flow, cb)?;
@@ -1330,6 +1452,7 @@ impl Solver<'_> {
         flow.y = top;
         flow.pending = MarginExtrema::default();
         flow.clearance_through = false;
+        flow.through_top = None;
         self.flush(flow, top)?;
         Ok(top)
     }
@@ -1344,11 +1467,13 @@ impl Solver<'_> {
     ) -> Result<Option<f32>, FlowError> {
         let clear = self.boxes[node].clear;
         // Earlier floats waiting on an open parent must exist before clear reads them.
-        // They take the parent's position so far; a parent later pushed down by this
-        // box's own margin (only when no clearance results) is not re-placed.
+        // They take the parent's position so far.
+        let mut early = None;
         if clear != ClearSide::None && !flow.deferred.is_empty() {
             let top = flow.position();
+            let placed = flow.floats.len();
             self.flush(flow, top)?;
+            early = Some((top, placed));
         }
         let Some(bottom) = flow.lowest(clear, node)? else {
             flow.adjoin(top_margin, node)?;
@@ -1359,13 +1484,34 @@ impl Solver<'_> {
             .extend(&[top_margin], NonZeroUsize::MIN)
             .map_err(|error| FlowError::Margin { node, error })?;
         let hypothetical = flow.y + joined.collapsed();
-        if bottom <= hypothetical {
+        // 9.5.2: were this box's margin to join the run, the open parents and the floats
+        // just placed at their top would move down with it, and such a float reaching
+        // below that top would then need clearing. So clearance results after all, which
+        // keeps the parents, and those floats, where they are.
+        let moved = match early {
+            Some((top, placed)) if hypothetical > top => {
+                NonZeroUsize::new(flow.floats.len() - placed)
+                    .map(|limit| {
+                        lowest_clearance_float_bottom(&flow.floats[placed..], clear, limit)
+                    })
+                    .transpose()
+                    .map_err(|error| FlowError::Clear { node, error })?
+                    .flatten()
+                    .is_some_and(|lowest| lowest > top)
+            }
+            _ => false,
+        };
+        if bottom <= hypothetical && !moved {
             flow.pending = joined;
+            flow.through_top = None;
             return Ok(None);
         }
         self.settle(flow)?;
-        let clearance = bottom - (flow.y + top_margin);
-        flow.y = bottom;
+        // The border edge goes past the floats, and never above where it would be
+        // without `clear`.
+        let target = bottom.max(hypothetical);
+        let clearance = target - (flow.y + top_margin);
+        flow.y = target;
         Ok(Some(clearance))
     }
 
@@ -1382,7 +1528,8 @@ impl Solver<'_> {
         let border = value.border;
         let mt = value.margin[0].zero_auto(basis);
         let mb = value.margin[2].zero_auto(basis);
-        flow.clearance_through = false;
+        // `flow.clearance_through` stays: a box that collapses through only joins that
+        // run, which still may not leave the parent; one that ends it settles or resets it.
         let clearance = self.apply_clear(node, flow, mt)?;
         let mut settled = clearance.is_some();
         if settled {
@@ -1446,6 +1593,7 @@ impl Solver<'_> {
             let top = flow.position();
             flow.unsettled.retain(|open| *open != node);
             flow.adjoin(mb, node)?;
+            flow.through_top = Some(top);
             self.geometry[node].border = rect(
                 border_left,
                 border_left + border[3] + padding[3] + width + padding[1] + border[1],
@@ -1511,6 +1659,12 @@ impl Solver<'_> {
             && minimum == 0.0
             && leaf_height.is_none_or(|height| height == 0.0)
             && content_bottom == content_top;
+        if flow.clearance_through {
+            // 8.3.1: its own margins adjoin, so the top one joins the run after it,
+            // which then starts from the box's margin edge rather than its border.
+            flow.adjoin(mt, node)?;
+            flow.y -= mt;
+        }
         self.publish(
             node,
             border_left,
@@ -1647,8 +1801,47 @@ impl Solver<'_> {
         };
     }
 
+    /// 17.4: places a caption in its table's wrapper box, a block as wide as the table's
+    /// border box with its own margins, its top margin edge at `top`. Returns its bottom
+    /// margin edge.
+    fn place_caption(
+        &mut self,
+        caption: usize,
+        left: f32,
+        top: f32,
+        width: f32,
+        direction: Direction,
+    ) -> Result<f32, FlowError> {
+        let value = &self.boxes[caption];
+        let margin = value.margin.map(|dim| dim.zero_auto(width));
+        let border = value.border;
+        let padding = self.paddings(caption, width);
+        let content =
+            (width - margin[3] - border[3] - padding[3] - padding[1] - border[1] - margin[1])
+                .max(0.0);
+        let bottom = self.finish_bfc_box(
+            caption,
+            Containing {
+                left: 0.0,
+                width: content,
+                height: None,
+                top: Some(0.0),
+                direction,
+            },
+            (content, 0.0, 0.0),
+            0.0,
+            0.0,
+            padding,
+        )?;
+        self.translate(caption, left + margin[3], top + margin[0]);
+        self.geometry[caption].margin = margin;
+        Ok(top + margin[0] + bottom + margin[2])
+    }
+
     /// Lays out a BFC root's contents with its border top fixed, publishing the box.
-    /// Returns the used border-box bottom. Floats do not escape.
+    /// Returns the used border-box bottom. Floats do not escape. A table's captions lie
+    /// outside its box (17.4): those above start at `top` and push the table's border box
+    /// down, and the bottom returned is past those below.
     fn finish_bfc_box(
         &mut self,
         node: usize,
@@ -1660,6 +1853,20 @@ impl Solver<'_> {
     ) -> Result<f32, FlowError> {
         let value = &self.boxes[node];
         let border = value.border;
+        let (below, above): (Vec<usize>, Vec<usize>) =
+            if matches!(value.table, Some(TableRole::Table { .. })) {
+                self.table_parts(node)
+                    .1
+                    .into_iter()
+                    .partition(|caption| self.boxes[*caption].caption_below)
+            } else {
+                (Vec::new(), Vec::new())
+            };
+        let outer_width = border[3] + padding[3] + width.0 + padding[1] + border[1];
+        let mut top = top;
+        for caption in above {
+            top = self.place_caption(caption, border_left, top, outer_width, value.direction)?;
+        }
         let content_left = border_left + border[3] + padding[3];
         let content_top = top + border[0] + padding[0];
         let height = value.height.vertical(cb.height);
@@ -1708,7 +1915,12 @@ impl Solver<'_> {
             [0.0; 4],
             None,
         );
-        Ok(self.geometry[node].border.bottom)
+        let mut bottom = self.geometry[node].border.bottom;
+        for caption in below {
+            bottom =
+                self.place_caption(caption, border_left, bottom, outer_width, value.direction)?;
+        }
+        Ok(bottom)
     }
 
     fn translate(&mut self, node: usize, dx: f32, dy: f32) {
@@ -1736,7 +1948,7 @@ impl Solver<'_> {
             flow.deferred.push((node, cb));
             return Ok(());
         }
-        let top = flow.position();
+        let top = flow.through_top.unwrap_or_else(|| flow.position());
         self.place_float_box(node, flow, cb, top)
     }
 
@@ -1872,7 +2084,8 @@ impl Solver<'_> {
             let height = mt + bottom + mb;
             // 10.8.1: its last line's, even past its box, or its bottom margin edge without one.
             let baseline = self.boxes[child].line_baseline.then(|| {
-                let top = self.geometry[child].border.top - mt;
+                // Its top margin edge: laid out at the origin, under any captions above.
+                let top = -mt;
                 self.last_baseline(child)
                     .map_or(height, |baseline| baseline - top)
             });
@@ -1901,6 +2114,8 @@ impl Solver<'_> {
         let tallest = items.iter().fold(reach, |most, item| most.max(item.height));
         let mut last_baseline = None;
         let float_error = |error| FlowError::Float { node, error };
+        // 16.6: no break between the boxes of a row that may not wrap.
+        let no_wrap = self.boxes[node].row_no_wrap;
         let (full_left, full_right) = (cb.left, cb.left + cb.width);
         let mut y = flow.y;
         let mut start = 0;
@@ -1928,7 +2143,13 @@ impl Solver<'_> {
                 near += indent;
             }
             let room = far - near;
-            if items[start].width > room
+            // What the line must hold: its first box, or all of them when none may wrap.
+            let needed = if no_wrap {
+                items[start..].iter().map(|item| item.width).sum()
+            } else {
+                items[start].width
+            };
+            if needed > room
                 && let Some(edge) = next_band_edge(&flow.floats, y).map_err(float_error)?
             {
                 y = edge;
@@ -1936,7 +2157,7 @@ impl Solver<'_> {
             }
             let mut end = start + 1;
             let mut used = items[start].width;
-            while end < items.len() && used + items[end].width <= room {
+            while end < items.len() && (no_wrap || used + items[end].width <= room) {
                 used += items[end].width;
                 end += 1;
             }
@@ -2018,9 +2239,10 @@ impl Solver<'_> {
         }
         // 9.5.1 rule 4 cannot apply above a parent whose own top edge is still open.
         let containing_top = cb.top.unwrap_or(hypothetical);
-        let band = NonZeroUsize::new(flow.floats.len() + 1).ok_or(FlowError::Boxes)?;
+        let band = NonZeroUsize::new(flow.reaching.len() + 1).ok_or(FlowError::Boxes)?;
+        // The floats left out of `reaching` end above where rule 6 starts this one.
         let placement = place_float(
-            &flow.floats,
+            &flow.reaching,
             Band {
                 left: cb.left,
                 right: cb.left + cb.width,
@@ -2030,12 +2252,18 @@ impl Solver<'_> {
                 width: (ml + border_width + mr).max(0.0),
                 height: (mt + border_box_bottom + mb).max(0.0),
                 containing_top,
-                hypothetical_top: hypothetical,
+                hypothetical_top: hypothetical.max(flow.float_top),
             },
             band,
         )
         .map_err(|error| FlowError::Float { node, error })?;
         flow.floats.push(placement.placed);
+        flow.float_top = flow.float_top.max(placement.placed.top);
+        let float_top = flow.float_top;
+        flow.reaching.retain(|float| float.bottom > float_top);
+        if placement.placed.bottom > float_top {
+            flow.reaching.push(placement.placed);
+        }
         self.translate(node, placement.placed.left + ml, placement.placed.top + mt);
         self.geometry[node].margin = [mt, mr, mb, ml];
         Ok(())

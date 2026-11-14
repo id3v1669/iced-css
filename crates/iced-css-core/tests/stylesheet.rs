@@ -124,6 +124,21 @@ fn nested_at_rules_do_not_leak_children_and_invalid_imports_are_recovered() {
     assert_eq!(sheet.rejected.len(), 4);
 }
 #[test]
+fn stray_close_brace_does_not_end_a_top_level_import() {
+    for css in [
+        "@import \"a.css\" } p { color: red } q { color: blue }",
+        "@import \"a.css\" } ; q { color: blue }",
+    ] {
+        let sheet = parse_stylesheet(css, context(), sheet_limits()).unwrap();
+        assert_eq!(sheet.entries.len(), 1, "{css}");
+        assert!(
+            matches!(sheet.entries[0].kind, SheetEntryKind::Style(_)),
+            "{css}"
+        );
+        assert_eq!(sheet.rejected.len(), 1, "{css}");
+    }
+}
+#[test]
 fn bounded_candidate_errors_never_return_a_partial_sheet() {
     let mut bounded = sheet_limits();
     bounded.statements = NonZeroUsize::MIN;
@@ -141,6 +156,14 @@ fn bounded_candidate_errors_never_return_a_partial_sheet() {
         parse_stylesheet("a{color:red}b{font-weight:+100}", context(), sheet_limits()),
         Err(RuleAssemblyError::Property { .. })
     ));
+    // A number naming no weight only drops its declaration; the sheet survives.
+    for css in [
+        "a{color:red}b{font-weight:550}",
+        "a{color:red}b{font:12 serif}",
+    ] {
+        let sheet = parse_stylesheet(css, context(), sheet_limits()).unwrap();
+        assert_eq!(sheet.entries.len(), 2, "{css}");
+    }
     let sheet = parse_stylesheet("@media screen{a{color:red", context(), sheet_limits()).unwrap();
     let SheetEntryKind::Media(media) = &sheet.entries[0].kind else {
         panic!()

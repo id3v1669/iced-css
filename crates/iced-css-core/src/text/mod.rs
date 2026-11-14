@@ -1,4 +1,8 @@
 //! Source-preserving text preprocessing. Shaping and line construction are separate.
+//!
+//! The UAX #9 bidi stages (`bidi_initial` through `bidi_stored`) and the UAX #14
+//! `line_boundaries` engine are standalone services: layout does not call them yet,
+//! so it neither reorders bidi text nor breaks lines with them.
 pub mod bidi_data;
 pub mod casing_contexts;
 pub mod casing_data;

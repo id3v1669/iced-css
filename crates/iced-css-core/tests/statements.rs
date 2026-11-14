@@ -57,6 +57,23 @@ fn block_context_does_not_skip_sgml_tokens_or_consume_containing_brace() {
 }
 
 #[test]
+fn stylesheet_at_rule_runs_past_a_stray_close_brace() {
+    let input = "@import \"a.css\" } p { color: red } q { color: blue }";
+    let mut statements = Statements::new(input, StatementContext::Stylesheet, limits());
+    let value = statements.next().unwrap().unwrap();
+    assert_eq!(value.prelude, " \"a.css\" } p ");
+    assert_eq!(value.body, Some(" color: red "));
+    assert!(value.invalid_tokens);
+    assert_eq!(statements.next().unwrap().unwrap().prelude, "q ");
+    assert!(statements.next().is_none());
+    let mut statements = Statements::new("@page } ; .a{}", StatementContext::Stylesheet, limits());
+    let value = statements.next().unwrap().unwrap();
+    assert_eq!(value.prelude, " } ");
+    assert_eq!(value.body, None);
+    assert_eq!(statements.next().unwrap().unwrap().prelude, ".a");
+}
+
+#[test]
 fn eof_records_closure_without_promoting_incomplete_rules() {
     let mut statements = Statements::new(
         "@media screen {.a{content:'x",

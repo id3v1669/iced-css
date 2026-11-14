@@ -1006,6 +1006,86 @@ fn keys_in_a_hosted_input_stay_its_own() {
 }
 
 #[test]
+fn tab_goes_through_every_focusable_a_host_holds() {
+    use iced::keyboard::{Event as Key, Key as Name, Location, Modifiers, key};
+    let root = node("page", vec![node("form", vec![])]);
+    let tree = BoxTree::new(root, "#form { height:80px; width:200px; }").unwrap();
+    let view: Element<'_, u8> = tree
+        .interactive()
+        .widget(
+            "form",
+            iced::widget::column![
+                iced::widget::text_input("", "").on_input(|_| 1),
+                iced::widget::text_input("", "").on_input(|_| 2),
+            ],
+        )
+        .into();
+    let mut ui = simulator(view);
+    let shift_tab = || {
+        let named = Name::Named(key::Named::Tab);
+        [
+            iced::Event::Keyboard(Key::KeyPressed {
+                key: named.clone(),
+                modified_key: named.clone(),
+                physical_key: key::Physical::Unidentified(key::NativeCode::Unidentified),
+                location: Location::Standard,
+                modifiers: Modifiers::SHIFT,
+                repeat: false,
+                text: None,
+            }),
+            iced::Event::Keyboard(Key::KeyReleased {
+                key: named.clone(),
+                modified_key: named,
+                physical_key: key::Physical::Unidentified(key::NativeCode::Unidentified),
+                location: Location::Standard,
+                modifiers: Modifiers::SHIFT,
+            }),
+        ]
+    };
+    // In at the first, then on to the second before leaving the host.
+    let _ = ui.tap_key(key::Named::Tab);
+    let _ = ui.typewrite("a");
+    let _ = ui.tap_key(key::Named::Tab);
+    let _ = ui.typewrite("b");
+    // Back with Shift to the first.
+    let _ = ui.simulate(shift_tab());
+    let _ = ui.typewrite("c");
+    let messages: Vec<u8> = ui.into_messages().collect();
+    assert_eq!(messages, vec![1, 2, 1]);
+}
+
+#[test]
+fn shift_tab_enters_a_host_at_its_last_focusable() {
+    use iced::keyboard::{Event as Key, Key as Name, Location, Modifiers, key};
+    let root = node("page", vec![node("form", vec![])]);
+    let tree = BoxTree::new(root, "#form { height:80px; width:200px; }").unwrap();
+    let view: Element<'_, u8> = tree
+        .interactive()
+        .widget(
+            "form",
+            iced::widget::column![
+                iced::widget::text_input("", "").on_input(|_| 1),
+                iced::widget::text_input("", "").on_input(|_| 2),
+            ],
+        )
+        .into();
+    let mut ui = simulator(view);
+    let named = Name::Named(key::Named::Tab);
+    let _ = ui.simulate([iced::Event::Keyboard(Key::KeyPressed {
+        key: named.clone(),
+        modified_key: named,
+        physical_key: key::Physical::Unidentified(key::NativeCode::Unidentified),
+        location: Location::Standard,
+        modifiers: Modifiers::SHIFT,
+        repeat: false,
+        text: None,
+    })]);
+    let _ = ui.typewrite("a");
+    let messages: Vec<u8> = ui.into_messages().collect();
+    assert_eq!(messages, vec![2]);
+}
+
+#[test]
 fn narrow_columns_hold_whole_small_caps_words() {
     // A word's minimum width is its whole width, so a shrunken column matches an unwrapped one.
     let draw = |css: &str, name: &str| {
@@ -6412,4 +6492,105 @@ fn an_inlines_percentage_padding_above_and_below_takes_its_share() {
     assert!(draw("20px", &name));
     assert!(draw("10%", &name));
     assert!(!draw("0", &name));
+}
+
+/// cosmic-text refuses a buffer whose font size or line height is zero, and both are values
+/// a stylesheet may ask for.
+#[test]
+fn text_of_no_size_or_line_height_lays_out_and_draws() {
+    for copy in [
+        "font-size:0px;",
+        "font-size:0px; line-height:20px;",
+        "line-height:0;",
+        "line-height:0px;",
+        "font-size:0px; line-height:0px;",
+    ] {
+        let root = node("page", vec![text("copy", "Some text")]);
+        let css = format!(
+            "#page {{ background-color:white; color:black; width:300px; }}
+             #copy {{ display:block; {copy} }}"
+        );
+        let tree = BoxTree::new(root, &css).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        assert!(ui.snapshot(&Theme::Light).is_ok(), "{copy}");
+    }
+}
+
+#[test]
+fn a_tree_taller_than_its_scrollable_paints_only_what_shows() {
+    // The kid's paint past the scrollable's 50 pixels must stay hidden, so a kid as tall as
+    // the tree looks the same as one exactly as tall as the scrollable.
+    let picture = |height: &str, name: &str| {
+        let root = node("page", vec![node("kid", vec![])]);
+        let css = format!("#kid {{ height:{height}; background-color:#d9534f; }}");
+        let tree = BoxTree::new(root, &css).unwrap();
+        let view: Element<'_, u8> =
+            iced::widget::scrollable(iced::widget::container(tree.view()).height(400))
+                .height(50)
+                .into();
+        let mut ui = simulator(view);
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    let name = format!("scrollable-clip-{}.png", std::process::id());
+    assert!(picture("50px", &name));
+    assert!(picture("400px", &name));
+}
+
+#[test]
+fn a_scrolling_roots_border_scrolls_with_the_page() {
+    let name = format!("root-border-scroll-{}.png", std::process::id());
+    let draw = |style: &str, down: f32| {
+        let root = node("page", vec![node("tall", vec![])]);
+        let tree = BoxTree::new(root, style).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        let mut ui = simulator(view);
+        ui.point_at(Point::new(10.0, 10.0));
+        if down > 0.0 {
+            let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y: -down },
+            })]);
+        }
+        ui.snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(&name))
+            .unwrap()
+    };
+    let style = |color: &str| {
+        format!(
+            "#page {{ overflow:auto; background:white; border-top:20px solid {color}; }}
+             #tall {{ height:3000px; }}"
+        )
+    };
+    assert!(draw(&style("white"), 100.0));
+    // Scrolled past, the root's top border is gone from the view like the rest of the page.
+    assert!(draw(&style("#d9534f"), 100.0));
+    // Unscrolled, it shows.
+    assert!(!draw(&style("#d9534f"), 0.0));
+}
+
+#[test]
+fn a_no_break_space_holds_a_shrink_to_fit_box_to_both_words() {
+    use iced::advanced::renderer::Headless;
+    let renderer = iced_test::futures::futures::executor::block_on(
+        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
+    )
+    .unwrap();
+    let width = |words: &'static str| {
+        let root = node("page", vec![node("f", vec![text("t", words)])]);
+        let sheet = "#page { width:1px; } #f { float:left; }";
+        let border = BoxTree::new(root, sheet)
+            .unwrap()
+            .layout_with(&renderer, 1024.0, None)
+            .unwrap()[1]
+            .unwrap()
+            .border;
+        border.right - border.left
+    };
+    // With no room, the float is as narrow as its widest unbreakable piece.
+    let (held, broken) = (width("mmm\u{a0}mmm"), width("mmm mmm"));
+    assert!(held > broken * 1.5, "{held} {broken}");
 }

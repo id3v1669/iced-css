@@ -36,6 +36,14 @@
 //! `:hover`, `:active` and `:focus` restyle the tree. Boxes with a press message or a
 //! `tabindex` attribute take focus by click and Tab; Enter and Space press the focused box. `overflow` other than visible clips, and
 //! `auto` and `scroll` boxes scroll on both axes with the wheel; there is no draggable bar. Captured payloads themselves are not drawn.
+//!
+//! Its text takes its own path: white space collapses and `text-transform` applies here,
+//! and lines are built by `iced_css_core::formatting::block_flow`. The standalone
+//! pipelines in `iced_css_core::text` (`preprocess_whitespace`, `trim_line_edges`),
+//! `iced_css_core::formatting::line_geometry` (`layout_line_geometry`,
+//! `layout_inline_tree`) and the `evaluation::source_whitespace` and `source_casing`
+//! chain are building blocks this widget does not use yet, so their tests do not cover
+//! what it draws.
 use crate::{
     animation::engine::ProgressLimits,
     capture::{CaptureLimits, CapturedElement, Construction, source::ConstructionState},
@@ -49,7 +57,10 @@ use crate::{
             TreePaint, evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
         },
     },
-    host::source_publication::{InitialSourceHost, PublicationLimits},
+    host::{
+        source_publication::{InitialSourceHost, PublicationLimits},
+        stylesheet::graph_recovery::report_graph_recovery,
+    },
 };
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, image, layout, overlay,
@@ -58,9 +69,11 @@ use iced::advanced::{
     widget::{Operation, Tree, tree},
 };
 use iced::{
-    Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector, keyboard, mouse,
+    Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector, keyboard, mouse, touch,
 };
-use iced_css_core::source::AttributeLimits;
+/// Core types named in this module's signatures, so callers need no second dependency.
+pub use iced_css_core::formatting::block_flow::{FlowGeometry, FlowRect};
+pub use iced_css_core::source::{AttributeError, AttributeLimits};
 use iced_css_core::values::bidi::{ComputedDirection, ComputedUnicodeBidi};
 use iced_css_core::values::registry::PropertyId;
 use iced_css_core::{
@@ -71,9 +84,7 @@ use iced_css_core::{
     },
     formatting::{
         block::Direction,
-        block_flow::{
-            Dim, FlowContent, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
-        },
+        block_flow::{Dim, FlowContent, FlowLimits, FlowViewport, RowAlign, TableRole},
         display::Position,
     },
     identity::SourceChangeLimits,
@@ -99,7 +110,7 @@ use std::{
     num::{NonZeroU64, NonZeroUsize},
     path::{Component, Path, PathBuf},
     sync::{
-        Arc, Mutex, PoisonError,
+        Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -133,10 +144,15 @@ const WORST_CASE: usize = usize::MAX >> 4;
 /// box and rule pairs. Simple selectors take about 33 s there (see `tests/box_tree_scale.rs`).
 /// It bounds the number of tests, not what each costs: `MATCH_WORK` bounds that.
 const RULE_VISITS: usize = 300_000_000;
-/// One selector against one box. Descendant combinators backtrack, so `section div div div a`
-/// spends several units per C(depth, 3): ordinary deep pages must fit, and only a selector
-/// built to explode should not. Nothing meters the total, so sheets are trusted input.
+/// One selector against one box. Each compound walks the ancestors once, so a selector spends
+/// a few units and its names' lengths per compound and ancestor: ordinary deep pages fit, and
+/// only names thousands of bytes long do not. Nothing meters the total, so sheets are trusted
+/// input.
 const MATCH_WORK: usize = 1_000_000;
+/// Boxes laid out in one flow layout, counting each again when its subtree is laid out again:
+/// a box with `overflow` beside floats is, once per place tried, and nesting multiplies those.
+/// A hundred passes over the largest tree; one built to double per level stops here.
+const LAYOUT_WORK: usize = 100 * COUNT;
 
 fn big() -> NonZeroUsize {
     nz(COUNT)
@@ -243,9 +259,10 @@ fn parse(css: &str, order: u64) -> Result<OwnedStylesheetGraph, BoxTreeError> {
         },
     )
     .map_err(failed)?;
-    OwnedStylesheetGraph::new(
+    let graph = OwnedStylesheetGraph::new(
         vec![OwnedLoadedSheet {
-            resource: ResourceId::new(NonZeroU64::MIN),
+            // Numbered from one by place in the sheets, as the log names it.
+            resource: ResourceId::new(NonZeroU64::MIN.saturating_add(order)),
             candidate,
             imports: vec![],
         }],
@@ -272,7 +289,12 @@ fn parse(css: &str, order: u64) -> Result<OwnedStylesheetGraph, BoxTreeError> {
             },
         },
     )
-    .map_err(failed)
+    .map_err(failed)?;
+    // What the parser dropped and went on without, logged as host stylesheets log it.
+    if let Err(error) = report_graph_recovery(&graph, None, nz(WORK)) {
+        log::error!(target: "iced_css::stylesheet", "stylesheet resource {}: {error}", order + 1);
+    }
+    Ok(graph)
 }
 
 /// Default capture limits for assembling a tree with the capture adapters.
@@ -354,6 +376,11 @@ pub struct TextRun {
     pub family: Option<String>,
     pub underline: bool,
     pub line_through: bool,
+    /// 16.3.1: the source node whose `text-decoration` draws the underline, with its color
+    /// and font size, when an ancestor's; the run's own otherwise.
+    pub underline_from: Option<(usize, [f32; 3], f32)>,
+    /// As `underline_from`, for the line through.
+    pub line_through_from: Option<(usize, [f32; 3], f32)>,
     /// 11.2: hidden text still takes up its room.
     pub visible: bool,
     /// The source node this run belongs to, for hit testing.
@@ -405,20 +432,47 @@ impl TextLeaf {
     }
 }
 
-fn transformed(text: &str, transform: &str) -> String {
+/// Where `capitalize` words start in a leaf's joined source text: UAX#29 word
+/// boundaries, so an apostrophe or a combining mark inside a word starts none,
+/// and neither does the seam between two runs.
+fn word_starts(text: &str) -> Vec<usize> {
+    use iced_css_core::text::word_boundaries::{WordBoundaryLimits, evaluate_word_boundaries};
+    use std::num::NonZeroUsize;
+    let scalars = text.chars().count();
+    let (Some(input_bytes), Some(count)) =
+        (NonZeroUsize::new(text.len()), NonZeroUsize::new(scalars))
+    else {
+        return Vec::new();
+    };
+    let work =
+        NonZeroUsize::new(scalars.saturating_mul(4).saturating_add(1)).unwrap_or(NonZeroUsize::MAX);
+    evaluate_word_boundaries(
+        text,
+        WordBoundaryLimits {
+            input_bytes,
+            scalars: count,
+            retained_bytes: NonZeroUsize::MAX,
+            work,
+        },
+    )
+    .map(|words| words.offsets().to_vec())
+    .unwrap_or_default()
+}
+
+/// `starts` are the leaf's word starts and `base` this run's offset among them;
+/// only `capitalize` reads either.
+fn transformed(text: &str, transform: &str, starts: &[usize], base: usize) -> String {
     match transform {
         "uppercase" => text.to_uppercase(),
         "lowercase" => text.to_lowercase(),
         "capitalize" => {
             let mut out = String::with_capacity(text.len());
-            let mut boundary = true;
-            for character in text.chars() {
-                if boundary {
+            for (at, character) in text.char_indices() {
+                if character.is_alphanumeric() && starts.binary_search(&(base + at)).is_ok() {
                     out.extend(character.to_uppercase());
                 } else {
                     out.push(character);
                 }
-                boundary = !character.is_alphanumeric();
             }
             out
         }
@@ -426,9 +480,10 @@ fn transformed(text: &str, transform: &str) -> String {
     }
 }
 
-/// 4.1.3: only these collapse; U+00A0 and U+3000 are ordinary characters.
+/// 16.6.1: only space, tab and line feed collapse (a carriage return is a line feed by
+/// then); U+000C, U+00A0 and U+3000 are ordinary characters.
 fn is_css_space(character: char) -> bool {
-    matches!(character, ' ' | '\t' | '\n' | '\r' | '\x0C')
+    matches!(character, ' ' | '\t' | '\n' | '\r')
 }
 
 /// The white-space mode that marks an empty inline's zero-width placeholder run.
@@ -444,14 +499,19 @@ fn collapse(texts: &mut [(String, &'static str)]) {
     }
     let mut after_space = true;
     let mut last_collapsing = None;
-    for (index, (text, mode)) in texts.iter_mut().enumerate() {
+    for index in 0..texts.len() {
+        let (before, rest) = texts.split_at_mut(index);
+        let (text, mode) = &mut rest[0];
         // An empty inline's placeholder is no text: spaces collapse across it.
         if *mode == PLACEHOLDER {
             continue;
         }
         if matches!(*mode, "pre" | "pre-wrap") {
-            after_space = text.ends_with(is_css_space);
-            last_collapsing = None;
+            // A preserved space is not collapsible: a collapsible one after it stays.
+            if !text.is_empty() {
+                after_space = false;
+                last_collapsing = None;
+            }
             continue;
         }
         let keep_newlines = *mode == "pre-line";
@@ -460,6 +520,10 @@ fn collapse(texts: &mut [(String, &'static str)]) {
             if keep_newlines && character == '\n' {
                 while out.ends_with(' ') {
                     out.pop();
+                }
+                // A collapsible space ending an earlier run ends this line too.
+                if out.is_empty() {
+                    trim_before_newline(before);
                 }
                 out.push('\n');
                 after_space = true;
@@ -482,6 +546,24 @@ fn collapse(texts: &mut [(String, &'static str)]) {
         && texts[index].0.ends_with(' ')
     {
         texts[index].0.pop();
+    }
+}
+
+/// Drops the collapsible spaces that end `texts`, back to a preserved run or other text.
+fn trim_before_newline(texts: &mut [(String, &'static str)]) {
+    for (text, mode) in texts.iter_mut().rev() {
+        if *mode == PLACEHOLDER {
+            continue;
+        }
+        if matches!(*mode, "pre" | "pre-wrap") && !text.is_empty() {
+            return;
+        }
+        while text.ends_with(' ') {
+            text.pop();
+        }
+        if !text.is_empty() {
+            return;
+        }
     }
 }
 
@@ -514,11 +596,14 @@ impl PseudoReach {
             }
             for (at, _) in text.match_indices(pseudo) {
                 let before = &text[..at];
+                // Past the whole delimiter: whitespace can be more than one byte long.
                 let start = before
-                    .rfind(|character: char| {
+                    .char_indices()
+                    .rev()
+                    .find(|&(_, character)| {
                         character.is_whitespace() || ",>+~{};/".contains(character)
                     })
-                    .map_or(0, |found| found + 1);
+                    .map_or(0, |(found, character)| found + character.len_utf8());
                 let compound = &before[start..];
                 let name = |marker: char| {
                     compound.find(marker).map(|found| {
@@ -567,9 +652,20 @@ struct Source {
     /// What relative `url()`s resolve against.
     base: PathBuf,
     /// Restyles already cascaded. Pointerless, so nothing here keeps the source alive.
-    variants: Mutex<BTreeMap<InteractionKey, Arc<Style>>>,
+    variants: Mutex<Variants>,
+    /// The sheets parsed, and the rules every page starts from: the same for every restyle.
+    parsed: OnceLock<Parsed>,
     /// Keys whose restyle was refused: asking again would only cascade again, per frame.
     refused: Mutex<BTreeSet<InteractionKey>>,
+}
+
+/// A source's sheets as rule graphs, after the rules every page starts from.
+struct Parsed(UaDisplayCatalog, Vec<OwnedStylesheetGraph>);
+
+impl std::fmt::Debug for Parsed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Parsed").finish_non_exhaustive()
+    }
 }
 
 static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
@@ -633,8 +729,41 @@ impl Source {
     }
 }
 
-/// Interaction states the cache holds before starting over: each is a whole style.
+/// Interaction states the cache holds before dropping the one unused longest: each is a
+/// whole style.
 const VARIANT_LIMIT: usize = 64;
+
+/// Cascaded stylings by interaction state, the least recently used dropped first.
+#[derive(Debug, Default)]
+struct Variants {
+    /// Counts uses; each styling carries the count of its latest one.
+    uses: u64,
+    styles: BTreeMap<InteractionKey, (u64, Arc<Style>)>,
+}
+
+impl Variants {
+    fn get(&mut self, key: InteractionKey) -> Option<Arc<Style>> {
+        self.uses += 1;
+        let (used, style) = self.styles.get_mut(&key)?;
+        *used = self.uses;
+        Some(Arc::clone(style))
+    }
+
+    fn insert(&mut self, key: InteractionKey, style: Arc<Style>) {
+        self.uses += 1;
+        if self.styles.len() >= VARIANT_LIMIT && !self.styles.contains_key(&key) {
+            let oldest = self
+                .styles
+                .iter()
+                .min_by_key(|(_, (used, _))| *used)
+                .map(|(key, _)| *key);
+            if let Some(oldest) = oldest {
+                self.styles.remove(&oldest);
+            }
+        }
+        self.styles.insert(key, (self.uses, style));
+    }
+}
 
 /// Everything that varies with the cascade.
 #[derive(Debug, Clone)]
@@ -680,14 +809,28 @@ pub struct BoxTree {
     presentation: Option<Arc<Vec<animation::Presented>>>,
 }
 
+/// Two trees are equal when they draw alike and restyle from the same sheets.
 impl PartialEq for BoxTree {
     fn eq(&self, other: &Self) -> bool {
-        self.prepared == other.prepared && self.paints == other.paints && self.texts == other.texts
+        self.prepared == other.prepared
+            && self.paints == other.paints
+            && self.texts == other.texts
+            && self.markers == other.markers
+            && self.backgrounds == other.backgrounds
+            && self.marker_images == other.marker_images
+            && (Arc::ptr_eq(&self.source, &other.source)
+                || self.source.sheets == other.source.sheets)
     }
 }
 
 impl BoxTree {
     /// Cascades `css` over a captured tree. Only the capture evidence is kept.
+    ///
+    /// The native payloads are dropped, with whatever was set on them: an adapter
+    /// button's `on_press`, a checkbox's `on_toggle`, a slider's `on_change` and style
+    /// closures never run, and a radio's, checkbox's or toggler's label lays out as a
+    /// text leaf with no control. Put native widgets in boxes with
+    /// [`BoxTreeView::widget`] and press messages with [`BoxTreeView::on_press`].
     ///
     /// # Errors
     /// Returns a stylesheet, capture, cascade or unsupported-display failure.
@@ -699,8 +842,10 @@ impl BoxTree {
     }
 
     /// As [`BoxTree::new`], resolving relative `url()`s against `base`. Only files under it
-    /// load: a `url()` with a scheme, an absolute path or `..` draws nothing. A missing or
-    /// undecodable file draws nothing too, and the box shows its background color.
+    /// load: a `url()` with a scheme, an absolute path or `..` draws nothing, as does one that
+    /// a symlink leads out of the base. A `url()`'s `%` escapes decode, and its query and
+    /// fragment are dropped. A missing or undecodable file draws nothing too, and the box shows
+    /// its background color.
     ///
     /// # Errors
     /// Returns a stylesheet, capture, cascade or unsupported-display failure.
@@ -717,10 +862,11 @@ impl BoxTree {
             construction,
             sheets,
             base: base.to_owned(),
-            variants: Mutex::new(BTreeMap::new()),
+            variants: Mutex::new(Variants::default()),
+            parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
         });
-        Self::styled(&source, (None, None, None))
+        Self::unstated(&source)
     }
 
     /// The same captured tree under other author sheets, later ones over earlier ones. Use
@@ -738,10 +884,24 @@ impl BoxTree {
             construction: self.source.construction.clone(),
             sheets,
             base: self.source.base.clone(),
-            variants: Mutex::new(BTreeMap::new()),
+            variants: Mutex::new(Variants::default()),
+            parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
         });
-        Self::styled(&source, (None, None, None))
+        Self::unstated(&source)
+    }
+
+    /// The styling with no interaction, kept so that leaving it and coming back, or
+    /// comparing a first hover against it, does not cascade it again.
+    fn unstated(source: &Arc<Source>) -> Result<Self, BoxTreeError> {
+        let key = (None, None, None);
+        let built = Self::styled(source, key)?;
+        source
+            .variants
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, Arc::new(built.style()));
+        Ok(built)
     }
 
     /// This tree restyled for an interaction state, cascading it the first time. A
@@ -760,8 +920,7 @@ impl BoxTree {
             .variants
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(&key)
-            .cloned();
+            .get(key);
         if let Some(style) = cached {
             return Self::from_style((*style).clone(), Arc::clone(&self.source));
         }
@@ -776,16 +935,11 @@ impl BoxTree {
                 return self.clone();
             }
         };
-        let mut variants = self
-            .source
+        self.source
             .variants
             .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if variants.len() >= VARIANT_LIMIT {
-            variants.clear();
-        }
-        variants.insert(key, Arc::new(built.style()));
-        drop(variants);
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, Arc::new(built.style()));
         built
     }
 
@@ -817,8 +971,7 @@ impl BoxTree {
             .variants
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(&key)
-            .cloned();
+            .get(key);
         if cached.is_some() {
             return cached;
         }
@@ -830,15 +983,11 @@ impl BoxTree {
             return None;
         };
         let style = Arc::new(built.style());
-        let mut variants = self
-            .source
+        self.source
             .variants
             .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if variants.len() >= VARIANT_LIMIT {
-            variants.clear();
-        }
-        variants.insert(key, Arc::clone(&style));
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, Arc::clone(&style));
         Some(style)
     }
 
@@ -850,7 +999,10 @@ impl BoxTree {
         if normal(first) == normal(second) {
             return true;
         }
-        match (self.cached_style(first), self.cached_style(second)) {
+        // The second is the one shown, by the callers: asked for first, it is the latest
+        // used when the other needs room, and so is never the one dropped for it.
+        let other = self.cached_style(second);
+        match (self.cached_style(first), other) {
             (Some(one), Some(other)) => {
                 Arc::ptr_eq(&one, &other)
                     || (one.prepared == other.prepared
@@ -899,24 +1051,28 @@ impl BoxTree {
         }
     }
 
-    /// The slot a widget for this CSS id occupies, in this styling: the leaf box itself,
+    /// The slot a widget for each CSS id occupies, in this styling: the leaf box itself,
     /// or the anonymous block of generated text it replaces when the box has only that.
-    /// Display none has none.
-    fn leaf_slot(&self, id: &str) -> Option<usize> {
+    /// Display none has none. The first box that can hold it wins.
+    fn leaf_slots(&self, ids: &[String]) -> Vec<Option<usize>> {
         let prepared = &self.prepared;
-        self.ids.iter().enumerate().find_map(|(arena, value)| {
-            if value.as_deref() != Some(id) || prepared.anonymous[arena] {
-                return None;
+        let mut found: BTreeMap<&str, usize> = BTreeMap::new();
+        for (arena, value) in self.ids.iter().enumerate() {
+            let Some(id) = value.as_deref() else {
+                continue;
+            };
+            if prepared.anonymous[arena] || found.contains_key(id) {
+                continue;
             }
             let children = &prepared.boxes[arena].children;
-            match children.first() {
-                None => Some(arena),
-                Some(first) if children.iter().all(|child| prepared.anonymous[*child]) => {
-                    Some(*first)
-                }
-                Some(_) => None,
-            }
-        })
+            let slot = match children.first() {
+                None => arena,
+                Some(first) if children.iter().all(|child| prepared.anonymous[*child]) => *first,
+                Some(_) => continue,
+            };
+            found.insert(id, slot);
+        }
+        ids.iter().map(|id| found.get(id.as_str()).copied()).collect()
     }
 
     fn styled(source: &Arc<Source>, key: InteractionKey) -> Result<Self, BoxTreeError> {
@@ -968,19 +1124,25 @@ impl BoxTree {
             .ok_or_else(|| BoxTreeError("snapshot".to_owned()))?;
         let projection =
             prepare_tree_source_projection(&host, snapshot, nz(WORK)).map_err(failed)?;
-        let catalog = UaDisplayCatalog::new(UaDisplayLimits {
-            rules: big(),
-            retained_bytes: nz(BYTES),
-            work: nz(WORK),
-            values: colors(),
-        })
-        .map_err(failed)?;
-        let graphs = source
-            .sheets
-            .iter()
-            .zip(0_u64..)
-            .map(|(css, order)| parse(css, order))
-            .collect::<Result<Vec<_>, _>>()?;
+        // Parsed once per source: every interaction state cascades the same rules.
+        let Parsed(catalog, graphs) = if let Some(parsed) = source.parsed.get() {
+            parsed
+        } else {
+            let catalog = UaDisplayCatalog::new(UaDisplayLimits {
+                rules: big(),
+                retained_bytes: nz(BYTES),
+                work: nz(WORK),
+                values: colors(),
+            })
+            .map_err(failed)?;
+            let graphs = source
+                .sheets
+                .iter()
+                .zip(0_u64..)
+                .map(|(css, order)| parse(css, order))
+                .collect::<Result<Vec<_>, _>>()?;
+            source.parsed.get_or_init(|| Parsed(catalog, graphs))
+        };
         let ids: Vec<SheetId> = (1..=graphs.len() as u64)
             .map(|id| SheetId::new(NonZeroU64::new(id).expect("positive")))
             .collect();
@@ -995,11 +1157,14 @@ impl BoxTree {
             vec![],
             true,
             None,
-            // This bound is itself charged per membership query, so keep it small.
+            // This bound is itself charged per membership query, so keep it small,
+            // but large enough for the pairwise duplicate-id check of `n` sheets.
             SheetLimits {
                 entries: big(),
                 retained_bytes: nz(BYTES),
-                work: nz(100 + 10 * ids.len()),
+                work: nz(100usize
+                    .saturating_add(10usize.saturating_mul(ids.len()))
+                    .saturating_add(ids.len().saturating_mul(ids.len().saturating_add(1)) / 2)),
             },
         )
         .map_err(failed)?;
@@ -1012,7 +1177,7 @@ impl BoxTree {
             })
             .collect();
         let bundle = DisplayRuleBundle::new(
-            &catalog,
+            catalog,
             &bindings,
             &sheets,
             BundleLimits {
@@ -1128,7 +1293,7 @@ impl BoxTree {
                 // the table's logical order: in rtl a cell's start is its right side.
                 use iced_css_core::formatting::block_flow::{table_grid, table_parts};
                 let (rows, _) = table_parts(&prepared.boxes, table);
-                let (placed, columns) = table_grid(&prepared.boxes, &rows);
+                let (placed, columns) = table_grid(&prepared.boxes, table, &rows);
                 let (start, end) = if prepared.boxes[table].direction == Direction::Rtl {
                     (1, 3)
                 } else {
@@ -1209,6 +1374,9 @@ impl BoxTree {
                     "right" => RowAlign::Right,
                     _ => RowAlign::Left,
                 });
+                // 16.6: and so does whether its boxes may wrap.
+                value.row_no_wrap =
+                    matches!(styles[container_of[arena]].white_space, "pre" | "nowrap");
             }
         }
         let nodes = snapshot.construction().nodes();
@@ -1237,10 +1405,10 @@ impl BoxTree {
                     }
                 }
             };
-            let mut texts: Vec<(String, &'static str)> = runs
+            let contents: Vec<Option<&str>> = runs
                 .iter()
                 .map(|&run| {
-                    let content = match (run, generated_of(run)) {
+                    match (run, generated_of(run)) {
                         // `content:""` with sides holds a place for them, as an empty
                         // inline element does (10.8).
                         (_, Some(made))
@@ -1267,18 +1435,43 @@ impl BoxTree {
                             .original_index(at)
                             .and_then(|original| nodes[original].text()),
                         _ => Some(""),
-                    };
+                    }
+                })
+                .collect();
+            // A word runs on through the runs of its leaf, so `capitalize` finds its
+            // words in the joined text (CSS Text 2.1).
+            let starts = if runs
+                .iter()
+                .any(|&run| style_of(run).text_transform == "capitalize")
+            {
+                word_starts(&contents.iter().copied().flatten().collect::<String>())
+            } else {
+                Vec::new()
+            };
+            let mut base = 0;
+            let mut texts: Vec<(String, &'static str)> = runs
+                .iter()
+                .zip(&contents)
+                .map(|(&run, &content)| {
                     let style = style_of(run);
                     // An element's own run is an empty inline's placeholder: zero width.
                     content.map_or(("\u{200B}".to_owned(), PLACEHOLDER), |content| {
-                        (
-                            transformed(content, style.text_transform),
-                            style.white_space,
-                        )
+                        let text = transformed(content, style.text_transform, &starts, base);
+                        base += content.len();
+                        (text, style.white_space)
                     })
                 })
                 .collect();
             collapse(&mut texts);
+            let decorated_by = |from: Option<usize>| {
+                from.map(|from| {
+                    (
+                        projection.original_index(from).unwrap_or_default(),
+                        raw_paints[from].color.unwrap_or([0.0; 3]),
+                        prepared.font_sizes[from],
+                    )
+                })
+            };
             let runs = runs
                 .iter()
                 .zip(texts)
@@ -1393,6 +1586,8 @@ impl BoxTree {
                         family: style.family.clone(),
                         underline: style.underline,
                         line_through: style.line_through,
+                        underline_from: decorated_by(style.underline_from),
+                        line_through_from: decorated_by(style.line_through_from),
                         visible,
                         owner: {
                             let (RunSource::Node(at)
@@ -1404,6 +1599,23 @@ impl BoxTree {
                 })
                 .collect();
             let lead = style_of(first);
+            // 16.6: a line may break wherever any of its runs lets it, so only text that
+            // is `pre` or `nowrap` throughout stays on its line.
+            let wraps = prepared.runs[arena]
+                .iter()
+                .any(|&run| !matches!(style_of(run).white_space, "pre" | "nowrap"));
+            // 10.8.1: one line height per leaf, so where its runs differ, the strut of
+            // the block container, not the height of the inline its first run sits in.
+            // Generated content in a box of its own is that container.
+            let line_height = if boxed
+                || prepared.runs[arena]
+                    .iter()
+                    .all(|&run| style_of(run).line_height == lead.line_height)
+            {
+                lead.line_height
+            } else {
+                styles[container_of[arena]].line_height
+            };
             Some(TextLeaf {
                 runs,
                 // 16.2: alignment belongs to the block container of the lines.
@@ -1412,8 +1624,8 @@ impl BoxTree {
                 } else {
                     lead.align
                 },
-                wraps: !matches!(lead.white_space, "pre" | "nowrap"),
-                line_height: lead.line_height,
+                wraps,
+                line_height,
                 percent_indent: None,
                 hang: 0.0,
             })
@@ -2072,6 +2284,8 @@ impl BoxTree {
                             family: style.family.clone(),
                             underline: false,
                             line_through: false,
+                            underline_from: None,
+                            line_through_from: None,
                             visible: raw_paints[projected].visible,
                             owner: projection.original_index(projected).unwrap_or_default(),
                         }],
@@ -2168,19 +2382,26 @@ impl BoxTree {
                 continue;
             }
             let (rows, _) = table_parts(&prepared.boxes, table);
-            let (placed, _) = table_grid(&prepared.boxes, &rows);
+            let (placed, _) = table_grid(&prepared.boxes, table, &rows);
+            // How many cells cover each row, and how many of those show, counted by where
+            // each span starts and ends rather than by scanning every cell per row.
+            let mut changes = vec![(0_isize, 0_isize); rows.len() + 1];
+            for item in &placed {
+                let paint = paints[prepared.positions[item.cell].0];
+                let hides = !prepared.anonymous[item.cell]
+                    && (paint.hidden_empty || (paint.hide_empty && !paint.visible));
+                let shows = isize::from(!hides);
+                let end = item.row + item.row_span;
+                changes[item.row].0 += 1;
+                changes[item.row].1 += shows;
+                changes[end].0 -= 1;
+                changes[end].1 -= shows;
+            }
+            let (mut covering, mut showing) = (0, 0);
             for (index, &row) in rows.iter().enumerate() {
-                let mut covering = placed
-                    .iter()
-                    .filter(|item| item.row <= index && index < item.row + item.row_span)
-                    .peekable();
-                let hides = covering.peek().is_some()
-                    && covering.all(|item| {
-                        let paint = paints[prepared.positions[item.cell].0];
-                        !prepared.anonymous[item.cell]
-                            && (paint.hidden_empty || (paint.hide_empty && !paint.visible))
-                    });
-                if hides {
+                covering += changes[index].0;
+                showing += changes[index].1;
+                if covering > 0 && showing == 0 {
                     hidden_rows.push(row);
                 }
             }
@@ -2234,6 +2455,7 @@ impl BoxTree {
             FlowLimits {
                 boxes: big(),
                 depth: nz(2_000),
+                work: nz(LAYOUT_WORK),
             },
         )
     }
@@ -2258,6 +2480,7 @@ impl BoxTree {
             FlowLimits {
                 boxes: big(),
                 depth: nz(2_000),
+                work: nz(LAYOUT_WORK),
             },
             &mut |arena, used| {
                 let leaf = self.texts[arena].as_ref()?;
@@ -2324,8 +2547,11 @@ impl BoxTree {
                         })
                 },
             )?;
-            let before = tree.texts.clone();
-            if pass == 1 || !tree.apply_percent_indents(&geometry) {
+            if pass == 1 {
+                break;
+            }
+            let before = tree.percent_leaves();
+            if !tree.apply_percent_indents(&geometry) {
                 break;
             }
             // Their spaces are text a shrink-to-fit box fits.
@@ -2357,6 +2583,7 @@ impl BoxTree {
             FlowLimits {
                 boxes: big(),
                 depth: nz(2_000),
+                work: nz(LAYOUT_WORK),
             },
             &mut |arena, used| {
                 if self.texts[arena].as_ref().is_some_and(TextLeaf::is_empty) {
@@ -2459,20 +2686,8 @@ impl BoxTree {
             // 9.10: the paragraph's direction mark leads its first text. Side spaces that
             // were empty until sized here came before it, or before the spaces holding it: it
             // moves onto them.
-            let starts = |run: &TextRun| {
-                run.text
-                    .chars()
-                    .next()
-                    .is_some_and(|mark| matches!(mark, '\u{200E}' | '\u{200F}'))
-            };
-            if let Some(first) = leaf.runs.iter().position(|run| !run.text.is_empty())
-                && !starts(&leaf.runs[first])
-                && let Some(at) = leaf.runs[first..]
-                    .iter()
-                    .position(|run| starts(run) || (!run.spacer && !run.text.is_empty()))
-                && starts(&leaf.runs[first + at])
-            {
-                let mark = leaf.runs[first + at].text.remove(0);
+            if let Some((first, marked)) = stranded_mark(leaf) {
+                let mark = leaf.runs[marked].text.remove(0);
                 leaf.runs[first].text.insert(0, mark);
                 changed = true;
             }
@@ -2558,7 +2773,7 @@ impl BoxTree {
                 continue;
             };
             let (rows, _) = table_parts(boxes, table);
-            let (placed, _) = table_grid(boxes, &rows);
+            let (placed, _) = table_grid(boxes, table, &rows);
             if let Some(item) = placed.iter().find(|item| item.cell == cell) {
                 kept.extend_from_slice(&rows[item.row..item.row + item.row_span]);
             }
@@ -2633,15 +2848,40 @@ impl BoxTree {
         }
     }
 
-    /// [`Self::set_text_widths`] again for the leaves whose text differs from `before`.
+    /// The leaves [`Self::apply_percent_indents`] can rewrite, by arena slot, as they are
+    /// now: the others need no copy to tell that they stayed.
+    fn percent_leaves(&self) -> Vec<(usize, TextLeaf)> {
+        self.texts
+            .iter()
+            .enumerate()
+            .filter_map(|(arena, leaf)| {
+                let leaf = leaf.as_ref()?;
+                let sized = leaf.percent_indent.is_some()
+                    || stranded_mark(leaf).is_some()
+                    || leaf.runs.iter().any(|run| {
+                        run.percent_room.is_some()
+                            || run.inline_boxes.iter().any(|decoration| {
+                                decoration
+                                    .padding_share
+                                    .iter()
+                                    .any(|(_, percent)| *percent != 0.0)
+                            })
+                    });
+                sized.then(|| (arena, leaf.clone()))
+            })
+            .collect()
+    }
+
+    /// [`Self::set_text_widths`] again for the leaves whose text differs from `before`,
+    /// [`Self::percent_leaves`] as it was.
     fn refit_texts(
         &mut self,
-        before: &[Option<TextLeaf>],
+        before: &[(usize, TextLeaf)],
         mut widths: impl FnMut(&TextLeaf) -> (f32, f32),
     ) {
-        for (arena, leaf) in self.texts.iter().enumerate() {
-            if let Some(leaf) = leaf
-                && before.get(arena).and_then(Option::as_ref) != Some(leaf)
+        for &(arena, ref old) in before {
+            if let Some(leaf) = self.texts.get(arena).and_then(Option::as_ref)
+                && leaf != old
             {
                 let (minimum, preferred) = widths(leaf);
                 self.prepared.boxes[arena].content = Some(FlowContent {
@@ -3095,6 +3335,7 @@ where
             elements,
             ids,
             slots: Vec::new(),
+            slot_owners: Vec::new(),
             presses: view.presses,
         })
     }
@@ -3121,7 +3362,7 @@ enum PaintStep {
     Marker(usize),
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 struct Interaction {
     hovered: Option<usize>,
     active: Option<usize>,
@@ -3130,6 +3371,136 @@ struct Interaction {
     scrolled: BTreeMap<usize, f32>,
     /// Horizontal scroll offsets by source node.
     scrolled_x: BTreeMap<usize, f32>,
+    /// The source whose nodes the indices above name.
+    source: Option<Arc<Source>>,
+}
+
+impl PartialEq for Interaction {
+    fn eq(&self, other: &Self) -> bool {
+        (self.hovered, self.active, self.focused) == (other.hovered, other.active, other.focused)
+            && self.scrolled == other.scrolled
+            && self.scrolled_x == other.scrolled_x
+    }
+}
+
+impl Interaction {
+    /// Moves the state to `source`'s node numbers. Source nodes are numbered in postorder,
+    /// so another capture numbers the same elements differently; a restyle does not.
+    fn follow(&mut self, source: &Arc<Source>) {
+        let Some(old) = self.source.replace(Arc::clone(source)) else {
+            return;
+        };
+        if old.capture == source.capture || *self == Self::default() {
+            return;
+        }
+        let carried = Carried::new(old.construction.nodes(), source.construction.nodes());
+        for held in [&mut self.hovered, &mut self.active, &mut self.focused] {
+            *held = held.and_then(|node| carried.at(node));
+        }
+        for offsets in [&mut self.scrolled, &mut self.scrolled_x] {
+            *offsets = std::mem::take(offsets)
+                .into_iter()
+                .filter_map(|(node, offset)| Some((carried.at(node)?, offset)))
+                .collect();
+        }
+    }
+}
+
+/// Where one capture's elements are in another: by CSS id where one element alone has it,
+/// and below or without such an element by the path down, a keyed child by its key and
+/// any other by its position among its siblings.
+struct Carried<'a> {
+    old: &'a [crate::capture::ConstructionNode],
+    new: &'a [crate::capture::ConstructionNode],
+    /// Each side's CSS ids, with the node when only one has the id.
+    ids: [BTreeMap<&'a str, Option<usize>>; 2],
+    /// Each side's children per node, in order.
+    children: [Vec<Vec<usize>>; 2],
+}
+
+impl<'a> Carried<'a> {
+    fn new(
+        old: &'a [crate::capture::ConstructionNode],
+        new: &'a [crate::capture::ConstructionNode],
+    ) -> Self {
+        let ids = [old, new].map(|nodes| {
+            let mut ids = BTreeMap::new();
+            for (index, node) in nodes.iter().enumerate() {
+                if let Some(id) = node.metadata().css_id() {
+                    ids.entry(id)
+                        .and_modify(|only| *only = None)
+                        .or_insert(Some(index));
+                }
+            }
+            ids
+        });
+        let children = [old, new].map(|nodes| {
+            let mut children = vec![Vec::new(); nodes.len()];
+            for (index, node) in nodes.iter().enumerate() {
+                if let Some(list) = node.parent().and_then(|parent| children.get_mut(parent)) {
+                    list.push(index);
+                }
+            }
+            children
+        });
+        Self {
+            old,
+            new,
+            ids,
+            children,
+        }
+    }
+
+    /// The new node for the old one, or `None` when the element is gone or is another one.
+    fn at(&self, node: usize) -> Option<usize> {
+        // Up to an element its id names on both sides, or to the root.
+        let mut path = Vec::new();
+        let mut here = node;
+        let mut found = loop {
+            let record = self.old.get(here)?;
+            if let Some(id) = record.metadata().css_id()
+                && self.ids[0].get(id).is_some_and(Option::is_some)
+            {
+                match *self.ids[1].get(id)? {
+                    Some(named) => break named,
+                    // Several elements have the id now: only the path can tell them apart.
+                    None => {}
+                }
+            }
+            let Some(parent) = record.parent() else {
+                break self.new.len().checked_sub(1)?;
+            };
+            let position = self.children[0]
+                .get(parent)?
+                .iter()
+                .position(|child| *child == here)?;
+            path.push((here, position));
+            here = parent;
+        };
+        // And down again, as long as each step finds the same kind of element.
+        for (old, position) in path.into_iter().rev() {
+            let record = &self.old[old];
+            let siblings = &self.children[1][found];
+            found = match record.source_key() {
+                Some(key) => {
+                    let mut keyed = siblings
+                        .iter()
+                        .copied()
+                        .filter(|child| self.new[*child].source_key() == Some(key));
+                    keyed.next().filter(|_| keyed.next().is_none())?
+                }
+                None => *siblings.get(position)?,
+            };
+            let next = &self.new[found];
+            if next.source_key() != record.source_key()
+                || next.metadata().css_id() != record.metadata().css_id()
+                || next.canonical_type() != record.canonical_type()
+            {
+                return None;
+            }
+        }
+        Some(found)
+    }
 }
 
 /// 18.1: the system cursor for a keyword; `None` is `auto`, which depends on the context.
@@ -3371,6 +3742,25 @@ fn room_text(run: &TextRun, width: f32) -> Option<String> {
     Some(text)
 }
 
+/// 9.10: a paragraph's direction mark that no longer leads its first text, as the first
+/// run with text and the run holding the mark.
+fn stranded_mark(leaf: &TextLeaf) -> Option<(usize, usize)> {
+    let starts = |run: &TextRun| {
+        run.text
+            .chars()
+            .next()
+            .is_some_and(|mark| matches!(mark, '\u{200E}' | '\u{200F}'))
+    };
+    let first = leaf.runs.iter().position(|run| !run.text.is_empty())?;
+    if starts(&leaf.runs[first]) {
+        return None;
+    }
+    let at = leaf.runs[first..]
+        .iter()
+        .position(|run| starts(run) || (!run.spacer && !run.text.is_empty()))?;
+    starts(&leaf.runs[first + at]).then_some((first, first + at))
+}
+
 /// Invisible spaces about `indent` wide at `first`'s font, or `None` when too small to show.
 fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
     let text = spaces(first.size, indent);
@@ -3398,9 +3788,11 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
 }
 
 /// 17.6.2.1: on an edge two cells of a collapsed table share, only the winner's border draws,
-/// and a `hidden` one draws neither. A cell that is not visible has no say. Cells that span
-/// the edge alike settle all of it; a cell beside a taller or wider one settles the stretch
-/// they share, and a loser leaves out only that stretch (`border_cuts`).
+/// and a `hidden` one draws neither. A cell's side first takes the border of a row, row
+/// group, column, column group or the table that lies along it and beats its own. A cell
+/// that is not visible has no say. Cells that span the edge alike settle all of it; a cell
+/// beside a taller or wider one settles the stretch they share, and a loser leaves out only
+/// that stretch (`border_cuts`).
 fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &mut [BoxPaint]) {
     use iced_css_core::formatting::{
         block_flow::{table_grid, table_parts},
@@ -3422,7 +3814,7 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
         _ => BorderStyle::None,
     };
     let (rows, _) = table_parts(&prepared.boxes, table);
-    let (placed, columns) = table_grid(&prepared.boxes, &rows);
+    let (placed, columns) = table_grid(&prepared.boxes, table, &rows);
     // In an rtl table the first column is on the right, so its far side is its left.
     let rtl = prepared.boxes[table].direction == Direction::Rtl;
     let (near, far) = if rtl { (3, 1) } else { (1, 3) };
@@ -3475,55 +3867,200 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
             paints[prepared.positions[item.cell].0].collapsed_cell = Some(table);
         }
     }
-    // On its outer edges the table's own border competes with the outer cells', and loses
-    // a tie. Where it wins, the cell draws it; `hidden` there leaves none.
-    if !prepared.anonymous[table] {
-        let owner = prepared.positions[table].0;
-        let (start, end) = if rtl { (1, 3) } else { (3, 1) };
-        for item in &placed {
-            let cell_owner = prepared.positions[item.cell].0;
-            if prepared.anonymous[item.cell] || !paints[cell_owner].visible {
+    // 17.6.2.1: the rows, row groups, columns and column groups whose edge a cell's side lies
+    // on contend for it too, and on its outer edges the table; each loses a tie to the ones
+    // before it. Where one wins, the cell draws it; `hidden` there leaves none. A part that
+    // is not visible has no say, as a cell has none.
+    struct Layer {
+        owner: usize,
+        widths: [f32; 4],
+        origin: BorderOrigin,
+        order: BorderOrder,
+        /// Its arena slot; a column or a column group has no box.
+        slot: Option<usize>,
+        rows: (usize, usize),
+        columns: (usize, usize),
+    }
+    let mut layers: Vec<Layer> = Vec::new();
+    {
+        let mut layer = |owner: usize,
+                         widths: Option<[f32; 4]>,
+                         origin,
+                         slot,
+                         rows: (usize, usize),
+                         columns: (usize, usize)| {
+            let widths = widths.or_else(|| {
+                let at = prepared
+                    .layer_borders
+                    .binary_search_by_key(&owner, |entry| entry.0)
+                    .ok()?;
+                Some(prepared.layer_borders[at].1)
+            });
+            if paints[owner].visible && paints[owner].border_style != ["none"; 4] {
+                layers.push(Layer {
+                    owner,
+                    widths: widths.unwrap_or_default(),
+                    origin,
+                    order: BorderOrder {
+                        inline_start: columns.0,
+                        block_start: rows.0,
+                    },
+                    slot,
+                    rows,
+                    columns,
+                });
+            }
+        };
+        let row_at: BTreeMap<usize, usize> = rows
+            .iter()
+            .enumerate()
+            .map(|(index, &row)| (row, index))
+            .collect();
+        for (index, &row) in rows.iter().enumerate() {
+            if !prepared.anonymous[row] {
+                layer(
+                    prepared.positions[row].0,
+                    None,
+                    BorderOrigin::Row,
+                    Some(row),
+                    (index, index + 1),
+                    (0, columns),
+                );
+            }
+        }
+        for &group in &prepared.boxes[table].children {
+            if prepared.anonymous[group]
+                || !matches!(
+                    prepared.boxes[group].table,
+                    Some(TableRole::HeaderGroup | TableRole::BodyGroup | TableRole::FooterGroup)
+                )
+            {
                 continue;
             }
-            for (outer, side) in [
-                (item.row == 0, 0),
-                (item.row + item.row_span == rows.len(), 2),
-                (item.column == 0, start),
-                (item.column + item.col_span == columns, end),
+            let own = || {
+                prepared.boxes[group]
+                    .children
+                    .iter()
+                    .filter_map(|row| row_at.get(row).copied())
+            };
+            if let (Some(first), Some(last)) = (own().min(), own().max()) {
+                layer(
+                    prepared.positions[group].0,
+                    None,
+                    BorderOrigin::RowGroup,
+                    Some(group),
+                    (first, last + 1),
+                    (0, columns),
+                );
+            }
+        }
+        // A table's columns are recorded in column order, a group's together.
+        let own: Vec<(usize, Option<usize>)> = prepared
+            .table_columns
+            .iter()
+            .filter(|entry| entry.0 == table)
+            .map(|entry| (entry.1, entry.2))
+            .collect();
+        for (at, &(column, group)) in own.iter().enumerate() {
+            layer(
+                column,
+                None,
+                BorderOrigin::Column,
+                None,
+                (0, rows.len()),
+                (at, at + 1),
+            );
+            if let Some(group) = group
+                && (at == 0 || own[at - 1].1 != Some(group))
+            {
+                let end = own[at..]
+                    .iter()
+                    .position(|entry| entry.1 != Some(group))
+                    .map_or(own.len(), |past| at + past);
+                layer(
+                    group,
+                    None,
+                    BorderOrigin::ColumnGroup,
+                    None,
+                    (0, rows.len()),
+                    (at, end),
+                );
+            }
+        }
+        if !prepared.anonymous[table] {
+            layer(
+                prepared.positions[table].0,
+                Some(prepared.boxes[table].border),
+                BorderOrigin::Table,
+                Some(table),
+                (0, rows.len()),
+                (0, columns),
+            );
+        }
+    }
+    // Whose border each cell's side now carries, where not its own, and that one's box.
+    let mut carried: BTreeMap<(usize, usize), (BorderOrigin, BorderOrder, Option<usize>)> =
+        BTreeMap::new();
+    let (start, end) = if rtl { (1, 3) } else { (3, 1) };
+    for item in &placed {
+        let cell_owner = prepared.positions[item.cell].0;
+        if prepared.anonymous[item.cell] || !paints[cell_owner].visible {
+            continue;
+        }
+        let (row_end, column_end) = (item.row + item.row_span, item.column + item.col_span);
+        for layer in &layers {
+            // A side lies on a part's edge where the cell ends with it, beside or inside it.
+            let across = item.column < layer.columns.1 && column_end > layer.columns.0;
+            let down = item.row < layer.rows.1 && row_end > layer.rows.0;
+            for (on, side) in [
+                (across && item.row == layer.rows.0, 0),
+                (across && row_end == layer.rows.1, 2),
+                (down && item.column == layer.columns.0, start),
+                (down && column_end == layer.columns.1, end),
             ] {
-                if !outer {
+                if !on {
                     continue;
                 }
-                let order = BorderOrder {
-                    inline_start: item.column,
-                    block_start: item.row,
-                };
+                let (origin, order) = carried.get(&(item.cell, side)).map_or(
+                    (
+                        BorderOrigin::Cell,
+                        BorderOrder {
+                            inline_start: item.column,
+                            block_start: item.row,
+                        },
+                    ),
+                    |entry| (entry.0, entry.1),
+                );
                 let (Ok(cell), Ok(own)) = (
                     BorderCandidate::new(
                         style_of(paints[cell_owner].border_style[side]),
                         prepared.boxes[item.cell].border[side],
-                        BorderOrigin::Cell,
+                        origin,
                         order,
                     ),
                     BorderCandidate::new(
-                        style_of(paints[owner].border_style[side]),
-                        prepared.boxes[table].border[side],
-                        BorderOrigin::Table,
-                        order,
+                        style_of(paints[layer.owner].border_style[side]),
+                        layer.widths[side],
+                        layer.origin,
+                        layer.order,
                     ),
                 ) else {
                     continue;
                 };
                 match resolve_collapsed_border(&[cell, own], limits) {
                     Ok(CollapsedBorder::Winner { index: 1, .. }) => {
-                        paints[cell_owner].border[side] = paints[owner].border[side];
-                        paints[cell_owner].border_style[side] = paints[owner].border_style[side];
+                        paints[cell_owner].border[side] = paints[layer.owner].border[side];
+                        paints[cell_owner].border_style[side] =
+                            paints[layer.owner].border_style[side];
                         prepared.boxes[item.cell].border[side] = own.width();
-                        prepared.table_borders.push((item.cell, side, table));
+                        carried.insert((item.cell, side), (layer.origin, layer.order, layer.slot));
                     }
+                    // The side is `hidden` from here on, to the cell across it too.
                     Ok(CollapsedBorder::Suppressed) => {
                         paints[cell_owner].border[side] = None;
+                        paints[cell_owner].border_style[side] = "hidden";
                         prepared.boxes[item.cell].border[side] = 0.0;
+                        carried.remove(&(item.cell, side));
                     }
                     _ => {}
                 }
@@ -3545,14 +4082,21 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
             continue;
         }
         let candidate = |item: &iced_css_core::formatting::block_flow::GridCell, side: usize| {
+            let (origin, order) = carried.get(&(item.cell, side)).map_or(
+                (
+                    BorderOrigin::Cell,
+                    BorderOrder {
+                        inline_start: item.column,
+                        block_start: item.row,
+                    },
+                ),
+                |entry| (entry.0, entry.1),
+            );
             BorderCandidate::new(
                 style_of(paints[prepared.positions[item.cell].0].border_style[side]),
                 prepared.boxes[item.cell].border[side],
-                BorderOrigin::Cell,
-                BorderOrder {
-                    inline_start: item.column,
-                    block_start: item.row,
-                },
+                origin,
+                order,
             )
         };
         let (Ok(one), Ok(two)) = (candidate(first, first_side), candidate(second, second_side))
@@ -3604,6 +4148,13 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
         paints[owner].border[side] = None;
         prepared.boxes[cell].border[side] = width;
         prepared.collapsed_losers.push((cell, side));
+        carried.remove(&(cell, side));
+    }
+    // What a side still draws of a table, a row or a row group follows that box's color.
+    for (&(cell, side), &(_, _, slot)) in &carried {
+        if let Some(slot) = slot {
+            prepared.table_borders.push((cell, side, slot));
+        }
     }
     let mut thin: Vec<(usize, usize, f32)> = Vec::new();
     for &(cell, side, winner, width) in &cuts {
@@ -3617,24 +4168,74 @@ fn resolve_collapsed_edges(prepared: &mut PreparedTree, table: usize, paints: &m
     prepared.thin_sides.extend(thin);
 }
 
-/// A file under the base: no scheme, no absolute path, no `..`.
+/// A file under the base: no scheme, no absolute path, no `..`, and none reached through a
+/// symlink that leads out of it. A `url()` is a relative URL: its query and fragment name no
+/// file, and the escapes in its path decode.
 fn local_image(base: &Path, uri: &str) -> Option<image::Handle> {
-    let inside = Path::new(uri)
-        .components()
-        .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
     let scheme = uri
         .split('/')
         .next()
         .is_some_and(|first| first.contains(':'));
-    (inside && !scheme).then(|| image::Handle::from_path(base.join(uri)))
+    if scheme {
+        return None;
+    }
+    let path = uri.split(['?', '#']).next().unwrap_or_default();
+    // Each segment on its own: an escaped `/` or NUL names no file.
+    let decoded = path
+        .split('/')
+        .map(|segment| {
+            let bytes = segment.as_bytes();
+            let mut out = Vec::with_capacity(bytes.len());
+            let mut at = 0;
+            while at < bytes.len() {
+                let escape = (bytes[at] == b'%')
+                    .then(|| segment.get(at + 1..at + 3))
+                    .flatten()
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+                if let Some(byte) = escape {
+                    out.push(byte);
+                    at += 3;
+                } else {
+                    out.push(bytes[at]);
+                    at += 1;
+                }
+            }
+            String::from_utf8(out)
+                .ok()
+                .filter(|segment| !segment.contains(['/', '\0']))
+        })
+        .collect::<Option<Vec<String>>>()?
+        .join("/");
+    let inside = Path::new(&decoded)
+        .components()
+        .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+    if !inside {
+        return None;
+    }
+    let file = base.join(&decoded);
+    // A missing file draws nothing either way; one that exists must really be under the base.
+    if let (Ok(real), Ok(root)) = (file.canonicalize(), base.canonicalize())
+        && !real.starts_with(&root)
+    {
+        return None;
+    }
+    Some(image::Handle::from_path(file))
 }
 
 /// What Tab asks of the focusable widgets inside a hosted element.
 enum HostFocus {
     Has(bool),
     IsFocused(bool),
-    /// Focus the first one; the flag says it is still to do.
-    Focus(bool),
+    /// How many it holds, and which of them, in order, has the focus.
+    Find {
+        count: usize,
+        focused: Option<usize>,
+    },
+    /// Focus the one at `target` in order, counting them in `seen`, and none of the rest.
+    Focus {
+        target: usize,
+        seen: usize,
+    },
     Unfocus,
 }
 
@@ -3652,13 +4253,19 @@ impl Operation for HostFocus {
         match self {
             Self::Has(found) => *found = true,
             Self::IsFocused(found) => *found |= state.is_focused(),
-            Self::Focus(pending) => {
-                if *pending {
+            Self::Find { count, focused } => {
+                if state.is_focused() {
+                    focused.get_or_insert(*count);
+                }
+                *count += 1;
+            }
+            Self::Focus { target, seen } => {
+                if *seen == *target {
                     state.focus();
-                    *pending = false;
                 } else {
                     state.unfocus();
                 }
+                *seen += 1;
             }
             Self::Unfocus => state.unfocus(),
         }
@@ -3845,21 +4452,23 @@ fn apply_scrolling(
                 padding.right - geometry[arena].content.right,
             )
         };
+        // A box shrunk below its content (a cell in a hidden row) has a negative trailing
+        // edge; it still never scrolls back past its start.
         let limit = if reach > bottom {
-            reach + trailing - bottom
+            (reach + trailing - bottom).max(0.0)
         } else {
             0.0
         };
         let ltr = prepared.boxes[arena].direction == Direction::Ltr;
         let limit_x = if ltr && reach_x > right {
-            reach_x + trailing_x - right
+            (reach_x + trailing_x - right).max(0.0)
         } else if !ltr && reach_left < start_x {
             let end_padding = if arena == 0 {
                 0.0
             } else {
                 geometry[arena].content.left - padding.left
             };
-            start_x - reach_left + end_padding
+            (start_x - reach_left + end_padding).max(0.0)
         } else {
             0.0
         };
@@ -3915,6 +4524,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     ids: Vec<String>,
     /// Each element's arena slot in the current styling, while it has a box.
     slots: Vec<Option<usize>>,
+    /// The other way: the first element in each arena slot, by slot.
+    slot_owners: Vec<Option<usize>>,
     presses: Vec<(String, Message)>,
     /// Shaped text, its top-left corner relative to the layout, and its color, by arena.
     paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
@@ -4057,65 +4668,85 @@ fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
             .filter(|text| !text.is_empty())
             .unwrap_or(&run.text);
         let attrs = to_attributes(font_of(base, run));
-        // Its faces as cosmic-text shapes it: the family's at its weight, else the common
-        // fallbacks and those for its scripts, else the closest match. Each character takes
-        // the first that has it, and the first takes what none has.
-        let scripts = on_line
-            .chars()
-            .map(|c| c.script())
-            .fold(Vec::new(), |mut all, script| {
-                if !matches!(
-                    script,
-                    Script::Common | Script::Inherited | Script::Latin | Script::Unknown
-                ) && !all.contains(&script)
-                {
-                    all.push(script);
-                }
-                all
-            });
-        let mut missing: Vec<char> = on_line
-            .chars()
-            .filter(|c| {
-                !c.is_whitespace()
-                    && !matches!(
-                        c,
-                        '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}'
-                            | '\u{FEFF}'
-                    )
-            })
-            .collect();
         let keys = fonts.get_font_matches(&attrs);
         let families = [&attrs.family];
-        let mut faces = cosmic_text::fallback::FontFallbackIter::new(
-            fonts,
-            &keys,
-            &families,
-            &scripts,
-            on_line,
-            attrs.weight,
-        );
-        let Some(first) = faces.next() else {
-            continue;
-        };
-        let mut used = Vec::new();
-        let mut face = Some(first.clone());
-        while let Some(font) = face.filter(|_| !missing.is_empty()) {
-            let map = font.as_swash().charmap();
-            let before = missing.len();
-            missing.retain(|c| map.map(*c) == 0);
-            if missing.len() < before {
-                used.push(font);
+        // cosmic-text shapes it word by word: each stretch up to a break opportunity, less its
+        // trailing whitespace, then each of those whitespace characters alone.
+        let mut words = Vec::new();
+        let mut start = 0;
+        for (end, _) in unicode_linebreak::linebreaks(on_line) {
+            let word = on_line[start..end].trim_end_matches(char::is_whitespace);
+            if !word.is_empty() {
+                words.push(word);
             }
-            face = faces.next();
+            let blank = start + word.len();
+            words.extend(
+                on_line[blank..end]
+                    .char_indices()
+                    .map(|(at, c)| &on_line[blank + at..blank + at + c.len_utf8()]),
+            );
+            start = end;
         }
-        if used.is_empty() || !missing.is_empty() {
-            used.push(first);
-        }
-        for font in used {
-            let metrics = font.metrics();
-            let scale = run.size / f32::from(metrics.units_per_em);
-            ascent = ascent.max(metrics.ascent * scale);
-            descent = descent.max(-metrics.descent * scale);
+        for word in words {
+            // Its faces as cosmic-text shapes it: the family's at its weight, else the common
+            // fallbacks and those for the word's own scripts, else the closest match. Each
+            // character takes the first that has it, and the first takes what none has,
+            // blanks included.
+            let scripts = word
+                .chars()
+                .map(|c| c.script())
+                .fold(Vec::new(), |mut all, script| {
+                    if !matches!(
+                        script,
+                        Script::Common | Script::Inherited | Script::Latin | Script::Unknown
+                    ) && !all.contains(&script)
+                    {
+                        all.push(script);
+                    }
+                    all
+                });
+            let mut missing: Vec<char> = word
+                .chars()
+                .filter(|c| {
+                    !c.is_whitespace()
+                        && !matches!(
+                            c,
+                            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}'
+                                | '\u{FEFF}'
+                        )
+                })
+                .collect();
+            let mut faces = cosmic_text::fallback::FontFallbackIter::new(
+                fonts,
+                &keys,
+                &families,
+                &scripts,
+                word,
+                attrs.weight,
+            );
+            let Some(first) = faces.next() else {
+                continue;
+            };
+            let mut used = Vec::new();
+            let mut face = Some(first.clone());
+            while let Some(font) = face.filter(|_| !missing.is_empty()) {
+                let map = font.as_swash().charmap();
+                let before = missing.len();
+                missing.retain(|c| map.map(*c) == 0);
+                if missing.len() < before {
+                    used.push(font);
+                }
+                face = faces.next();
+            }
+            if used.is_empty() || !missing.is_empty() {
+                used.push(first);
+            }
+            for font in used {
+                let metrics = font.metrics();
+                let scale = run.size / f32::from(metrics.units_per_em);
+                ascent = ascent.max(metrics.ascent * scale);
+                descent = descent.max(-metrics.descent * scale);
+            }
         }
         line = line.max(area.height);
     }
@@ -4135,8 +4766,13 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
             let mut span = text::Span::new(run.text.as_str())
                 .size(Pixels(run.size))
                 .font(font_of(base, run));
-            if let Some(line_size) = run.line_size {
-                let height = line_height_of(leaf).to_absolute(Pixels(line_size));
+            // A line of no height never ends cosmic-text's pass over a buffer's lines, and
+            // `font-size: 0` and `line-height: 0` both ask for one: such a span's line is
+            // the least there is.
+            let line_size = run.line_size.unwrap_or(run.size);
+            let height = line_height_of(leaf).to_absolute(Pixels(line_size)).0;
+            if run.line_size.is_some() || height <= 0.0 {
+                let height = Pixels(height.max(f32::MIN_POSITIVE));
                 span = span.line_height(text::LineHeight::Absolute(height));
             }
             if !run.visible {
@@ -4148,12 +4784,23 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
             span
         })
         .collect();
-    let size = leaf.runs.first().map_or(16.0, |run| run.size);
+    // cosmic-text panics on a buffer whose font size or line height is zero. Every span
+    // carries its own size, so the buffer's own only have to be more than nothing.
+    let size = Pixels(
+        leaf.runs
+            .first()
+            .map_or(16.0, |run| run.size)
+            .max(f32::MIN_POSITIVE),
+    );
+    let mut line_height = line_height_of(leaf);
+    if line_height.to_absolute(size).0 <= 0.0 {
+        line_height = text::LineHeight::Absolute(Pixels(f32::MIN_POSITIVE));
+    }
     Renderer::Paragraph::with_spans(text::Text {
         content: spans.as_slice(),
         bounds: Size::new(width, f32::INFINITY),
-        size: Pixels(size),
-        line_height: line_height_of(leaf),
+        size,
+        line_height,
         font: base,
         // A right-to-left paragraph aligned right draws nothing in iced 0.14, and left shifts by
         // the width; the default draws it at the corner the caller works out. Every such
@@ -4237,7 +4884,10 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
             continue;
         }
         let color = run.color.unwrap_or([0.0; 3]);
-        let thickness = (run.size / 14.0).max(1.0);
+        // 16.3.1: a line takes the color and size of the box that set it.
+        let decoration = |from: Option<(usize, [f32; 3], f32)>| {
+            from.map_or((color, run.size), |(_, color, size)| (color, size))
+        };
         for area in shaped.span_bounds(index) {
             let area = Rectangle {
                 x: area.x + corner.x,
@@ -4325,17 +4975,19 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
                 }
             }
             // Line boxes may be taller than the text: measure from their centre, by size.
-            let line = |offset: f32| Rectangle {
+            let line = |offset: f32, size: f32| Rectangle {
                 x: area.x,
                 y: area.y + area.height / 2.0 + offset,
                 width: area.width,
-                height: thickness,
+                height: (size / 14.0).max(1.0),
             };
             if run.underline {
-                quad(renderer, line(run.size * 0.4), color, 1.0);
+                let (color, size) = decoration(run.underline_from);
+                quad(renderer, line(size * 0.4, size), color, 1.0);
             }
             if run.line_through {
-                quad(renderer, line(0.0), color, 1.0);
+                let (color, size) = decoration(run.line_through_from);
+                quad(renderer, line(0.0, size), color, 1.0);
             }
         }
     }
@@ -4751,8 +5403,10 @@ fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
             word.push(run.clone());
             continue;
         }
-        for chunk in run.text.split_inclusive(char::is_whitespace) {
-            let body = chunk.trim_end();
+        // A no-break space joins its neighbours, so only breaking white space ends a word.
+        let breaks = |c: char| c.is_whitespace() && !matches!(c, '\u{a0}' | '\u{2007}' | '\u{202f}');
+        for chunk in run.text.split_inclusive(breaks) {
+            let body = chunk.trim_end_matches(breaks);
             if !body.is_empty() {
                 word.push(TextRun {
                     text: body.to_owned(),
@@ -4785,6 +5439,56 @@ fn border_bands(border: FlowRect, padding: FlowRect) -> [Rectangle; 4] {
         rectangle(border.left, border.right, padding.bottom, border.bottom),
         rectangle(border.left, padding.left, padding.top, padding.bottom),
     ]
+}
+
+/// Which of the four sides between `border` and `padding` draw `double` as two lines.
+fn double_sides(border: FlowRect, padding: FlowRect, styles: [&str; 4]) -> [bool; 4] {
+    let thick = [
+        padding.top - border.top,
+        border.right - padding.right,
+        border.bottom - padding.bottom,
+        padding.left - border.left,
+    ];
+    std::array::from_fn(|side| styles[side] == "double" && thick[side] >= 3.0)
+}
+
+/// Where two `double` sides meet, their lines join into two rings, as `band_pieces` alone
+/// cannot: the outer line of the left and right sides runs on to the outer line of the top
+/// and bottom, and the inner line of the top and bottom stops at theirs. `pieces` are one
+/// side's two lines, outer first; `doubles` from `double_sides`.
+fn join_double(
+    pieces: &mut [(Rectangle, [f32; 3])],
+    side: usize,
+    border: FlowRect,
+    padding: FlowRect,
+    doubles: [bool; 4],
+) {
+    if !doubles[side] || pieces.len() != 2 {
+        return;
+    }
+    let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    if side == 0 || side == 2 {
+        let inner = &mut pieces[1].0;
+        let (left, right) = (padding.left - border.left, border.right - padding.right);
+        if doubles[1] && near(inner.x + inner.width, border.right) {
+            inner.width = (inner.width - right * 2.0 / 3.0).max(0.0);
+        }
+        if doubles[3] && near(inner.x, border.left) {
+            let cut = (left * 2.0 / 3.0).min(inner.width);
+            inner.x += cut;
+            inner.width -= cut;
+        }
+    } else {
+        let outer = &mut pieces[0].0;
+        let (top, bottom) = (padding.top - border.top, border.bottom - padding.bottom);
+        if doubles[2] && near(outer.y + outer.height, padding.bottom) {
+            outer.height += bottom * 2.0 / 3.0;
+        }
+        if doubles[0] && near(outer.y, padding.top) {
+            outer.y -= top * 2.0 / 3.0;
+            outer.height += top * 2.0 / 3.0;
+        }
+    }
 }
 
 /// The rectangles that draw one side of a border or outline in its 8.5.3 style. The spec
@@ -5014,8 +5718,11 @@ fn draw_outline<Renderer: renderer::Renderer>(
         bottom: inner.bottom + width,
     };
     let style = tree.paints[index].outline_style;
+    let doubles = double_sides(outer, inner, [style; 4]);
     for (side, band) in border_bands(outer, inner).into_iter().enumerate() {
-        for (piece, shade) in band_pieces(band, side, style, color) {
+        let mut pieces = band_pieces(band, side, style, color);
+        join_double(&mut pieces, side, outer, inner, doubles);
+        for (piece, shade) in pieces {
             renderer.fill_quad(
                 Quad {
                     bounds: Rectangle {
@@ -5048,7 +5755,7 @@ fn column_rects(
         }
         let table = columns[first].0;
         let (rows, _) = table_parts(&prepared.boxes, table);
-        let (placed, _) = table_grid(&prepared.boxes, &rows);
+        let (placed, _) = table_grid(&prepared.boxes, table, &rows);
         let (mut top, mut bottom) = (f32::INFINITY, f32::NEG_INFINITY);
         for item in &placed {
             if let Some(cell) = slot_geometry.get(item.cell) {
@@ -5253,6 +5960,10 @@ fn paint_box<Renderer: renderer::Renderer>(
     }
     if parts != BoxParts::Background {
         let bands = border_bands(border, geometry.padding);
+        let mut doubles = double_sides(border, geometry.padding, paint.border_style);
+        for (double, color) in doubles.iter_mut().zip(paint.border) {
+            *double &= color.is_some();
+        }
         for (side, (band, color)) in bands.into_iter().zip(paint.border).enumerate() {
             let Some(color) = color else { continue };
             // What a neighbour won is left out, along the band's length.
@@ -5290,7 +6001,9 @@ fn paint_box<Renderer: renderer::Renderer>(
                 // A side fading to or from transparent: at its opacity. Bands meet without
                 // overlapping, so no corner paints twice.
                 let alpha = paint.border_fade[side].unwrap_or(1.0);
-                for (piece, shade) in band_pieces(part, side, paint.border_style[side], color) {
+                let mut pieces = band_pieces(part, side, paint.border_style[side], color);
+                join_double(&mut pieces, side, border, geometry.padding, doubles);
+                for (piece, shade) in pieces {
                     quad(renderer, piece, shade, alpha);
                 }
             }
@@ -5332,6 +6045,11 @@ where
                     .map(|(shaped, corner, leaf)| (shaped, *corner, leaf));
                 for (shaped, corner, leaf) in std::iter::once((shaped, *corner, leaf)).chain(rest) {
                     let local = Point::new(point.x - corner.x, point.y - corner.y);
+                    // Every run sits on a line between the paragraph's top and bottom, so a
+                    // point above or below them misses without asking the shaper.
+                    if local.y < 0.0 || local.y >= shaped.min_bounds().height {
+                        continue;
+                    }
                     if let Some(span) = shaped.hit_span(local)
                         && let Some(run) = leaf.runs.get(span)
                         && run.visible
@@ -5729,8 +6447,11 @@ where
                 top: inner.top - width,
                 bottom: inner.bottom + width,
             };
+            let doubles = double_sides(outer, inner, [paint.outline_style; 4]);
             for (side, band) in border_bands(outer, inner).into_iter().enumerate() {
-                for (part, shade) in band_pieces(band, side, paint.outline_style, color) {
+                let mut pieces = band_pieces(band, side, paint.outline_style, color);
+                join_double(&mut pieces, side, outer, inner, doubles);
+                for (part, shade) in pieces {
                     renderer.fill_quad(
                         Quad {
                             bounds: part,
@@ -5767,6 +6488,9 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
+        tree.state
+            .downcast_mut::<Interaction>()
+            .follow(&self.base.source);
         tree.diff_children(&self.elements);
     }
 
@@ -5784,8 +6508,11 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let available = limits.max();
-        let interaction = tree.state.downcast_ref::<Interaction>().clone();
-        // A rebuilt view keeps this state; `styled` ignores a node this tree lacks.
+        let state = tree.state.downcast_mut::<Interaction>();
+        // A rebuilt view keeps this state, moved to this capture's nodes; `styled` ignores
+        // a node this tree lacks.
+        state.follow(&self.base.source);
+        let interaction = state.clone();
         let key = (interaction.hovered, interaction.active, interaction.focused);
         if key != self.key {
             self.key = key;
@@ -5794,7 +6521,13 @@ where
         }
         if !self.measured {
             self.measured = true;
-            self.slots = self.ids.iter().map(|id| self.tree.leaf_slot(id)).collect();
+            self.slots = self.tree.leaf_slots(&self.ids);
+            self.slot_owners = vec![None; self.tree.prepared.boxes.len()];
+            for (index, slot) in self.slots.iter().enumerate() {
+                if let Some(owner) = slot.and_then(|arena| self.slot_owners.get_mut(arena)) {
+                    owner.get_or_insert(index);
+                }
+            }
             self.allocations.clear();
             self.loaded.clear();
             for (projected, (_, handle)) in &self.tree.backgrounds {
@@ -5847,7 +6580,8 @@ where
         // gives its spacers room, when the first changed one.
         for pass in 0..2 {
             // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
-            let (elements, slots, children) = (&mut self.elements, &self.slots, &mut tree.children);
+            let (elements, owners, children) =
+                (&mut self.elements, &self.slot_owners, &mut tree.children);
             let current = &self.tree;
             let mut baselines: Baselines = BTreeMap::new();
             self.slot_geometry = current
@@ -5855,7 +6589,7 @@ where
                     available.width,
                     Some(available.height),
                     &mut |arena, width| {
-                        if let Some(index) = slots.iter().position(|slot| *slot == Some(arena)) {
+                        if let Some(index) = owners.get(arena).copied().flatten() {
                             // A Fill-height widget takes what the box has, and asks for nothing.
                             if elements[index].as_widget().size().height.is_fill() {
                                 return Some(0.0);
@@ -5895,8 +6629,11 @@ where
                     },
                 )
                 .unwrap_or_default();
-            let before = self.tree.texts.clone();
-            if pass == 1 || !self.tree.apply_percent_indents(&self.slot_geometry) {
+            if pass == 1 {
+                break;
+            }
+            let before = self.tree.percent_leaves();
+            if !self.tree.apply_percent_indents(&self.slot_geometry) {
                 break;
             }
             // Their spaces are text a shrink-to-fit box fits.
@@ -5905,7 +6642,7 @@ where
                 (narrowest_width(renderer, leaf), longest)
             });
         }
-        let slots = &self.slots;
+        let owners = &self.slot_owners;
         self.canvas_height = available.height;
         self.canvas_width = available.width;
         let originals = &self.tree.originals;
@@ -5928,7 +6665,9 @@ where
                 // the width rounded the same way. Split text already sized its box.
                 let leaf = texts[arena].as_ref().filter(|leaf| !leaf.is_empty())?;
                 let auto_height = boxes[arena].height == Dim::Auto;
-                if (geometry.leaf_after.is_some() && auto_height) || slots.contains(&Some(arena)) {
+                if (geometry.leaf_after.is_some() && auto_height)
+                    || owners.get(arena).is_some_and(Option::is_some)
+                {
                     return None;
                 }
                 let place = geometry.leaf_band.unwrap_or(geometry.content);
@@ -5983,7 +6722,7 @@ where
             let Some(geometry) = self.slot_geometry.get(arena) else {
                 continue;
             };
-            if self.slots.contains(&Some(arena)) {
+            if self.slot_owners.get(arena).is_some_and(Option::is_some) {
                 continue;
             }
             let place = geometry.leaf_band.unwrap_or(geometry.content);
@@ -6050,21 +6789,11 @@ where
             }
             // A paragraph aligns its lines within its widest line and draws from that
             // block's corner: place the block in the content box.
-            let block = paragraph::<Renderer>(renderer, leaf, width)
-                .min_bounds()
-                .width;
-            let corner = Point::new(
-                match leaf.align {
-                    "center" => place.left + (width - block) / 2.0,
-                    "right" => place.left + width - block,
-                    _ => place.left,
-                },
-                place.top,
-            );
-            self.paragraphs.insert(
-                arena,
-                (paragraph(renderer, leaf, width), corner, Color::BLACK),
-            );
+            // Shaped once: the same paragraph gives the block width and is stored.
+            let shaped: Renderer::Paragraph = paragraph(renderer, leaf, width);
+            let corner = block_corner(shaped.min_bounds().width, place, width, place.top);
+            self.paragraphs
+                .insert(arena, (shaped, corner, Color::BLACK));
         }
         self.steps = self.tree.paint_steps(&self.embedded());
         self.marker_paragraphs.clear();
@@ -6106,7 +6835,17 @@ where
                         .layout(&mut tree.children[index], renderer, &limits)
                         .move_to(Point::new(place.left, place.top))
                 }
-                None => layout::Node::new(Size::ZERO),
+                // No box: no size, but the widget's own node shape, which its `operate`
+                // and `overlay` still walk.
+                None => {
+                    let limits = layout::Limits::new(Size::ZERO, Size::ZERO);
+                    let node = element.as_widget_mut().layout(
+                        &mut tree.children[index],
+                        renderer,
+                        &limits,
+                    );
+                    layout::Node::with_children(Size::ZERO, node.children().to_vec())
+                }
             };
             nodes.push(node);
         }
@@ -6200,30 +6939,51 @@ where
                 .focused
                 .filter(|node| self.takes_focus(*node));
             let mut hosts = Vec::new();
+            // Tab within a host: the element and which of its focusables takes the focus.
+            let mut within = None;
             let next = match key.as_ref() {
                 keyboard::Key::Named(keyboard::key::Named::Tab) => {
                     // A widget focused by a click counts as where Tab starts from.
                     hosts = self.focus_hosts(tree, layout, renderer);
                     for &(index, node) in &hosts {
-                        let mut found = HostFocus::IsFocused(false);
+                        let mut found = HostFocus::Find {
+                            count: 0,
+                            focused: None,
+                        };
                         self.operate_host(tree, layout, renderer, index, &mut found);
-                        if matches!(found, HostFocus::IsFocused(true)) {
+                        if let HostFocus::Find {
+                            count,
+                            focused: Some(at),
+                        } = found
+                        {
                             focused = Some(node);
+                            // Through a host's focusables before leaving it.
+                            let step = if modifiers.shift() {
+                                at.checked_sub(1)
+                            } else {
+                                (at + 1 < count).then_some(at + 1)
+                            };
+                            within = step.map(|to| (index, to));
                         }
                     }
-                    let order = self.tab_order(&hosts);
-                    if order.is_empty() {
-                        return;
+                    if within.is_some() {
+                        focused
+                    } else {
+                        let order = self.tab_order(&hosts);
+                        if order.is_empty() {
+                            return;
+                        }
+                        let at =
+                            focused.and_then(|node| order.iter().position(|item| *item == node));
+                        let count = order.len();
+                        let index = match (at, modifiers.shift()) {
+                            (Some(index), false) => (index + 1) % count,
+                            (Some(index), true) => (index + count - 1) % count,
+                            (None, false) => 0,
+                            (None, true) => count - 1,
+                        };
+                        Some(order[index])
                     }
-                    let at = focused.and_then(|node| order.iter().position(|item| *item == node));
-                    let count = order.len();
-                    let index = match (at, modifiers.shift()) {
-                        (Some(index), false) => (index + 1) % count,
-                        (Some(index), true) => (index + count - 1) % count,
-                        (None, false) => 0,
-                        (None, true) => count - 1,
-                    };
-                    Some(order[index])
                 }
                 keyboard::Key::Named(keyboard::key::Named::Escape) if focused.is_some() => None,
                 keyboard::Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space)
@@ -6248,13 +7008,30 @@ where
             };
             // Every element, hidden ones too: their widgets keep their state.
             for index in 0..self.elements.len() {
-                let target = hosts
+                let entered = hosts
                     .iter()
                     .any(|&(host, node)| host == index && next == Some(node));
-                let mut change = if target {
-                    HostFocus::Focus(true)
-                } else {
-                    HostFocus::Unfocus
+                let mut change = match within {
+                    Some((host, target)) if host == index => HostFocus::Focus { target, seen: 0 },
+                    Some(_) => HostFocus::Unfocus,
+                    // Backward, a host is entered at its last focusable.
+                    None if entered && modifiers.shift() => {
+                        let mut found = HostFocus::Find {
+                            count: 0,
+                            focused: None,
+                        };
+                        self.operate_host(tree, layout, renderer, index, &mut found);
+                        let count = match found {
+                            HostFocus::Find { count, .. } => count,
+                            _ => 0,
+                        };
+                        HostFocus::Focus {
+                            target: count.saturating_sub(1),
+                            seen: 0,
+                        }
+                    }
+                    None if entered => HostFocus::Focus { target: 0, seen: 0 },
+                    None => HostFocus::Unfocus,
                 };
                 self.operate_host(tree, layout, renderer, index, &mut change);
             }
@@ -6277,14 +7054,22 @@ where
             }
             return;
         }
-        let Event::Mouse(mouse_event) = event else {
-            return;
+        // A finger presses and lifts as the left button does; iced moves the cursor to it.
+        let (pressed, released) = match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            | Event::Touch(touch::Event::FingerPressed { .. }) => (true, false),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+            | Event::Touch(touch::Event::FingerLifted { .. } | touch::Event::FingerLost { .. }) => {
+                (false, true)
+            }
+            Event::Mouse(_) | Event::Touch(_) => (false, false),
+            _ => return,
         };
-        let bounds = layout.bounds();
-        let hit = cursor.position_in(bounds).and_then(|point| self.hit(point));
+        // The same point over the same boxes as `top`: the children change neither.
+        let hit = top;
         let focus_after_press = self.focus_target(hit);
         let state = tree.state.downcast_mut::<Interaction>();
-        if let mouse::Event::WheelScrolled { delta } = mouse_event {
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
             if shell.is_event_captured() {
                 return;
             }
@@ -6359,19 +7144,17 @@ where
         }
         let mut next = state.clone();
         next.hovered = hit;
-        match mouse_event {
-            mouse::Event::ButtonPressed(mouse::Button::Left) => {
-                next.active = hit;
-                next.focused = focus_after_press;
-                if !shell.is_event_captured()
-                    && let Some(message) = self.press_message(hit)
-                {
-                    shell.publish(message);
-                    shell.capture_event();
-                }
+        if pressed {
+            next.active = hit;
+            next.focused = focus_after_press;
+            if !shell.is_event_captured()
+                && let Some(message) = self.press_message(hit)
+            {
+                shell.publish(message);
+                shell.capture_event();
             }
-            mouse::Event::ButtonReleased(mouse::Button::Left) => next.active = None,
-            _ => {}
+        } else if released {
+            next.active = None;
         }
         if next != *state {
             let key = (next.hovered, next.active, next.focused);
@@ -6415,10 +7198,8 @@ where
             })
             .max()
             .unwrap_or_default();
-        if inner == mouse::Interaction::default()
-            && let Some(point) = cursor.position_in(layout.bounds())
-        {
-            let hit = self.hit(point);
+        if inner == mouse::Interaction::default() && top.is_some() {
+            let hit = top;
             if let Some(chosen) = hit
                 .and_then(|node| self.tree.originals.iter().position(|value| *value == node))
                 .and_then(|projected| css_cursor(self.tree.paints[projected].cursor))
@@ -6443,6 +7224,11 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
+        // Layers are absolute in iced: one clipped to these bounds alone would paint past a
+        // clipping ancestor, such as a scrollable this view is taller than.
+        let Some(visible) = bounds.intersection(viewport) else {
+            return;
+        };
         let origin = bounds.position();
         let embedded = self.embedded();
         let steps = self.tree.drawn_steps(&embedded);
@@ -6475,8 +7261,8 @@ where
                     bottom: clip.bottom.min(more.bottom),
                 }));
             }
-            clip.map_or(bounds, |clip| {
-                bounds
+            clip.map_or(visible, |clip| {
+                visible
                     .intersection(&Rectangle {
                         x: clip.left + origin.x,
                         y: clip.top + origin.y,
@@ -6499,6 +7285,36 @@ where
                 Color::from_rgba(color[0], color[1], color[2], fade.unwrap_or(1.0)),
             );
         }
+        // The canvas scrolls with the root, unlike any other scroller's own box: where the
+        // root's box is drawn, shifted by its clamped scroll.
+        let root_origin = {
+            let interaction = tree.state.downcast_ref::<Interaction>();
+            let root = prepared.positions.first().map(|(root, _)| *root);
+            let original = root.and_then(|root| self.tree.originals.get(root));
+            let limits = self.scroll_limits.first().copied().unwrap_or((0.0, 0.0));
+            let scrolled = original
+                .and_then(|original| interaction.scrolled.get(original))
+                .copied()
+                .unwrap_or(0.0)
+                .clamp(0.0, limits.0);
+            let across = original
+                .and_then(|original| interaction.scrolled_x.get(original))
+                .copied()
+                .unwrap_or(0.0)
+                .clamp(0.0, limits.1);
+            let rtl = prepared
+                .boxes
+                .first()
+                .is_some_and(|root| root.direction == Direction::Rtl);
+            Point::new(
+                if rtl {
+                    origin.x + across
+                } else {
+                    origin.x - across
+                },
+                origin.y - scrolled,
+            )
+        };
         // 14.2: the root's image covers the canvas too, placed against the root box.
         let viewport_box = bounds;
         if let Some(background) = prepared
@@ -6510,40 +7326,10 @@ where
             let positioning = if background.0.fixed {
                 viewport_box
             } else {
-                // The canvas scrolls with the root, unlike any other scroller's background.
-                let scrolled = tree
-                    .state
-                    .downcast_ref::<Interaction>()
-                    .scrolled
-                    .get(&self.tree.originals[prepared.positions[0].0])
-                    .copied()
-                    .unwrap_or(0.0)
-                    .clamp(
-                        0.0,
-                        self.scroll_limits.first().map_or(0.0, |limits| limits.0),
-                    );
-                let across = tree
-                    .state
-                    .downcast_ref::<Interaction>()
-                    .scrolled_x
-                    .get(&self.tree.originals[prepared.positions[0].0])
-                    .copied()
-                    .unwrap_or(0.0)
-                    .clamp(
-                        0.0,
-                        self.scroll_limits.first().map_or(0.0, |limits| limits.1),
-                    );
-                let mut placed = moved_rectangle(geometry.padding, origin);
-                placed.y -= scrolled;
-                if prepared.boxes[0].direction == Direction::Rtl {
-                    placed.x += across;
-                } else {
-                    placed.x -= across;
-                }
-                placed
+                moved_rectangle(geometry.padding, root_origin)
             };
-            renderer.with_layer(bounds, |renderer| {
-                draw_background_image(renderer, background, positioning, bounds);
+            renderer.with_layer(visible, |renderer| {
+                draw_background_image(renderer, background, positioning, visible);
             });
         }
         // A layer draws its text and images over its quads, so anything painted after them
@@ -6572,7 +7358,7 @@ where
                                     &self.tree,
                                     &self.geometry,
                                     renderer,
-                                    origin,
+                                    root_origin,
                                     index,
                                     BoxParts::Border,
                                 ),
@@ -6652,6 +7438,11 @@ where
                             if inline {
                                 self.draw_inline_outline(renderer, origin, index);
                             } else {
+                                let origin = if index == prepared.positions[0].0 {
+                                    root_origin
+                                } else {
+                                    origin
+                                };
                                 draw_outline(&self.tree, &self.geometry, renderer, origin, index);
                             }
                         }
@@ -6713,8 +7504,7 @@ where
                                 draw_run_decorations(leaf, shaped, renderer, corner);
                                 renderer.fill_paragraph(shaped, corner, Color::BLACK, clip);
                             }
-                            if let Some(index) =
-                                self.slots.iter().position(|slot| *slot == Some(arena))
+                            if let Some(index) = self.slot_owners.get(arena).copied().flatten()
                                 && let Some(child_layout) = layout.children().nth(index)
                                 && self.visible_slot(index).is_some()
                             {
@@ -6725,7 +7515,9 @@ where
                                     style,
                                     child_layout,
                                     self.child_cursor(index, cursor, top, pressed),
-                                    viewport,
+                                    // Layers do not nest: a widget opening its own clips
+                                    // to this, and must not paint past a clipping box.
+                                    &clip,
                                 );
                             }
                         }
@@ -6735,7 +7527,7 @@ where
             start = end;
         }
         // A plain position indicator at each scrolled box's right padding edge.
-        renderer.with_layer(bounds, |renderer| {
+        renderer.with_layer(visible, |renderer| {
             let interaction = tree.state.downcast_ref::<Interaction>();
             for (arena, &(limit, limit_x)) in self.scroll_limits.iter().enumerate() {
                 let Some(geometry) = self.slot_geometry.get(arena) else {
@@ -6847,6 +7639,48 @@ mod tests {
     use crate::capture::adapters;
     use iced::{Background, Theme, Transformation};
     use iced_css_core::source::AttributeLimits;
+
+    fn collapsed(runs: &[(&str, &'static str)]) -> Vec<String> {
+        let mut texts: Vec<_> = runs
+            .iter()
+            .map(|&(text, mode)| (text.to_owned(), mode))
+            .collect();
+        collapse(&mut texts);
+        texts.into_iter().map(|(text, _)| text).collect()
+    }
+
+    #[test]
+    fn a_collapsible_space_after_a_preserved_one_stays() {
+        assert_eq!(collapsed(&[("a ", "pre"), (" b", "normal")]), ["a ", " b"]);
+        assert_eq!(collapsed(&[("a", "pre"), ("  b", "normal")]), ["a", " b"]);
+    }
+
+    #[test]
+    fn a_form_feed_is_no_collapsible_space() {
+        assert_eq!(collapsed(&[("a\x0Cb", "normal")]), ["a\x0Cb"]);
+        assert_eq!(collapsed(&[("a \x0C b", "normal")]), ["a \x0C b"]);
+    }
+
+    #[test]
+    fn a_preserved_newline_drops_the_space_ending_an_earlier_run() {
+        assert_eq!(
+            collapsed(&[("total ", "pre-line"), ("\n42", "pre-line")]),
+            ["total", "\n42"]
+        );
+        assert_eq!(
+            collapsed(&[
+                ("total ", "normal"),
+                ("", PLACEHOLDER),
+                ("\n42", "pre-line")
+            ]),
+            ["total", "", "\n42"]
+        );
+        // A preserved space stays.
+        assert_eq!(
+            collapsed(&[("total ", "pre"), ("\n42", "pre-line")]),
+            ["total ", "\n42"]
+        );
+    }
 
     #[derive(Default)]
     struct Recording(Vec<(Rectangle, Color)>);
@@ -7030,6 +7864,45 @@ mod tests {
     }
 
     #[test]
+    fn only_leaves_a_percentage_can_rewrite_are_copied_for_the_second_layout() {
+        let plain = BoxTree::new(
+            node("p", vec![]),
+            "#p { width:200px; } #p:before { content:\"words\"; }",
+        )
+        .unwrap();
+        assert!(plain.texts.iter().flatten().count() > 0);
+        assert!(plain.percent_leaves().is_empty());
+        for css in [
+            "#p { width:200px; text-indent:25%; } #p:before { content:\"words\"; }",
+            "#p { width:200px; text-indent:-25%; } #p:before { content:\"words\"; }",
+            "#p { width:200px; } #p:before { content:\"words\"; padding:10%; margin:0 5%; }",
+            "#p { width:200px; direction:rtl; }
+             #p:before { content:\"words\"; padding-left:10%; }",
+        ] {
+            let mut tree = BoxTree::new(node("p", vec![]), css).unwrap();
+            let geometry = tree
+                .layout_arena(
+                    800.0,
+                    None,
+                    &mut |_, _| Some(20.0),
+                    &mut |_, _, _, _| None,
+                    &mut |_, _, _| None,
+                )
+                .unwrap();
+            let all = tree.texts.clone();
+            let copied = tree.percent_leaves();
+            tree.apply_percent_indents(&geometry);
+            let rewritten: Vec<usize> = (0..all.len())
+                .filter(|arena| all[*arena] != tree.texts[*arena])
+                .collect();
+            assert!(!rewritten.is_empty(), "{css}");
+            for arena in rewritten {
+                assert!(copied.iter().any(|(at, _)| *at == arena), "{css}");
+            }
+        }
+    }
+
+    #[test]
     fn clip_stops_what_a_scroller_can_reach() {
         let scroller = "#box { overflow:auto; width:100px; height:40px; position:relative; }";
         // Cut to 150 by 60 from 300 by 90: 50 across and 20 down past the 100 by 40 box.
@@ -7160,6 +8033,65 @@ mod tests {
         assert_eq!(limits[1].1, 40.0);
         assert_eq!(geometry[1].content.left, left - 15.0);
         assert_eq!(geometry[1].padding, padding);
+    }
+
+    #[test]
+    fn a_local_image_url_is_a_relative_url_under_the_base() {
+        let root = std::env::temp_dir().join(format!("local-image-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let base = root.join("base");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("my tile.png"), b"").unwrap();
+        let at = |name: &str| Some(image::Handle::from_path(base.join(name)));
+        assert_eq!(local_image(&base, "my%20tile.png"), at("my tile.png"));
+        assert_eq!(local_image(&base, "tile.png?v=2"), at("tile.png"));
+        assert_eq!(local_image(&base, "sprite.png#icon"), at("sprite.png"));
+        // Escapes decode to no separators and no way out.
+        assert_eq!(local_image(&base, "a%2Fb.png"), None);
+        assert_eq!(local_image(&base, "%2e%2e/x.png"), None);
+        assert_eq!(local_image(&base, "a%00.png"), None);
+        #[cfg(unix)]
+        {
+            let outside = root.join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(outside.join("private.png"), b"").unwrap();
+            std::os::unix::fs::symlink(&outside, base.join("link")).unwrap();
+            assert_eq!(local_image(&base, "link/private.png"), None);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_scroller_shrunk_below_its_content_never_gets_a_negative_limit() {
+        let tree = BoxTree::new(
+            node("page", vec![node("line", vec![])]),
+            "#line { overflow:auto; width:60px; height:20px; }",
+        )
+        .unwrap();
+        let mut geometry: Vec<FlowGeometry> = tree
+            .layout(800.0, Some(600.0))
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        // As a hidden row's stretch leaves a cell: its edges above its content's end.
+        geometry[1].padding.bottom -= 20.0;
+        geometry[1].border.bottom -= 20.0;
+        let limits = apply_scrolling(
+            &tree.prepared,
+            &mut geometry,
+            |_| (5.0, 0.0),
+            |arena, _| {
+                (arena == 1).then_some(TextExtent {
+                    height: 10.0,
+                    from: 0.0,
+                    to: 10.0,
+                })
+            },
+            |_, _| None,
+            Size::new(800.0, 600.0),
+        );
+        assert_eq!(limits[1], (0.0, 0.0));
     }
 
     #[test]
@@ -7314,6 +8246,22 @@ mod tests {
             let reach = PseudoReach::of(&[css.to_owned()], ":hover");
             assert!(reach.any, "{css:?}");
         }
+        // Whitespace of more than one byte before the name, in a selector or a comment.
+        for pseudo in [":hover", ":active", ":focus"] {
+            for space in ['\u{a0}', '\u{85}', '\u{2003}', '\u{3000}'] {
+                let reach = PseudoReach::of(&[format!("a{space}b{pseudo}{{color:red}}")], pseudo);
+                assert!(reach.any, "{space:?} {pseudo}");
+                let reach = PseudoReach::of(
+                    &[format!(
+                        "/* x{space}{pseudo} */ p{space}#a{pseudo}{{color:red}}"
+                    )],
+                    pseudo,
+                );
+                assert!(reach.any, "{space:?} {pseudo}");
+                assert!(reach.ids.contains("a"), "{space:?} {pseudo}");
+            }
+        }
+        assert!(BoxTree::new(node("a", vec![]), "a\u{a0}b:hover{color:red}").is_ok());
         // A comment after the colon, and a name whose lowercase depends on its context.
         let shown = tree("#a:/**/hover { color:#ff0000; }");
         assert_eq!(
@@ -7344,6 +8292,55 @@ mod tests {
     }
 
     #[test]
+    fn the_styling_cache_drops_the_one_unused_longest_and_keeps_the_one_shown() {
+        let count = VARIANT_LIMIT + 6;
+        let children: Vec<_> = (0..count)
+            .map(|at| node(&format!("c{at}"), vec![]))
+            .collect();
+        let css: String = (0..count)
+            .map(|at| format!("#c{at}:hover {{ color:#ff0000; }}"))
+            .collect();
+        let shown = BoxTree::new(node("page", children), &css).unwrap();
+        let card = |at: usize| {
+            let id = format!("c{at}");
+            let found = shown
+                .ids
+                .iter()
+                .position(|value| value.as_deref() == Some(&*id));
+            (Some(shown.originals[found.unwrap()]), None, None)
+        };
+        let cached = |key: InteractionKey| {
+            let variants = shown.source.variants.lock().unwrap();
+            variants
+                .styles
+                .get(&key)
+                .map(|(_, style)| Arc::clone(style))
+        };
+        let none = (None, None, None);
+        // The sheets are parsed once, and the styling with no interaction is kept: a first
+        // hover cascades the hovered state alone.
+        assert!(shown.source.parsed.get().is_some());
+        let unstated = cached(none).expect("the first styling is kept");
+        assert!(!shown.same_variant(card(0), none));
+        assert!(Arc::ptr_eq(&unstated, &cached(none).unwrap()));
+        // A sweep over more boxes than the cache holds, one box shown throughout.
+        let first = cached(card(0)).unwrap();
+        for at in 1..count {
+            assert!(!shown.same_variant(card(at), card(0)));
+            assert!(Arc::ptr_eq(&first, &cached(card(0)).unwrap()), "{at}");
+        }
+        assert_eq!(
+            shown.source.variants.lock().unwrap().styles.len(),
+            VARIANT_LIMIT
+        );
+        // The latest stay, the earliest went, and not everything at once.
+        assert!(cached(card(count - 1)).is_some());
+        assert!(cached(card(count - 2)).is_some());
+        assert!(cached(none).is_none());
+        assert!(cached(card(1)).is_none());
+    }
+
+    #[test]
     fn a_cascade_too_large_to_finish_is_refused() {
         let children: Vec<_> = (0..20_000)
             .map(|at| node(&format!("c{at}"), vec![]))
@@ -7354,6 +8351,46 @@ mod tests {
         // A sheet well past 100,000 characters is ordinary.
         let css = "a{color:red}".repeat(10_000);
         assert!(BoxTree::new(node("page", vec![]), &css).is_ok());
+    }
+
+    #[test]
+    fn double_sides_join_into_two_rings() {
+        let border = FlowRect {
+            left: 0.0,
+            right: 30.0,
+            top: 0.0,
+            bottom: 30.0,
+        };
+        let padding = FlowRect {
+            left: 9.0,
+            right: 21.0,
+            top: 9.0,
+            bottom: 21.0,
+        };
+        let doubles = double_sides(border, padding, ["double"; 4]);
+        assert_eq!(doubles, [true; 4]);
+        let pieces: Vec<Vec<Rectangle>> = border_bands(border, padding)
+            .into_iter()
+            .enumerate()
+            .map(|(side, band)| {
+                let mut pieces = band_pieces(band, side, "double", [0.0; 3]);
+                join_double(&mut pieces, side, border, padding, doubles);
+                pieces.into_iter().map(|piece| piece.0).collect()
+            })
+            .collect();
+        // The top's inner line stops at the sides' inner lines; the left's outer line runs
+        // up to the top's outer line, leaving no notch.
+        assert_eq!(pieces[0][0], rectangle(0.0, 30.0, 0.0, 3.0));
+        assert_eq!(pieces[0][1], rectangle(6.0, 24.0, 6.0, 9.0));
+        assert_eq!(pieces[3][0], rectangle(0.0, 3.0, 3.0, 27.0));
+        assert_eq!(pieces[3][1], rectangle(6.0, 9.0, 9.0, 21.0));
+        assert_eq!(pieces[2][1], rectangle(6.0, 24.0, 21.0, 24.0));
+        assert_eq!(pieces[1][0], rectangle(27.0, 30.0, 3.0, 27.0));
+        // Beside a solid side, a double one keeps its lines as they were.
+        let mixed = double_sides(border, padding, ["double", "solid", "double", "solid"]);
+        let mut top = band_pieces(border_bands(border, padding)[0], 0, "double", [0.0; 3]);
+        join_double(&mut top, 0, border, padding, mixed);
+        assert_eq!(top[1].0, rectangle(0.0, 30.0, 6.0, 9.0));
     }
 
     #[test]
@@ -7452,14 +8489,17 @@ mod tests {
 
     #[test]
     fn a_refused_interaction_is_remembered_and_keeps_the_style() {
-        // Deep enough that this selector's backtracking overruns its budget, only on hover.
+        // Deep enough that comparing this selector's long id overruns its budget, only on hover.
         let mut deep = node("leaf", vec![]);
         for at in 0..200 {
             deep = node(&format!("n{at}"), vec![deep]);
         }
         let tree = BoxTree::new(
             deep,
-            "#nope * * * * * *:hover { color:#ff0000; } #leaf { color:#00ff00; }",
+            &format!(
+                "#{} *:hover {{ color:#ff0000; }} #leaf {{ color:#00ff00; }}",
+                "n".repeat(10_000)
+            ),
         )
         .unwrap();
         let key = (Some(tree.originals[tree.originals.len() - 1]), None, None);

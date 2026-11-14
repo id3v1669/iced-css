@@ -61,6 +61,7 @@ fn run(
         FlowLimits {
             boxes: bound(),
             depth: nz(32),
+            work: nz(1_000_000),
         },
         measure,
     )
@@ -219,6 +220,27 @@ fn absolute_stretches_between_offsets_and_fixed_uses_the_viewport() {
 }
 
 #[test]
+fn auto_height_absolute_box_gives_percent_heights_no_basis() {
+    // 10.5: the height comes from content, so the child's percentage computes to auto.
+    let g = solved(
+        "#a { position:absolute; top:0; min-height:100px; }
+         #a1 { height:50%; }
+         #a2 { height:40px; }",
+    );
+    assert_eq!((g[A1].border.top, g[A1].border.bottom), (0.0, 0.0));
+    assert_eq!((g[A2].border.top, g[A2].border.bottom), (0.0, 40.0));
+    assert_eq!(g[A].border.bottom, 100.0);
+    // With top and bottom both set the height is definite.
+    let g = solved(
+        "#a { position:absolute; top:0; bottom:0; }
+         #a1 { height:50%; }
+         #a2 { height:40px; }",
+    );
+    assert_eq!(g[A1].border.bottom, 200.0);
+    assert_eq!(g[A2].border.top, 200.0);
+}
+
+#[test]
 fn overflow_establishes_a_bfc_that_avoids_floats() {
     let g = solved(
         "#a1 { float:left; width:50px; height:20px; }
@@ -258,6 +280,23 @@ fn relative_percent_top_of_an_auto_height_parent_is_auto() {
     let g = solved(
         "#a { height:100px; }
          #a1 { position:relative; top:50%; height:4px; }",
+    );
+    assert_eq!(g[A1].border.top, 50.0);
+}
+
+#[test]
+fn relative_percent_top_resolves_against_the_containing_block_core_used() {
+    // A percentage height of an auto-height block is auto, so its child's top is too.
+    let g = solved(
+        "#a { height:50%; }
+         #a1 { position:relative; top:50%; height:4px; }
+         #a2 { height:96px; }",
+    );
+    assert_eq!(g[A1].border.top, 0.0);
+    // A line of inline-blocks hands its block's containing block through.
+    let g = solved(
+        "#a { height:100px; }
+         #a1 { display:inline-block; position:relative; top:50%; height:4px; }",
     );
     assert_eq!(g[A1].border.top, 50.0);
 }

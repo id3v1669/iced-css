@@ -174,3 +174,55 @@ fn pinned_quote_numeric_brahmic_and_ignored_context_targets() {
         assert_eq!(actual, expected, "{source:?}");
     }
 }
+#[test]
+fn class_specific_rules_each_decide_one_literal_pair() {
+    use LineBreakKind::*;
+    for (source, expected) in [
+        // LB11 WJ on both sides.
+        ("a\u{2060}b", vec![(5, Mandatory)]),
+        // LB12a and LB12; LB12a does not hold after SP or HY.
+        ("a\u{a0}b", vec![(4, Mandatory)]),
+        (" \u{a0}a", vec![(1, Optional), (4, Mandatory)]),
+        ("a-\u{a0}b", vec![(2, Optional), (5, Mandatory)]),
+        // LB17 B2 SP* × B2.
+        ("\u{2014}\u{2014}", vec![(6, Mandatory)]),
+        ("\u{2014} \u{2014}", vec![(7, Mandatory)]),
+        // LB20 ÷ CB ÷.
+        (
+            "a\u{fffc}b",
+            vec![(1, Optional), (4, Optional), (5, Mandatory)],
+        ),
+        // LB20a word-initial hyphen; LB21 × HY otherwise allows a break after it.
+        ("-a", vec![(2, Mandatory)]),
+        (" -a", vec![(1, Optional), (3, Mandatory)]),
+        ("a-b", vec![(2, Optional), (3, Mandatory)]),
+        // LB21 × BA (TAB) and BB × (ACUTE ACCENT).
+        ("a\tb", vec![(2, Optional), (3, Mandatory)]),
+        ("a\u{b4}b", vec![(1, Optional), (4, Mandatory)]),
+        // LB21a HL HY × and LB21b SY × HL.
+        ("\u{5d0}-a", vec![(4, Mandatory)]),
+        ("/\u{5d0}", vec![(3, Mandatory)]),
+        ("/a", vec![(1, Optional), (2, Mandatory)]),
+        // LB22 × IN.
+        ("a\u{2026}", vec![(4, Mandatory)]),
+        ("\u{2026}a", vec![(3, Optional), (4, Mandatory)]),
+        // LB26 Korean syllable blocks and LB27 Hangul with PO.
+        ("\u{1100}\u{1161}", vec![(6, Mandatory)]),
+        ("\u{ac00}\u{11a8}", vec![(6, Mandatory)]),
+        ("\u{ac00}\u{ac00}", vec![(3, Optional), (6, Mandatory)]),
+        ("\u{ac00}%", vec![(4, Mandatory)]),
+        ("\u{ac00}a", vec![(3, Optional), (4, Mandatory)]),
+        // LB30b EB × EM.
+        ("\u{1f466}\u{1f3fb}", vec![(8, Mandatory)]),
+        ("\u{1f466}\u{1f466}", vec![(4, Optional), (8, Mandatory)]),
+        ("a\u{1f3fb}", vec![(1, Optional), (5, Mandatory)]),
+    ] {
+        let r = evaluate_line_boundaries(source, limits()).unwrap();
+        let actual: Vec<_> = r
+            .opportunities()
+            .iter()
+            .map(|v| (v.offset(), v.kind()))
+            .collect();
+        assert_eq!(actual, expected, "{source:?}");
+    }
+}

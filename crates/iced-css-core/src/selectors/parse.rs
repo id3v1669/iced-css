@@ -334,10 +334,12 @@ impl<'a> Parser<'a> {
             let test = match look.token.kind {
                 TokenKind::Hash => {
                     self.take()?;
+                    // A HASH name may start with a digit or "-digit"; an ID
+                    // selector's must be an identifier (CSS 2.2 5.9).
                     Some(SimpleSelector::Id(self.name(
                         &look.token.raw[1..],
                         look.start + 1,
-                        false,
+                        true,
                         false,
                     )?))
                 }

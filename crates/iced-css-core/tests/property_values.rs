@@ -1265,6 +1265,15 @@ fn unverified_weight_spellings_are_explicit_errors_not_guessed_validity() {
             Err(PropertyError::UnimplementedNumericSpelling(_))
         ));
     }
+    // A number that names none of the nine weights is plainly invalid: the
+    // declaration is dropped, the stylesheet is not aborted.
+    for value in ["150", "550", "1000", "0", "1.5", "-100", "+150", "100.5"] {
+        assert_eq!(
+            parse(&format!("font-weight:{value}")).unwrap(),
+            PropertyResult::Invalid,
+            "{value}"
+        );
+    }
     let PropertyResult::Parsed(actual) = parse("font-weight:700").unwrap() else {
         panic!()
     };

@@ -399,17 +399,11 @@ impl Integer {
     }
     /// The value saturated to `i32`, for orderings such as stacking.
     pub fn saturating_i32(&self) -> i32 {
-        let magnitude = self
-            .magnitude
-            .0
-            .iter()
-            .rev()
-            .fold(0_i64, |total, limb| {
-                total
-                    .saturating_mul(BASE as i64)
-                    .saturating_add(i64::from(*limb))
-            })
-            .min(i64::from(i32::MAX));
+        let magnitude = self.magnitude.0.iter().rev().fold(0_i64, |total, limb| {
+            total
+                .saturating_mul(BASE as i64)
+                .saturating_add(i64::from(*limb))
+        });
         let signed = if self.negative { -magnitude } else { magnitude };
         i32::try_from(signed).unwrap_or(if self.negative { i32::MIN } else { i32::MAX })
     }

@@ -86,23 +86,43 @@ fn attribute<'a>(
     charge(work, cost)?;
     Ok(metadata.attribute(key))
 }
+/// Comparisons one binary search or one sort pass over `count` items pays.
+fn log_cost(count: usize) -> usize {
+    (usize::BITS - count.leading_zeros()).max(1) as usize
+}
+/// Sorts `items`, first paying `unit` work per comparison over the sort's
+/// `count * log2(count)` bound.
+fn sort_charged<T: Ord>(
+    items: &mut [T],
+    unit: usize,
+    work: &mut usize,
+) -> Result<(), SelectorTreeError> {
+    let cost = items
+        .len()
+        .checked_mul(log_cost(items.len()))
+        .and_then(|count| count.checked_mul(unit))
+        .ok_or(SelectorTreeError::Work)?;
+    charge(work, cost)?;
+    items.sort_unstable();
+    Ok(())
+}
 fn find(
-    elements: &[SelectorElement<'_>],
+    by_instance: &[(InstanceId, usize)],
     id: InstanceId,
     work: &mut usize,
 ) -> Result<ElementIndex, SelectorTreeError> {
-    for (index, element) in elements.iter().enumerate() {
-        charge(work, 1)?;
-        if element.node.instance == id {
-            return Ok(ElementIndex(index));
-        }
-    }
-    Err(SelectorTreeError::UnknownInstance)
+    charge(work, log_cost(by_instance.len()))?;
+    by_instance
+        .binary_search_by_key(&id, |(instance, _)| *instance)
+        .map(|found| ElementIndex(by_instance[found].1))
+        .map_err(|_| SelectorTreeError::UnknownInstance)
 }
 impl<'a> SelectorTree<'a> {
     /// Own only the bounded index. Source records, child lists, attributes and
-    /// labels are borrowed unchanged. Construction is work-bounded, not a promise
-    /// of linear-time identity lookup; all matcher callbacks are constant-time.
+    /// labels are borrowed unchanged. Construction is work-bounded: identity and
+    /// CSS id checks sort transient indexes (n log n), and each element still
+    /// walks its ancestor chain (n x depth). All matcher callbacks are
+    /// constant-time.
     pub fn new(
         elements: &'a [SelectorElement<'a>],
         document_language: DocumentLanguage<'a>,
@@ -149,24 +169,6 @@ impl<'a> SelectorTree<'a> {
             }
             let css_id =
                 attribute(&element.node.metadata, "id", &mut work)?.filter(|id| !id.is_empty());
-            for earlier in 0..position {
-                charge(&mut work, 1)?;
-                if elements[earlier].node.instance == element.node.instance {
-                    return Err(SelectorTreeError::DuplicateInstance);
-                }
-                if let (Some(id), Some(previous)) = (css_id, indexed[earlier].css_id) {
-                    charge(
-                        &mut work,
-                        id.len()
-                            .checked_add(previous.len())
-                            .and_then(|count| count.checked_add(1))
-                            .ok_or(SelectorTreeError::Work)?,
-                    )?;
-                    if id == previous {
-                        return Err(SelectorTreeError::DuplicateCssId);
-                    }
-                }
-            }
             let local_language = attribute(&element.node.metadata, "lang", &mut work)?
                 .map(|lang| (!lang.is_empty()).then_some(lang));
             indexed.push(Indexed {
@@ -177,48 +179,71 @@ impl<'a> SelectorTree<'a> {
                 ..Default::default()
             });
         }
+        let mut by_instance: Vec<(InstanceId, usize)> = Vec::new();
+        by_instance
+            .try_reserve_exact(elements.len())
+            .map_err(|_| SelectorTreeError::Allocation)?;
+        by_instance.extend(
+            elements
+                .iter()
+                .enumerate()
+                .map(|(position, element)| (element.node.instance, position)),
+        );
+        sort_charged(&mut by_instance, 1, &mut work)?;
+        if by_instance.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return Err(SelectorTreeError::DuplicateInstance);
+        }
+        let mut css_ids: Vec<&str> = Vec::new();
+        css_ids
+            .try_reserve_exact(elements.len())
+            .map_err(|_| SelectorTreeError::Allocation)?;
+        css_ids.extend(indexed.iter().filter_map(|indexed| indexed.css_id));
+        // Each string comparison inspects at most the longest id plus one.
+        let longest = css_ids.iter().map(|id| id.len()).max().unwrap_or(0);
+        sort_charged(&mut css_ids, longest + 1, &mut work)?;
+        if css_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(SelectorTreeError::DuplicateCssId);
+        }
+        drop(css_ids);
         let root = root.ok_or(SelectorTreeError::Root)?;
         let mut entries = elements.len();
+        // Whether an element was already linked as a child. A linked child's
+        // parent owns the list it was found in, so each element can be
+        // linked at most once.
+        let mut linked: Vec<bool> = Vec::new();
+        linked
+            .try_reserve_exact(elements.len())
+            .map_err(|_| SelectorTreeError::Allocation)?;
+        linked.resize(elements.len(), false);
         for (position, element) in elements.iter().enumerate() {
             if let Some(parent) = element.node.parent {
-                indexed[position].parent = Some(find(elements, parent, &mut work)?);
+                indexed[position].parent = Some(find(&by_instance, parent, &mut work)?);
             }
             let mut previous = None;
-            for (child_position, child_id) in element.node.children.iter().enumerate() {
+            for child_id in &element.node.children {
                 entries = entries
                     .checked_add(1)
                     .filter(|entries| *entries <= limits.entries.get())
                     .ok_or(SelectorTreeError::Entries)?;
-                charge(
-                    &mut work,
-                    child_position
-                        .checked_add(1)
-                        .ok_or(SelectorTreeError::Work)?,
-                )?;
-                if element.node.children[..child_position].contains(child_id) {
-                    return Err(SelectorTreeError::DuplicateChild);
-                }
-                let child = find(elements, *child_id, &mut work)?;
+                charge(&mut work, 1)?;
+                let child = find(&by_instance, *child_id, &mut work)?;
                 if elements[child.0].node.parent != Some(element.node.instance) {
                     return Err(SelectorTreeError::Nonreciprocal);
                 }
+                if linked[child.0] {
+                    return Err(SelectorTreeError::DuplicateChild);
+                }
+                linked[child.0] = true;
                 indexed[child.0].previous = previous;
                 previous = Some(child);
             }
         }
         for (position, element) in elements.iter().enumerate() {
-            if let Some(parent) = indexed[position].parent {
-                let children = &elements[parent.0].node.children;
-                charge(
-                    &mut work,
-                    children
-                        .len()
-                        .checked_add(1)
-                        .ok_or(SelectorTreeError::Work)?,
-                )?;
-                if !children.contains(&element.node.instance) {
-                    return Err(SelectorTreeError::Nonreciprocal);
-                }
+            // Every linked child sits in its parent's list, so a parented
+            // element that was never linked is missing from that list.
+            charge(&mut work, 1)?;
+            if indexed[position].parent.is_some() && !linked[position] {
+                return Err(SelectorTreeError::Nonreciprocal);
             }
             let mut cursor = Some(ElementIndex(position));
             let mut language = None;

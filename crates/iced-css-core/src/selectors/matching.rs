@@ -2,6 +2,7 @@ use super::{Combinator, ElementFacts, MatchBudget, PseudoElement, Selector, matc
 use crate::cascade::Specificity;
 use std::num::NonZeroUsize;
 /// A read-only view of validated source-element relationships, not native layout.
+/// The relationships must form a tree: an element and its previous element share a parent.
 pub trait SelectorSource {
     type Node: Copy + Eq;
     fn facts(&self, node: Self::Node) -> Option<ElementFacts<'_>>;
@@ -111,6 +112,11 @@ impl<S: SelectorSource> Engine<'_, S> {
                 ancestors: false,
             },
         )?;
+        // The lowest compound whose ancestor walk has begun. Reaching a compound passes every
+        // one after it, so each descendant compound from here on has had its walk. A walk tries
+        // every ancestor of where it starts, and a later one could only start further up, at
+        // one of those: it has nothing new to try, so matching is linear in the depth.
+        let mut walked = selector.compounds.len();
         while let Some(frame) = stack.pop() {
             self.charge(1)?;
             if frame.ancestors {
@@ -155,6 +161,12 @@ impl<S: SelectorSource> Engine<'_, S> {
                 return Ok(true);
             }
             let relation = selector.combinators[frame.index - 1];
+            if relation == Combinator::Descendant {
+                if frame.index - 1 >= walked {
+                    continue;
+                }
+                walked = frame.index - 1;
+            }
             let next = match relation {
                 Combinator::Child | Combinator::Descendant => parent,
                 Combinator::Adjacent => previous,
@@ -184,7 +196,8 @@ fn engine<S: SelectorSource>(source: &S, limits: MatchLimits) -> Result<Engine<'
     })
 }
 /// Match a parsed selector from its subject backwards. Descendant continuations
-/// preserve alternative ancestors; no recursive Rust call stack is used.
+/// preserve alternative ancestors, each compound walking them once; no recursive
+/// Rust call stack is used.
 /// Limits cover traversal/comparison work and retained backtracking frames, not
 /// the caller-owned AST/source snapshot or work internal to a source view method.
 pub fn matches_selector<S: SelectorSource>(

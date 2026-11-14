@@ -94,12 +94,34 @@ impl<'a> Statements<'a> {
                 start,
             )
         };
-        let recovered =
+        let mut recovered =
             recover_prefix_budget(&self.input[start..], mode, self.limits, &mut self.work)
                 .map_err(|mut error| {
                     error.offset += start;
                     error
                 })?;
+        // A stylesheet-level at-rule has no containing rule, so a stray '}' is
+        // an invalid prelude token, not its end: keep scanning to ';' or a block.
+        while self.context == StatementContext::Stylesheet
+            && recovered.boundary == Boundary::RuleClose
+        {
+            let base = recovered.consumed + 1;
+            let rest = recover_prefix_budget(
+                &self.input[start + base..],
+                mode,
+                self.limits,
+                &mut self.work,
+            )
+            .map_err(|mut error| {
+                error.offset += start + base;
+                error
+            })?;
+            recovered.block_start = rest.block_start.map(|block| base + block);
+            recovered.consumed = base + rest.consumed;
+            recovered.boundary = rest.boundary;
+            recovered.invalid_tokens = true;
+            recovered.implicit_close |= rest.implicit_close;
+        }
         let end = start + recovered.consumed;
         let terminal = usize::from(matches!(
             recovered.boundary,

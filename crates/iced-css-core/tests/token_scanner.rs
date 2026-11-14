@@ -101,13 +101,13 @@ fn unicode_ranges_follow_the_lexical_six_digit_boundaries() {
 }
 #[test]
 fn comments_and_strings_hide_internal_delimiters() {
-    for input in ["/*;{}*/after", "'a;{b}';after", "url(a;b);after"] {
+    for (input, kind, raw) in [
+        ("/*;{}*/after", TokenKind::Comment, "/*;{}*/"),
+        ("'a;{b}';after", TokenKind::String, "'a;{b}'"),
+        ("url(a;b);after", TokenKind::Uri, "url(a;b)"),
+    ] {
         let value = scan(input);
-        assert!(matches!(
-            value.kind,
-            TokenKind::Comment | TokenKind::String | TokenKind::Uri
-        ));
-        assert!(input[value.raw.len()..].ends_with("after"));
+        assert_eq!((value.kind, value.raw), (kind, raw), "{input:?}");
     }
     assert!(scan_token("", NonZeroUsize::MIN).unwrap().is_none());
     assert!(matches!(

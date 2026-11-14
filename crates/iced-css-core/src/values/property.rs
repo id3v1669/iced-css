@@ -351,6 +351,16 @@ pub(super) fn inner(
                 first.raw,
                 "100" | "200" | "300" | "400" | "500" | "600" | "700" | "800" | "900"
             ) {
+                // Only another spelling of one of the nine weights (+100, 0100,
+                // 100.0) is the unresolved form. A number naming no weight at
+                // all (150, 1000, 0, 1.5, -100) is invalid under every reading
+                // and drops just this declaration.
+                let names_weight = first.raw.parse::<f64>().map_or(true, |number| {
+                    (1..=9).any(|step| number == f64::from(step * 100))
+                });
+                if !names_weight {
+                    return Ok(PropertyResult::Invalid);
+                }
                 return Err(PropertyError::UnimplementedNumericSpelling(property));
             }
             SpecifiedValue::Integer(

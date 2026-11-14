@@ -55,8 +55,8 @@ impl<W> Captured<W> {
         mut self,
         name: &str,
         value: &str,
-        limits: iced_css_core::source::AttributeLimits,
-    ) -> Result<Self, iced_css_core::source::AttributeError> {
+        limits: AttributeLimits,
+    ) -> Result<Self, AttributeError> {
         self.construction
             .edit_metadata(limits, |metadata, limits| {
                 metadata.try_set_attribute(name, value, limits)
@@ -65,11 +65,7 @@ impl<W> Captured<W> {
     }
 
     /// Replace the shared id attribute; an empty ID has no ID-selector token.
-    pub fn style_id(
-        self,
-        id: &str,
-        limits: iced_css_core::source::AttributeLimits,
-    ) -> Result<Self, iced_css_core::source::AttributeError> {
+    pub fn style_id(self, id: &str, limits: AttributeLimits) -> Result<Self, AttributeError> {
         self.style_attribute("id", id, limits)
     }
 
@@ -77,8 +73,8 @@ impl<W> Captured<W> {
     pub fn style_classes(
         mut self,
         classes: &[&str],
-        limits: iced_css_core::source::AttributeLimits,
-    ) -> Result<Self, iced_css_core::source::AttributeError> {
+        limits: AttributeLimits,
+    ) -> Result<Self, AttributeError> {
         self.construction
             .edit_metadata(limits, |metadata, limits| {
                 metadata.try_set_classes(classes, limits)
@@ -138,6 +134,8 @@ where
 }
 
 mod row_recipe;
+/// The core types `style_id`, `style_attribute` and `style_classes` take and return.
+pub use iced_css_core::source::{AttributeError, AttributeLimits};
 pub use row_recipe::RowRecipe;
 
 mod ordered_insertion;

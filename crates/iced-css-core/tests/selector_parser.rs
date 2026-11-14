@@ -58,6 +58,11 @@ fn grouping_is_atomic_and_newer_selector_forms_are_not_admitted() {
         "div/**/text",
         ":lang()",
         ":lang(en,fr)",
+        "#123",
+        "#1st",
+        "#-",
+        "#-1",
+        "#123, text",
     ] {
         assert!(parse_selector_list(input, limits()).is_err(), "{input:?}");
     }
@@ -106,6 +111,11 @@ fn escapes_strings_and_language_keep_semantic_identity() {
         value[0].compounds[0]
             .tests
             .contains(&SimpleSelector::Lang("EN-gb".into()))
+    );
+    assert!(
+        parse_selector_list(r"#\31 23", limits()).unwrap()[0].compounds[0]
+            .tests
+            .contains(&SimpleSelector::Id("123".into()))
     );
     for input in [r".\0", r"[x='\d800']"] {
         assert!(parse_selector_list(input, limits()).is_err());
