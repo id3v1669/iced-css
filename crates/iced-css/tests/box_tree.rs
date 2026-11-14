@@ -3407,6 +3407,34 @@ mod animation {
     }
 
     #[test]
+    fn an_initial_block_without_a_viewport_height_gives_no_height_basis() {
+        let height = |css: &str| {
+            let geometry = tree(css).layout(800.0, None).unwrap();
+            let placed = geometry[1].as_ref().unwrap();
+            (placed.border.top, placed.border.bottom - placed.border.top)
+        };
+        // Absolute with no positioned ancestor shares the fixed box's initial block.
+        assert_eq!(
+            height("#box { position:absolute; height:50%; }"),
+            height("#box { position:fixed; height:50%; }")
+        );
+        assert_eq!(
+            height("#box { position:absolute; height:50%; }"),
+            height("#box { position:absolute; }")
+        );
+        // `bottom` has no edge to measure from, so the box keeps its static position.
+        assert_eq!(
+            height("#box { position:fixed; bottom:0; height:40px; }"),
+            (0.0, 40.0)
+        );
+        // A percentage max-height is none rather than a zero cap.
+        assert_eq!(
+            height("#box { position:absolute; height:40px; max-height:80%; }"),
+            (0.0, 40.0)
+        );
+    }
+
+    #[test]
     fn a_relative_offset_mixes_against_a_definite_height() {
         let css = |top: &str| {
             format!("#page {{ height:400px; }} #box {{ position:relative; top:{top}; }}")

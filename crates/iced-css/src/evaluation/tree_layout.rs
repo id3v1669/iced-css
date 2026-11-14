@@ -1276,7 +1276,8 @@ impl AbsoluteFailure {
     }
 }
 
-/// 10.1: the padding box of the nearest positioned ancestor, or the initial block.
+/// 10.1: the padding box of the nearest positioned ancestor, or the initial block, and
+/// whether it is the initial block.
 fn containing_block(
     boxes: &[FlowBox],
     parents: &[Option<usize>],
@@ -1285,7 +1286,7 @@ fn containing_block(
     arena: usize,
     position: Position,
     viewport: FlowViewport,
-) -> (FlowRect, Direction) {
+) -> (FlowRect, Direction, bool) {
     let initial = FlowRect {
         left: viewport.left,
         right: viewport.left + viewport.width,
@@ -1293,16 +1294,16 @@ fn containing_block(
         bottom: viewport.top + viewport.height.unwrap_or(0.0),
     };
     if position == Position::Fixed {
-        return (initial, boxes[0].direction);
+        return (initial, boxes[0].direction, true);
     }
     let mut at = parents[arena];
     while let Some(ancestor) = at {
         if positions[ancestor].1 != Position::Static {
-            return (geometry[ancestor].padding, boxes[ancestor].direction);
+            return (geometry[ancestor].padding, boxes[ancestor].direction, false);
         }
         at = parents[ancestor];
     }
-    (initial, boxes[0].direction)
+    (initial, boxes[0].direction, true)
 }
 
 fn subtree(boxes: &[FlowBox], root: usize) -> Vec<usize> {
@@ -1331,9 +1332,22 @@ fn place_absolute(
     text_baseline: &mut dyn FnMut(usize, f32, Option<(f32, f32)>) -> Option<f32>,
 ) -> Result<(), AbsoluteFailure> {
     let value = &boxes[arena];
-    let (block, direction) = containing_block(
+    let (block, direction, initial) = containing_block(
         boxes, parents, geometry, positions, arena, position, viewport,
     );
+    // An initial block of unknown height has no height to take a share of or to measure
+    // `bottom` from: percentage heights and `bottom` are auto, as is a percentage `top`.
+    let indefinite = initial && viewport.height.is_none();
+    let indefinite_auto = |dim: Dim| match dim {
+        Dim::Percent(_) | Dim::Mix(..) if indefinite => Dim::Auto,
+        other => other,
+    };
+    let offset = [
+        indefinite_auto(offset[0]),
+        offset[1],
+        if indefinite { Dim::Auto } else { offset[2] },
+        offset[3],
+    ];
     let cb_width = block.right - block.left;
     let cb_height = block.bottom - block.top;
     let auto = |dim: Dim, basis: f32| match dim {
@@ -1418,14 +1432,7 @@ fn place_absolute(
             &mut |local_node, used, split| text_baseline(nodes[local_node], used, split),
         )
     };
-    let specified = match value.height {
-        Dim::Percent(_) | Dim::Mix(..)
-            if viewport.height.is_none() && position == Position::Fixed =>
-        {
-            Dim::Auto
-        }
-        other => other,
-    };
+    let specified = indefinite_auto(value.height);
     let first = solve(Dim::Auto, Dim::Auto).map_err(AbsoluteFailure::Flow)?;
     let content_height = first[0].content.bottom - first[0].content.top;
     let height = absolute_height(AbsoluteHeightInput {
@@ -1441,8 +1448,8 @@ fn place_absolute(
         padding_bottom: padding[2],
         border_bottom: value.border[2],
         content_height,
-        min_height: zero(value.min_height, cb_height),
-        max_height: match value.max_height {
+        min_height: zero(indefinite_auto(value.min_height), cb_height),
+        max_height: match indefinite_auto(value.max_height) {
             Dim::Auto => None,
             other => Some(zero(other, cb_height)),
         },
