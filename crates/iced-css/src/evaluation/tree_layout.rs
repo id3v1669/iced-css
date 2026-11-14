@@ -1137,10 +1137,12 @@ impl PreparedTree {
         text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
         text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
     ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
-        self.layout_slots_baselines(viewport, limits, text_height, text_split, &mut |_, _| None)
+        self.layout_slots_baselines(viewport, limits, text_height, text_split, &mut |_, _, _| {
+            None
+        })
     }
 
-    /// Lays the tree out as [`Self::layout_slots`], asking `text_baseline(slot, width)` for
+    /// Lays the tree out as [`Self::layout_slots`], asking `text_baseline(slot, width, split)` for
     /// a leaf's last line's baseline, which rows of inline-blocks line up on.
     ///
     /// # Errors
@@ -1151,7 +1153,7 @@ impl PreparedTree {
         limits: FlowLimits,
         text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
         text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
-        text_baseline: &mut dyn FnMut(usize, f32) -> Option<f32>,
+        text_baseline: &mut dyn FnMut(usize, f32, Option<(f32, f32)>) -> Option<f32>,
     ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
         use TreeLayoutError as E;
         let Self {
@@ -1297,7 +1299,7 @@ fn place_absolute(
     limits: FlowLimits,
     text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
     text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
-    text_baseline: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    text_baseline: &mut dyn FnMut(usize, f32, Option<(f32, f32)>) -> Option<f32>,
 ) -> Result<(), AbsoluteFailure> {
     let value = &boxes[arena];
     let (block, direction) =
@@ -1377,7 +1379,7 @@ fn place_absolute(
             &mut |local_node, narrow, until, wide| {
                 text_split(nodes[local_node], narrow, until, wide)
             },
-            &mut |local_node, used| text_baseline(nodes[local_node], used),
+            &mut |local_node, used, split| text_baseline(nodes[local_node], used, split),
         )
     };
     let specified = match value.height {

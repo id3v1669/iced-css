@@ -6184,3 +6184,69 @@ fn a_shrink_to_fit_box_fits_its_percentage_indent() {
     assert!(draw("100px"));
     assert!(draw("25%"));
 }
+
+#[test]
+fn an_inline_block_whose_text_widens_past_a_float_sits_on_its_last_line() {
+    let lowest = |float: &str, name: &str| {
+        let root = node(
+            "page",
+            vec![
+                text("a", "x "),
+                node(
+                    "b",
+                    vec![
+                        node("f", vec![]),
+                        text("t", "aaa ccc eee mmm nnn rrr sss uuu www zzz"),
+                    ],
+                ),
+            ],
+        );
+        let sheet = format!(
+            "#page {{ background-color:white; color:#0000ff; line-height:20px; }}
+             #b {{ display:inline-block; width:120px; color:#ff0000; }}
+             #f {{ float:left; {float} }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        let path = std::env::temp_dir().join(format!("past-float-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            simulator(view)
+                .snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let bottom = |keep: &dyn Fn(&[u8]) -> bool| {
+            bytes[..info.buffer_size()]
+                .chunks(4)
+                .enumerate()
+                .filter(|(_, pixel)| keep(pixel))
+                .map(|(at, _)| at / width)
+                .max()
+                .unwrap()
+        };
+        let blue = bottom(&|pixel| pixel[2] > 150 && pixel[0] < 80 && pixel[1] < 80);
+        let red = bottom(&|pixel| pixel[0] > 150 && pixel[1] < 80 && pixel[2] < 80);
+        let _ = std::fs::remove_dir_all(&path);
+        (blue, red)
+    };
+    // Its last line, laid out wider past the float, shares the outer line's baseline.
+    let (blue, red) = lowest("width:60px; height:10px;", "beside");
+    assert!(blue.abs_diff(red) <= 1, "blue {blue} red {red}");
+    // So does text that starts below a float as wide as its box.
+    let (blue, red) = lowest("width:120px; height:30px;", "below");
+    assert!(blue.abs_diff(red) <= 1, "blue {blue} red {red}");
+}

@@ -2282,7 +2282,7 @@ impl BoxTree {
         let mut geometry = Vec::new();
         for pass in 0..2 {
             let current = &tree;
-            let mut baselines: BTreeMap<(usize, u32), Option<f32>> = BTreeMap::new();
+            let mut baselines: Baselines = BTreeMap::new();
             geometry = current.layout_arena(
                 width,
                 height,
@@ -2300,12 +2300,13 @@ impl BoxTree {
                     let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
                     Some(first_height + rest.min_bounds().height)
                 },
-                &mut |arena, width| {
+                &mut |arena, width, split| {
+                    let key = split.map(|(until, wide)| (until.to_bits(), wide.to_bits()));
                     *baselines
-                        .entry((arena, width.to_bits()))
+                        .entry((arena, width.to_bits(), key))
                         .or_insert_with(|| {
                             let leaf = current.texts[arena].as_ref()?;
-                            leaf_baseline(renderer, leaf, width)
+                            leaf_baseline(renderer, leaf, width, split)
                         })
                 },
             )?;
@@ -2330,7 +2331,7 @@ impl BoxTree {
         height: Option<f32>,
         measure: &mut dyn FnMut(usize, f32) -> Option<f32>,
         split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
-        baseline: &mut dyn FnMut(usize, f32) -> Option<f32>,
+        baseline: &mut dyn FnMut(usize, f32, Option<(f32, f32)>) -> Option<f32>,
     ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
         self.prepared.layout_slots_baselines(
             FlowViewport {
@@ -2350,7 +2351,13 @@ impl BoxTree {
                 measure(arena, used.ceil())
             },
             &mut |arena, narrow, until, wide| split(arena, narrow.ceil(), until, wide.ceil()),
-            &mut |arena, used| baseline(arena, used.ceil()),
+            &mut |arena, used, split| {
+                baseline(
+                    arena,
+                    used.ceil(),
+                    split.map(|(until, wide)| (until, wide.ceil())),
+                )
+            },
         )
     }
 
@@ -4607,12 +4614,25 @@ fn leaf_height<Renderer: text::Renderer<Font = iced::Font>>(
     }
 }
 
-/// [`last_baseline`] of a leaf at `width`, laid out as [`pieces`] lays it out.
+/// Leaves' baselines already asked for in a layout pass: by arena slot, width and float
+/// split (`leaf_baseline`), as bits.
+type Baselines = BTreeMap<(usize, u32, Option<(u32, u32)>), Option<f32>>;
+
+/// [`last_baseline`] of a leaf at `width`, laid out as [`pieces`] lays it out, or, past a
+/// shorter float `until` below its top, as `wide` from there (`split`), as paint lays its
+/// rest out.
 fn leaf_baseline<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
     width: f32,
+    split: Option<(f32, f32)>,
 ) -> Option<f32> {
+    if let Some((until, wide)) = split
+        && let Some((_, rest, first_height)) = split_leaf(renderer, leaf, width, until)
+    {
+        return last_baseline(renderer, &rest, &paragraph(renderer, &rest, wide))
+            .map(|baseline| first_height + baseline);
+    }
     let Some(pieces) = pieces(renderer, leaf, width) else {
         return last_baseline(renderer, leaf, &paragraph(renderer, leaf, width));
     };
@@ -5758,7 +5778,7 @@ where
             // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
             let (elements, slots, children) = (&mut self.elements, &self.slots, &mut tree.children);
             let current = &self.tree;
-            let mut baselines: BTreeMap<(usize, u32), Option<f32>> = BTreeMap::new();
+            let mut baselines: Baselines = BTreeMap::new();
             self.slot_geometry = current
                 .layout_arena(
                     available.width,
@@ -5793,12 +5813,13 @@ where
                         Some(first_height + rest.min_bounds().height)
                     },
                     // Once per leaf and width in a pass: rows ask again for nested boxes.
-                    &mut |arena, width| {
+                    &mut |arena, width, split| {
+                        let key = split.map(|(until, wide)| (until.to_bits(), wide.to_bits()));
                         *baselines
-                            .entry((arena, width.to_bits()))
+                            .entry((arena, width.to_bits(), key))
                             .or_insert_with(|| {
                                 let leaf = current.texts[arena].as_ref()?;
-                                leaf_baseline(renderer, leaf, width)
+                                leaf_baseline(renderer, leaf, width, split)
                             })
                     },
                 )
@@ -6920,7 +6941,7 @@ mod tests {
                 None,
                 &mut |_, _| Some(20.0),
                 &mut |_, _, _, _| None,
-                &mut |_, _| None,
+                &mut |_, _, _| None,
             )
             .unwrap();
         let spacers = |tree: &BoxTree| {

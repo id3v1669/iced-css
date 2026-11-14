@@ -515,7 +515,7 @@ struct Solver<'a> {
     /// See [`layout_block_flow_split`].
     text_split: &'a mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
     /// See [`layout_block_flow_baselines`].
-    text_baseline: &'a mut dyn FnMut(usize, f32) -> Option<f32>,
+    text_baseline: &'a mut dyn FnMut(usize, f32, Option<(f32, f32)>) -> Option<f32>,
     /// A row of inline-blocks' last line's baseline, from the row's bottom, which moves with
     /// it (its parent sets its top afterwards).
     row_baselines: std::collections::BTreeMap<usize, f32>,
@@ -569,13 +569,15 @@ pub fn layout_block_flow_split(
         limits,
         text_height,
         text_split,
-        &mut |_, _| None,
+        &mut |_, _, _| None,
     )
 }
 
-/// Lays out as [`layout_block_flow_split`], asking `text_baseline(node, width)` for a
-/// leaf's last line's baseline below its content top at that width, which a row of
-/// inline-blocks lines its pieces up on (10.8.1). `None` takes its bottom instead.
+/// Lays out as [`layout_block_flow_split`], asking `text_baseline(node, width, split)` for
+/// a leaf's last line's baseline below its first line's top, laid out at that width, which
+/// a row of inline-blocks lines its pieces up on (10.8.1). `split` is where a leaf that
+/// widens past a float does, below that top, and how wide it is from there, as
+/// `text_split` settled it. `None` takes its bottom instead.
 ///
 /// # Errors
 /// As [`layout_block_flow`].
@@ -585,7 +587,7 @@ pub fn layout_block_flow_baselines(
     limits: FlowLimits,
     text_height: &mut dyn FnMut(usize, f32) -> Option<f32>,
     text_split: &mut dyn FnMut(usize, f32, f32, f32) -> Option<f32>,
-    text_baseline: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    text_baseline: &mut dyn FnMut(usize, f32, Option<(f32, f32)>) -> Option<f32>,
 ) -> Result<Vec<FlowGeometry>, FlowError> {
     if boxes.is_empty() || boxes.len() > limits.boxes.get() {
         return Err(FlowError::Boxes);
@@ -623,7 +625,7 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
         last_flowed: 0.0,
         text_height: &mut |_, _| None,
         text_split: &mut |_, _, _, _| None,
-        text_baseline: &mut |_, _| None,
+        text_baseline: &mut |_, _, _| None,
         row_baselines: std::collections::BTreeMap::new(),
     }
     .measure(node)
@@ -1806,9 +1808,14 @@ impl Solver<'_> {
             return self.first_row_baseline(node);
         }
         if value.content.is_some() && value.children.is_empty() {
-            let content = self.geometry[node].content;
-            let baseline = (self.text_baseline)(node, content.right - content.left)?;
-            return Some(content.top + baseline);
+            // Beside floats from its band, and past a shorter one wider.
+            let geometry = self.geometry[node];
+            let place = geometry.leaf_band.unwrap_or(geometry.content);
+            let split = geometry
+                .leaf_after
+                .map(|after| (after.top - place.top, after.right - after.left));
+            let baseline = (self.text_baseline)(node, place.right - place.left, split)?;
+            return Some(place.top + baseline);
         }
         let children: Vec<usize> = value
             .children

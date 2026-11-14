@@ -1089,7 +1089,7 @@ fn inline_blocks_share_the_line_baseline() {
         limits(),
         &mut |_, _| None,
         &mut |_, _, _, _| None,
-        &mut |node, _| {
+        &mut |node, _, _| {
             baselines
                 .iter()
                 .find(|entry| entry.0 == node)
@@ -1120,7 +1120,7 @@ fn inline_blocks_share_the_line_baseline() {
         limits(),
         &mut |_, _| None,
         &mut |_, _, _, _| None,
-        &mut |node, _| {
+        &mut |node, _, _| {
             reach
                 .iter()
                 .find(|entry| entry.0 == node)
@@ -1155,7 +1155,7 @@ fn inline_blocks_share_the_line_baseline() {
         limits(),
         &mut |_, _| None,
         &mut |_, _, _, _| None,
-        &mut |node, _| {
+        &mut |node, _, _| {
             marks
                 .iter()
                 .find(|entry| entry.0 == node)
@@ -1175,7 +1175,7 @@ fn inline_blocks_share_the_line_baseline() {
             limits(),
             &mut |_, _| None,
             &mut |_, _, _, _| None,
-            &mut |node, _| {
+            &mut |node, _, _| {
                 marks
                     .iter()
                     .find(|entry| entry.0 == node)
