@@ -1,4 +1,19 @@
-//! CSS integration primitives and the legacy Compile style annotation.
+//! CSS 2.2 styling and layout for iced.
+//!
+//! The entry point is [`box_tree::BoxTree`]: capture a tree of boxes (see
+//! [`capture::adapters`]), cascade an author stylesheet over it with
+//! [`box_tree::BoxTree::new`], and use the result as a laid-out, painted and
+//! interactive iced widget. [`box_tree::BoxTree::restyled`] swaps in edited
+//! sheets without capturing the tree again, which is how to build hot reload.
+//!
+//! # Legacy Compile annotation
+//!
+//! The root items [`style`], [`StyleClasses`], [`apply`], [`Constrained`],
+//! [`Resolved`], [`Policy`], [`Event`], [`update`] and [`subscription`] belong
+//! to an older, separate path: the `#[iced_css::style]` attribute macro, which
+//! accepts only single `.class` selectors with sizing, margin and padding
+//! properties, and only `policy=Compile`. It does not use the `BoxTree`
+//! cascade. New code should use [`box_tree::BoxTree`].
 //!
 //! The legacy annotation requires literal class names in active source:
 //! ```compile_fail
@@ -50,6 +65,7 @@ pub use constrained::Constrained;
 pub use iced_css_core::{Length, MarginValue, Margins, Paddings, Resolved};
 pub use iced_css_macro::style;
 
+#[doc(hidden)]
 pub mod dispatch {
     use super::{Constrained, MarginValue, Paddings, Resolved};
     use iced::widget::{Button, Container, button, container};
@@ -252,23 +268,43 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// OnDemand/Auto only
+/// Runtime stylesheet update for the `OnDemand` and `Auto` legacy policies.
+///
+/// # Panics
+///
+/// Always panics: these policies are not implemented, and the
+/// `#[iced_css::style]` macro rejects them. For runtime stylesheet changes use
+/// [`box_tree::BoxTree::restyled`].
 pub fn update(event: Event) {
     let _ = event;
     unimplemented!("iced-css: runtime update not implemented yet")
 }
 
-/// for auto
+/// File-watching subscription for the `Auto` legacy policy.
+///
+/// # Panics
+///
+/// Always panics: the `Auto` policy is not implemented, and the
+/// `#[iced_css::style]` macro rejects it. For runtime stylesheet changes use
+/// [`box_tree::BoxTree::restyled`].
 pub fn subscription<Message: From<Event> + Send + 'static>() -> iced::Subscription<Message> {
     unimplemented!("iced-css: file subscription not implemented yet")
 }
 
+/// Placeholder methods that the legacy `#[iced_css::style]` macro rewrites.
+///
+/// Outside a function annotated with `#[iced_css::style]` both methods do
+/// nothing: they discard their argument and return the widget unstyled. To give
+/// a box an id or classes for a [`box_tree::BoxTree`] stylesheet, use
+/// [`capture::Captured::style_id`] and [`capture::Captured::style_classes`].
 pub trait StyleClasses<'a, Message> {
+    /// Rewritten by `#[iced_css::style]`; a no-op anywhere else.
     fn style_classes<const N: usize>(
         self,
         classes: [&'static str; N],
     ) -> iced::Element<'a, Message>;
 
+    /// A no-op: returns the widget unstyled, also inside `#[iced_css::style]`.
     fn style_id(self, id: &'static str) -> iced::Element<'a, Message>;
 }
 
