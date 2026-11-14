@@ -8233,3 +8233,18 @@ fn a_captured_radio_keeps_only_its_label_as_text() {
         .collect();
     assert_eq!(texts.concat(), "Pick");
 }
+
+#[test]
+fn an_offset_inherits_through_a_static_parent_at_any_tree_position() {
+    // `b` is the third row in preorder, past the two sibling-projection parents.
+    let tree = BoxTree::new(
+        node(
+            "page",
+            vec![node("a", vec![]), node("b", vec![node("c", vec![])])],
+        ),
+        "#b { top:7px; } #c { position:relative; top:inherit; height:10px; }",
+    )
+    .unwrap();
+    let geometry = tree.layout(200.0, None).unwrap();
+    assert_eq!(geometry[3].unwrap().border.top, 7.0);
+}

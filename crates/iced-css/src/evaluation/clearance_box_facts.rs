@@ -663,11 +663,11 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
     let source = snapshot
         .selector_source(limits.selectors)
         .map_err(E::Source)?;
-    // ISP (CSS2.2 6.2.1): the offsets of an O or P that is not relatively positioned
-    // (static, or absolute or fixed and refused later by the facade; projected 0 and 1, the
-    // only rows with children in the sibling projection) for a relative child's `inherit`;
-    // Sequence only, never published or converted here.
-    let mut statics: [Option<resolve::StaticOffsets<'_>>; 2] = [None; 2];
+    // ISP (CSS2.2 6.2.1): the offsets of a row that is not relatively positioned (static,
+    // or absolute or fixed and refused later by the facade) for a positioned child's
+    // `inherit`, indexed by projected row; Sequence only, never published or converted
+    // here. The whole-tree entry projects every row, so any row can be a parent.
+    let mut statics: Vec<Option<resolve::StaticOffsets<'_>>> = vec![None; count];
     for projected in 0..count {
         let original = projection
             .original_index(projected)
@@ -737,10 +737,10 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
                 .ok_or(E::SourceJoin { projected })?
                 .position;
             let parent_static = parent.and_then(|(original_parent, _)| {
-                statics
-                    .into_iter()
-                    .flatten()
-                    .find(|row| row.original == original_parent)
+                projection
+                    .projected_index(original_parent)
+                    .and_then(|p| statics.get(p).copied().flatten())
+                    .filter(|row| row.original == original_parent)
             });
             if position == Position::Relative
                 || (absolute_offsets && matches!(position, Position::Absolute | Position::Fixed))

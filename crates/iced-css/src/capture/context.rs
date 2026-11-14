@@ -97,9 +97,10 @@ pub enum PublicCaptureEntry {
 }
 
 /// Select capture under the innermost explicit configuration, otherwise report
-/// the setup error once and select the ordinary unstyled view. No limits are
-/// invented. The reporter owns logging, attribution and cross-entry deduplication;
-/// a reporter panic propagates before a view branch is selected.
+/// the setup error once for this entry and select the ordinary unstyled view. No
+/// limits are invented. The reporter runs on every unconfigured entry and owns
+/// logging, attribution and any cross-entry deduplication; a reporter panic
+/// propagates before a view branch is selected.
 ///
 /// This is only the public entry decision: an error from the subsequently selected
 /// captured body must not retry through Unstyled. Async helpers select when their
@@ -118,6 +119,9 @@ pub fn public_entry(report_missing: impl FnOnce(ContextError)) -> PublicCaptureE
 /// emits an Error record under `iced_css::capture`, with the calling location,
 /// then selects the ordinary unstyled view. The application owns logger/filter
 /// configuration; this neither installs a logger nor creates a capture scope.
+/// It does not deduplicate: every unconfigured call emits its own record, so a
+/// helper called from an iced `view` logs once per call per view rebuild. Use
+/// [`public_entry`] with a deduplicating reporter where that matters.
 #[track_caller]
 pub fn public_entry_logged() -> PublicCaptureEntry {
     let caller = std::panic::Location::caller();
