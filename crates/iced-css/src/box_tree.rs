@@ -3280,13 +3280,18 @@ impl<'a, Message, Theme, Renderer> BoxTreeView<'a, Message, Theme, Renderer> {
     /// says; a box with auto height takes the widget's height at the used width, except
     /// that a Fill-height widget fills a definite box and adds nothing to an auto one.
     /// The widget shows only while such a box exists, so a rule can hide or reveal it.
+    /// A box holds one widget: another for the same id replaces it.
     #[must_use]
     pub fn widget(
         mut self,
         id: &str,
         element: impl Into<Element<'a, Message, Theme, Renderer>>,
     ) -> Self {
-        self.widgets.push((id.to_owned(), element.into()));
+        let element = element.into();
+        match self.widgets.iter_mut().find(|(held, _)| held == id) {
+            Some(entry) => entry.1 = element,
+            None => self.widgets.push((id.to_owned(), element)),
+        }
         self
     }
 
@@ -6273,6 +6278,35 @@ where
         !matches!(found, HostFocus::IsFocused(true))
     }
 
+    /// The box from `node` outward hosting the widget that has the focus.
+    fn focused_host(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        node: Option<usize>,
+    ) -> Option<usize> {
+        let hosts = self.focus_hosts(tree, layout, renderer);
+        let nodes = self.tree.source.construction.nodes();
+        let mut chain = Vec::new();
+        let mut at = node;
+        while let Some(here) = at {
+            chain.push(here);
+            at = nodes[here].parent();
+        }
+        for (index, host) in hosts {
+            if !chain.contains(&host) {
+                continue;
+            }
+            let mut found = HostFocus::IsFocused(false);
+            self.operate_host(tree, layout, renderer, index, &mut found);
+            if matches!(found, HostFocus::IsFocused(true)) {
+                return Some(host);
+            }
+        }
+        None
+    }
+
     /// A box's `tabindex`; a press message implies 0.
     fn tab_index(&self, nodes: &[crate::capture::ConstructionNode], node: usize) -> Option<i64> {
         let metadata = nodes[node].metadata();
@@ -7147,7 +7181,13 @@ where
         };
         // The same point over the same boxes as `top`: the children change neither.
         let hit = top;
-        let focus_after_press = self.focus_target(hit);
+        // A widget the press focused, as a box on the pressed chain, is what has `:focus`.
+        let clicked_host = if pressed {
+            self.focused_host(tree, layout, renderer, hit)
+        } else {
+            None
+        };
+        let focus_after_press = clicked_host.or_else(|| self.focus_target(hit));
         let state = tree.state.downcast_mut::<Interaction>();
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
             if shell.is_event_captured() {
@@ -7419,6 +7459,17 @@ where
             }
             renderer.with_layer(clip, |renderer| {
                 for step in &steps[start..end] {
+                    // A box paints within its border box: one wholly outside the clip
+                    // draws nothing.
+                    if let PaintStep::Box(index) = *step
+                        && index != prepared.positions[0].0
+                        && let Some(Some(geometry)) = self.geometry.get(index)
+                        && moved_rectangle(geometry.border, origin)
+                            .intersection(&clip)
+                            .is_none()
+                    {
+                        continue;
+                    }
                     match *step {
                         PaintStep::Box(index) => {
                             let root = index == prepared.positions[0].0;
@@ -7859,6 +7910,70 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    impl text::Renderer for Recording {
+        type Font = iced::Font;
+        type Paragraph = ();
+        type Editor = ();
+        const ICON_FONT: iced::Font = iced::Font::DEFAULT;
+        const CHECKMARK_ICON: char = '0';
+        const ARROW_DOWN_ICON: char = '0';
+        const SCROLL_UP_ICON: char = '0';
+        const SCROLL_DOWN_ICON: char = '0';
+        const SCROLL_LEFT_ICON: char = '0';
+        const SCROLL_RIGHT_ICON: char = '0';
+        const ICED_LOGO: char = '0';
+        fn default_font(&self) -> iced::Font {
+            iced::Font::default()
+        }
+        fn default_size(&self) -> iced::Pixels {
+            iced::Pixels(16.0)
+        }
+        fn fill_paragraph(&mut self, _: &(), _: Point, _: Color, _: Rectangle) {}
+        fn fill_editor(&mut self, _: &(), _: Point, _: Color, _: Rectangle) {}
+        fn fill_text(&mut self, _: text::Text, _: Point, _: Color, _: Rectangle) {}
+    }
+
+    #[cfg(not(feature = "image-without-codecs"))]
+    #[test]
+    fn draw_skips_boxes_wholly_outside_their_clip() {
+        let root = node(
+            "page",
+            vec![node("clip", vec![node("in", vec![]), node("out", vec![])])],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#page { background-color:#000; }
+             #clip { overflow:hidden; height:10px; }
+             #in { height:10px; background-color:#f00; }
+             #out { height:10px; background-color:#00f; }",
+        )
+        .unwrap();
+        let mut element = tree.view::<(), Theme, Recording>();
+        let mut state = iced::advanced::widget::Tree::new(&element);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(100.0, 80.0));
+        let mut renderer = Recording::default();
+        let laid = element
+            .as_widget_mut()
+            .layout(&mut state, &renderer, &limits);
+        element.as_widget().draw(
+            &state,
+            &mut renderer,
+            &Theme::Light,
+            &renderer::Style::default(),
+            Layout::new(&laid),
+            mouse::Cursor::Unavailable,
+            &Rectangle::new(Point::ORIGIN, Size::new(100.0, 80.0)),
+        );
+        let colors: Vec<Color> = renderer.0.iter().map(|quad| quad.1).collect();
+        assert!(colors.contains(&Color::from_rgb(1.0, 0.0, 0.0)));
+        assert!(
+            !colors.contains(&Color::from_rgb(0.0, 0.0, 1.0)),
+            "#out is clipped away"
+        );
+        // The root paints the canvas wherever it is.
+        assert!(colors.contains(&Color::from_rgb(0.0, 0.0, 0.0)));
     }
 
     #[test]

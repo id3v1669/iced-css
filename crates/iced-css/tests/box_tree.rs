@@ -779,6 +779,49 @@ mod interactive {
     }
 
     #[test]
+    fn a_second_widget_for_the_same_id_replaces_the_first() {
+        let root = node("page", vec![node("slot", vec![])]);
+        let tree = BoxTree::new(root, "").unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("slot", space(25.0))
+            .widget("slot", space(7.0))
+            .into();
+        let rig = Rig::new(view);
+        assert_eq!(rig.node.children().len(), 1);
+        assert_eq!(rig.slot().height, 7.0);
+    }
+
+    #[test]
+    fn a_click_into_a_hosted_widget_gives_its_box_focus() {
+        let root = node("page", vec![node("top", vec![]), node("field", vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#top { height:10px; } #field:focus { margin-top:10px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("field", iced::widget::text_input("", ""))
+            .into();
+        let mut rig = Rig::new(view);
+        let slot = rig.slot();
+        assert_eq!(slot.y, 10.0);
+        assert!(slot.height > 2.0);
+        let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+        let release = mouse::Event::ButtonReleased(mouse::Button::Left);
+        let inside = Point::new(5.0, slot.y + 1.0);
+        rig.send(press, inside);
+        rig.send(release, inside);
+        assert_eq!(rig.slot().y, 20.0, "the focused input's box has :focus");
+        // A click on nothing unfocuses the input, and its box with it.
+        let off = Point::new(5.0, 190.0);
+        rig.send(press, off);
+        rig.send(release, off);
+        assert_eq!(rig.slot().y, 10.0);
+    }
+
+    #[test]
     fn hover_and_active_rules_restyle_and_relayout() {
         let root = node("page", vec![node("top", vec![]), node("slot", vec![])]);
         let tree = BoxTree::new(
