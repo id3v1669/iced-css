@@ -2028,10 +2028,22 @@ pub struct TextStyle {
     pub underline_from: Option<usize>,
     /// As `underline_from`, for the line through.
     pub line_through_from: Option<usize>,
+    pub overline: bool,
+    /// As `underline_from`, for the overline.
+    pub overline_from: Option<usize>,
     /// `left`, `center` or `right`, after the initial value's direction.
     pub align: &'static str,
     pub white_space: &'static str,
     pub text_transform: &'static str,
+}
+
+fn clear_side(keyword: &str) -> ClearSide {
+    match keyword {
+        "left" => ClearSide::Left,
+        "right" => ClearSide::Right,
+        "both" => ClearSide::Both,
+        _ => ClearSide::None,
+    }
 }
 
 fn line_height_of(
@@ -2146,6 +2158,8 @@ pub fn evaluate_tree_paint<'r>(
     let mut captions_below: Vec<bool> = Vec::with_capacity(projection.len());
     let mut collapses: Vec<bool> = Vec::with_capacity(projection.len());
     let mut raw_spacings: Vec<[f32; 2]> = Vec::with_capacity(projection.len());
+    // Each element's computed `clear`, which its `:before` and `:after` inherit.
+    let mut clears: Vec<ClearSide> = Vec::with_capacity(projection.len());
     // Each list parent's running item count.
     let mut items = vec![0_usize; projection.len()];
     let nodes = snapshot.construction().nodes();
@@ -2343,34 +2357,53 @@ pub fn evaluate_tree_paint<'r>(
             _ => None,
         };
         let resolution = display.resolution(original);
-        // 16.3.1: decorations propagate down, except into floats and absolute boxes.
+        // 16.3.1: decorations propagate down, except into floats, absolute boxes and the
+        // contents of atomic inline-level boxes.
         let detached = resolution.is_some_and(|value| {
             value.float != Float::None
                 || matches!(value.position, Position::Absolute | Position::Fixed)
+                || matches!(value.display, Display::InlineBlock | Display::InlineTable)
         });
         let carried = inherited.filter(|_| !detached);
-        let (mut underline, mut line_through) = carried.map_or((false, false), |style| {
-            (style.underline, style.line_through)
-        });
+        let (mut underline, mut line_through, mut overline) = carried
+            .map_or((false, false, false), |style| {
+                (style.underline, style.line_through, style.overline)
+            });
         // A carried line keeps the color and size of the box that set it.
         let from = |on: bool, from: Option<usize>| on.then(|| from.or(parent_index)).flatten();
-        let (mut underline_from, mut line_through_from) = carried.map_or((None, None), |style| {
-            (
-                from(style.underline, style.underline_from),
-                from(style.line_through, style.line_through_from),
-            )
-        });
-        if let DefaultedValueRef::Compute(SpecifiedValue::TextDecoration(own)) =
-            defaulted("text-decoration")?
-        {
-            underline |= own.underline();
-            line_through |= own.line_through();
-            if own.underline() {
-                underline_from = None;
+        let (mut underline_from, mut line_through_from, mut overline_from) =
+            carried.map_or((None, None, None), |style| {
+                (
+                    from(style.underline, style.underline_from),
+                    from(style.line_through, style.line_through_from),
+                    from(style.overline, style.overline_from),
+                )
+            });
+        // Its own lines: an `inherit` takes the parent's own, not the ones it only carries.
+        let own = match defaulted("text-decoration")? {
+            DefaultedValueRef::Compute(SpecifiedValue::TextDecoration(own)) => {
+                (own.underline(), own.line_through(), own.overline())
             }
-            if own.line_through() {
-                line_through_from = None;
-            }
+            DefaultedValueRef::ParentComputed => inherited.map_or((false, false, false), |style| {
+                (
+                    style.underline && style.underline_from.is_none(),
+                    style.line_through && style.line_through_from.is_none(),
+                    style.overline && style.overline_from.is_none(),
+                )
+            }),
+            _ => (false, false, false),
+        };
+        underline |= own.0;
+        line_through |= own.1;
+        overline |= own.2;
+        if own.0 {
+            underline_from = None;
+        }
+        if own.1 {
+            line_through_from = None;
+        }
+        if own.2 {
+            overline_from = None;
         }
         let parent_align = parent_index.map(|parent| aligns[parent]);
         let align = compute_text_align(&winners, parent_align).map_err(|_| E::Paint {
@@ -2404,6 +2437,8 @@ pub fn evaluate_tree_paint<'r>(
             line_through,
             underline_from,
             line_through_from,
+            overline,
+            overline_from,
             align: match align {
                 ComputedTextAlign::Right => "right",
                 ComputedTextAlign::Center => "center",
@@ -2833,6 +2868,17 @@ pub fn evaluate_tree_paint<'r>(
             };
         }
         border_widths.push(widths);
+        let element_display = display.resolution(original).map(|value| value.display);
+        let element_clear = match defaulted("clear")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                clear_side(keyword.as_str())
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.map_or(ClearSide::None, |parent| clears[parent])
+            }
+            _ => ClearSide::None,
+        };
+        clears.push(element_clear);
         let mut pending_pair = [None, None];
         let mut pair = [None, None];
         for (side, pseudo) in [PseudoElement::Before, PseudoElement::After]
@@ -2873,28 +2919,27 @@ pub fn evaluate_tree_paint<'r>(
             {
                 content = Some(list.clone());
             }
-            let hide_display = matches!(
-                cascaded("display")?,
-                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
-                    if keyword.as_str() == "none"
-            );
+            // `inherit` takes the element's computed display and clear.
+            let (hide_display, inline) = match cascaded("display")? {
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                    (keyword.as_str() == "none", keyword.as_str() == "inline")
+                }
+                DefaultedValueRef::ParentComputed => (
+                    element_display == Some(Display::None),
+                    element_display.is_none_or(|value| value == Display::Inline),
+                ),
+                _ => (false, true),
+            };
             if hide_display {
                 content = None;
             }
-            let block = matches!(
-                cascaded("display")?,
-                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
-                    if keyword.as_str() != "inline"
-            );
+            // Only a generated box is block-level: an inside marker alone stays inline.
+            let block = content.is_some() && !inline;
             let clear = match cascaded("clear")? {
                 DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
-                    match keyword.as_str() {
-                        "left" => ClearSide::Left,
-                        "right" => ClearSide::Right,
-                        "both" => ClearSide::Both,
-                        _ => ClearSide::None,
-                    }
+                    clear_side(keyword.as_str())
                 }
+                DefaultedValueRef::ParentComputed => element_clear,
                 _ => ClearSide::None,
             };
             let marker_text = if side == 0 { marker.clone() } else { None };
@@ -2965,23 +3010,29 @@ pub fn evaluate_tree_paint<'r>(
                 }
                 _ => owner.italic,
             };
-            let (mut underline, mut line_through) = (owner.underline, owner.line_through);
+            let (mut underline, mut line_through, mut overline) =
+                (owner.underline, owner.line_through, owner.overline);
             // The element's lines run through its generated content in its color and size.
             let from = |on: bool, from: Option<usize>| on.then(|| from.unwrap_or(index));
-            let (mut underline_from, mut line_through_from) = (
+            let (mut underline_from, mut line_through_from, mut overline_from) = (
                 from(owner.underline, owner.underline_from),
                 from(owner.line_through, owner.line_through_from),
+                from(owner.overline, owner.overline_from),
             );
             if let DefaultedValueRef::Compute(SpecifiedValue::TextDecoration(own)) =
                 cascaded("text-decoration")?
             {
                 underline |= own.underline();
                 line_through |= own.line_through();
+                overline |= own.overline();
                 if own.underline() {
                     underline_from = None;
                 }
                 if own.line_through() {
                     line_through_from = None;
+                }
+                if own.overline() {
+                    overline_from = None;
                 }
             }
             let pseudo_color = compute_color(
@@ -3163,25 +3214,43 @@ pub fn evaluate_tree_paint<'r>(
             } else {
                 None
             };
+            // An inside marker alone is its list item's text: the `:before` generates nothing.
+            let (size, color, shown, style) = if has_content {
+                (
+                    size,
+                    rgb(pseudo_color.value(), limits.numeric),
+                    shown,
+                    TextStyle {
+                        weight,
+                        italic,
+                        underline,
+                        line_through,
+                        underline_from,
+                        line_through_from,
+                        overline,
+                        overline_from,
+                        family,
+                        white_space,
+                        text_transform,
+                        ..owner
+                    },
+                )
+            } else {
+                (
+                    font_size,
+                    rgb(current.value(), limits.numeric),
+                    visible,
+                    owner,
+                )
+            };
             pair[side] = Some(GeneratedRun {
                 text,
                 size,
-                color: rgb(pseudo_color.value(), limits.numeric),
+                color,
                 // Only a box paints a background; an inside marker alone has none.
                 background: rgb(pseudo_background.value(), limits.numeric).filter(|_| has_content),
                 visible: shown,
-                style: TextStyle {
-                    weight,
-                    italic,
-                    underline,
-                    line_through,
-                    underline_from,
-                    line_through_from,
-                    family,
-                    white_space,
-                    text_transform,
-                    ..owner
-                },
+                style,
                 block,
                 clear,
                 frame,

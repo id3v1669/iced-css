@@ -382,6 +382,9 @@ pub struct TextRun {
     pub underline_from: Option<(usize, [f32; 3], f32)>,
     /// As `underline_from`, for the line through.
     pub line_through_from: Option<(usize, [f32; 3], f32)>,
+    pub overline: bool,
+    /// As `underline_from`, for the overline.
+    pub overline_from: Option<(usize, [f32; 3], f32)>,
     /// 11.2: hidden text still takes up its room.
     pub visible: bool,
     /// The source node this run belongs to, for hit testing.
@@ -1576,6 +1579,8 @@ impl BoxTree {
                         line_through: style.line_through,
                         underline_from: decorated_by(style.underline_from),
                         line_through_from: decorated_by(style.line_through_from),
+                        overline: style.overline,
+                        overline_from: decorated_by(style.overline_from),
                         visible,
                         owner: {
                             let (RunSource::Node(at)
@@ -1727,8 +1732,9 @@ impl BoxTree {
                 let start = pseudo_box(source).unwrap_or(at);
                 // Whether the run is in a `:before` or `:after` box with sides of its own.
                 let in_box = start != at && inline_chain(Some(start)).last() == Some(&start);
-                // 12.5.1: an inside marker takes a run of its own, the marker's text, when it
-                // has an image or the `:before` it leads has a box: the marker is outside it.
+                // 12.5.1: an inside marker takes a run of its own, the marker's text, in its
+                // list item's font, color and visibility rather than the `:before`'s; with an
+                // image or a `:before` box, outside that box.
                 let marker = match source {
                     RunSource::Before(_) => generated_of(source)
                         .and_then(|made| made.marker)
@@ -1737,11 +1743,33 @@ impl BoxTree {
                 };
                 let image = marker.and_then(|_| inside_image(at));
                 let mut pieces = Vec::with_capacity(2);
-                match marker.filter(|_| image.is_some() || in_box) {
+                match marker {
                     Some(length) => {
                         let rest = run.text.split_off(length);
+                        let item = &styles[at];
+                        let decorated_by = |from: Option<usize>| {
+                            from.map(|from| {
+                                (
+                                    projection.original_index(from).unwrap_or_default(),
+                                    raw_paints[from].color.unwrap_or([0.0; 3]),
+                                    prepared.font_sizes[from],
+                                )
+                            })
+                        };
                         pieces.push((
                             TextRun {
+                                size: prepared.font_sizes[at],
+                                color: raw_paints[at].color,
+                                visible: raw_paints[at].visible,
+                                weight: item.weight,
+                                italic: item.italic,
+                                family: item.family.clone(),
+                                underline: item.underline,
+                                line_through: item.line_through,
+                                overline: item.overline,
+                                underline_from: decorated_by(item.underline_from),
+                                line_through_from: decorated_by(item.line_through_from),
+                                overline_from: decorated_by(item.overline_from),
                                 marker_image: image.map(|handle| MarkerImage {
                                     handle,
                                     fallback: None,
@@ -2274,6 +2302,8 @@ impl BoxTree {
                             line_through: false,
                             underline_from: None,
                             line_through_from: None,
+                            overline: false,
+                            overline_from: None,
                             visible: raw_paints[projected].visible,
                             owner: projection.original_index(projected).unwrap_or_default(),
                         }],
@@ -3785,6 +3815,7 @@ fn indent_run(first: &TextRun, indent: f32) -> Option<TextRun> {
         backgrounds: Vec::new(),
         underline: false,
         line_through: false,
+        overline: false,
         inline_boxes: Vec::new(),
         edge: None,
         ..first.clone()
@@ -5048,6 +5079,10 @@ fn draw_run_decorations<Renderer: text::Renderer<Font = iced::Font>>(
             if run.line_through {
                 let (color, size) = decoration(run.line_through_from);
                 quad(renderer, line(0.0, size), color, 1.0);
+            }
+            if run.overline {
+                let (color, size) = decoration(run.overline_from);
+                quad(renderer, line(-size * 0.55, size), color, 1.0);
             }
         }
     }

@@ -8318,3 +8318,106 @@ fn an_offset_inherits_through_a_static_parent_at_any_tree_position() {
     let geometry = tree.layout(200.0, None).unwrap();
     assert_eq!(geometry[3].unwrap().border.top, 7.0);
 }
+
+#[test]
+fn decoration_skips_atomic_inlines_and_inherit_takes_the_parents_own() {
+    let root = node(
+        "page",
+        vec![
+            text("copy", "x"),
+            node("chip", vec![text("in", "y")]),
+            node("side", vec![text("out", "z")]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#page { text-decoration:underline overline; }
+         #chip { display:inline-block; }
+         #side { float:left; text-decoration:inherit; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let run = |wanted: &str| {
+        let run = &leaves
+            .iter()
+            .find(|(_, leaf)| leaf.text() == wanted)
+            .unwrap()
+            .1
+            .runs[0];
+        (run.underline, run.overline)
+    };
+    assert_eq!(run("x"), (true, true));
+    // 16.3.1: not into the contents of an inline-block.
+    assert_eq!(run("y"), (false, false));
+    // A float carries none, but an explicit `inherit` is the parent's own value.
+    assert_eq!(run("z"), (true, true));
+}
+
+#[test]
+fn pseudo_display_and_clear_inherit_take_the_elements() {
+    let root = node(
+        "page",
+        vec![
+            node("wrap", vec![node("side", vec![])]),
+            node("after", vec![]),
+        ],
+    );
+    let tree = BoxTree::new(
+        root,
+        "#wrap { display:block; clear:both; }
+         #wrap:after { content:\"\"; display:inherit; clear:inherit; }
+         #side { float:left; width:10px; height:30px; }
+         #after { height:1px; }",
+    )
+    .unwrap();
+    let g = tree.layout_text(100.0, None, &mut |_, _| 0.0).unwrap();
+    assert_eq!(g[1].unwrap().border.bottom, 30.0);
+    assert_eq!(g[3].unwrap().border.top, 30.0);
+}
+
+#[test]
+fn an_inside_marker_keeps_its_items_style_and_line() {
+    let runs_of = |css: &str| {
+        let tree = BoxTree::new(
+            node(
+                "page",
+                vec![node("li", vec![node("x", vec![text("t", "item")])])],
+            ),
+            &format!(
+                "#li {{ display:list-item; list-style:inside decimal; color:#0000ff;
+                        font-size:10px; }}
+                 #x {{ display:block; }}
+                 #li:before {{ color:#ff0000; font-size:30px; margin:10px; {css} }}"
+            ),
+        )
+        .unwrap();
+        let g = tree.layout_text(100.0, None, &mut |_, _| 0.0).unwrap();
+        let leaves = tree.text_leaves();
+        let runs = &leaves[0].1.runs;
+        (
+            leaves.len(),
+            runs[0].text.clone(),
+            runs[0].color,
+            runs[0].size,
+            // The `:before`'s margin would move the item's block down.
+            g[3].unwrap().border.top - g[1].unwrap().border.top,
+        )
+    };
+    let plain = runs_of("").4;
+    let marker = |leaves: usize| {
+        (
+            leaves,
+            "1.\u{a0}".to_owned(),
+            Some([0.0, 0.0, 1.0]),
+            10.0,
+            plain,
+        )
+    };
+    // No `:before` box: the marker is the item's text, in the item's color and size.
+    assert_eq!(runs_of(""), marker(2));
+    // A hidden or empty block `:before` does not take the marker into a block of its own.
+    assert_eq!(runs_of("display:none; content:\"x\";"), marker(2));
+    assert_eq!(runs_of("display:block;"), marker(2));
+    // With content, only the content takes the `:before`'s style.
+    assert_eq!(runs_of("content:\"x\";"), marker(2));
+}

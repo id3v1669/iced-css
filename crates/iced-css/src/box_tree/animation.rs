@@ -1146,6 +1146,7 @@ impl BoxTree {
             marker_image: None,
             underline: false,
             line_through: false,
+            overline: false,
             inline_boxes,
             visible: if margin { base.visible } else { paint.visible },
             owner: if margin { margin_owner } else { node },
@@ -2060,9 +2061,13 @@ impl BoxTree {
             for run in &mut leaf.runs {
                 let owner = edge_owner(run);
                 // A line an ancestor set changes color with it (16.3.1).
-                for from in [&mut run.underline_from, &mut run.line_through_from]
-                    .into_iter()
-                    .flatten()
+                for from in [
+                    &mut run.underline_from,
+                    &mut run.line_through_from,
+                    &mut run.overline_from,
+                ]
+                .into_iter()
+                .flatten()
                 {
                     if from.1 == target && followers.boxes.iter().any(|f| f.node == from.0) {
                         from.1 = now;
