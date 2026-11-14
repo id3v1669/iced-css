@@ -1718,6 +1718,10 @@ impl BoxTree {
                             let colors = box_paints[element].border;
                             InlineDecoration {
                                 padding: [sides.padding[0], sides.padding[2]],
+                                padding_share: [
+                                    (sides.padding[0], sides.percent_padding[0]),
+                                    (sides.padding[2], sides.percent_padding[2]),
+                                ],
                                 border: [
                                     (sides.border[0], colors[0]),
                                     (sides.border[2], colors[2]),
@@ -2431,6 +2435,16 @@ impl BoxTree {
                 (place.right - place.left).max(0.0)
             };
             for run in &mut leaf.runs {
+                // Percentage paddings above and below, which take no room in the line.
+                for decoration in &mut run.inline_boxes {
+                    for (padding, (fixed, percent)) in
+                        decoration.padding.iter_mut().zip(decoration.padding_share)
+                    {
+                        if percent != 0.0 {
+                            *padding = fixed + percent / 100.0 * width;
+                        }
+                    }
+                }
                 let Some(text) = room_text(run, width) else {
                     continue;
                 };
@@ -3143,6 +3157,9 @@ fn css_cursor(keyword: &str) -> Option<mouse::Interaction> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InlineDecoration {
     pub padding: [f32; 2],
+    /// The top and bottom padding's fixed pixels and percentage, of the block's content
+    /// width: `padding` once its width is known.
+    pub padding_share: [(f32, f32); 2],
     pub border: [(f32, Option<[f32; 3]>); 2],
     /// The `border-top-style` and `border-bottom-style`.
     pub border_style: [&'static str; 2],

@@ -3418,6 +3418,31 @@ mod animation {
     }
 
     #[test]
+    fn an_inlines_percentage_padding_above_moves_as_a_share() {
+        let source = || node("p", vec![node("s", vec![text("t", "words")])]);
+        let css = |padding: &str| format!("#s {{ display:inline; padding-top:{padding}; }}");
+        let from = BoxTree::new(source(), &css("10%")).unwrap();
+        let to = from.restyled(&[&css("30%")]).unwrap();
+        let start = Instant::now();
+        let mut animations = BoxTreeAnimations::new();
+        let count = animations
+            .request(&from, &to, "s", &["padding-top"], second(), start)
+            .unwrap();
+        assert_eq!(count, 1);
+        animations.advance(start + Duration::from_millis(500), &to);
+        let half = animations.presented(&to);
+        // Halfway, a fifth of the block's width, sized once it is known.
+        let share = half
+            .text_leaves()
+            .iter()
+            .flat_map(|(_, leaf)| &leaf.runs)
+            .flat_map(|run| &run.inline_boxes)
+            .map(|decoration| decoration.padding_share[0])
+            .next();
+        assert_eq!(share, Some((0.0, 20.0)));
+    }
+
+    #[test]
     fn a_collapsed_tables_border_color_moves_on_its_outer_cells() {
         let source = || {
             node(

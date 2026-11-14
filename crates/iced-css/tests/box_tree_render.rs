@@ -6382,3 +6382,34 @@ fn a_row_of_inline_blocks_takes_a_percentage_of_the_containing_block() {
     let g = tree.layout_with(&renderer, 400.0, None).unwrap();
     assert_eq!(g[2].unwrap().border.left, 90.0);
 }
+
+#[test]
+fn an_inlines_percentage_padding_above_and_below_takes_its_share() {
+    let draw = |padding: &str, name: &str| {
+        let root = node(
+            "page",
+            vec![node(
+                "p",
+                vec![text("a", "before "), node("s", vec![text("b", "padded")])],
+            )],
+        );
+        let sheet = format!(
+            "#page {{ background-color:white; color:black; padding-top:60px; }}
+             #p {{ width:200px; }}
+             #s {{ display:inline; background-color:#ff0000; padding-top:{padding};
+                   padding-bottom:{padding}; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        simulator(view)
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // 10.8.1: no room in the line, but its background reaches 10% of the paragraph's
+    // 200px above and below: as far as 20px.
+    let name = format!("inline-vertical-percent-{}.png", std::process::id());
+    assert!(draw("20px", &name));
+    assert!(draw("10%", &name));
+    assert!(!draw("0", &name));
+}

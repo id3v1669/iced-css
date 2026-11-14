@@ -969,6 +969,10 @@ impl BoxTree {
         // Its box around its runs, after the boxes around it, as the styling would make it.
         let own = super::InlineDecoration {
             padding: [sides.padding[0], sides.padding[2]],
+            padding_share: [
+                (sides.padding[0], sides.percent_padding[0]),
+                (sides.padding[2], sides.percent_padding[2]),
+            ],
             border: [(sides.border[0], border[0]), (sides.border[2], border[1])],
             border_style: [paint.border_style[0], paint.border_style[2]],
             background,
@@ -1004,6 +1008,7 @@ impl BoxTree {
                 .filter(|sides| sides.owner == node)
             {
                 sides.padding = own.padding;
+                sides.padding_share = own.padding_share;
                 sides.border[0].0 = own.border[0].0;
                 sides.border[1].0 = own.border[1].0;
             }
