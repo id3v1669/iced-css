@@ -118,7 +118,6 @@ impl std::error::Error for HttpImportError {
 #[derive(Debug)]
 pub enum HttpGraphError {
     Input(HttpStylesheetSubmitError),
-    IdentityPoisoned,
     Root(HttpImportError),
     Imports(CollectionError<HttpImportError>),
 }
@@ -133,7 +132,6 @@ impl std::error::Error for HttpGraphError {
             Self::Input(e) => Some(e),
             Self::Root(e) => Some(e),
             Self::Imports(e) => Some(e),
-            Self::IdentityPoisoned => None,
         }
     }
 }
@@ -406,10 +404,11 @@ impl FileReader {
                 limits.bases,
                 move || {
                     let report = HttpDependencyReport::new(limits.attempts);
-                    let mut identities = match identities.lock() {
-                        Ok(value) => value,
-                        Err(_) => return (Err(HttpGraphError::IdentityPoisoned), report),
-                    };
+                    // `identify` is atomic, so a panic during acquisition or CSS intake
+                    // under this guard leaves the registry consistent.
+                    let mut identities = identities
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let aliases = match ImportUriAliases::new(limits.aliases) {
                         Ok(value) => value,
                         Err(error) => {

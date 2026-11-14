@@ -77,7 +77,6 @@ impl std::error::Error for FileGraphRetryError {
 pub enum FileGraphAcquisitionError {
     UriBytes,
     MetadataBytes,
-    IdentityPoisoned,
     Watch(super::file_watch::FileGraphWatchError),
     Root(FileImportError),
     Imports(CollectionError<FileImportError>),
@@ -332,15 +331,11 @@ impl RuntimeFileStylesheetGraph {
                     request,
                     limits.bases,
                     move || {
-                        let mut identities = match identities.lock() {
-                            Ok(identities) => identities,
-                            Err(_) => {
-                                return (
-                                    Err(FileGraphAcquisitionError::IdentityPoisoned),
-                                    FileDependencyReport::new(limits.file.dependencies),
-                                );
-                            }
-                        };
+                        // `identify` is atomic, so a panic during reads or CSS intake
+                        // under this guard leaves the registry consistent.
+                        let mut identities = identities
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let mut provider =
                             UnixFileImportProvider::new(&mut identities, context, limits.file);
                         let result = provider

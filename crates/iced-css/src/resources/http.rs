@@ -65,6 +65,8 @@ impl HttpExchangeTiming {
 #[derive(Debug)]
 pub struct HttpSettings {
     pub operations: NonZeroUsize,
+    /// Total time for one exchange, from connecting until its body has been read.
+    /// Each followed redirect hop is a separate exchange.
     pub timeout: Duration,
     pub connect_timeout: Duration,
     pub additional_roots: Vec<Vec<u8>>,
@@ -267,6 +269,7 @@ impl DirectHttpTransport {
         let thread = std::thread::Builder::new()
             .name("iced-css-http".into())
             .spawn(move || {
+                let timeout = settings.timeout;
                 let client = match catch_unwind(AssertUnwindSafe(|| build_client(settings))) {
                     Ok(Ok(client)) => client,
                     Ok(Err(error)) => {
@@ -288,12 +291,19 @@ impl DirectHttpTransport {
                     let result = catch_unwind(AssertUnwindSafe(|| match job.redirects {
                         Some(limits) => redirects::exchange_following(
                             &client,
+                            timeout,
                             job.uri,
                             job.limits,
                             limits,
                             || job.sender.is_canceled(),
                         ),
-                        None => exchange(&client, &job.uri, job.validator.as_deref(), job.limits),
+                        None => exchange(
+                            &client,
+                            timeout,
+                            &job.uri,
+                            job.validator.as_deref(),
+                            job.limits,
+                        ),
                     }))
                     .unwrap_or(Err(HttpError::Panicked));
                     drop(job.lease);
@@ -455,19 +465,25 @@ fn build_client(settings: HttpSettings) -> Result<reqwest::blocking::Client, Htt
 }
 fn exchange(
     client: &reqwest::blocking::Client,
+    timeout: Duration,
     uri: &str,
     validator: Option<&[u8]>,
     limits: HttpLimits,
 ) -> Result<HttpResponse, HttpError> {
     let url = transport_url(uri, limits.uri)?;
-    let mut request = client.get(url);
+    // The blocking client timeout restarts on every body read; the per-request
+    // timeout is total, from connecting until the body has been read.
+    let mut request = client.get(url).timeout(timeout);
     if let Some(validator) = validator {
         let header = reqwest::header::HeaderValue::from_bytes(validator)
             .map_err(HttpError::InvalidHeader)?;
         request = request.header(reqwest::header::IF_NONE_MATCH, header);
     }
     let request_time = HttpClockSample::capture();
-    let mut response = request.send().map_err(HttpError::Request)?;
+    // Request URLs can carry query secrets; keep them out of error diagnostics.
+    let mut response = request
+        .send()
+        .map_err(|error| HttpError::Request(error.without_url()))?;
     let timing = HttpExchangeTiming {
         request: request_time,
         response_headers: HttpClockSample::capture(),

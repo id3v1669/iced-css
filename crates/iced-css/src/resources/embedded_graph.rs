@@ -65,7 +65,6 @@ impl<E: std::error::Error + 'static> std::error::Error for EmbeddedImportError<E
 #[derive(Debug)]
 pub enum EmbeddedGraphError<E> {
     Input(EmbeddedSubmitError),
-    IdentityPoisoned,
     Root(EmbeddedImportError<E>),
     Imports(CollectionError<EmbeddedImportError<E>>),
 }
@@ -80,7 +79,6 @@ impl<E: std::error::Error + 'static> std::error::Error for EmbeddedGraphError<E>
             Self::Input(e) => Some(e),
             Self::Root(e) => Some(e),
             Self::Imports(e) => Some(e),
-            Self::IdentityPoisoned => None,
         }
     }
 }
@@ -255,10 +253,11 @@ impl<R: EmbeddedResolver> EmbeddedReader<R> {
                     limits.bases,
                     move || {
                         let report = EmbeddedDependencyReport::new(limits.dependencies);
-                        let mut identities = match identities.lock() {
-                            Ok(ids) => ids,
-                            Err(_) => return (Err(EmbeddedGraphError::IdentityPoisoned), report),
-                        };
+                        // `identify` is atomic, so a panic in a resolver callback or CSS
+                        // intake under this guard leaves the registry consistent.
+                        let mut identities = identities
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let mut provider = Provider {
                             namespace: &namespace,
                             resolver: resolver.as_ref(),

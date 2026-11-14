@@ -176,6 +176,7 @@ impl History {
 
 pub(super) fn exchange_following(
     client: &reqwest::blocking::Client,
+    timeout: std::time::Duration,
     initial: String,
     limits: HttpLimits,
     redirect_limits: RedirectLimits,
@@ -195,7 +196,7 @@ pub(super) fn exchange_following(
             .entries
             .last()
             .map_or(initial.as_str(), |hop| hop.target.as_str());
-        let mut response = exchange(client, reference, None, limits)?;
+        let mut response = exchange(client, timeout, reference, None, limits)?;
         if cancelled() {
             return Err(HttpError::Stopped);
         }

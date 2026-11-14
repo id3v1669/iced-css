@@ -3623,6 +3623,124 @@ fn staged_file_requests_acquire_only_under_the_current_owner_and_generation() {
 }
 
 #[test]
+fn embedded_resolver_panic_does_not_disable_later_graph_loads() {
+    use iced::futures::executor::block_on;
+    use iced_css::resources::{embedded::*, graph::GraphWorkerError, worker::WorkerFailure};
+    use iced_css_core::{
+        resources::{body::BodyLimits, uri::UriLimits},
+        stylesheet::{collector::CollectorLimits, identities::*, requests::ImportRequestLimits},
+    };
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    struct Resolver(Arc<AtomicBool>);
+    impl EmbeddedResolver for Resolver {
+        type Error = std::io::Error;
+        fn resolve(&self, _: EmbeddedRequest<'_>) -> Result<EmbeddedSource, Self::Error> {
+            assert!(!self.0.load(Ordering::SeqCst), "resolver probe panic");
+            Ok(EmbeddedSource {
+                bytes: b"a{color:red}".to_vec(),
+                version: vec![0],
+                dependency_base: "app:/root.css".into(),
+            })
+        }
+    }
+    let panic = Arc::new(AtomicBool::new(true));
+    let uri = UriLimits {
+        bytes: n(),
+        work: n(),
+    };
+    let reader = EmbeddedReader::new(
+        "app".into(),
+        Resolver(Arc::clone(&panic)),
+        NonZeroUsize::MIN,
+        uri,
+    )
+    .unwrap();
+    let ids = Arc::new(Mutex::new(
+        ImportIdentityRegistry::new(IdentityLimits {
+            entries: n(),
+            bytes: n(),
+            work: n(),
+        })
+        .unwrap(),
+    ));
+    let source = || EmbeddedGraphSource {
+        base: "app:/main.css".into(),
+        reference: "app:/root.css".into(),
+        encoding: Default::default(),
+    };
+    let settings = EmbeddedGraphLimits {
+        stylesheet: EmbeddedStylesheetLimits {
+            asset: EmbeddedLimits {
+                uri,
+                metadata_bytes: n(),
+                body: BodyLimits {
+                    retained_bytes: n(),
+                    work: n(),
+                },
+            },
+            metadata_bytes: n(),
+            intake: intake_limits(),
+        },
+        collector: CollectorLimits {
+            entries: n(),
+            record_bytes: n(),
+            work: n(),
+            cycle_bytes: n(),
+            requests: ImportRequestLimits {
+                entries: n(),
+                retained_bytes: n(),
+                work: n(),
+            },
+            tracking: graph_limits().expansion.tracking,
+        },
+        bases: meta_limits(),
+        dependencies: EmbeddedDependencyLimits {
+            entries: n(),
+            retained_bytes: n(),
+            work: n(),
+        },
+    };
+    let mut owner = RuntimeLocatedStylesheetGraph::new(
+        PublicationLimits {
+            requests: NonZeroU64::new(4).unwrap(),
+            revisions: NonZeroU64::new(4).unwrap(),
+        },
+        n(),
+    );
+    let request = owner.request(0, context(), graph_limits()).unwrap();
+    let (completion, _) = block_on(reader.load_stylesheet_graph(
+        request,
+        Arc::clone(&ids),
+        context(),
+        source(),
+        settings,
+    ));
+    assert!(matches!(
+        owner.finish(completion).unwrap(),
+        SheetCompletion::Failed(GraphLoadError::Acquisition(GraphWorkerError::Worker(
+            WorkerFailure::Panicked
+        )))
+    ));
+    panic.store(false, Ordering::SeqCst);
+    let request = owner.request(0, context(), graph_limits()).unwrap();
+    let (completion, _) = block_on(reader.load_stylesheet_graph(
+        request,
+        Arc::clone(&ids),
+        context(),
+        source(),
+        settings,
+    ));
+    assert!(matches!(
+        owner.finish(completion).unwrap(),
+        SheetCompletion::Published(_)
+    ));
+    assert_eq!(owner.active().unwrap().graph().rules().count(), 1);
+}
+
+#[test]
 fn embedded_graph_collection_uses_resolver_bases_versions_and_atomic_reloads() {
     use iced::futures::executor::block_on;
     use iced_css::resources::embedded::*;

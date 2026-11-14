@@ -301,6 +301,8 @@ fn explicit_trust_succeeds_and_untrusted_or_wrong_host_tls_is_rejected() {
             let error = result.unwrap_err();
             assert!(matches!(error, HttpError::Request(_)));
             let diagnostic = format!("{error:?}");
+            assert!(!diagnostic.contains("/style.css"), "{diagnostic}");
+            assert!(!error.to_string().contains("/style.css"), "{error}");
             assert!(
                 diagnostic.contains(if wrong_host {
                     "NotValidForName"
@@ -312,6 +314,45 @@ fn explicit_trust_succeeds_and_untrusted_or_wrong_host_tls_is_rejected() {
         }
         assert_eq!(transport.in_flight(), 0);
     }
+}
+#[test]
+fn timeout_bounds_the_whole_exchange_not_each_body_read() {
+    let transport = block_on(DirectHttpTransport::new(HttpSettings {
+        timeout: Duration::from_millis(600),
+        ..settings()
+    }))
+    .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut b = [0; 512];
+        while !request.windows(4).any(|x| x == b"\r\n\r\n") {
+            let n = socket.read(&mut b).unwrap();
+            assert!(n > 0);
+            request.extend_from_slice(&b[..n]);
+        }
+        let _ =
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n");
+        // Every read finishes well within the timeout; the whole body does not.
+        for _ in 0..10 {
+            thread::sleep(Duration::from_millis(200));
+            if socket.write_all(b"a").is_err() {
+                break;
+            }
+        }
+    });
+    let mut limits = limits();
+    limits.read.reads = nz(100);
+    let result = block_on(
+        transport
+            .get(format!("http://127.0.0.1:{port}/style.css"), limits)
+            .unwrap(),
+    );
+    assert!(result.is_err(), "{result:?}");
+    server.join().unwrap();
+    assert_eq!(transport.in_flight(), 0);
 }
 #[test]
 fn invalid_or_excessive_application_roots_fail_before_exchange() {
