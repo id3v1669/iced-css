@@ -7582,6 +7582,21 @@ mod tests {
         .unwrap();
         let arena = tree.prepared.generated_boxes[0].0;
         assert_eq!(tree.prepared.boxes[arena].border[0], 0.0);
+        // An element that inherits passes its parent's on.
+        let tree = BoxTree::new(
+            node("p", vec![node("e", vec![])]),
+            "#p { width:30px; margin-left:1em; font-size:10px; border:thin solid; }
+             #e { width:inherit; margin-left:inherit; border:solid; border-width:inherit; }
+             #e:before { content:\"x\"; display:block; width:inherit; margin-left:inherit;
+                         border-style:solid; border-width:inherit; }",
+        )
+        .unwrap();
+        let arena = tree.prepared.generated_boxes[0].0;
+        let value = &tree.prepared.boxes[arena];
+        assert_eq!(
+            (value.width, value.margin[3], value.border[0]),
+            (Dim::Px(30.0), Dim::Px(10.0), 1.0)
+        );
     }
 
     #[test]

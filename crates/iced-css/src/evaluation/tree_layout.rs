@@ -2019,6 +2019,20 @@ fn family_of(list: &[FontFamily]) -> Option<String> {
     })
 }
 
+/// The box lengths generated content inherits from its element.
+const BOX_LENGTHS: [&str; 10] = [
+    "width",
+    "height",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+];
+
 /// Cascades background and border colors for each projected row; `color` is computed
 /// along the way, since it is both inherited and the initial border color.
 ///
@@ -2069,6 +2083,10 @@ pub fn evaluate_tree_paint<'r>(
         .map(|name| id(name))
         .collect::<Result<Vec<_>, _>>()?;
     let mut marker_images: Vec<Option<String>> = Vec::with_capacity(projection.len());
+    // Each element's computed box lengths (`BOX_LENGTHS`) and border widths, which its
+    // `:before` and `:after` inherit.
+    let mut box_lengths: Vec<[Dim; 10]> = Vec::with_capacity(projection.len());
+    let mut border_widths: Vec<[f32; 4]> = Vec::with_capacity(projection.len());
     let mut outline_colors: Vec<Option<[f32; 3]>> = Vec::with_capacity(projection.len());
     let mut outside_items: Vec<bool> = Vec::with_capacity(projection.len());
     let mut captions_below: Vec<bool> = Vec::with_capacity(projection.len());
@@ -2674,6 +2692,76 @@ pub fn evaluate_tree_paint<'r>(
                 .resolution(original)
                 .is_some_and(|value| value.display != Display::None),
         );
+        // Its own lengths, as its generated content inherits them: an `em` in its font size,
+        // its own `inherit` its parent's, and a border width none where its style is.
+        let own_length = |target: &LengthTarget| match target {
+            LengthTarget::Absolute(value) => {
+                Dim::Px(value.to_finite_f32(limits.numeric).map_or(0.0, |c| c.value))
+            }
+            LengthTarget::Relative(value, RelativeUnit::Em) => Dim::Px(
+                value
+                    .scaled_finite_f32(font_size, limits.numeric)
+                    .map_or(0.0, |c| c.value),
+            ),
+            LengthTarget::Relative(value, RelativeUnit::Ex) => Dim::Px(
+                value
+                    .scaled_finite_f32(font_size * 0.5, limits.numeric)
+                    .map_or(0.0, |c| c.value),
+            ),
+            LengthTarget::Percentage(value) => Dim::Percent(
+                value
+                    .percentage_finite_f32(100.0, limits.numeric)
+                    .map_or(0.0, |c| c.value),
+            ),
+            LengthTarget::Auto => Dim::Auto,
+        };
+        let mut lengths = [Dim::Px(0.0); 10];
+        for (at, name) in BOX_LENGTHS.iter().enumerate() {
+            let initial = if at < 2 { Dim::Auto } else { Dim::Px(0.0) };
+            lengths[at] = match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => own_length(target),
+                DefaultedValueRef::ParentComputed => {
+                    parent_index.map_or(initial, |parent| box_lengths[parent][at])
+                }
+                _ => initial,
+            };
+        }
+        box_lengths.push(lengths);
+        let mut widths = [0.0_f32; 4];
+        for (at, name) in [
+            "border-top-width",
+            "border-right-width",
+            "border-bottom-width",
+            "border-left-width",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            widths[at] = if matches!(paints[index].border_style[at], "none" | "hidden") {
+                0.0
+            } else {
+                match defaulted(name)? {
+                    DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                        match keyword.as_str() {
+                            "thin" => 1.0,
+                            "thick" => 5.0,
+                            _ => 3.0,
+                        }
+                    }
+                    DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => {
+                        match own_length(target) {
+                            Dim::Px(pixels) => pixels.max(0.0),
+                            _ => 3.0,
+                        }
+                    }
+                    DefaultedValueRef::ParentComputed => {
+                        parent_index.map_or(3.0, |parent| border_widths[parent][at])
+                    }
+                    _ => 3.0,
+                }
+            };
+        }
+        border_widths.push(widths);
         let mut pending_pair = [None, None];
         let mut pair = [None, None];
         for (side, pseudo) in [PseudoElement::Before, PseudoElement::After]
@@ -2877,20 +2965,16 @@ pub fn evaluate_tree_paint<'r>(
                 ),
                 LengthTarget::Auto => Dim::Auto,
             };
-            // `inherit` takes the element's value, in the element's font size; the element's
-            // own `inherit` there is the initial value.
-            let element_size = font_sizes.get(index).copied().unwrap_or(size);
+            // `inherit` takes the element's computed value (`box_lengths`).
             let dim = |name: &'static str, initial: Dim| {
                 Ok::<_, TreeLayoutError>(match cascaded(name)? {
                     DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => {
                         length(target, size)
                     }
-                    DefaultedValueRef::ParentComputed => match defaulted(name)? {
-                        DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => {
-                            length(target, element_size)
-                        }
-                        _ => initial,
-                    },
+                    DefaultedValueRef::ParentComputed => BOX_LENGTHS
+                        .iter()
+                        .position(|own| *own == name)
+                        .map_or(initial, |at| box_lengths[index][at]),
                     _ => initial,
                 })
             };
@@ -2933,30 +3017,17 @@ pub fn evaluate_tree_paint<'r>(
                         "border-bottom-width",
                         "border-left-width",
                     ][at];
-                    // Inherited, the element's: none where its own style draws none.
-                    let keyword = match cascaded(width_name)? {
+                    let width = match cascaded(width_name)? {
                         DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
-                            keyword.as_str()
-                        }
-                        DefaultedValueRef::ParentComputed => {
-                            if matches!(paints[index].border_style[at], "none" | "hidden") {
-                                "none"
-                            } else {
-                                match defaulted(width_name)? {
-                                    DefaultedValueRef::Compute(SpecifiedValue::Keyword(
-                                        keyword,
-                                    )) => keyword.as_str(),
-                                    _ => "",
-                                }
+                            match keyword.as_str() {
+                                "thin" => 1.0,
+                                "medium" => 3.0,
+                                "thick" => 5.0,
+                                _ => width,
                             }
                         }
-                        _ => "",
-                    };
-                    let width = match keyword {
-                        "thin" => 1.0,
-                        "medium" => 3.0,
-                        "thick" => 5.0,
-                        "none" => 0.0,
+                        // Inherited, the element's computed width (`border_widths`).
+                        DefaultedValueRef::ParentComputed => border_widths[index][at],
                         _ => width,
                     };
                     border_width[at] = if matches!(style, "none" | "hidden") {
