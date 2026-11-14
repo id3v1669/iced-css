@@ -3132,6 +3132,37 @@ fn auto_file_coordinator_routes_messages_and_coalesces_dirty_work() {
         iced_css_core::resources::publication::PublicationStatus::Failed
     );
     assert!(subscription::into_recipes(bad.subscription()).is_empty());
+    // Rejected input storage has no report: Auto finishes it in one phase
+    // without a fabricated coverage failure.
+    let mut oversized = FileStylesheetHost::new(
+        FileReader::new(NonZeroUsize::MIN),
+        FileStylesheetHostConfig {
+            graph: FileGraphLimits {
+                file: FileImportLimits {
+                    file: FileUriReadLimits {
+                        uri: UriLimits {
+                            bytes: NonZeroUsize::MIN,
+                            work: n(),
+                        },
+                        ..settings.file.file
+                    },
+                    ..settings.file
+                },
+                ..settings
+            },
+            ..config
+        },
+    )
+    .unwrap();
+    let work = oversized
+        .request(RequestReason::FirstAcquisition, source())
+        .unwrap();
+    let failed = oversized.update(block_on(work));
+    assert!(matches!(
+        failed.outcome.unwrap().unwrap(),
+        SheetCompletion::Failed(_)
+    ));
+    assert!(failed.work.is_none() && !oversized.is_busy());
     let mut once = FileStylesheetHost::new(
         FileReader::new(NonZeroUsize::MIN),
         FileStylesheetHostConfig {
@@ -3302,6 +3333,17 @@ fn auto_file_coordinator_routes_messages_and_coalesces_dirty_work() {
 
     // Exercise file replacement and dependency removal through real subscription
     // notices. Periodic fallback is allowed; this does not assert a native event kind.
+    // Published replacement coverage rereads once to cover the registration gap;
+    // that reread keeps the same coverage and settles without further work.
+    fn reread(host: &mut FileStylesheetHost, work: Option<FileStylesheetWork>) {
+        let Some(work) = work else { return };
+        let update = settle(host, work);
+        assert!(matches!(
+            update.outcome.unwrap().unwrap(),
+            SheetCompletion::Published(_)
+        ));
+        assert!(update.work.is_none(), "reread must not loop");
+    }
     let nested = temp.0.join("retired-imports");
     std::fs::create_dir(&nested).unwrap();
     let nested_child = nested.join("child.css");
@@ -3315,6 +3357,11 @@ fn auto_file_coordinator_routes_messages_and_coalesces_dirty_work() {
         published.outcome.unwrap().unwrap(),
         SheetCompletion::Published(_)
     ));
+    assert!(
+        published.work.is_some(),
+        "new import directory rereads once"
+    );
+    reread(&mut host, published.work);
     assert_eq!(host.active().unwrap().graph().rules().count(), 2);
     // Coverage changed to include a new directory: attach to the current recipe.
     let mut current_notices = subscription::into_recipes(host.subscription())
@@ -3330,6 +3377,7 @@ fn auto_file_coordinator_routes_messages_and_coalesces_dirty_work() {
         published.outcome.unwrap().unwrap(),
         SheetCompletion::Published(_)
     ));
+    reread(&mut host, published.work);
     assert_eq!(host.active().unwrap().graph().rules().count(), 1);
     std::fs::remove_file(&nested_child).unwrap();
     let mut current_notices = subscription::into_recipes(host.subscription())
@@ -3342,6 +3390,7 @@ fn auto_file_coordinator_routes_messages_and_coalesces_dirty_work() {
         published.outcome.unwrap().unwrap(),
         SheetCompletion::Published(_)
     ));
+    reread(&mut host, published.work);
     assert_eq!(host.active().unwrap().graph().rules().count(), 1);
     std::fs::write(&replacement, b"").unwrap();
     std::fs::rename(&replacement, &path).unwrap();
@@ -3355,6 +3404,7 @@ fn auto_file_coordinator_routes_messages_and_coalesces_dirty_work() {
         published.outcome.unwrap().unwrap(),
         SheetCompletion::Published(_)
     ));
+    reread(&mut host, published.work);
     assert_eq!(host.active().unwrap().graph().rules().count(), 0);
 
     let work = manual

@@ -84,11 +84,20 @@ pub fn read_body_blocking(
 /// advertised metadata length. A length mismatch or read error rejects the body.
 /// This does not canonicalize URI/file identities or establish an atomic snapshot;
 /// same-length concurrent changes require the resource host's reload strategy.
+/// Non-regular objects (FIFOs, devices, directories) are rejected as I/O errors
+/// before opening, so a writer-less FIFO cannot block the worker in `open`.
 pub fn read_file_blocking(
     path: &Path,
     limits: ReadBodyLimits,
 ) -> Result<CompletedBody, ReadBodyError> {
+    let not_regular = || io::Error::new(io::ErrorKind::InvalidInput, "not a regular file");
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(ReadBodyError::Io(not_regular()));
+    }
     let mut file = File::open(path)?;
-    let expected = file.metadata()?.len();
-    read_body_blocking(&mut file, Some(expected), limits)
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(ReadBodyError::Io(not_regular()));
+    }
+    read_body_blocking(&mut file, Some(metadata.len()), limits)
 }

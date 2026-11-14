@@ -213,5 +213,29 @@ fn explicit_local_file_acquisition_preserves_original_encoding_bytes() {
         read_file_blocking(&path.join("missing.css"), limits()),
         Err(ReadBodyError::Io(_))
     ));
+    // A writer-less FIFO is rejected before `open`, which would block forever.
+    #[cfg(unix)]
+    {
+        let fifo = path.join("pipe.css");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(matches!(
+                read_file_blocking(&fifo, limits()),
+                Err(ReadBodyError::Io(error)) if error.kind() == io::ErrorKind::InvalidInput
+            ));
+        });
+        assert!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap()
+        );
+    }
     drop(cleanup);
 }

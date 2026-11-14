@@ -1,6 +1,6 @@
 //! Bounded exact-input recovery reporting, with prior-occurrence suppression.
 use iced_css_core::stylesheet::{
-    RejectionReason, SheetEntryKind, SheetRejectionReason, UnicodeStylesheetCandidate,
+    OriginalSpan, RejectionReason, SheetEntryKind, SheetRejectionReason, UnicodeStylesheetCandidate,
 };
 use std::{num::NonZeroUsize, ops::Range};
 #[derive(Debug)]
@@ -93,6 +93,30 @@ fn same(
     let b = b_source.get(b.span.clone()).ok_or(Error::InvalidSpan)?;
     bytes_equal(a, b, work)
 }
+/// Original-source location of a notice; decoded offsets only if unmapped.
+struct At<'a>(Option<OriginalSpan>, &'a Range<usize>);
+impl std::fmt::Display for At<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(span) => write!(
+                f,
+                "line {}, column {} (source bytes {}..{})",
+                span.start.line, span.start.column, span.start.byte, span.end.byte
+            ),
+            None => write!(f, "decoded bytes {}..{}", self.1.start, self.1.end),
+        }
+    }
+}
+/// Rejected property name, when the notice has one.
+struct Property<'a>(Option<&'a str>);
+impl std::fmt::Display for Property<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(name) => write!(f, " in property `{name}`"),
+            None => Ok(()),
+        }
+    }
+}
 /// No cause cache or copied source is allocated. Input spelling changes remain
 /// distinct diagnostics; offsets alone do not. Extra equal occurrences still log.
 pub(super) fn report(
@@ -139,10 +163,12 @@ pub(super) fn report_with_work(
             }
         }
         if earlier_count >= old_count {
+            let at = At(active.original_span(notice.span.clone()), notice.span);
+            let property = Property(notice.name);
             if let Some(resource) = resource {
-                log::error!(target: "iced_css::stylesheet", "stylesheet resource {resource:?} skipped input at decoded bytes {}..{}: {:?}", notice.span.start, notice.span.end, notice.kind);
+                log::error!(target: "iced_css::stylesheet", "stylesheet resource {resource:?} skipped input at {at}{property}: {:?}", notice.kind);
             } else {
-                log::error!(target: "iced_css::stylesheet", "stylesheet skipped input at decoded bytes {}..{}: {:?}", notice.span.start, notice.span.end, notice.kind);
+                log::error!(target: "iced_css::stylesheet", "stylesheet skipped input at {at}{property}: {:?}", notice.kind);
             }
         }
     }

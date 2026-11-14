@@ -184,6 +184,11 @@ fn current_graph_failures_and_recovery_log_without_duplicate_occurrences() {
         ))))
         .unwrap();
     assert_eq!(SINK.0.lock().unwrap().len(), 1);
+    // Recovery names the original-source position and the rejected property.
+    assert!(
+        SINK.0.lock().unwrap()[0]
+            .contains("at line 1, column 3 (source bytes 2..13) in property `width`")
+    );
     let next = runtime.request(0, context(), graph_limits()).unwrap();
     runtime
         .finish(next.assemble(Ok::<_, &str>(complete_inputs(

@@ -465,7 +465,12 @@ impl FileStylesheetHost {
                 if !self.graph.is_current(&completion) {
                     return FileStylesheetUpdate::default();
                 }
-                if self.config.mode == RuntimeMode::Auto {
+                // A missing report only comes from an already failed acquisition
+                // (rejected input storage or worker failure); finish it directly
+                // instead of manufacturing a second coverage failure.
+                if self.config.mode == RuntimeMode::Auto
+                    && self.graph.pending_dependencies(&completion).is_some()
+                {
                     let work = self.graph.prepare_watch_registered(
                         completion,
                         &mut self.paths,
@@ -494,10 +499,23 @@ impl FileStylesheetHost {
                 self.busy = None;
                 let outcome = match result {
                     Err(rejected) => self.graph.fail_watch(rejected),
-                    Ok(prepared) => match self.graph.finish_watched(prepared, &mut self.watches) {
-                        Ok(result) => result.sheet,
-                        Err(rejected) => self.graph.fail_watch(rejected),
-                    },
+                    Ok(prepared) => {
+                        // Replacement coverage registers after the worker read the
+                        // files, and the retired session's unread notices are
+                        // discarded. Reread once so edits in that window are seen.
+                        let replaces = prepared.candidate_control().is_some();
+                        match self.graph.finish_watched(prepared, &mut self.watches) {
+                            Ok(result) => {
+                                if replaces
+                                    && matches!(result.sheet, Ok(SheetCompletion::Published(_)))
+                                {
+                                    self.dirty = true;
+                                }
+                                result.sheet
+                            }
+                            Err(rejected) => self.graph.fail_watch(rejected),
+                        }
+                    }
                 };
                 drop(lease);
                 outcome
