@@ -24,7 +24,7 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full", "visit-mut"] }
 iced_test = "0.14.0"
-iced-css = { path = "crates/iced-css" }
-iced-css-core = { path = "crates/iced-css-core" }
-iced-css-macro = { path = "crates/iced-css-macro" }
+iced-css = { version = "0.1.0", path = "crates/iced-css" }
+iced-css-core = { version = "0.1.0", path = "crates/iced-css-core" }
+iced-css-macro = { version = "0.1.0", path = "crates/iced-css-macro" }
 cssparser = "0.37"

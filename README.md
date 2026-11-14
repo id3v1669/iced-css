@@ -150,3 +150,7 @@ A cascade over more than 100 million box and rule pairs, counting every rule whe
 ## Status
 
 Under active development and not yet published. Conformance is not measured.
+
+## License
+
+GPL-3.0-only; see `LICENSE`.

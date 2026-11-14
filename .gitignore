@@ -1,9 +1,11 @@
-docs
-target
+/docs
+/target
 
-result
+/result
 .direnv
 
-*-out
+/graphify-out
 /*.md
-!README.md
+!/README.md
+!/CHANGELOG.md
+!/CONTRIBUTING.md
