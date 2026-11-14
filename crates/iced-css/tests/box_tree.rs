@@ -2936,6 +2936,59 @@ fn hidden_pseudo_with_an_inside_marker_does_not_count_and_counter_inherit_copies
 }
 
 #[test]
+fn content_less_pseudo_with_an_inside_marker_does_not_count() {
+    // No `content`, so no pseudo-element: its counter directives apply whatever the marker.
+    for position in ["inside", "outside"] {
+        let root = node("page", vec![node("li", vec![]), node("next", vec![])]);
+        let sheet = format!(
+            "#page {{ counter-reset:n; }}
+             #li {{ display:list-item; list-style-position:{position}; }}
+             #li:before {{ counter-increment:n 5; }}
+             #next:before {{ content:\"[\" counter(n) \"]\"; }}"
+        );
+        let tree = BoxTree::new(root, &sheet).unwrap();
+        let texts: Vec<_> = tree.text_leaves().iter().map(|(_, l)| l.text()).collect();
+        assert!(texts.iter().any(|t| t == "[0]"), "{position}: {texts:?}");
+    }
+}
+
+#[test]
+fn a_block_pseudo_takes_its_own_line_height_alignment_and_indent() {
+    let root = node("e", vec![text("t", "body")]);
+    let tree = BoxTree::new(
+        root,
+        "#e { font-size:10px; }
+         #e:before { content:\"Title\"; display:block; text-align:center; line-height:40px;
+                     text-indent:10px; }
+         #e:after { content:\"End\"; display:block; text-indent:inherit; }",
+    )
+    .unwrap();
+    let leaves = tree.text_leaves();
+    let title = &leaves[0].1;
+    assert_eq!(title.text(), "\u{2003}Title");
+    assert_eq!(title.align, "center");
+    assert_eq!(
+        title.line_height,
+        iced_css::evaluation::tree_layout::TextLineHeight::Px(40.0)
+    );
+    // The element's own text keeps its alignment, as does a later block that sets none.
+    assert_eq!(leaves[1].1.text(), "body");
+    assert_eq!(leaves[1].1.align, "left");
+    assert_eq!(leaves[2].1.text(), "End");
+    assert_eq!(leaves[2].1.align, "left");
+    // An inline one does not align or indent: the element's lines do.
+    let root = node("e", vec![text("t", "body")]);
+    let tree = BoxTree::new(
+        root,
+        "#e:before { content:\"x\"; text-align:center; text-indent:10px; }",
+    )
+    .unwrap();
+    let leaf = &tree.text_leaves()[0].1;
+    assert_eq!(leaf.align, "left");
+    assert_eq!(leaf.text(), "xbody");
+}
+
+#[test]
 fn anonymous_parts_cover_nested_tables_rows_of_inline_blocks_and_blank_text() {
     // A table directly in a table sits in an anonymous cell, with its own content.
     let root = node("t", vec![node("inner", vec![node("c", vec![])])]);

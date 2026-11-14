@@ -2046,6 +2046,19 @@ fn clear_side(keyword: &str) -> ClearSide {
     }
 }
 
+/// `left`, `center`, `right` or `justify` for a computed `text-align`.
+fn align_keyword(align: ComputedTextAlign, rtl: bool) -> &'static str {
+    match align {
+        ComputedTextAlign::Right => "right",
+        ComputedTextAlign::Center => "center",
+        ComputedTextAlign::DirectionalInitial if rtl => "right",
+        // An rtl paragraph stays start-aligned rather than justified.
+        ComputedTextAlign::Justify if rtl => "right",
+        ComputedTextAlign::Justify => "justify",
+        _ => "left",
+    }
+}
+
 fn line_height_of(
     value: &SpecifiedValue,
     font_size: f32,
@@ -2109,6 +2122,9 @@ pub fn evaluate_tree_paint<'r>(
     display: &SourceDisplay<'_, '_, 'r>,
     limits: ClearanceBoxFactsLimits,
     font_sizes: &[f32],
+    // The `medium` font size in pixels, as given to `prepare_captured_tree`; a generated
+    // content's font keywords need it.
+    font_medium: f32,
 ) -> Result<TreePaint, TreeLayoutError> {
     use TreeLayoutError as E;
     let id = |name: &'static str| PropertyId::lookup(name).ok_or(E::Paint { property: name });
@@ -2439,15 +2455,7 @@ pub fn evaluate_tree_paint<'r>(
             line_through_from,
             overline,
             overline_from,
-            align: match align {
-                ComputedTextAlign::Right => "right",
-                ComputedTextAlign::Center => "center",
-                ComputedTextAlign::DirectionalInitial if rtl => "right",
-                // An rtl paragraph stays start-aligned rather than justified.
-                ComputedTextAlign::Justify if rtl => "right",
-                ComputedTextAlign::Justify => "justify",
-                _ => "left",
-            },
+            align: align_keyword(align, rtl),
             white_space: keywords.map_or("normal", |value| value.white_space().keyword().as_str()),
             text_transform: keywords
                 .map_or("none", |value| value.text_transform().keyword().as_str()),
@@ -2948,11 +2956,12 @@ pub fn evaluate_tree_paint<'r>(
             }
             // With no content of its own there is no box, only an inside marker.
             let has_content = content.is_some();
-            // A `display: none` pseudo affects no counter (12.4.3); an inside marker stays.
+            // A pseudo that generates nothing (`display: none`, or no `content`) affects no
+            // counter (12.4.3); an inside marker stays.
             pending_pair[side] = Some(PendingContent {
                 marker: marker_text,
                 items: content.unwrap_or_default(),
-                actions: if hide_display {
+                actions: if hide_display || !has_content {
                     CounterActions::default()
                 } else {
                     CounterActions {
@@ -2982,7 +2991,7 @@ pub fn evaluate_tree_paint<'r>(
                     LengthTarget::Auto => font_size,
                 },
                 DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
-                    let table = FontSizeTable::new(16.0).map_err(E::FontMedium)?;
+                    let table = FontSizeTable::new(font_medium).map_err(E::FontMedium)?;
                     match keyword.as_str() {
                         "xx-small" => table.entries()[0],
                         "x-small" => table.entries()[1],
@@ -3214,6 +3223,36 @@ pub fn evaluate_tree_paint<'r>(
             } else {
                 None
             };
+            // Its own line height, in its own font size; `inherit` the element's.
+            let line_height = match cascaded("line-height")? {
+                DefaultedValueRef::Compute(value) => line_height_of(value, size, limits.numeric),
+                _ => owner.line_height,
+            };
+            // Alignment and indent belong to a block container: only a block-level one has
+            // its own; an inline one's lines are the element's.
+            let (align, text_indent, text_indent_percent) = if block {
+                let align =
+                    compute_text_align(&winners, Some(aligns[index])).map_err(|_| E::Paint {
+                        property: "text-align",
+                    })?;
+                let (indent, percent) = match cascaded("text-indent")? {
+                    DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => {
+                        match length(target, size) {
+                            Dim::Px(pixels) => (pixels, 0.0),
+                            Dim::Percent(percent) => (0.0, percent),
+                            Dim::Mix(pixels, percent) => (pixels, percent),
+                            Dim::Auto => (0.0, 0.0),
+                        }
+                    }
+                    DefaultedValueRef::ParentComputed => {
+                        (owner.text_indent, owner.text_indent_percent)
+                    }
+                    _ => (0.0, 0.0),
+                };
+                (align_keyword(align, rtl), indent, percent)
+            } else {
+                (owner.align, owner.text_indent, owner.text_indent_percent)
+            };
             // An inside marker alone is its list item's text: the `:before` generates nothing.
             let (size, color, shown, style) = if has_content {
                 (
@@ -3232,6 +3271,10 @@ pub fn evaluate_tree_paint<'r>(
                         family,
                         white_space,
                         text_transform,
+                        line_height,
+                        align,
+                        text_indent,
+                        text_indent_percent,
                         ..owner
                     },
                 )

@@ -1216,7 +1216,7 @@ impl BoxTree {
             em_lengths,
             marker_images,
             outside_items,
-        } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes)
+        } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes, 16.0)
             .map_err(failed)?;
         let weights: Vec<u16> = styles.iter().map(|style| style.weight).collect();
         let mut prepared = prepare_captured_tree(
@@ -1611,8 +1611,9 @@ impl BoxTree {
             };
             Some(TextLeaf {
                 runs,
-                // 16.2: alignment belongs to the block container of the lines.
-                align: if prepared.anonymous[arena] {
+                // 16.2: alignment belongs to the block container of the lines; generated
+                // content in a box of its own is that container.
+                align: if prepared.anonymous[arena] && !boxed {
                     styles[container_of[arena]].align
                 } else {
                     lead.align
@@ -2181,8 +2182,17 @@ impl BoxTree {
             } else {
                 prepared.positions[arena].0
             };
-            let indent = styles[owner].text_indent;
-            let percent = styles[owner].text_indent_percent;
+            // Generated content in a box of its own indents by its own `text-indent`.
+            let made = prepared
+                .generated_boxes
+                .binary_search_by_key(&arena, |entry| entry.0)
+                .ok()
+                .and_then(|_| prepared.runs[arena].first())
+                .and_then(|&run| generated_of(run));
+            let (indent, percent) = made.map_or(
+                (styles[owner].text_indent, styles[owner].text_indent_percent),
+                |made| (made.style.text_indent, made.style.text_indent_percent),
+            );
             let Some(leaf) = texts[arena]
                 .as_mut()
                 .filter(|leaf| (indent != 0.0 || percent != 0.0) && !leaf.is_empty())
@@ -2194,7 +2204,7 @@ impl BoxTree {
             let in_row = prepared.anonymous[arena]
                 && parent_of[arena]
                     .is_some_and(|parent| prepared.boxes[parent].inline_row.is_some());
-            if !leads(&prepared, arena) || in_row {
+            if (made.is_none() && !leads(&prepared, arena)) || in_row {
                 continue;
             }
             if indent < 0.0 || percent < 0.0 {
