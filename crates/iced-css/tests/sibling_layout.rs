@@ -13044,8 +13044,8 @@ fn cp_css_unsupported_padding_categories_keep_fact_source_and_property() {
     }
 }
 
-// Planned Task 2 addition to crates/iced-css/tests/sibling_layout.rs.
-// Bit-exact expectations; not compiled, executed, or credited as Rust mutant kills.
+// Bit-exact witness cases; each `cp_mutant_witness_*` test below runs one case once.
+// A case that witnesses several mutants is run by one test that lists the others.
 
 // Model case 19198: cp-n5-f-left-top; expected SHA-256 e42ce37773f24d9bf556655a1cfc5fe821244007bee662cbe3c85f5274432629.
 fn cp_witness_case_19198() {
@@ -30146,6 +30146,7 @@ fn cp_mutant_witness_omit_admission_top() {
     cp_witness_case_19238();
 }
 
+/// Also witnesses mutants `float_border_alias`, `facade_padding_alias`.
 #[test]
 fn cp_mutant_witness_omit_placement_top() {
     cp_witness_case_19198();
@@ -30176,39 +30177,22 @@ fn cp_mutant_witness_f64_extent_width() {
     cp_witness_case_19258();
 }
 
+/// Also witnesses mutants `float_border_bottom_height`.
 #[test]
 fn cp_mutant_witness_f64_extent_height() {
     cp_witness_case_19259();
 }
 
+/// Also witnesses mutants `before_content_bottom_float_top`, `before_content_bottom_clearance`.
 #[test]
 fn cp_mutant_witness_before_content_alias() {
     cp_witness_case_19206();
 }
 
+/// Also witnesses mutants `last_content_bottom_height`.
 #[test]
 fn cp_mutant_witness_tail_content_alias() {
     cp_witness_case_19207();
-}
-
-#[test]
-fn cp_mutant_witness_float_border_alias() {
-    cp_witness_case_19198();
-}
-
-#[test]
-fn cp_mutant_witness_facade_padding_alias() {
-    cp_witness_case_19198();
-}
-
-#[test]
-fn cp_mutant_witness_before_content_bottom_float_top() {
-    cp_witness_case_19206();
-}
-
-#[test]
-fn cp_mutant_witness_before_content_bottom_clearance() {
-    cp_witness_case_19206();
 }
 
 #[test]
@@ -30217,27 +30201,13 @@ fn cp_mutant_witness_tail_content_bottom_clearance() {
 }
 
 #[test]
-fn cp_mutant_witness_last_content_bottom_height() {
-    cp_witness_case_19207();
-}
-
-#[test]
 fn cp_mutant_witness_float_border_bottom_clearance() {
     cp_witness_case_19283();
 }
 
-#[test]
-fn cp_mutant_witness_float_border_bottom_height() {
-    cp_witness_case_19259();
-}
-
+/// Also witnesses mutants `contact_reject_zero`.
 #[test]
 fn cp_mutant_witness_contact_less_equal() {
-    cp_witness_case_19208();
-}
-
-#[test]
-fn cp_mutant_witness_contact_reject_zero() {
     cp_witness_case_19208();
 }
 
@@ -30261,13 +30231,9 @@ fn cp_mutant_witness_right_padding_sign() {
     cp_witness_case_19203();
 }
 
+/// Also witnesses mutants `containment_margin_only`.
 #[test]
 fn cp_mutant_witness_containment_content_only() {
-    cp_witness_case_19255();
-}
-
-#[test]
-fn cp_mutant_witness_containment_margin_only() {
     cp_witness_case_19255();
 }
 

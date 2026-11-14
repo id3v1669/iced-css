@@ -1,4 +1,3 @@
-// UNCOMPILED against the reviewed proposed API; no expected casing algorithm.
 use iced_css::evaluation::source_casing::*;
 use iced_css_core::text::casing_data::{CaseMapping, conditional_mappings};
 fn casing_limits() -> SourceCasingLimits {

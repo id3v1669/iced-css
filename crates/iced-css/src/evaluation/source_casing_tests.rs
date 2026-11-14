@@ -4,7 +4,8 @@ use super::{
 };
 use crate as iced_css;
 use std::{error::Error, mem::size_of};
-include!("../../tests/support/source_casing/adapter.rs");
+include!("../../tests/support/source_capitalize/adapter.rs");
+include!("../../tests/support/source_casing/casing_observer.rs");
 fn leaf(id: usize, text: &str, op: &str, tag: Option<&str>) -> InputNode {
     InputNode::Payload {
         id,

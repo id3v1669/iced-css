@@ -2,6 +2,7 @@ use super::{Receipt, ScalarRecord, SourceRecord, UnitRecord, admitted, build, pa
 use crate as iced_css;
 use std::{error::Error, mem::size_of};
 include!("../../tests/support/source_capitalize/adapter.rs");
+include!("../../tests/support/source_capitalize/casing_observer.rs");
 fn leaf(id: usize, text: &str, op: &str, tag: Option<&str>) -> InputNode {
     InputNode::Payload {
         id,

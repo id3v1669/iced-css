@@ -1,5 +1,5 @@
-// UNCOMPILED integration preparation, all fixture expectations are literal.
-include!("adapter.rs");
+include!("../source_capitalize/adapter.rs");
+include!("casing_observer.rs");
 fn leaf(id: usize, text: &str, operation: &str, lang: Option<&str>) -> InputNode {
     InputNode::Payload {
         id,

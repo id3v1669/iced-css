@@ -1,4 +1,3 @@
-// UNCOMPILED integration fixtures. Install with adapter/helpers at reviewed paths.
 include!("support/source_whitespace/adapter.rs");
 fn leaf(id: usize, text: &str, mode: &str) -> InputNode {
     InputNode::Payload {

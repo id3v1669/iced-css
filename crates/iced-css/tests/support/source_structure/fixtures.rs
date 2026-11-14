@@ -1,4 +1,3 @@
-// UNCOMPILED public integration literals for the approved SourceStructure API.
 include!("adapter.rs");
 
 fn managed(label:&str,family:InputFamily,display:&str,children:Vec<InputNode>)->InputNode {

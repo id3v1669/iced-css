@@ -45,6 +45,7 @@ impl Drop for Temp {
 }
 fn notice(stream: &mut LocalWatchStream, predicate: impl Fn(WatchNotice) -> bool) -> WatchNotice {
     let deadline = Instant::now() + Duration::from_secs(5);
+    let mut skipped = Vec::new();
     loop {
         let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
         let (done_tx, done_rx) = oneshot::channel();
@@ -59,12 +60,38 @@ fn notice(stream: &mut LocalWatchStream, predicate: impl Fn(WatchNotice) -> bool
         timer.join().unwrap();
         let value = match result {
             Either::Left((Some(value), _)) => value,
-            _ => panic!("watch stream stopped or timed out"),
+            Either::Left((None, _)) => panic!("{}", missed("watch stream ended", &skipped)),
+            Either::Right(_) => panic!("{}", missed("timed out after 5 s", &skipped)),
         };
         if predicate(value) {
             return value;
         }
+        skipped.push(value);
     }
+}
+/// Names the environmental cause when an awaited notice never arrives: a skipped
+/// `registration_loss` means the native watcher could not register (for example
+/// exhausted inotify instance or watch limits), so native events cannot be delivered.
+fn missed(reason: &str, skipped: &[WatchNotice]) -> String {
+    let registration = if skipped.iter().any(|v| v.registration_loss) {
+        "; the native watcher reported registration_loss (check inotify limits or the temp filesystem)"
+    } else {
+        ""
+    };
+    format!("{reason} before the awaited notice{registration}; skipped notices: {skipped:?}")
+}
+#[test]
+fn missed_notice_message_names_registration_loss() {
+    let loss = WatchNotice {
+        dirty_all_local: true,
+        native_change: false,
+        registration_loss: true,
+        periodic_rescan: false,
+        resumed: false,
+        worker_failed: false,
+    };
+    assert!(missed("timed out after 5 s", &[loss]).contains("registration_loss (check inotify"));
+    assert!(!missed("watch stream ended", &[]).contains("inotify"));
 }
 #[test]
 fn native_parent_events_reach_an_iced_stream_and_control_stops_with_stream() {

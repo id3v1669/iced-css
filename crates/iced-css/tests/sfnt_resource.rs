@@ -1,4 +1,4 @@
-//! Proposed public tests, NOT installed or compiled by preparation.
+//! Public tests for `prepare_sfnt_resource`.
 //! Fixtures are deliberately incomplete fonts; success is structural/metric preparation.
 use iced_css::fonts::metrics::{
     DesignMetricSource, FontMetricError, FontMetricLimits, read_sfnt_design_metrics,
@@ -13,7 +13,7 @@ macro_rules! fixture {
     ($name:literal) => {
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../docs/tmp/implementation-sfnt-resource-oracle/fixtures/",
+            "/tests/fixtures/sfnt_resource/",
             $name
         ))
         .as_slice()

@@ -1,8 +1,9 @@
-include!("support/source_participants_helpers.rs");
+include!("support/source_structural_events_helpers.rs");
 use iced_css::capture::{
     ContentCapability, ControlContentFamily, ManagedContentFamily, ReplacementCapability,
 };
 use iced_css::evaluation::source_participants::*;
+use iced_css_core::formatting::display::Flow;
 
 #[test]
 fn original_indices_and_exact_owner_survive_wrapper_drop() {

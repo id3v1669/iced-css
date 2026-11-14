@@ -801,7 +801,7 @@ mod tests {
     fn retained_budget_uses_the_same_owners_actual_three_capacities() {
         let bytes = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../docs/tmp/implementation-sfnt-resource-oracle/fixtures/single.ttf"
+            "/tests/fixtures/sfnt_resource/single.ttf"
         ))
         .to_vec();
         let owner = prepare_sfnt_resource(bytes, limits()).unwrap();

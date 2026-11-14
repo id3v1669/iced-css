@@ -1,4 +1,3 @@
-// UNCOMPILED copied capture/display fixture helpers; exercised by observe smoke test.
 use iced_css::evaluation::display_rules::{
     BundleLimits, DisplayRuleBundle, GraphBinding, GraphOrigin,
 };

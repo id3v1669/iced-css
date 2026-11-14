@@ -1,5 +1,5 @@
 // Expected-free actual-owner adapter for the approved SourceAnalysisInput API.
-include!("helpers.rs");
+include!("../source_analysis_input/helpers.rs");
 
 use iced_css::{
     evaluation::{

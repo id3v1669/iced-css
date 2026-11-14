@@ -1,4 +1,4 @@
-// Uncompiled actual-owner input adapter. No expected scalar results embedded.
+// Actual-owner input adapter. No expected scalar results embedded.
 include!("helpers.rs");
 use iced_css::evaluation::{
     source_participants::SourceParticipants, source_structural_events::SourceStructuralEventKind,

@@ -1,5 +1,4 @@
-// UNCOMPILED expected-free actual-owner adapter for the reviewed SourceStructure API.
-include!("helpers.rs");
+include!("../source_capitalize/helpers.rs");
 
 use iced_css::{
     capture::ContentCapability,
