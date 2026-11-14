@@ -33,12 +33,94 @@ fn text(id: &str, content: &'static str) -> Node {
 }
 /// The Vulkan loader's first driver scan is not safe to run from several threads: parallel
 /// tests crashed in it, inside `loader_scanned_icd_add`. Renderers are made one at a time.
-fn simulator(view: Element<'_, u8>) -> iced_test::Simulator<'_, u8> {
-    static CREATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _one_at_a_time = CREATING
+static CREATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    CREATING
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+fn simulator(view: Element<'_, u8>) -> iced_test::Simulator<'_, u8> {
+    let _one_at_a_time = one_at_a_time();
     iced_test::simulator(view)
+}
+/// A renderer for `layout_with`, made as the simulator makes its own: one at a time, on the
+/// backend `ICED_TEST_BACKEND` names, with the simulator's default face, so that layout
+/// measures text in the face the simulator draws it in.
+fn renderer() -> iced_test::renderer::Renderer {
+    use iced::advanced::renderer::Headless;
+    let _one_at_a_time = one_at_a_time();
+    let backend = std::env::var("ICED_TEST_BACKEND").ok();
+    iced_test::futures::futures::executor::block_on(iced_test::renderer::Renderer::new(
+        iced::Font::with_name("Fira Sans"),
+        iced::Pixels(16.0),
+        backend.as_deref(),
+    ))
+    .unwrap()
+}
+/// This run's own directory for pictures, emptied when the run first asks for it.
+/// `matches_image` records a missing picture and compares against one that exists, so a
+/// picture left by another run, or by an earlier process with the same id, must not be found.
+fn scratch() -> std::path::PathBuf {
+    static FRESH: std::sync::Once = std::sync::Once::new();
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("box_tree_render-{}", std::process::id()));
+    FRESH.call_once(|| {
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+    });
+    path
+}
+
+/// A snapshot's pixels, at its scale of 2, read back from the picture it records. A single
+/// `matches_image` on a new path only records, so pictures are checked through these.
+struct Pixels {
+    width: usize,
+    rgba: Vec<u8>,
+}
+impl Pixels {
+    fn of(snapshot: &iced_test::simulator::Snapshot, name: &str) -> Self {
+        let path = scratch().join(format!("pixels-{name}"));
+        let _ = std::fs::remove_dir_all(&path);
+        assert!(snapshot.matches_image(path.join("frame.png")).unwrap());
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut rgba = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut rgba).unwrap();
+        rgba.truncate(info.buffer_size());
+        let _ = std::fs::remove_dir_all(&path);
+        Self { width, rgba }
+    }
+    fn at(&self, x: usize, y: usize) -> [u8; 3] {
+        let at = (y * self.width + x) * 4;
+        [self.rgba[at], self.rgba[at + 1], self.rgba[at + 2]]
+    }
+    /// Where the pixels that match `keep` are, as `(x, y)` pairs.
+    fn matching(&self, keep: impl Fn([u8; 3]) -> bool) -> Vec<(usize, usize)> {
+        self.rgba
+            .chunks(4)
+            .enumerate()
+            .filter(|(_, pixel)| keep([pixel[0], pixel[1], pixel[2]]))
+            .map(|(at, _)| (at % self.width, at / self.width))
+            .collect()
+    }
+    /// The left, top, right and bottom pixels painted exactly `rgb`.
+    fn bounds(&self, rgb: [u8; 3]) -> Option<[usize; 4]> {
+        let at = self.matching(|pixel| pixel == rgb);
+        Some([
+            at.iter().map(|p| p.0).min()?,
+            at.iter().map(|p| p.1).min()?,
+            at.iter().map(|p| p.0).max()?,
+            at.iter().map(|p| p.1).max()?,
+        ])
+    }
 }
 
 fn click(view: Element<'_, u8>, at: Point) -> Vec<u8> {
@@ -130,10 +212,16 @@ fn renders_a_table_from_a_stylesheet() {
     let view: Element<'_, u8> = BoxTree::new(root, &css).unwrap().view();
     let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
-    let path = std::env::temp_dir().join("iced-css-box-tree-table");
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).unwrap();
-    assert!(snapshot.matches_image(path.join("table.png")).unwrap());
+    let pixels = Pixels::of(&snapshot, "table");
+    // 70% of the page's content width, 1024 less 32 of padding, at the scale of 2.
+    let table = pixels.bounds([0xcf, 0xd8, 0xdc]).unwrap();
+    let wide = (table[2] + 1 - table[0]) as f32;
+    assert!((wide - 0.7 * 992.0 * 2.0).abs() <= 4.0, "{table:?}");
+    // The header group comes first, though written after the body, and the footer last.
+    let head = pixels.bounds([0x90, 0xa4, 0xae]).unwrap();
+    let second = pixels.bounds([0xff, 0xf3, 0xe0]).unwrap();
+    assert!(head[3] < second[1], "{head:?} {second:?}");
+    assert!(second[3] < table[3], "{second:?} {table:?}");
 }
 
 #[test]
@@ -158,10 +246,20 @@ fn inline_blocks_lay_out_as_a_navigation_row() {
         .into();
     let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
-    let path = std::env::temp_dir().join("iced-css-box-tree-nav");
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).unwrap();
-    assert!(snapshot.matches_image(path.join("nav.png")).unwrap());
+    let pixels = Pixels::of(&snapshot, "nav");
+    let nav = pixels.bounds([0x26, 0x32, 0x38]).unwrap();
+    assert_eq!([nav[0], nav[2]], [0, 2047]);
+    // The three items share one line, centred in it.
+    let items = pixels.bounds([0x45, 0x5a, 0x64]).unwrap();
+    assert!(items[0].abs_diff(2047 - items[2]) <= 4, "{items:?}");
+    // A row in the items' top padding, above their text.
+    let row = items[1] + 4;
+    let starts = (1..pixels.width)
+        .filter(|&x| {
+            pixels.at(x, row) == [0x45, 0x5a, 0x64] && pixels.at(x - 1, row) != [0x45, 0x5a, 0x64]
+        })
+        .count();
+    assert_eq!(starts, 3);
     let spaced = node(
         "page",
         vec![node("b", vec![]), text("t", "   "), node("c", vec![])],
@@ -194,10 +292,17 @@ fn text_widens_past_a_shorter_float_on_the_real_renderer() {
         .into();
     let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
-    let path = std::env::temp_dir().join("iced-css-box-tree-widen");
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).unwrap();
-    assert!(snapshot.matches_image(path.join("widen.png")).unwrap());
+    let pixels = Pixels::of(&snapshot, "widen");
+    let side = pixels.bounds([0xff, 0xcc, 0x80]).unwrap();
+    assert_eq!(side, [16, 16, 255, 135]);
+    let after = pixels.bounds([0x90, 0xca, 0xf9]).unwrap();
+    assert_eq!([after[0], after[2]], [16, 855]);
+    // Below the float the lines reach back past its right edge, and stop before the block
+    // after them.
+    let ink = pixels.matching(|[r, g, b]| r < 100 && g < 100 && b < 100);
+    assert!(ink.iter().any(|&(x, y)| x < side[0] + 40 && y > side[3]));
+    assert!(!ink.iter().any(|&(x, y)| x <= side[2] && y <= side[3]));
+    assert!(ink.iter().all(|&(_, y)| y < after[1]));
     let view = || -> Element<'_, u8> {
         BoxTree::new(
             node(
@@ -318,7 +423,7 @@ fn checker_png(size: u32) -> Vec<u8> {
 #[cfg(feature = "image")]
 #[test]
 fn renders_background_images_from_a_stylesheet() {
-    let path = std::env::temp_dir().join("iced-css-box-tree-images");
+    let path = scratch().join("images");
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     std::fs::write(path.join("tile.png"), checker_png(32)).unwrap();
@@ -346,8 +451,14 @@ fn renders_background_images_from_a_stylesheet() {
         #missing { background:#fff9c4 url(no-such-file.png); }";
     let view: Element<'_, u8> = BoxTree::with_base(root, css, &path).unwrap().view();
     let mut ui = simulator(view);
-    let snapshot = ui.snapshot(&Theme::Light).unwrap();
-    assert!(snapshot.matches_image(path.join("images.png")).unwrap());
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "images");
+    // The tile's two colors are drawn, the missing file leaves its box's color, and the
+    // child sits on the single tile.
+    assert!(pixels.bounds([230, 74, 25]).is_some());
+    assert!(pixels.bounds([255, 224, 178]).is_some());
+    assert!(pixels.bounds([0xff, 0xf9, 0xc4]).is_some());
+    let child = pixels.bounds([0x00, 0x79, 0x6b]).unwrap();
+    assert_eq!([child[2] - child[0], child[3] - child[1]], [79, 79]);
 }
 
 #[test]
@@ -420,10 +531,19 @@ fn renders_inline_runs_lists_floats_clips_and_stacking() {
     let view: Element<'_, u8> = BoxTree::new(root, css).unwrap().view();
     let mut ui = simulator(view);
     let snapshot = ui.snapshot(&Theme::Light).unwrap();
-    let path = std::env::temp_dir().join("iced-css-box-tree-render");
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).unwrap();
-    assert!(snapshot.matches_image(path.join("page.png")).unwrap());
+    let pixels = Pixels::of(&snapshot, "page");
+    // The float sits at the right, inside the page's padding and its own border.
+    let side = pixels.bounds([0xc8, 0xe6, 0xc9]).unwrap();
+    assert_eq!(side[2], 2047 - 32 - 4);
+    assert!(pixels.bounds([0xff, 0xf5, 0x9d]).is_some());
+    // The clip keeps 30px less the tall box's 8px margin of it.
+    let tall = pixels.bounds([0x15, 0x65, 0xc0]).unwrap();
+    assert_eq!(tall[3] + 1 - tall[1], 44);
+    // The higher z-index paints over the box after it where the shift makes them overlap.
+    let under = pixels.bounds([0xef, 0x9a, 0x9a]).unwrap();
+    let over = pixels.bounds([0x90, 0xca, 0xf9]).unwrap();
+    assert!(under[3] > over[1], "{under:?} {over:?}");
+    assert_eq!(pixels.at(under[0] + 10, over[1] + 4), [0xef, 0x9a, 0x9a]);
 }
 
 #[test]
@@ -445,7 +565,7 @@ fn unbreakable_text_can_be_scrolled_to() {
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
     // A first comparison records the picture, so a second one sees any movement.
-    let picture = std::env::temp_dir().join(format!("scroll-text-{}.png", std::process::id()));
+    let picture = scratch().join(format!("scroll-text-{}.png", std::process::id()));
     assert!(
         ui.snapshot(&Theme::Light)
             .unwrap()
@@ -498,14 +618,15 @@ fn a_frame_of_an_animation_draws_between_its_ends() {
     animations.advance(start + Duration::from_millis(500), &to);
     let view: Element<'_, u8> = animations.presented(&to).view();
     let mut ui = simulator(view);
-    assert!(
-        ui.snapshot(&Theme::Light)
-            .unwrap()
-            .matches_image(
-                std::env::temp_dir().join(format!("animation-frame-{}.png", std::process::id()))
-            )
-            .unwrap()
-    );
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "animation-frame");
+    // Inside the 4px border and below the text, a color that is neither end's, as wide as
+    // neither end.
+    let fill = pixels.at(10, 80);
+    assert!(fill != [255, 0, 0] && fill != [0, 0, 255] && fill[0] > 0 && fill[2] > 0);
+    let wide = (8..pixels.width)
+        .take_while(|&x| pixels.at(x, 80) == fill)
+        .count();
+    assert!(wide > 200 + 8 && wide < 600 - 8, "{wide}");
 }
 
 #[test]
@@ -526,14 +647,17 @@ fn text_sits_in_a_line_beside_inline_blocks() {
     .unwrap();
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
-    assert!(
-        ui.snapshot(&Theme::Light)
-            .unwrap()
-            .matches_image(
-                std::env::temp_dir().join(format!("row-text-{}.png", std::process::id()))
-            )
-            .unwrap()
-    );
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "row-text");
+    let chip = pixels.bounds([0x2a, 0x4d, 0x69]).unwrap();
+    assert_eq!([chip[2] - chip[0], chip[3] - chip[1]], [79, 59]);
+    // Text on both sides of it, in the same line.
+    let ink = pixels.matching(|[r, g, b]| r < 40 && g < 40 && b < 40);
+    let beside = |side: fn(usize, &[usize; 4]) -> bool| {
+        ink.iter()
+            .any(|&(x, y)| side(x, &chip) && y >= chip[1] && y <= chip[3])
+    };
+    assert!(beside(|x, chip| x < chip[0]));
+    assert!(beside(|x, chip| x > chip[2]));
 }
 
 #[test]
@@ -549,7 +673,7 @@ fn a_scrollers_own_text_can_be_scrolled_to() {
     .unwrap();
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
-    let picture = std::env::temp_dir().join(format!(
+    let picture = scratch().join(format!(
         "a_scrollers_own_text_can_be_scrolled_to-{}.png",
         std::process::id()
     ));
@@ -587,7 +711,7 @@ fn text_a_child_clips_does_not_extend_the_scroller() {
     .unwrap();
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
-    let picture = std::env::temp_dir().join(format!(
+    let picture = scratch().join(format!(
         "text_a_child_clips_does_not_extend_the_scroller-{}.png",
         std::process::id()
     ));
@@ -627,7 +751,7 @@ fn justified_text_draws_differently_from_left_aligned() {
             .matches_image(picture)
             .unwrap()
     };
-    let picture = std::env::temp_dir().join(format!("justify-{}.png", std::process::id()));
+    let picture = scratch().join(format!("justify-{}.png", std::process::id()));
     assert!(draw("justify", &picture));
     assert!(draw("justify", &picture));
     assert!(!draw("left", &picture));
@@ -646,13 +770,10 @@ fn clip_rect_cuts_an_absolute_box() {
     .unwrap();
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
-    let name = format!("clip-rect-{}.png", std::process::id());
-    assert!(
-        ui.snapshot(&Theme::Light)
-            .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
-            .unwrap()
-    );
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "clip-rect");
+    // Only x 40..80 and y 20..110 of the page stay: the child's top, then the box under it.
+    assert_eq!(pixels.bounds([0xd9, 0x53, 0x4f]), Some([80, 40, 159, 119]));
+    assert_eq!(pixels.bounds([0x2a, 0x4d, 0x69]), Some([80, 120, 159, 219]));
 }
 
 #[test]
@@ -670,7 +791,7 @@ fn blank_text_adds_no_scroll_range() {
     .unwrap();
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
-    let picture = std::env::temp_dir().join(format!("blank-{}.png", std::process::id()));
+    let picture = scratch().join(format!("blank-{}.png", std::process::id()));
     assert!(
         ui.snapshot(&Theme::Light)
             .unwrap()
@@ -703,7 +824,7 @@ fn a_fixed_child_stays_inside_its_ancestors_clip() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("fixed-clip-{}.png", std::process::id());
@@ -724,7 +845,7 @@ fn clip_does_nothing_on_a_static_box() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("static-clip-{}.png", std::process::id());
@@ -749,13 +870,18 @@ fn text_indent_and_small_caps_draw() {
     .unwrap();
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
-    let name = format!("indent-{}.png", std::process::id());
-    assert!(
-        ui.snapshot(&Theme::Light)
-            .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
-            .unwrap()
-    );
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "indent");
+    // The first line starts 40px further in than the next, and the text wraps in 300px.
+    let ink = pixels.matching(|[r, g, b]| r < 128 && g < 128 && b < 128);
+    assert!(ink.iter().all(|&(x, _)| x < 600));
+    let mut rows: Vec<usize> = ink.iter().map(|p| p.1).collect();
+    rows.sort_unstable();
+    rows.dedup();
+    let gap = rows.windows(2).position(|w| w[1] > w[0] + 1).unwrap();
+    let first = ink.iter().filter(|p| p.1 <= rows[gap]).map(|p| p.0).min();
+    let rest = ink.iter().filter(|p| p.1 > rows[gap]).map(|p| p.0).min();
+    let (first, rest) = (first.unwrap(), rest.unwrap());
+    assert!(first.abs_diff(rest + 80) <= 8, "{first} {rest}");
 }
 
 #[test]
@@ -794,7 +920,7 @@ fn tab_reaches_hosted_text_inputs_in_box_order() {
 #[cfg(feature = "image")]
 #[test]
 fn list_style_images_replace_outside_markers_and_fall_back_to_text() {
-    let path = std::env::temp_dir().join(format!("iced-css-markers-{}", std::process::id()));
+    let path = scratch().join(format!("iced-css-markers-{}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     std::fs::write(path.join("dot.png"), checker_png(16)).unwrap();
     let matches = |css: &str, name: &str| {
@@ -836,7 +962,7 @@ fn list_style_images_replace_outside_markers_and_fall_back_to_text() {
 #[cfg(feature = "image")]
 #[test]
 fn inside_marker_images_take_room_in_the_line_and_fall_back_to_text() {
-    let path = std::env::temp_dir().join(format!("iced-css-inside-{}", std::process::id()));
+    let path = scratch().join(format!("iced-css-inside-{}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     std::fs::write(path.join("dot.png"), checker_png(16)).unwrap();
     let matches_in = |page: &str, css: &str, name: &str| {
@@ -972,7 +1098,7 @@ fn right_to_left_text_keeps_a_percentage_indent_through_a_new_layout() {
         }
         (before, ui.snapshot(&Theme::Light).unwrap())
     };
-    let path = std::env::temp_dir().join(format!("iced-css-rtl-indent-{}", std::process::id()));
+    let path = scratch().join(format!("iced-css-rtl-indent-{}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     let (blank, _) = picture("color:white;");
     assert!(blank.matches_image(path.join("blank.png")).unwrap());
@@ -1110,7 +1236,7 @@ fn narrow_columns_hold_whole_small_caps_words() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("small-caps-column-{}.png", std::process::id());
@@ -1147,7 +1273,7 @@ fn inline_boxes_draw_their_sides_across_lines() {
             .matches_image(picture)
             .unwrap()
     };
-    let picture = std::env::temp_dir().join(format!("inline-box-{}.png", std::process::id()));
+    let picture = scratch().join(format!("inline-box-{}.png", std::process::id()));
     let boxed =
         "padding:3px 8px; margin:0 8px; background-color:#adcbe3; border:2px solid #2a4d69;";
     assert!(draw(boxed, &picture));
@@ -1155,11 +1281,11 @@ fn inline_boxes_draw_their_sides_across_lines() {
     assert!(!draw("background-color:#adcbe3;", &picture));
     // Styles reach an inline box's top, bottom and side borders alike.
     let solid = "border-top:6px solid #2a4d69;";
-    let name = std::env::temp_dir().join(format!("inline-top-{}.png", std::process::id()));
+    let name = scratch().join(format!("inline-top-{}.png", std::process::id()));
     assert!(draw(solid, &name));
     assert!(!draw("border-top:6px dashed #2a4d69;", &name));
     let solid = "border-left:12px solid #2a4d69;";
-    let name = std::env::temp_dir().join(format!("inline-side-{}.png", std::process::id()));
+    let name = scratch().join(format!("inline-side-{}.png", std::process::id()));
     assert!(draw(solid, &name));
     assert!(!draw("border-left:12px double #2a4d69;", &name));
     assert!(!draw("", &picture));
@@ -1208,7 +1334,7 @@ fn unbroken_text_keeps_its_column_whole() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("nowrap-column-{}.png", std::process::id());
@@ -1241,7 +1367,7 @@ fn a_hidden_child_leaves_its_parents_paint_whole() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("hidden-child-{}.png", std::process::id());
@@ -1273,7 +1399,7 @@ fn a_hidden_child_leaves_a_parent_without_sides_whole() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("hidden-unsided-{}.png", std::process::id());
@@ -1300,7 +1426,7 @@ fn authored_wide_spaces_still_break_a_columns_minimum() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // The neighbour sits past the wider word in both: the space counts for nothing.
@@ -1378,7 +1504,7 @@ fn a_columns_minimum_holds_a_word_with_its_sides() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("word-with-sides-{}.png", std::process::id());
@@ -1399,7 +1525,7 @@ fn small_letters_keep_the_full_line_height_on_screen() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("small-line-{}.png", std::process::id());
@@ -1423,7 +1549,7 @@ fn escape_in_a_hosted_input_drops_focus_styling_with_its_focus() {
         .widget("one", iced::widget::text_input("", "").on_input(|_| 1))
         .into();
     let mut ui = simulator(view);
-    let picture = std::env::temp_dir().join(format!("escape-{}.png", std::process::id()));
+    let picture = scratch().join(format!("escape-{}.png", std::process::id()));
     assert!(
         ui.snapshot(&Theme::Light)
             .unwrap()
@@ -1474,32 +1600,42 @@ fn enter_in_a_hosted_input_presses_no_box_around_it() {
 
 #[test]
 fn border_styles_draw() {
-    let root = node(
-        "page",
-        ["a", "b", "c", "d", "e", "f", "g"]
-            .into_iter()
-            .map(|id| node(id, vec![]))
-            .collect(),
-    );
-    let tree = BoxTree::new(
-        root,
-        "#page { background-color:white; padding:8px; }
+    const BOXES: &str = "#page { background-color:white; padding:8px; }
          #a, #b, #c, #d, #e, #f, #g { width:200px; height:24px; margin:8px;
-             border:6px solid #2a4d69; background-color:#e7eff6; }
-         #a { border-style:dashed; } #b { border-style:dotted; } #c { border-style:double; }
+             border:6px solid #2a4d69; background-color:#e7eff6; }";
+    let draw = |styles: &str, name: &str| {
+        let root = node(
+            "page",
+            ["a", "b", "c", "d", "e", "f", "g"]
+                .into_iter()
+                .map(|id| node(id, vec![]))
+                .collect(),
+        );
+        let tree = BoxTree::new(root, &format!("{BOXES} {styles}")).unwrap();
+        let view: Element<'_, u8> = tree.view();
+        Pixels::of(&simulator(view).snapshot(&Theme::Light).unwrap(), name)
+    };
+    let styled = draw(
+        "#a { border-style:dashed; } #b { border-style:dotted; } #c { border-style:double; }
          #d { border-style:groove; } #e { border-style:ridge; } #f { border-style:inset; }
          #g { border-style:outset; outline:3px dashed #d9534f; }",
-    )
-    .unwrap();
-    let view: Element<'_, u8> = tree.view();
-    let mut ui = simulator(view);
-    let name = format!("border-styles-{}.png", std::process::id());
-    assert!(
-        ui.snapshot(&Theme::Light)
-            .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
-            .unwrap()
+        "border-styles",
     );
+    let solid = draw("", "border-solid");
+    // Each box's border band, 8px in and 24px plus its 12px of border tall, 8px apart,
+    // differs from the solid one.
+    for index in 0..7 {
+        let top = (16 + index * 44) * 2;
+        let band = |pixels: &Pixels| {
+            (top..top + 72)
+                .flat_map(|y| (32..32 + 424).map(move |x| (x, y)))
+                .map(|(x, y)| pixels.at(x, y))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(solid.at(40, top + 4), [0x2a, 0x4d, 0x69], "box {index}");
+        assert_ne!(band(&styled), band(&solid), "box {index}");
+    }
+    assert!(styled.bounds([0xd9, 0x53, 0x4f]).is_some());
 }
 
 #[test]
@@ -1515,7 +1651,7 @@ fn unicode_bidi_and_direction_reorder_text() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let pid = std::process::id();
@@ -1584,7 +1720,7 @@ fn collapsed_lines_survive_cell_backgrounds() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("collapse-lines-{}.png", std::process::id());
@@ -1610,7 +1746,7 @@ fn justified_right_to_left_text_starts_at_the_right() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("rtl-justify-{}.png", std::process::id());
@@ -1641,7 +1777,7 @@ fn a_later_rows_background_stays_under_a_spanning_cell() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // A white row over a white table looks like none, if the red cell stays on top.
@@ -1673,7 +1809,7 @@ fn a_columns_background_paints_under_its_cells() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("column-background-{}.png", std::process::id());
@@ -1710,7 +1846,7 @@ fn a_column_fills_an_anonymous_cell_not_its_content() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("column-anonymous-{}.png", std::process::id());
@@ -1744,7 +1880,7 @@ fn a_widget_in_an_empty_table_row_is_drawn() {
         }
         interactive.into()
     };
-    let name = std::env::temp_dir().join(format!("empty-row-widget-{}.png", std::process::id()));
+    let name = scratch().join(format!("empty-row-widget-{}.png", std::process::id()));
     assert!(
         simulator(view(false))
             .snapshot(&Theme::Light)
@@ -1784,7 +1920,7 @@ fn a_widget_in_an_empty_row_group_is_drawn() {
         }
         interactive.into()
     };
-    let name = std::env::temp_dir().join(format!("empty-group-widget-{}.png", std::process::id()));
+    let name = scratch().join(format!("empty-group-widget-{}.png", std::process::id()));
     assert!(
         simulator(view(false))
             .snapshot(&Theme::Light)
@@ -1828,7 +1964,7 @@ fn a_spanning_cell_does_not_widen_a_column_and_a_hidden_column_paints_nothing() 
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("column-span-{}.png", std::process::id());
@@ -1877,7 +2013,7 @@ fn a_column_group_paints_under_its_columns() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("column-group-{}.png", std::process::id());
@@ -1919,7 +2055,7 @@ fn a_fixed_table_reads_widths_of_grouped_columns() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("grouped-widths-{}.png", std::process::id());
@@ -1958,7 +2094,7 @@ fn a_column_group_keeps_generated_content_after_the_table() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("group-after-{}.png", std::process::id());
@@ -1982,7 +2118,7 @@ fn an_rtl_scroller_scrolls_left_with_the_wheel() {
     .unwrap();
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
-    let picture = std::env::temp_dir().join(format!("rtl-scroll-{}.png", std::process::id()));
+    let picture = scratch().join(format!("rtl-scroll-{}.png", std::process::id()));
     assert!(
         ui.snapshot(&Theme::Light)
             .unwrap()
@@ -2029,7 +2165,7 @@ fn rtl_text_wider_than_its_scroller_can_be_scrolled_to() {
     .unwrap();
     let view: Element<'_, u8> = tree.view();
     let mut ui = simulator(view);
-    let picture = std::env::temp_dir().join(format!("rtl-scroll-text-{}.png", std::process::id()));
+    let picture = scratch().join(format!("rtl-scroll-text-{}.png", std::process::id()));
     assert!(
         ui.snapshot(&Theme::Light)
             .unwrap()
@@ -2066,7 +2202,7 @@ fn an_rtl_scrollers_bar_starts_at_its_right_end() {
         })]);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // At its start an rtl box shows what an ltr one shows at its end, bar included.
@@ -2108,7 +2244,7 @@ fn tab_scrolls_an_rtl_box_to_an_input_at_its_left_end() {
     };
     let id = std::process::id();
     // The field starts out of view, past the box's left end.
-    let hidden = std::env::temp_dir().join(format!("rtl-tab-hidden-{id}.png"));
+    let hidden = scratch().join(format!("rtl-tab-hidden-{id}.png"));
     assert!(
         ui(false)
             .snapshot(&Theme::Light)
@@ -2124,7 +2260,7 @@ fn tab_scrolls_an_rtl_box_to_an_input_at_its_left_end() {
             .unwrap()
     );
     // Tab scrolls exactly to it: the same as scrolling to the left end and then focusing it.
-    let shown = std::env::temp_dir().join(format!("rtl-tab-shown-{id}.png"));
+    let shown = scratch().join(format!("rtl-tab-shown-{id}.png"));
     let mut reference = ui(true);
     wheel(&mut reference);
     let _ = reference.tap_key(iced::keyboard::key::Named::Tab);
@@ -2187,7 +2323,7 @@ fn a_row_of_hidden_empty_cells_takes_no_height() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let id = std::process::id();
@@ -2251,7 +2387,7 @@ fn a_hidden_empty_cell_hosting_a_widget_keeps_its_row() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // A hosted widget's cell draws as if shown, and its row stays as tall as the widget,
@@ -2275,7 +2411,7 @@ fn an_anonymous_table_inherits_from_its_parent_not_its_cell() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // `border-spacing` and `border-collapse` on a cell do nothing: they apply to tables, and
@@ -2302,7 +2438,7 @@ fn an_anonymous_table_in_an_inline_element_inherits_from_it() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // The inline element has no box of its own, yet its spacing reaches the table.
@@ -2334,7 +2470,7 @@ fn a_block_before_takes_its_own_box_like_an_element() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("generated-box-{}.png", std::process::id());
@@ -2357,7 +2493,7 @@ fn generated_blocks_keep_the_right_background_in_text_and_inline_owners() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let id = std::process::id();
@@ -2426,7 +2562,7 @@ fn a_percentage_text_indent_takes_its_share_of_the_width() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // A quarter of the 200px it lays out in is 50px.
@@ -2454,7 +2590,7 @@ fn a_percentage_text_indent_takes_its_share_of_the_width() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("indent-percent-row-{}.png", std::process::id());
@@ -2490,7 +2626,7 @@ fn an_inline_outline_draws_around_its_pieces() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("inline-outline-{}.png", std::process::id());
@@ -2526,7 +2662,7 @@ fn an_inline_outline_draws_around_its_pieces() {
             let mut ui = simulator(view);
             ui.snapshot(&Theme::Light)
                 .unwrap()
-                .matches_image(std::env::temp_dir().join(name))
+                .matches_image(scratch().join(name))
                 .unwrap()
         };
         let name = format!("inline-outline-{kind}-{}.png", std::process::id());
@@ -2556,7 +2692,7 @@ fn an_empty_inline_with_sides_still_draws_its_box() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("empty-inline-{}.png", std::process::id());
@@ -2595,7 +2731,7 @@ fn an_inline_holding_only_an_empty_inline_draws_its_box() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("nested-empty-inline-{}.png", std::process::id());
@@ -2614,7 +2750,7 @@ fn an_inline_holding_only_an_empty_inline_draws_its_box() {
     assert!(
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(&blank))
+            .matches_image(scratch().join(&blank))
             .unwrap()
     );
     assert!(!draw(true, &blank));
@@ -2653,7 +2789,7 @@ fn generated_inline_boxes_draw_as_inline_elements_do() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let boxed = "padding:0 8px; border:2px solid #2a4d69; background-color:#d9534f;";
@@ -2715,7 +2851,7 @@ fn a_box_fading_out_with_visibility_stays_drawn_until_the_end() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     assert!(picture(&shown, "visibility-shown"));
@@ -2747,7 +2883,7 @@ fn a_box_fading_out_with_visibility_stays_drawn_until_the_end() {
     for name in ["visibility-shown", "visibility-hidden"] {
         for renderer in ["wgpu", "tiny-skia"] {
             let _ = std::fs::remove_file(
-                std::env::temp_dir().join(format!("{name}-{}-{renderer}.png", std::process::id())),
+                scratch().join(format!("{name}-{}-{renderer}.png", std::process::id())),
             );
         }
     }
@@ -2782,14 +2918,14 @@ fn a_hidden_inline_box_keeps_only_its_room() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("hidden-room-{}.png", std::process::id());
     assert!(draw(false, &name));
     assert!(draw(true, &name));
     let _ = std::fs::remove_file(
-        std::env::temp_dir().join(format!("hidden-room-{}-wgpu.png", std::process::id())),
+        scratch().join(format!("hidden-room-{}-wgpu.png", std::process::id())),
     );
 }
 
@@ -2798,7 +2934,7 @@ fn a_hidden_inline_box_keeps_only_its_room() {
 fn a_fading_block_keeps_its_image_under_generated_text() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};
-    let path = std::env::temp_dir().join(format!("iced-css-fade-image-{}", std::process::id()));
+    let path = scratch().join(format!("iced-css-fade-image-{}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     std::fs::write(path.join("dot.png"), checker_png(16)).unwrap();
     let css = |shown: &str| {
@@ -2870,7 +3006,7 @@ fn font_size_halfway_lays_out_as_its_size_then() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let from = BoxTree::new(source(), &css("16px")).unwrap();
@@ -2893,7 +3029,7 @@ fn font_size_halfway_lays_out_as_its_size_then() {
     animations.advance(start + Duration::from_millis(500), &to);
     assert!(picture(animations.presented(&to), "font-between"));
     for renderer in ["wgpu", "tiny-skia"] {
-        let _ = std::fs::remove_file(std::env::temp_dir().join(format!(
+        let _ = std::fs::remove_file(scratch().join(format!(
             "font-between-{}-{renderer}.png",
             std::process::id()
         )));
@@ -2950,7 +3086,7 @@ fn font_size_halfway_lays_out_as_its_size_then() {
     animations.advance(start + Duration::from_millis(500), &to);
     assert!(picture(animations.presented(&to), "font-between-2"));
     for renderer in ["wgpu", "tiny-skia"] {
-        let _ = std::fs::remove_file(std::env::temp_dir().join(format!(
+        let _ = std::fs::remove_file(scratch().join(format!(
             "font-between-2-{}-{renderer}.png",
             std::process::id()
         )));
@@ -2984,7 +3120,7 @@ fn font_size_halfway_lays_out_as_its_size_then() {
     animations.advance(start + Duration::from_millis(500), &to);
     assert!(picture(animations.presented(&to), "font-between-3"));
     for renderer in ["wgpu", "tiny-skia"] {
-        let _ = std::fs::remove_file(std::env::temp_dir().join(format!(
+        let _ = std::fs::remove_file(scratch().join(format!(
             "font-between-3-{}-{renderer}.png",
             std::process::id()
         )));
@@ -2996,7 +3132,7 @@ fn font_size_halfway_lays_out_as_its_size_then() {
 fn a_list_image_keeps_its_gap_with_an_animated_font_size() {
     use iced_css::{animation::clock::AnimationTiming, box_tree::BoxTreeAnimations};
     use std::time::{Duration, Instant};
-    let path = std::env::temp_dir().join(format!("iced-css-font-image-{}", std::process::id()));
+    let path = scratch().join(format!("iced-css-font-image-{}", std::process::id()));
     std::fs::create_dir_all(&path).unwrap();
     std::fs::write(path.join("dot.png"), checker_png(8)).unwrap();
     let source = || {
@@ -3062,7 +3198,7 @@ fn lengths_and_percentages_mix_halfway() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let from = BoxTree::new(source(), &css("width:25%; margin-left:0px; left:0px;")).unwrap();
@@ -3118,12 +3254,12 @@ fn lengths_and_percentages_mix_halfway() {
     assert!(picture(animations.presented(&back), "mix-quarter"));
     for renderer in ["wgpu", "tiny-skia"] {
         let _ = std::fs::remove_file(
-            std::env::temp_dir().join(format!("mix-quarter-{}-{renderer}.png", std::process::id())),
+            scratch().join(format!("mix-quarter-{}-{renderer}.png", std::process::id())),
         );
     }
     for renderer in ["wgpu", "tiny-skia"] {
         let _ = std::fs::remove_file(
-            std::env::temp_dir().join(format!("mix-between-{}-{renderer}.png", std::process::id())),
+            scratch().join(format!("mix-between-{}-{renderer}.png", std::process::id())),
         );
     }
 }
@@ -3162,7 +3298,7 @@ fn an_inline_elements_sides_animate_both_ways() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let none = BoxTree::new(source(), &css("")).unwrap();
@@ -3186,7 +3322,7 @@ fn an_inline_elements_sides_animate_both_ways() {
     }
     for renderer in ["wgpu", "tiny-skia"] {
         let _ = std::fs::remove_file(
-            std::env::temp_dir().join(format!("sides-half-{}-{renderer}.png", std::process::id())),
+            scratch().join(format!("sides-half-{}-{renderer}.png", std::process::id())),
         );
     }
 }
@@ -3200,7 +3336,7 @@ fn inline_sides_animate_in_every_place_they_fall() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     // `#s` between `ends`, both ways: halfway it draws as `half`.
@@ -3227,7 +3363,7 @@ fn inline_sides_animate_in_every_place_they_fall() {
         }
         for renderer in ["wgpu", "tiny-skia"] {
             let _ = std::fs::remove_file(
-                std::env::temp_dir().join(format!("{name}-{}-{renderer}.png", std::process::id())),
+                scratch().join(format!("{name}-{}-{renderer}.png", std::process::id())),
             );
         }
     };
@@ -3399,7 +3535,7 @@ fn right_to_left_text_keeps_its_mark_before_percentage_sides() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // Its own padding, its margin before a nested inline's padding: the mark leads them all.
@@ -3409,13 +3545,13 @@ fn right_to_left_text_keeps_its_mark_before_percentage_sides() {
     let margin = format!("rtl-percent-margin-{}.png", std::process::id());
     assert!(draw("margin:0 40px;", &margin));
     assert!(draw("margin:0 10%;", &margin));
-    let _ = std::fs::remove_file(std::env::temp_dir().join(format!(
+    let _ = std::fs::remove_file(scratch().join(format!(
         "rtl-percent-margin-{}-wgpu.png",
         std::process::id()
     )));
     for renderer in ["wgpu", "tiny-skia"] {
         let _ = std::fs::remove_file(
-            std::env::temp_dir().join(format!("rtl-percent-{}-{renderer}.png", std::process::id())),
+            scratch().join(format!("rtl-percent-{}-{renderer}.png", std::process::id())),
         );
     }
 }
@@ -3461,7 +3597,7 @@ fn em_lengths_follow_an_animated_font_size() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let from = BoxTree::new(source(), &css("16px", "2px")).unwrap();
@@ -3486,7 +3622,7 @@ fn em_lengths_follow_an_animated_font_size() {
     assert!(picture(animations.presented(&to), "em-between"));
     for renderer in ["wgpu", "tiny-skia"] {
         let _ = std::fs::remove_file(
-            std::env::temp_dir().join(format!("em-between-{}-{renderer}.png", std::process::id())),
+            scratch().join(format!("em-between-{}-{renderer}.png", std::process::id())),
         );
     }
 }
@@ -3525,7 +3661,7 @@ fn an_inline_background_fades_to_and_from_transparent() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let clear = BoxTree::new(source(), &css("transparent")).unwrap();
@@ -3587,7 +3723,7 @@ fn nested_inline_backgrounds_fade_together() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let clear = BoxTree::new(source(), &css("transparent", "transparent")).unwrap();
@@ -3616,7 +3752,7 @@ fn nested_inline_backgrounds_fade_together() {
     // The colors themselves, over the white page: the outer blue at half, the red at
     // half over that in the span, and the red alone in its padding above the line.
     let prefix = format!("nested-half-{}-", std::process::id());
-    let file = std::fs::read_dir(std::env::temp_dir())
+    let file = std::fs::read_dir(scratch())
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -3676,7 +3812,7 @@ fn an_inline_fade_shows_behind_hidden_text_in_it() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let clear = BoxTree::new(source(), &css("transparent")).unwrap();
@@ -3724,7 +3860,7 @@ fn an_inline_outline_animates_where_it_draws() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let from = BoxTree::new(source(), &css("#ff0000", "2px")).unwrap();
@@ -3751,7 +3887,7 @@ fn an_inline_outline_animates_where_it_draws() {
     assert!(picture(animations.presented(&to), "outline-end"));
     // The colors themselves: the halfway purple, and neither end.
     let prefix = format!("outline-half-{}-", std::process::id());
-    let file = std::fs::read_dir(std::env::temp_dir())
+    let file = std::fs::read_dir(scratch())
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -3799,7 +3935,7 @@ fn font_weight_animates_through_the_weights_between() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let from = BoxTree::new(source(), &css("400")).unwrap();
@@ -3844,7 +3980,7 @@ fn a_box_border_fades_over_what_lies_beneath() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let clear = BoxTree::new(source(), &css("transparent")).unwrap();
@@ -3869,7 +4005,7 @@ fn a_box_border_fades_over_what_lies_beneath() {
     }
     // The red at half over the white page, its corners no darker, nothing at full.
     let prefix = format!("border-half-{}-", std::process::id());
-    let file = std::fs::read_dir(std::env::temp_dir())
+    let file = std::fs::read_dir(scratch())
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -3916,7 +4052,7 @@ fn a_fade_across_a_display_change_paints_as_the_new_display() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let start = Instant::now();
@@ -3982,7 +4118,7 @@ fn collapsed_borders_fade_where_they_win() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let clear = BoxTree::new(source(), &css("transparent")).unwrap();
@@ -4009,7 +4145,7 @@ fn collapsed_borders_fade_where_they_win() {
     }
     // The wide cell's red at half over white, the edge it wins too; no red at full.
     let prefix = format!("collapsed-half-{}-", std::process::id());
-    let file = std::fs::read_dir(std::env::temp_dir())
+    let file = std::fs::read_dir(scratch())
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -4054,7 +4190,7 @@ fn a_border_a_hover_gives_fades_its_color_there() {
             position: on,
         })]);
         let snapshot = ui.snapshot(&Theme::Light).unwrap();
-        let path = std::env::temp_dir().join(format!("hover-border-{}", std::process::id()));
+        let path = scratch().join(format!("hover-border-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(snapshot.matches_image(path.join("frame.png")).unwrap());
@@ -4125,7 +4261,7 @@ fn a_negative_inline_margin_draws_its_box_over_the_text_before() {
         let tree = BoxTree::new(source(), &css).unwrap();
         let view: Element<'_, u8> = tree.view();
         let mut ui = simulator(view);
-        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let path = scratch().join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -4234,7 +4370,7 @@ fn a_negative_inline_margin_pulls_only_its_own_box_and_outward() {
         let tree = BoxTree::new(source, &css).unwrap();
         let view: Element<'_, u8> = tree.view();
         let mut ui = simulator(view);
-        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let path = scratch().join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -4406,7 +4542,7 @@ fn a_negative_inline_margin_animates_as_its_box_pulls() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let from = BoxTree::new(source(), &css("-8px")).unwrap();
@@ -4448,7 +4584,7 @@ fn a_before_animates_its_own_colors_where_it_draws() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let start = Instant::now();
@@ -4497,7 +4633,7 @@ fn a_before_animates_its_own_colors_where_it_draws() {
     animations.advance(start + Duration::from_millis(500), &full);
     assert!(picture(animations.presented(&full), "before-block-half"));
     let prefix = format!("before-block-half-{}-", std::process::id());
-    let file = std::fs::read_dir(std::env::temp_dir())
+    let file = std::fs::read_dir(scratch())
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -4548,7 +4684,7 @@ fn a_before_animates_its_own_colors_where_it_draws() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light).unwrap()
     };
-    let path = std::env::temp_dir().join(format!("after-block-half-{}", std::process::id()));
+    let path = scratch().join(format!("after-block-half-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     assert!(snapshot.matches_image(path.join("frame.png")).unwrap());
@@ -4584,7 +4720,7 @@ fn a_block_before_animates_its_own_box() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let css = |width: &str, side: &str, size: &str| {
@@ -4642,7 +4778,7 @@ fn a_before_grows_with_its_line_and_small_capitals() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let start = Instant::now();
@@ -4706,7 +4842,7 @@ fn an_inline_before_animates_its_sides_on_its_line() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let css = |padding: &str, border: &str, margin: &str| {
@@ -4790,7 +4926,7 @@ fn an_inline_before_fades_its_background_on_its_line() {
                 .matches_image(path)
                 .unwrap()
         };
-        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let path = scratch().join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         let frame = path.join("frame.png");
@@ -4835,7 +4971,7 @@ fn a_block_before_carries_its_current_color_border() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     let css = |color: &str| {
@@ -4886,7 +5022,7 @@ fn an_inline_block_sits_on_the_line_baseline() {
         let tree = BoxTree::new(source, &css).unwrap();
         let view: Element<'_, u8> = tree.view();
         let mut ui = simulator(view);
-        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let path = scratch().join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -5027,7 +5163,6 @@ fn an_inline_block_sits_on_the_line_baseline() {
 
 #[test]
 fn layout_with_a_renderer_matches_the_widget() {
-    use iced::advanced::renderer::Headless;
     let source = || {
         node(
             "page",
@@ -5045,17 +5180,14 @@ fn layout_with_a_renderer_matches_the_widget() {
                #b { display:inline-block; background-color:#ff0000; font-size:28px;
                     padding-bottom:30px; }";
     let tree = BoxTree::new(source(), css).unwrap();
-    let renderer = iced_test::futures::futures::executor::block_on(
-        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
-    )
-    .unwrap();
+    let renderer = renderer();
     // Page, paragraph, its first text, then the inline-block.
     let laid = tree.layout_with(&renderer, 1024.0, None).unwrap();
     let boxed = laid[3].unwrap().border;
     // Where the widget draws it: its red, at the snapshot's scale of 2.
     let view: Element<'_, u8> = tree.clone().view();
     let mut ui = simulator(view);
-    let path = std::env::temp_dir().join(format!("layout-with-{}", std::process::id()));
+    let path = scratch().join(format!("layout-with-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     assert!(
@@ -5112,7 +5244,7 @@ fn layout_with_a_renderer_matches_the_widget() {
         .border;
     let view: Element<'_, u8> = indented.view();
     let mut ui = simulator(view);
-    let path = std::env::temp_dir().join(format!("layout-with-indent-{}", std::process::id()));
+    let path = scratch().join(format!("layout-with-indent-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     assert!(
@@ -5175,7 +5307,7 @@ fn every_inline_box_fades_as_it_shows() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(format!("{name}-{}.png", std::process::id())))
+            .matches_image(scratch().join(format!("{name}-{}.png", std::process::id())))
             .unwrap()
     };
     // `id` fades out, then after a delay back in: halfway out it draws as shown, through the
@@ -5216,8 +5348,7 @@ fn every_inline_box_fades_as_it_shows() {
         for name in [on, off] {
             for renderer in ["wgpu", "tiny-skia"] {
                 let _ = std::fs::remove_file(
-                    std::env::temp_dir()
-                        .join(format!("{name}-{}-{renderer}.png", std::process::id())),
+                    scratch().join(format!("{name}-{}-{renderer}.png", std::process::id())),
                 );
             }
         }
@@ -5316,7 +5447,7 @@ fn inline_percentage_sides_take_their_share_of_the_block() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // A tenth of the 300px block is 30px, for padding and for margin.
@@ -5347,7 +5478,7 @@ fn inline_percentage_sides_take_their_share_of_the_block() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("inline-percent-rtl-{}.png", std::process::id());
@@ -5373,7 +5504,7 @@ fn inline_percentage_sides_take_their_share_of_the_block() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("inline-percent-row-{}.png", std::process::id());
@@ -5404,7 +5535,7 @@ fn inline_percentage_sides_take_their_share_of_the_block() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("inline-percent-wrap-{}.png", std::process::id());
@@ -5449,7 +5580,7 @@ fn a_spanning_cells_edge_is_resolved_per_stretch() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // Blue beats the spanning cell's red beside the first row; red keeps the second, where
@@ -5496,7 +5627,7 @@ fn a_spanning_loser_after_its_winners_and_a_hidden_edge_settle_per_stretch() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let id = std::process::id();
@@ -5543,7 +5674,7 @@ fn a_column_spanning_cells_edge_is_resolved_per_stretch() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // Blue beats the wide cell's red over the first column; red keeps the second.
@@ -5554,7 +5685,6 @@ fn a_column_spanning_cells_edge_is_resolved_per_stretch() {
 
 #[test]
 fn a_negative_text_indent_hangs_the_first_line() {
-    use iced::advanced::renderer::Headless;
     const WORDS: &str = "words that wrap onto more lines once a hanging first line pulls them out";
     let source = |words: &'static str| node("page", vec![node("p", vec![text("a", words)])]);
     let sheet = |css: &str| {
@@ -5570,14 +5700,12 @@ fn a_negative_text_indent_hangs_the_first_line() {
         let tree = BoxTree::new(source(words), &sheet(css)).unwrap();
         let view: Element<'_, u8> = tree.view();
         let mut ui = simulator(view);
-        let path = std::env::temp_dir().join(format!("hang-{}-{name}", std::process::id()));
+        let path = scratch().join(format!("hang-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         let shot = ui.snapshot(&Theme::Light).unwrap();
         let same = shot
-            .matches_image(
-                std::env::temp_dir().join(format!("hang-{}-{reference}.png", std::process::id())),
-            )
+            .matches_image(scratch().join(format!("hang-{}-{reference}.png", std::process::id())))
             .unwrap();
         assert!(shot.matches_image(path.join("frame.png")).unwrap());
         let file = std::fs::read_dir(&path)
@@ -5683,7 +5811,7 @@ fn a_negative_text_indent_hangs_the_first_line() {
     )
     .unwrap();
     let view: Element<'_, u8> = mixed.view();
-    let path = std::env::temp_dir().join(format!("hang-{}-mixed", std::process::id()));
+    let path = scratch().join(format!("hang-{}-mixed", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     assert!(
@@ -5730,10 +5858,7 @@ fn a_negative_text_indent_hangs_the_first_line() {
     );
     let _ = std::fs::remove_dir_all(&path);
     // Laid out outside the widget, as tall as the widget draws it.
-    let renderer = iced_test::futures::futures::executor::block_on(
-        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
-    )
-    .unwrap();
+    let renderer = renderer();
     let height = |css: &str| {
         let tree = BoxTree::new(source(WORDS), &sheet(css)).unwrap();
         let block = tree.layout_with(&renderer, 1024.0, None).unwrap()[1]
@@ -5815,7 +5940,7 @@ fn a_negative_text_indent_hangs_the_first_line() {
              #p {{ line-height:20px; text-indent:-20px; background-color:#ff0000; }}"
         );
         let view: Element<'_, u8> = BoxTree::new(node("page", children), &sheet).unwrap().view();
-        let path = std::env::temp_dir().join(format!("hang-{}-{name}", std::process::id()));
+        let path = scratch().join(format!("hang-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -5901,7 +6026,7 @@ fn a_negative_text_indent_hangs_the_first_line() {
     );
     for reference in ["plain", "hung", "rtl", "broken", "hebrew"] {
         let file = format!("hang-{}-{reference}.png", std::process::id());
-        let _ = std::fs::remove_file(std::env::temp_dir().join(file));
+        let _ = std::fs::remove_file(scratch().join(file));
     }
 }
 
@@ -5915,7 +6040,7 @@ fn wrapped_right_to_left_lines_take_their_alignment() {
              #p {{ line-height:20px; direction:rtl; {css} }}"
         );
         let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
-        let path = std::env::temp_dir().join(format!("rtl-align-{}-{name}", std::process::id()));
+        let path = scratch().join(format!("rtl-align-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -6034,7 +6159,6 @@ fn a_press_on_a_hanging_line_goes_to_its_run() {
 
 #[test]
 fn a_negative_word_spacing_narrows_each_space() {
-    use iced::advanced::renderer::Headless;
     // The ink's width, at the snapshot's scale of 2.
     let ink = |words: &'static str, css: &str, name: &str| {
         let root = node("page", vec![node("p", vec![text("a", words)])]);
@@ -6042,7 +6166,7 @@ fn a_negative_word_spacing_narrows_each_space() {
             "#page {{ background-color:white; color:black; }} #p {{ white-space:nowrap; {css} }}"
         );
         let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
-        let path = std::env::temp_dir().join(format!("spacing-{}-{name}", std::process::id()));
+        let path = scratch().join(format!("spacing-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -6086,10 +6210,7 @@ fn a_negative_word_spacing_narrows_each_space() {
     let together = ink("mmmmmmmmmmmmmm", "", "together");
     assert!(none.abs_diff(together) <= 4, "{none} {together}");
     // The line keeps its height.
-    let renderer = iced_test::futures::futures::executor::block_on(
-        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
-    )
-    .unwrap();
+    let renderer = renderer();
     let height = |words: &'static str, css: &str| {
         let sheet = format!("#p {{ {css} }}");
         let root = node("page", vec![node("p", vec![text("a", words)])]);
@@ -6138,7 +6259,7 @@ fn a_fallback_face_moves_an_inline_blocks_baseline() {
                  #r { display:inline; color:#ff0000; }
                  #g { display:inline; color:#00ff00; }";
     let view: Element<'_, u8> = BoxTree::new(root, sheet).unwrap().view();
-    let path = std::env::temp_dir().join(format!("fallback-{}", std::process::id()));
+    let path = scratch().join(format!("fallback-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     assert!(
@@ -6187,7 +6308,7 @@ fn a_percentage_text_indent_is_of_the_containing_block() {
         simulator(view)
             .snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // 16.1: half the page's 300px, not half the paragraph's own 200px.
@@ -6213,22 +6334,18 @@ fn a_percentage_text_indent_is_of_the_containing_block() {
         simulator(view)
             .snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(&name))
+            .matches_image(scratch().join(&name))
             .unwrap()
     };
     assert!(hang("-150px"));
     assert!(hang("-50%"));
     assert!(!hang("-100px"));
-    let _ = std::fs::remove_file(std::env::temp_dir().join(name));
+    let _ = std::fs::remove_file(scratch().join(name));
 }
 
 #[test]
 fn a_shrink_to_fit_box_fits_its_percentage_indent() {
-    use iced::advanced::renderer::Headless;
-    let renderer = iced_test::futures::futures::executor::block_on(
-        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
-    )
-    .unwrap();
+    let renderer = renderer();
     let float = |indent: &str| {
         let root = node("page", vec![node("f", vec![text("t", "one two")])]);
         let sheet = format!(
@@ -6259,7 +6376,7 @@ fn a_shrink_to_fit_box_fits_its_percentage_indent() {
         simulator(view)
             .snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(&name))
+            .matches_image(scratch().join(&name))
             .unwrap()
     };
     assert!(draw("100px"));
@@ -6288,7 +6405,7 @@ fn an_inline_block_whose_text_widens_past_a_float_sits_on_its_last_line() {
              #f {{ float:left; {float} }}"
         );
         let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
-        let path = std::env::temp_dir().join(format!("past-float-{}-{name}", std::process::id()));
+        let path = scratch().join(format!("past-float-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -6348,7 +6465,7 @@ fn only_the_faces_on_its_last_line_set_an_inline_blocks_baseline() {
          #r {{ display:inline; color:#ff0000; }}"
         );
         let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
-        let path = std::env::temp_dir().join(format!("line-faces-{}-{name}", std::process::id()));
+        let path = scratch().join(format!("line-faces-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -6403,7 +6520,7 @@ fn word_spacing_keeps_its_room_with_the_line_before() {
              #p {{ width:120px; line-height:20px; word-spacing:24px; {css} }}"
         );
         let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
-        let path = std::env::temp_dir().join(format!("spacing-wrap-{}-{name}", std::process::id()));
+        let path = scratch().join(format!("spacing-wrap-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         assert!(
@@ -6447,11 +6564,7 @@ fn word_spacing_keeps_its_room_with_the_line_before() {
 
 #[test]
 fn a_row_of_inline_blocks_takes_a_percentage_of_the_containing_block() {
-    use iced::advanced::renderer::Headless;
-    let renderer = iced_test::futures::futures::executor::block_on(
-        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
-    )
-    .unwrap();
+    let renderer = renderer();
     // 10% of the page's 400px, inside the paragraph's 50px padding.
     let tree = BoxTree::new(
         node("page", vec![node("p", vec![node("b", vec![])])]),
@@ -6483,7 +6596,7 @@ fn an_inlines_percentage_padding_above_and_below_takes_its_share() {
         simulator(view)
             .snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     // 10.8.1: no room in the line, but its background reaches 10% of the paragraph's
@@ -6532,7 +6645,7 @@ fn a_tree_taller_than_its_scrollable_paints_only_what_shows() {
         let mut ui = simulator(view);
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(name))
+            .matches_image(scratch().join(name))
             .unwrap()
     };
     let name = format!("scrollable-clip-{}.png", std::process::id());
@@ -6556,7 +6669,7 @@ fn a_scrolling_roots_border_scrolls_with_the_page() {
         }
         ui.snapshot(&Theme::Light)
             .unwrap()
-            .matches_image(std::env::temp_dir().join(&name))
+            .matches_image(scratch().join(&name))
             .unwrap()
     };
     let style = |color: &str| {
@@ -6574,11 +6687,7 @@ fn a_scrolling_roots_border_scrolls_with_the_page() {
 
 #[test]
 fn a_no_break_space_holds_a_shrink_to_fit_box_to_both_words() {
-    use iced::advanced::renderer::Headless;
-    let renderer = iced_test::futures::futures::executor::block_on(
-        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
-    )
-    .unwrap();
+    let renderer = renderer();
     let width = |words: &'static str| {
         let root = node("page", vec![node("f", vec![text("t", words)])]);
         let sheet = "#page { width:1px; } #f { float:left; }";

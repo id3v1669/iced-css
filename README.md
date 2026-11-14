@@ -61,6 +61,14 @@ To keep the checkout elsewhere, change the `iced_animate` path in
 `crates/iced-css-conformance/src/dependency.rs`, which checks the dependency against the
 same path.
 
+A plain `cargo test` leaves out the tests of the optional `image` and `svg` features: image
+painting and list-style images in `crates/iced-css/tests/box_tree_render.rs`, and the
+`tests/capture_image.rs` and `tests/capture_svg.rs` adapters, among others. Run them with:
+
+```sh
+cargo test --workspace --features iced-css/image,iced-css/svg
+```
+
 ## What works
 
 - **Selectors and cascade:** type, class, id, attribute and combinator selectors, including

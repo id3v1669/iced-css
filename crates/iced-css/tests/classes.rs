@@ -1,5 +1,5 @@
 //! Classes handling: matching by class, multiple classes, cascade order.
-//! (Unknown-class rejection is unit-tested in iced-css-macro.)
+//! (A class no rule names is not rejected: it matches nothing, see `unmatched_classes.rs`.)
 
 #[macro_use]
 mod common;
