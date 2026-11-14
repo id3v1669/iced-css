@@ -7546,6 +7546,45 @@ mod tests {
     }
 
     #[test]
+    fn generated_content_inherits_its_elements_lengths() {
+        let generated = |css: &str| {
+            let tree = BoxTree::new(
+                node("e", vec![]),
+                &format!(
+                    "#e {{ width:40px; margin-left:2em; font-size:10px;
+                           border:thick solid; }}
+                     #e:before {{ content:\"x\"; display:block; font-size:20px; {css} }}"
+                ),
+            )
+            .unwrap();
+            let arena = tree.prepared.generated_boxes[0].0;
+            let value = tree.prepared.boxes[arena].clone();
+            (value.width, value.margin[3], value.border[0])
+        };
+        // 6.2.1: `inherit` takes the element's value, its `em` in the element's font size.
+        assert_eq!(
+            generated(
+                "width:inherit; margin-left:inherit; border-style:solid; border-width:inherit;"
+            ),
+            (Dim::Px(40.0), Dim::Px(20.0), 5.0)
+        );
+        assert_eq!(
+            generated("border-style:solid;"),
+            (Dim::Auto, Dim::Px(0.0), 3.0)
+        );
+        // The element's border width computes to none where its own style draws none.
+        let tree = BoxTree::new(
+            node("e", vec![]),
+            "#e { border-width:thick; border-style:none; }
+             #e:before { content:\"x\"; display:block; border-style:solid;
+                         border-width:inherit; }",
+        )
+        .unwrap();
+        let arena = tree.prepared.generated_boxes[0].0;
+        assert_eq!(tree.prepared.boxes[arena].border[0], 0.0);
+    }
+
+    #[test]
     fn a_collapsed_tables_border_competes_on_its_outer_edges() {
         let (red, blue) = (Some([1.0, 0.0, 0.0]), Some([0.0, 0.0, 1.0]));
         // The left cell's left, top and shared right side; its table's left.

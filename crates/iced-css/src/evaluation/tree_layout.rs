@@ -2856,28 +2856,40 @@ pub fn evaluate_tree_paint<'r>(
             let shown =
                 keyword_of("visibility", if visible { "visible" } else { "hidden" })? == "visible";
             // A block-level one is a box of its own: lengths in its own font size.
+            let length = |target: &LengthTarget, size: f32| match target {
+                LengthTarget::Absolute(value) => {
+                    Dim::Px(value.to_finite_f32(limits.numeric).map_or(0.0, |c| c.value))
+                }
+                LengthTarget::Relative(value, RelativeUnit::Em) => Dim::Px(
+                    value
+                        .scaled_finite_f32(size, limits.numeric)
+                        .map_or(0.0, |c| c.value),
+                ),
+                LengthTarget::Relative(value, RelativeUnit::Ex) => Dim::Px(
+                    value
+                        .scaled_finite_f32(size * 0.5, limits.numeric)
+                        .map_or(0.0, |c| c.value),
+                ),
+                LengthTarget::Percentage(value) => Dim::Percent(
+                    value
+                        .percentage_finite_f32(100.0, limits.numeric)
+                        .map_or(0.0, |c| c.value),
+                ),
+                LengthTarget::Auto => Dim::Auto,
+            };
+            // `inherit` takes the element's value, in the element's font size; the element's
+            // own `inherit` there is the initial value.
+            let element_size = font_sizes.get(index).copied().unwrap_or(size);
             let dim = |name: &'static str, initial: Dim| {
                 Ok::<_, TreeLayoutError>(match cascaded(name)? {
-                    DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => match target {
-                        LengthTarget::Absolute(value) => {
-                            Dim::Px(value.to_finite_f32(limits.numeric).map_or(0.0, |c| c.value))
+                    DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => {
+                        length(target, size)
+                    }
+                    DefaultedValueRef::ParentComputed => match defaulted(name)? {
+                        DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => {
+                            length(target, element_size)
                         }
-                        LengthTarget::Relative(value, RelativeUnit::Em) => Dim::Px(
-                            value
-                                .scaled_finite_f32(size, limits.numeric)
-                                .map_or(0.0, |c| c.value),
-                        ),
-                        LengthTarget::Relative(value, RelativeUnit::Ex) => Dim::Px(
-                            value
-                                .scaled_finite_f32(size * 0.5, limits.numeric)
-                                .map_or(0.0, |c| c.value),
-                        ),
-                        LengthTarget::Percentage(value) => Dim::Percent(
-                            value
-                                .percentage_finite_f32(100.0, limits.numeric)
-                                .map_or(0.0, |c| c.value),
-                        ),
-                        LengthTarget::Auto => Dim::Auto,
+                        _ => initial,
                     },
                     _ => initial,
                 })
@@ -2915,18 +2927,36 @@ pub fn evaluate_tree_paint<'r>(
                         Dim::Px(width) => width.max(0.0),
                         _ => 3.0,
                     };
-                    let width = match keyword_of(
-                        [
-                            "border-top-width",
-                            "border-right-width",
-                            "border-bottom-width",
-                            "border-left-width",
-                        ][at],
-                        "",
-                    )? {
+                    let width_name = [
+                        "border-top-width",
+                        "border-right-width",
+                        "border-bottom-width",
+                        "border-left-width",
+                    ][at];
+                    // Inherited, the element's: none where its own style draws none.
+                    let keyword = match cascaded(width_name)? {
+                        DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                            keyword.as_str()
+                        }
+                        DefaultedValueRef::ParentComputed => {
+                            if matches!(paints[index].border_style[at], "none" | "hidden") {
+                                "none"
+                            } else {
+                                match defaulted(width_name)? {
+                                    DefaultedValueRef::Compute(SpecifiedValue::Keyword(
+                                        keyword,
+                                    )) => keyword.as_str(),
+                                    _ => "",
+                                }
+                            }
+                        }
+                        _ => "",
+                    };
+                    let width = match keyword {
                         "thin" => 1.0,
                         "medium" => 3.0,
                         "thick" => 5.0,
+                        "none" => 0.0,
                         _ => width,
                     };
                     border_width[at] = if matches!(style, "none" | "hidden") {
