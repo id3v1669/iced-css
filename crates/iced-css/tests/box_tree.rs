@@ -7034,7 +7034,19 @@ fn bidi_controls_cover_blocks_and_breaks_and_leave_blank_text_blank() {
 fn word_spacing_reaches_no_break_spaces() {
     let root = node("page", vec![text("t", "a\u{a0}b c")]);
     let tree = BoxTree::new(root, "#page { word-spacing:16px; font-size:16px; }").unwrap();
-    assert_eq!(tree.text_leaves()[0].1.text(), "a\u{a0}\u{2003}b \u{2003}c");
+    // The stand-ins joined so no line breaks among them: before a space, and after a
+    // no-break space with no break after them either.
+    assert_eq!(
+        tree.text_leaves()[0].1.text(),
+        "a\u{a0}\u{2060}\u{2003}\u{2060}b\u{2003}\u{2060} c"
+    );
+    // Several stand-ins, joined among themselves too.
+    let root = node("page", vec![text("t", "a b")]);
+    let tree = BoxTree::new(root, "#page { word-spacing:24px; font-size:16px; }").unwrap();
+    assert_eq!(
+        tree.text_leaves()[0].1.text(),
+        "a\u{2003}\u{2060}\u{2002}\u{2060} b"
+    );
 }
 
 #[test]

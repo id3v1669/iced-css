@@ -1576,8 +1576,17 @@ impl BoxTree {
                     if style.word_spacing > 0.0
                         && let Some(extra) = indent_run(&run, style.word_spacing)
                     {
-                        let wide = format!(" {}", extra.text);
-                        let wide_fixed = format!("\u{a0}{}", extra.text);
+                        // Joined so no line breaks inside them: before a space they stay at
+                        // the end of a line it breaks, and after a no-break space no line
+                        // breaks after them either.
+                        let joined = extra
+                            .text
+                            .chars()
+                            .map(String::from)
+                            .collect::<Vec<_>>()
+                            .join("\u{2060}");
+                        let wide = format!("{joined}\u{2060} ");
+                        let wide_fixed = format!("\u{a0}\u{2060}{joined}\u{2060}");
                         run.text = run.text.replace(' ', &wide).replace('\u{a0}', &wide_fixed);
                     }
                     // Less by drawing each space smaller.

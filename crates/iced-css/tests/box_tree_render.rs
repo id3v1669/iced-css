@@ -6311,3 +6311,55 @@ fn only_the_faces_on_its_last_line_set_an_inline_blocks_baseline() {
     let (blue, red) = lowest("汉\nx", "white-space:pre;", "breaks");
     assert!(blue.abs_diff(red) <= 1, "blue {blue} red {red}");
 }
+
+#[test]
+fn word_spacing_keeps_its_room_with_the_line_before() {
+    // Each line's leftmost dark pixel and the lines drawn, at the snapshot's scale of 2.
+    let lines = |words: &'static str, css: &str, name: &str| {
+        let root = node("page", vec![node("p", vec![text("t", words)])]);
+        let sheet = format!(
+            "#page {{ background-color:white; color:black; padding-left:20px; }}
+             #p {{ width:120px; line-height:20px; word-spacing:24px; {css} }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        let path = std::env::temp_dir().join(format!("spacing-wrap-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            simulator(view)
+                .snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let mut starts: Vec<Option<usize>> = vec![None; 8];
+        for (at, pixel) in bytes[..info.buffer_size()].chunks(4).enumerate() {
+            let line = at / width / 40;
+            if pixel[0] < 100 && pixel[1] < 100 && pixel[2] < 100 && line < starts.len() {
+                let x = at % width;
+                starts[line] = Some(starts[line].map_or(x, |most: usize| most.min(x)));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&path);
+        starts.into_iter().flatten().collect::<Vec<_>>()
+    };
+    // Every wrapped line starts at the box's left, 20px in: its spacing stays behind.
+    let wrapped = lines("mmm mmm mmm mmm mmm mmm", "", "spaces");
+    assert!(wrapped.len() >= 3, "{wrapped:?}");
+    assert!(wrapped.iter().all(|x| (38..=44).contains(x)), "{wrapped:?}");
+    // No-break spaces hold their words together: one line, wider than the box.
+    let held = lines("mm\u{a0}mm\u{a0}mm\u{a0}mm", "", "held");
+    assert_eq!(held.len(), 1, "{held:?}");
+}
