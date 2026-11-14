@@ -83,7 +83,8 @@ same path.
   and their query and fragment dropped. Paths outside the base, also through a symlink, and
   remote URLs draw nothing.
 - **Keyboard:** boxes with a press message or `tabindex` take focus by click and Tab, and
-  match `:focus`; Enter and Space press them.
+  match `:focus`; Enter and Space press them (a held Space once). With Ctrl, Alt or Logo held
+  these keys are left to the app.
 - **Touch:** a finger press and lift act as a left click does (`on_press`, `:active`, `:focus`);
   dragging a finger does not scroll an `overflow` box.
 - **Native widgets:** any iced `Element` can sit in a leaf box and receives input; Tab moves through

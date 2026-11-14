@@ -70,6 +70,7 @@ use iced::advanced::{
 };
 use iced::{
     Color, Element, Event, Length, Pixels, Point, Rectangle, Size, Vector, keyboard, mouse, touch,
+    window,
 };
 /// Core types named in this module's signatures, so callers need no second dependency.
 pub use iced_css_core::formatting::block_flow::{FlowGeometry, FlowRect};
@@ -657,6 +658,8 @@ struct Source {
     parsed: OnceLock<Parsed>,
     /// Keys whose restyle was refused: asking again would only cascade again, per frame.
     refused: Mutex<BTreeSet<InteractionKey>>,
+    /// Why the widget's last layout was refused, said once until a layout succeeds.
+    layout_refusal: Mutex<Option<String>>,
 }
 
 /// A source's sheets as rule graphs, after the rules every page starts from.
@@ -865,6 +868,7 @@ impl BoxTree {
             variants: Mutex::new(Variants::default()),
             parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
+            layout_refusal: Mutex::new(None),
         });
         Self::unstated(&source)
     }
@@ -887,6 +891,7 @@ impl BoxTree {
             variants: Mutex::new(Variants::default()),
             parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
+            layout_refusal: Mutex::new(None),
         });
         Self::unstated(&source)
     }
@@ -914,33 +919,11 @@ impl BoxTree {
     }
 
     fn unpresented_variant(&self, key: InteractionKey) -> Self {
-        let key = self.source.normal_key(key);
-        let cached = self
-            .source
-            .variants
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(key);
-        if let Some(style) = cached {
-            return Self::from_style((*style).clone(), Arc::clone(&self.source));
-        }
-        if self.is_refused(key) {
-            return self.clone();
-        }
-        let built = match Self::styled(&self.source, key) {
-            Ok(built) => built,
+        match self.cached_style(key) {
+            Some(style) => Self::from_style((*style).clone(), Arc::clone(&self.source)),
             // This tree may carry a frame's presented values; those are not a style to keep.
-            Err(_) => {
-                self.refuse(key);
-                return self.clone();
-            }
-        };
-        self.source
-            .variants
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(key, Arc::new(built.style()));
-        built
+            None => self.clone(),
+        }
     }
 
     fn is_refused(&self, key: InteractionKey) -> bool {
@@ -951,7 +934,9 @@ impl BoxTree {
             .contains(&key)
     }
 
-    fn refuse(&self, key: InteractionKey) {
+    /// Remembers a refused restyle, and says why once: it is not asked again.
+    fn refuse(&self, key: InteractionKey, error: &BoxTreeError) {
+        log::warn!(target: "iced_css::box_tree", "restyle for {key:?} refused: {error}");
         let mut refused = self
             .source
             .refused
@@ -978,9 +963,12 @@ impl BoxTree {
         if self.is_refused(key) {
             return None;
         }
-        let Ok(built) = Self::styled(&self.source, key) else {
-            self.refuse(key);
-            return None;
+        let built = match Self::styled(&self.source, key) {
+            Ok(built) => built,
+            Err(error) => {
+                self.refuse(key, &error);
+                return None;
+            }
         };
         let style = Arc::new(built.style());
         self.source
@@ -2514,19 +2502,34 @@ impl BoxTree {
             let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
             (narrowest_width(renderer, leaf), longest)
         });
-        // A percentage `text-indent` or inline side needs its block's width: a second layout
-        // gives its spacers room, when the first changed one.
+        let geometry = tree.layout_passes(renderer, width, height, &mut |_, _| None)?;
+        Ok(tree.prepared.by_projected(&geometry))
+    }
+
+    /// Lays out by arena slot with `renderer`'s text, as `layout_with` and the widget do.
+    /// `hosted(arena, width)` gives a hosted widget's height; other leaves are text. A
+    /// percentage `text-indent` or inline side needs its block's width: a second layout
+    /// gives its spacers room, when the first changed one.
+    fn layout_passes<Renderer: text::Renderer<Font = iced::Font>>(
+        &mut self,
+        renderer: &Renderer,
+        width: f32,
+        height: Option<f32>,
+        hosted: &mut dyn FnMut(usize, f32) -> Option<f32>,
+    ) -> Result<Vec<FlowGeometry>, TreeLayoutError> {
         let mut geometry = Vec::new();
         for pass in 0..2 {
-            let current = &tree;
+            let current = &*self;
             let mut baselines: Baselines = BTreeMap::new();
             geometry = current.layout_arena(
                 width,
                 height,
                 &mut |arena, width| {
-                    current.texts[arena]
-                        .as_ref()
-                        .map(|leaf| leaf_height(renderer, leaf, width))
+                    hosted(arena, width).or_else(|| {
+                        current.texts[arena]
+                            .as_ref()
+                            .map(|leaf| leaf_height(renderer, leaf, width))
+                    })
                 },
                 &mut |arena, narrow, until, wide| {
                     // A hanging first line stays beside the floats as it is.
@@ -2537,6 +2540,7 @@ impl BoxTree {
                     let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
                     Some(first_height + rest.min_bounds().height)
                 },
+                // Once per leaf and width in a pass: rows ask again for nested boxes.
                 &mut |arena, width, split| {
                     let key = split.map(|(until, wide)| (until.to_bits(), wide.to_bits()));
                     *baselines
@@ -2550,17 +2554,17 @@ impl BoxTree {
             if pass == 1 {
                 break;
             }
-            let before = tree.percent_leaves();
-            if !tree.apply_percent_indents(&geometry) {
+            let before = self.percent_leaves();
+            if !self.apply_percent_indents(&geometry) {
                 break;
             }
             // Their spaces are text a shrink-to-fit box fits.
-            tree.refit_texts(&before, |leaf| {
+            self.refit_texts(&before, |leaf| {
                 let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
                 (narrowest_width(renderer, leaf), longest)
             });
         }
-        Ok(tree.prepared.by_projected(&geometry))
+        Ok(geometry)
     }
 
     /// Lays out by arena slot, with `measure(arena, width)` giving each leaf's height and
@@ -3024,10 +3028,9 @@ impl BoxTree {
         steps
     }
 
-    /// The steps that draw: a hidden empty cell keeps its place for input, and draws only
-    /// around a hosted widget.
-    fn drawn_steps(&self, embedded: &BTreeSet<usize>) -> Vec<PaintStep> {
-        let mut steps = self.paint_steps(embedded);
+    /// Of `steps` from `paint_steps`, the ones that draw: a hidden empty cell keeps its
+    /// place for input, and draws only around a hosted widget.
+    fn drawn_steps(&self, mut steps: Vec<PaintStep>, embedded: &BTreeSet<usize>) -> Vec<PaintStep> {
         steps.retain(|step| {
             let PaintStep::Box(index) = *step else {
                 return true;
@@ -3222,14 +3225,7 @@ impl BoxTree {
                 parents[child] = Some(arena);
             }
         }
-        let meet = |clip: Option<FlowRect>, more: FlowRect| {
-            Some(clip.map_or(more, |clip: FlowRect| FlowRect {
-                left: clip.left.max(more.left),
-                right: clip.right.min(more.right),
-                top: clip.top.max(more.top),
-                bottom: clip.bottom.min(more.bottom),
-            }))
-        };
+        let meet = |clip: Option<FlowRect>, more: FlowRect| Some(narrowed(clip, more));
         let mut clips: Vec<Option<FlowRect>> = vec![None; count];
         // `clip` alone, down through the box tree: a fixed box escapes `overflow`, not this.
         let mut cut: Vec<Option<FlowRect>> = vec![None; count];
@@ -3326,6 +3322,7 @@ where
             canvas_width: 0.0,
             clips: Vec::new(),
             steps: Vec::new(),
+            drawn: Vec::new(),
             paragraphs: BTreeMap::new(),
             allocations: Vec::new(),
             loaded: BTreeSet::new(),
@@ -3373,6 +3370,8 @@ struct Interaction {
     scrolled_x: BTreeMap<usize, f32>,
     /// The source whose nodes the indices above name.
     source: Option<Arc<Source>>,
+    /// Scrolling moved boxes under the pointer: the next redraw finds what it is over.
+    rehover: bool,
 }
 
 impl PartialEq for Interaction {
@@ -4222,6 +4221,55 @@ fn local_image(base: &Path, uri: &str) -> Option<image::Handle> {
     Some(image::Handle::from_path(file))
 }
 
+/// An outside operation over a widget whose box is hidden or absent: it is not there to
+/// focus, as it takes no input. Everything else reaches it, since its state stays.
+struct Unfocusable<'a>(&'a mut dyn Operation);
+
+impl Operation for Unfocusable<'_> {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        self.0
+            .traverse(&mut |operation| operate(&mut Unfocusable(operation)));
+    }
+
+    fn container(&mut self, id: Option<&iced::widget::Id>, bounds: Rectangle) {
+        self.0.container(id, bounds);
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        bounds: Rectangle,
+        content_bounds: Rectangle,
+        translation: Vector,
+        state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        self.0
+            .scrollable(id, bounds, content_bounds, translation, state);
+    }
+
+    fn text_input(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        bounds: Rectangle,
+        state: &mut dyn iced::advanced::widget::operation::TextInput,
+    ) {
+        self.0.text_input(id, bounds, state);
+    }
+
+    fn text(&mut self, id: Option<&iced::widget::Id>, bounds: Rectangle, text: &str) {
+        self.0.text(id, bounds, text);
+    }
+
+    fn custom(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        bounds: Rectangle,
+        state: &mut dyn std::any::Any,
+    ) {
+        self.0.custom(id, bounds, state);
+    }
+}
+
 /// What Tab asks of the focusable widgets inside a hosted element.
 enum HostFocus {
     Has(bool),
@@ -4340,6 +4388,16 @@ struct TextExtent {
     to: f32,
 }
 
+/// `more` within `clip`, when there is one. Disjoint rectangles leave an inverted one.
+fn narrowed(clip: Option<FlowRect>, more: FlowRect) -> FlowRect {
+    clip.map_or(more, |clip| FlowRect {
+        left: clip.left.max(more.left),
+        right: clip.right.min(more.right),
+        top: clip.top.max(more.top),
+        bottom: clip.bottom.min(more.bottom),
+    })
+}
+
 /// How far each scrolling box can scroll down and across, after moving its contents by
 /// its offsets. Parents come first in arena order, so nested scrollers measure moved
 /// contents. Across, a box scrolls toward its end: an ltr box's contents past its right,
@@ -4393,12 +4451,7 @@ fn apply_scrolling(
                 let mut at = any_cut.then_some(child);
                 while let Some(here) = at.filter(|here| *here != scroller) {
                     if let Some(own) = cut(here, &geometry[here]) {
-                        bound = Some(bound.map_or(own, |bound| FlowRect {
-                            left: bound.left.max(own.left),
-                            right: bound.right.min(own.right),
-                            top: bound.top.max(own.top),
-                            bottom: bound.bottom.min(own.bottom),
-                        }));
+                        bound = Some(narrowed(bound, own));
                     }
                     at = parents[here];
                 }
@@ -4519,6 +4572,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     clips: Vec<Option<FlowRect>>,
     /// Paint order at the last layout, front last; hit tests walk it on every pointer event.
     steps: Vec<PaintStep>,
+    /// The same steps as they draw.
+    drawn: Vec<PaintStep>,
     elements: Vec<Element<'a, Message, Theme, Renderer>>,
     /// The CSS id naming each element's box.
     ids: Vec<String>,
@@ -4527,8 +4582,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     /// The other way: the first element in each arena slot, by slot.
     slot_owners: Vec<Option<usize>>,
     presses: Vec<(String, Message)>,
-    /// Shaped text, its top-left corner relative to the layout, and its color, by arena.
-    paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point, Color)>,
+    /// Shaped text and its top-left corner relative to the layout, by arena.
+    paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point)>,
     /// The text after the first paragraph's, by arena slot: past a shorter float or a
     /// hanging first line, or each line of right-to-left text aligned left or centered.
     /// Each with its corner and its leaf.
@@ -6021,7 +6076,7 @@ where
             // Inline text answers for the run under the point; blank line space for nothing.
             if let PaintStep::Text(arena) = step
                 && self.tree.prepared.anonymous[arena]
-                && let Some((shaped, corner, _)) = self.paragraphs.get(&arena)
+                && let Some((shaped, corner)) = self.paragraphs.get(&arena)
                 && let Some(leaf) = self.tree.texts[arena].as_ref()
                 && self
                     .clips
@@ -6392,7 +6447,7 @@ where
         let shaped = self
             .paragraphs
             .iter()
-            .filter_map(|(arena, (shaped, corner, _))| {
+            .filter_map(|(arena, (shaped, corner))| {
                 Some((self.tree.texts[*arena].as_ref()?, shaped, *corner))
             })
             .chain(
@@ -6576,72 +6631,50 @@ where
         }
         self.tree
             .keep_rows_with_widgets(self.slots.iter().copied().flatten());
-        // A percentage `text-indent` or inline side needs its block's width: a second layout
-        // gives its spacers room, when the first changed one.
-        for pass in 0..2 {
-            // A refused layout draws nothing; `BoxTree::layout_text` reports the cause.
-            let (elements, owners, children) =
-                (&mut self.elements, &self.slot_owners, &mut tree.children);
-            let current = &self.tree;
-            let mut baselines: Baselines = BTreeMap::new();
-            self.slot_geometry = current
-                .layout_arena(
-                    available.width,
-                    Some(available.height),
-                    &mut |arena, width| {
-                        if let Some(index) = owners.get(arena).copied().flatten() {
-                            // A Fill-height widget takes what the box has, and asks for nothing.
-                            if elements[index].as_widget().size().height.is_fill() {
-                                return Some(0.0);
-                            }
-                            let limits =
-                                layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
-                            return Some(
-                                elements[index]
-                                    .as_widget_mut()
-                                    .layout(&mut children[index], renderer, &limits)
-                                    .size()
-                                    .height,
-                            );
-                        }
-                        current.texts[arena]
-                            .as_ref()
-                            .map(|leaf| leaf_height(renderer, leaf, width))
-                    },
-                    &mut |arena, narrow, until, wide| {
-                        // A hanging first line stays beside the floats as it is.
-                        let leaf = current.texts[arena]
-                            .as_ref()
-                            .filter(|leaf| leaf.hang <= 0.0)?;
-                        let (_, second, first_height) = split_leaf(renderer, leaf, narrow, until)?;
-                        let rest: Renderer::Paragraph = paragraph(renderer, &second, wide);
-                        Some(first_height + rest.min_bounds().height)
-                    },
-                    // Once per leaf and width in a pass: rows ask again for nested boxes.
-                    &mut |arena, width, split| {
-                        let key = split.map(|(until, wide)| (until.to_bits(), wide.to_bits()));
-                        *baselines
-                            .entry((arena, width.to_bits(), key))
-                            .or_insert_with(|| {
-                                let leaf = current.texts[arena].as_ref()?;
-                                leaf_baseline(renderer, leaf, width, split)
-                            })
-                    },
+        let (elements, owners, children) =
+            (&mut self.elements, &self.slot_owners, &mut tree.children);
+        let laid = self.tree.layout_passes(
+            renderer,
+            available.width,
+            Some(available.height),
+            &mut |arena, width| {
+                let index = owners.get(arena).copied().flatten()?;
+                // A Fill-height widget takes what the box has, and asks for nothing.
+                if elements[index].as_widget().size().height.is_fill() {
+                    return Some(0.0);
+                }
+                let limits = layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
+                Some(
+                    elements[index]
+                        .as_widget_mut()
+                        .layout(&mut children[index], renderer, &limits)
+                        .size()
+                        .height,
                 )
-                .unwrap_or_default();
-            if pass == 1 {
-                break;
+            },
+        );
+        // A refused layout draws nothing, and says why once.
+        let mut refusal = self
+            .tree
+            .source
+            .layout_refusal
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.slot_geometry = match laid {
+            Ok(geometry) => {
+                *refusal = None;
+                geometry
             }
-            let before = self.tree.percent_leaves();
-            if !self.tree.apply_percent_indents(&self.slot_geometry) {
-                break;
+            Err(error) => {
+                let said = error.to_string();
+                if refusal.as_deref() != Some(said.as_str()) {
+                    log::warn!(target: "iced_css::box_tree", "layout refused: {said}");
+                    *refusal = Some(said);
+                }
+                Vec::new()
             }
-            // Their spaces are text a shrink-to-fit box fits.
-            self.tree.refit_texts(&before, |leaf| {
-                let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
-                (narrowest_width(renderer, leaf), longest)
-            });
-        }
+        };
+        drop(refusal);
         let owners = &self.slot_owners;
         self.canvas_height = available.height;
         self.canvas_width = available.width;
@@ -6650,6 +6683,8 @@ where
         let texts = &self.tree.texts;
         let boxes = &self.tree.prepared.boxes;
         let paints = &self.tree.paints;
+        // Plain text the extents shape, for placing it below at the same width.
+        let shaped_plain = std::cell::RefCell::new(BTreeMap::new());
         self.scroll_limits = apply_scrolling(
             &self.tree.prepared,
             &mut self.slot_geometry,
@@ -6693,7 +6728,11 @@ where
                     }
                     return Some(TextExtent { height, from, to });
                 }
-                let size = paragraph(renderer, leaf, width).min_bounds();
+                let shaped: Renderer::Paragraph = paragraph(renderer, leaf, width);
+                let size = shaped.min_bounds();
+                shaped_plain
+                    .borrow_mut()
+                    .insert((arena, width.to_bits()), shaped);
                 let (from, to) = extent(size.width, 0.0, width, place.right - place.left);
                 Some(TextExtent {
                     height: size.height,
@@ -6710,6 +6749,7 @@ where
             },
             available,
         );
+        let mut shaped_plain = shaped_plain.into_inner();
         self.geometry = self.tree.prepared.by_projected(&self.slot_geometry);
         self.clips = self.tree.clips(&self.geometry);
         self.column_rects = column_rects(&self.tree.prepared, &self.slot_geometry);
@@ -6737,10 +6777,6 @@ where
                     top,
                 )
             };
-            // Past a shorter float the rest of the text takes the wider band.
-            let parts = geometry.leaf_after.and_then(|after| {
-                split_leaf(renderer, leaf, width, after.top - place.top).map(|parts| (after, parts))
-            });
             // A paragraph at a time where one would not do, each where its own width puts
             // it: a hanging line reaches out past the start edge (left, or right in a
             // right-to-left block). It never widens past a float: layout gives it no
@@ -6760,8 +6796,7 @@ where
                     let corner = block_corner(shaped.min_bounds().width, line_place, room, top);
                     top += shaped.min_bounds().height;
                     if index == 0 {
-                        self.paragraphs
-                            .insert(arena, (shaped, corner, Color::BLACK));
+                        self.paragraphs.insert(arena, (shaped, corner));
                     } else {
                         rest.push((shaped, corner, piece));
                     }
@@ -6769,6 +6804,10 @@ where
                 self.rest_paragraphs.insert(arena, rest);
                 continue;
             }
+            // Past a shorter float the rest of the text takes the wider band.
+            let parts = geometry.leaf_after.and_then(|after| {
+                split_leaf(renderer, leaf, width, after.top - place.top).map(|parts| (after, parts))
+            });
             if let Some((after, (first, second, first_height))) = parts {
                 let wide = (after.right - after.left).ceil();
                 let shaped_first: Renderer::Paragraph = paragraph(renderer, &first, width);
@@ -6781,8 +6820,7 @@ where
                     wide,
                     place.top + first_height,
                 );
-                self.paragraphs
-                    .insert(arena, (shaped_first, corner_first, Color::BLACK));
+                self.paragraphs.insert(arena, (shaped_first, corner_first));
                 self.rest_paragraphs
                     .insert(arena, vec![(shaped_rest, corner_rest, second)]);
                 continue;
@@ -6790,12 +6828,15 @@ where
             // A paragraph aligns its lines within its widest line and draws from that
             // block's corner: place the block in the content box.
             // Shaped once: the same paragraph gives the block width and is stored.
-            let shaped: Renderer::Paragraph = paragraph(renderer, leaf, width);
+            let shaped: Renderer::Paragraph = shaped_plain
+                .remove(&(arena, width.to_bits()))
+                .unwrap_or_else(|| paragraph(renderer, leaf, width));
             let corner = block_corner(shaped.min_bounds().width, place, width, place.top);
-            self.paragraphs
-                .insert(arena, (shaped, corner, Color::BLACK));
+            self.paragraphs.insert(arena, (shaped, corner));
         }
-        self.steps = self.tree.paint_steps(&self.embedded());
+        let embedded = self.embedded();
+        self.steps = self.tree.paint_steps(&embedded);
+        self.drawn = self.tree.drawn_steps(self.steps.clone(), &embedded);
         self.marker_paragraphs.clear();
         for (projected, leaf) in &self.tree.markers {
             let Some(Some(geometry)) = self.geometry.get(*projected) else {
@@ -6836,7 +6877,7 @@ where
                         .move_to(Point::new(place.left, place.top))
                 }
                 // No box: no size, but the widget's own node shape, which its `operate`
-                // and `overlay` still walk.
+                // still walks.
                 None => {
                     let limits = layout::Limits::new(Size::ZERO, Size::ZERO);
                     let node = element.as_widget_mut().layout(
@@ -6860,16 +6901,23 @@ where
         operation: &mut dyn Operation,
     ) {
         operation.container(None, layout.bounds());
+        let shown: Vec<_> = (0..self.elements.len())
+            .map(|index| self.visible_slot(index).is_some())
+            .collect();
         operation.traverse(&mut |operation| {
-            for ((element, child), child_layout) in self
+            for (index, ((element, child), child_layout)) in self
                 .elements
                 .iter_mut()
                 .zip(&mut tree.children)
                 .zip(layout.children())
+                .enumerate()
             {
-                element
-                    .as_widget_mut()
-                    .operate(child, child_layout, renderer, operation);
+                let widget = element.as_widget_mut();
+                if shown[index] {
+                    widget.operate(child, child_layout, renderer, operation);
+                } else {
+                    widget.operate(child, child_layout, renderer, &mut Unfocusable(operation));
+                }
             }
         });
     }
@@ -6917,7 +6965,13 @@ where
                 viewport,
             );
         }
-        if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
+        if let Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            modifiers,
+            repeat,
+            ..
+        }) = event
+        {
             if shell.is_event_captured() {
                 // A widget that took Escape dropped its focus: `:focus` goes with it.
                 let escaped = matches!(
@@ -6941,6 +6995,10 @@ where
             let mut hosts = Vec::new();
             // Tab within a host: the element and which of its focusables takes the focus.
             let mut within = None;
+            // Ctrl, Alt or Logo with a key is a shortcut, the app's to take.
+            if modifiers.control() || modifiers.alt() || modifiers.logo() {
+                return;
+            }
             let next = match key.as_ref() {
                 keyboard::Key::Named(keyboard::key::Named::Tab) => {
                     // A widget focused by a click counts as where Tab starts from.
@@ -6998,8 +7056,16 @@ where
                             return;
                         }
                     }
+                    // A held Space presses once, as a browser's does on release; Enter repeats.
+                    let held_space = *repeat
+                        && matches!(
+                            key.as_ref(),
+                            keyboard::Key::Named(keyboard::key::Named::Space)
+                        );
                     if let Some(message) = self.press_message(focused) {
-                        shell.publish(message);
+                        if !held_space {
+                            shell.publish(message);
+                        }
                         shell.capture_event();
                     }
                     return;
@@ -7048,6 +7114,7 @@ where
             let moved = scrolled != state.scrolled || scrolled_x != state.scrolled_x;
             state.scrolled = scrolled;
             state.scrolled_x = scrolled_x;
+            state.rehover |= moved;
             if moved || !self.base.same_variant(after, before) {
                 shell.invalidate_layout();
                 shell.request_redraw();
@@ -7063,6 +7130,19 @@ where
                 (false, true)
             }
             Event::Mouse(_) | Event::Touch(_) => (false, false),
+            // Laid out again after a scroll: the still pointer is over other boxes now.
+            Event::Window(window::Event::RedrawRequested(_)) => {
+                let state = tree.state.downcast_mut::<Interaction>();
+                if std::mem::take(&mut state.rehover) && state.hovered != top {
+                    state.hovered = top;
+                    let key = (state.hovered, state.active, state.focused);
+                    if !self.base.same_variant(key, self.key) {
+                        shell.invalidate_layout();
+                        shell.request_redraw();
+                    }
+                }
+                return;
+            }
             _ => return,
         };
         // The same point over the same boxes as `top`: the children change neither.
@@ -7091,13 +7171,12 @@ where
                     .iter()
                     .position(|value| *value == node)
                     .and_then(|projected| self.tree.prepared.slot[projected]);
-                if position == Some(Position::Fixed) {
-                    break;
-                }
                 let here = arena.map(|arena| self.tree.prepared.positions[arena].1);
-                let skipped = position == Some(Position::Absolute)
-                    && here == Some(Position::Static)
-                    && arena != Some(0);
+                // Past a fixed box only the root, standing for the viewport, moves it on.
+                let skipped = arena != Some(0)
+                    && (position == Some(Position::Fixed)
+                        || (position == Some(Position::Absolute)
+                            && here == Some(Position::Static)));
                 if !skipped && here.is_some() {
                     position = here;
                 }
@@ -7136,6 +7215,7 @@ where
                 at = nodes[node].parent();
             }
             if moved {
+                state.rehover = true;
                 shell.capture_event();
                 shell.invalidate_layout();
                 shell.request_redraw();
@@ -7230,8 +7310,7 @@ where
             return;
         };
         let origin = bounds.position();
-        let embedded = self.embedded();
-        let steps = self.tree.drawn_steps(&embedded);
+        let steps = &self.drawn;
         let top = cursor.position_in(bounds).and_then(|point| self.hit(point));
         let pressed = tree.state.downcast_ref::<Interaction>().active;
         let prepared = &self.tree.prepared;
@@ -7253,13 +7332,7 @@ where
                 && prepared.clipped[arena]
                 && let Some(outer) = self.slot_geometry.get(arena)
             {
-                let more = outer.padding;
-                clip = Some(clip.map_or(more, |clip| FlowRect {
-                    left: clip.left.max(more.left),
-                    right: clip.right.min(more.right),
-                    top: clip.top.max(more.top),
-                    bottom: clip.bottom.min(more.bottom),
-                }));
+                clip = Some(narrowed(clip, outer.padding));
             }
             clip.map_or(visible, |clip| {
                 visible
@@ -7487,7 +7560,7 @@ where
                             }
                         }
                         PaintStep::Text(arena) => {
-                            if let Some((shaped, corner, color)) = self.paragraphs.get(&arena) {
+                            if let Some((shaped, corner)) = self.paragraphs.get(&arena) {
                                 let corner = Point::new(origin.x + corner.x, origin.y + corner.y);
                                 if let Some(leaf) = self.tree.texts[arena].as_ref() {
                                     draw_run_decorations(leaf, shaped, renderer, corner);
@@ -7495,7 +7568,7 @@ where
                                         == iced_css_core::formatting::block::Direction::Rtl;
                                     draw_marker_images(leaf, shaped, renderer, corner, clip, rtl);
                                 }
-                                renderer.fill_paragraph(shaped, corner, *color, clip);
+                                renderer.fill_paragraph(shaped, corner, Color::BLACK, clip);
                             }
                             for (shaped, corner, leaf) in
                                 self.rest_paragraphs.get(&arena).into_iter().flatten()
@@ -7622,14 +7695,28 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        overlay::from_children(
-            &mut self.elements,
-            tree,
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
+        // A widget without a visible box shows nothing over the view either.
+        let shown: Vec<_> = (0..self.elements.len())
+            .map(|index| self.visible_slot(index).is_some())
+            .collect();
+        let overlays: Vec<_> = self
+            .elements
+            .iter_mut()
+            .zip(&mut tree.children)
+            .zip(layout.children())
+            .enumerate()
+            .filter(|(index, _)| shown[*index])
+            .filter_map(|(_, ((element, child), child_layout))| {
+                element.as_widget_mut().overlay(
+                    child,
+                    child_layout,
+                    renderer,
+                    viewport,
+                    translation,
+                )
+            })
+            .collect();
+        (!overlays.is_empty()).then(|| overlay::Group::with_children(overlays).overlay())
     }
 }
 
@@ -8104,7 +8191,7 @@ mod tests {
         )
         .unwrap();
         let drawn = |embedded: &BTreeSet<usize>| {
-            tree.drawn_steps(embedded)
+            tree.drawn_steps(tree.paint_steps(embedded), embedded)
                 .iter()
                 .any(|step| matches!(step, PaintStep::Box(2)))
         };

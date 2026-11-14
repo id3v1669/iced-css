@@ -1009,6 +1009,46 @@ mod interactive {
     }
 
     #[test]
+    fn an_outside_focus_operation_skips_widgets_whose_box_is_hidden() {
+        use iced::advanced::widget::{Id, Operation, operation::Focusable};
+        // What iced's `focus_next` walks: each focusable widget it reaches.
+        struct Count(usize);
+        impl Operation for Count {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn focusable(&mut self, _: Option<&Id>, _: Rectangle, _: &mut dyn Focusable) {
+                self.0 += 1;
+            }
+        }
+        let root = node(
+            "page",
+            vec![
+                node("gone", vec![]),
+                node("unseen", vec![]),
+                node("shown", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#gone { display:none; } #unseen { visibility:hidden; height:10px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("gone", iced::widget::text_input("", ""))
+            .widget("unseen", iced::widget::text_input("", ""))
+            .widget("shown", iced::widget::text_input("", ""))
+            .into();
+        let mut rig = Rig::new(view);
+        let mut count = Count(0);
+        rig.element
+            .as_widget_mut()
+            .operate(&mut rig.tree, Layout::new(&rig.node), &(), &mut count);
+        assert_eq!(count.0, 1);
+    }
+
+    #[test]
     fn a_boxless_widget_with_a_child_still_operates_and_overlays() {
         struct Walk;
         impl iced::advanced::widget::Operation for Walk {
@@ -1132,6 +1172,15 @@ mod interactive {
         } else {
             iced::keyboard::Modifiers::empty()
         };
+        key_with(rig, named, modifiers, false)
+    }
+
+    fn key_with(
+        rig: &mut Rig<'_>,
+        named: iced::keyboard::key::Named,
+        modifiers: iced::keyboard::Modifiers,
+        repeat: bool,
+    ) -> Vec<u8> {
         let event = Event::Keyboard(iced::keyboard::Event::KeyPressed {
             key: iced::keyboard::Key::Named(named),
             modified_key: iced::keyboard::Key::Named(named),
@@ -1141,7 +1190,7 @@ mod interactive {
             location: iced::keyboard::Location::Standard,
             modifiers,
             text: None,
-            repeat: false,
+            repeat,
         });
         let mut messages = Vec::new();
         let mut shell = Shell::new(&mut messages);
@@ -1241,6 +1290,23 @@ mod interactive {
         assert_eq!(key(&mut rig, Named::Enter, false), vec![5]);
         assert_eq!(key(&mut rig, Named::Space, false), vec![5]);
         assert!(rig.captured);
+        // A held Space presses once; a held Enter goes on pressing.
+        let none = iced::keyboard::Modifiers::empty();
+        assert!(key_with(&mut rig, Named::Space, none, true).is_empty());
+        assert_eq!(key_with(&mut rig, Named::Enter, none, true), vec![5]);
+        // With Ctrl, Alt or Logo the keys are shortcuts: the app's, uncaptured.
+        for chord in [
+            iced::keyboard::Modifiers::CTRL,
+            iced::keyboard::Modifiers::ALT,
+            iced::keyboard::Modifiers::LOGO,
+        ] {
+            assert!(key_with(&mut rig, Named::Enter, chord, false).is_empty());
+            assert!(!rig.captured);
+            assert!(key_with(&mut rig, Named::Tab, chord, false).is_empty());
+            assert!(!rig.captured);
+        }
+        // Focus stayed where it was.
+        assert_eq!(key(&mut rig, Named::Enter, false), vec![5]);
         // #skip sits at 50 here (5+5+40): a click focuses it, outside the Tab order.
         let press = mouse::Event::ButtonPressed(mouse::Button::Left);
         let release = mouse::Event::ButtonReleased(mouse::Button::Left);
@@ -1607,6 +1673,88 @@ mod interactive {
         rig.send(wheel(-5000.0), Point::new(5.0, 45.0));
         // Content ends at 70, past a 55 padding bottom, plus 5 of end padding: limit 20.
         assert_eq!(rig.slot().y, -20.0);
+    }
+
+    #[test]
+    fn the_wheel_over_a_fixed_box_scrolls_the_page_past_its_scrollers() {
+        let root = node(
+            "page",
+            vec![
+                node(
+                    "box",
+                    vec![
+                        node("in", vec![]),
+                        node("deep", vec![]),
+                        node("bar", vec![]),
+                    ],
+                ),
+                node("slot", vec![]),
+                node("tall", vec![]),
+            ],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#page { overflow:auto; }
+             #box { overflow:auto; height:50px; }
+             #in { height:10px; }
+             #deep { height:100px; }
+             #bar { position:fixed; top:150px; left:0; width:20px; height:20px; }
+             #slot { height:10px; }
+             #tall { height:1000px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree
+            .interactive()
+            .widget("in", space(10.0))
+            .widget("slot", space(10.0))
+            .into();
+        let mut rig = Rig::new(view);
+        assert_eq!(rig.node.children()[1].bounds().y, 50.0);
+        rig.send(wheel(-30.0), Point::new(5.0, 155.0));
+        // The page moved; the box between the fixed bar and the root did not.
+        assert!(rig.captured);
+        assert_eq!(rig.node.children()[1].bounds().y, 20.0);
+        assert_eq!(rig.node.children()[0].bounds().y, -30.0);
+    }
+
+    #[test]
+    fn hover_follows_the_boxes_a_wheel_moves_under_a_still_pointer() {
+        let root = node(
+            "page",
+            vec![node(
+                "list",
+                vec![
+                    node("a", vec![]),
+                    node("b", vec![]),
+                    node("slot", vec![]),
+                    node("tall", vec![]),
+                ],
+            )],
+        );
+        let tree = BoxTree::new(
+            root,
+            "#list { overflow:auto; height:50px; }
+             #a, #b { height:20px; }
+             #a:hover { height:25px; }
+             #tall { height:100px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(10.0)).into();
+        let mut rig = Rig::new(view);
+        let at = Point::new(5.0, 15.0);
+        rig.send(mouse::Event::CursorMoved { position: at }, at);
+        assert_eq!(rig.slot().y, 45.0);
+        rig.send(wheel(-20.0), at);
+        assert_eq!(rig.slot().y, 25.0);
+        // The redraw after the scroll finds #b under the pointer, and #a loses its hover.
+        let redraw = Event::Window(iced::window::Event::RedrawRequested(
+            iced::time::Instant::now(),
+        ));
+        rig.send_event(redraw.clone(), at);
+        assert_eq!(rig.slot().y, 20.0);
+        // Once: a later redraw with nothing scrolled changes nothing.
+        rig.send_event(redraw, at);
+        assert_eq!(rig.slot().y, 20.0);
     }
 
     #[test]
