@@ -2,6 +2,9 @@
 //!
 //! This is a pairwise policy primitive, not font matching or catalogue validation.
 //! No font bytes are inspected, retained or copied.
+//!
+//! Not yet integrated: the `iced-css` `BoxTree` widget does not call this module; face
+//! selection and font metrics go through cosmic-text.
 
 use std::cmp::Ordering;
 

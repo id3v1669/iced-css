@@ -68,6 +68,17 @@ pub use iced_css_macro::style;
 #[doc(hidden)]
 pub mod dispatch {
     use super::{Constrained, MarginValue, Paddings, Resolved};
+
+    /// Never implemented: it makes a `style_classes` call that the
+    /// `#[iced_css::style]` macro did not rewrite a compile error.
+    #[diagnostic::on_unimplemented(
+        message = "`style_classes` was not rewritten by `#[iced_css::style]`",
+        label = "this call would apply no style",
+        note = "call `style_classes` directly in the body of a function annotated with \
+                `#[iced_css::style(..)]`, not in a nested item or an unannotated function",
+        note = "for `BoxTree` stylesheets use `iced_css::capture::Captured::style_classes`"
+    )]
+    pub trait Rewritten {}
     use iced::widget::{Button, Container, button, container};
 
     pub struct NativeContainer;
@@ -291,37 +302,39 @@ pub fn subscription<Message: From<Event> + Send + 'static>() -> iced::Subscripti
     unimplemented!("iced-css: file subscription not implemented yet")
 }
 
-/// Placeholder methods that the legacy `#[iced_css::style]` macro rewrites.
+/// Placeholder method that the legacy `#[iced_css::style]` macro rewrites.
 ///
-/// Outside a function annotated with `#[iced_css::style]` both methods do
-/// nothing: they discard their argument and return the widget unstyled. To give
-/// a box an id or classes for a [`box_tree::BoxTree`] stylesheet, use
+/// The macro replaces every one-argument `.style_classes(..)` call in the body of
+/// the function it annotates. A call it does not rewrite, outside such a function
+/// or in an item nested inside one, fails to compile instead of returning the
+/// widget unstyled:
+/// ```compile_fail
+/// use iced_css::StyleClasses;
+/// fn view() -> iced::Element<'static, ()> {
+///     iced::widget::container(iced::widget::Space::new()).style_classes(["x"])
+/// }
+/// ```
+/// To give a box an id or classes for a [`box_tree::BoxTree`] stylesheet, use
 /// [`capture::Captured::style_id`] and [`capture::Captured::style_classes`].
 pub trait StyleClasses<'a, Message> {
-    /// Rewritten by `#[iced_css::style]`; a no-op anywhere else.
+    /// Rewritten by `#[iced_css::style]`; a compile error anywhere else.
     fn style_classes<const N: usize>(
         self,
         classes: [&'static str; N],
-    ) -> iced::Element<'a, Message>;
-
-    /// A no-op: returns the widget unstyled, also inside `#[iced_css::style]`.
-    fn style_id(self, id: &'static str) -> iced::Element<'a, Message>;
+    ) -> iced::Element<'a, Message>
+    where
+        Self: dispatch::Rewritten;
 }
 
 impl<'a, Message, T> StyleClasses<'a, Message> for T
 where
     T: Into<iced::Element<'a, Message>>,
 {
-    fn style_classes<const N: usize>(
-        self,
-        classes: [&'static str; N],
-    ) -> iced::Element<'a, Message> {
+    fn style_classes<const N: usize>(self, classes: [&'static str; N]) -> iced::Element<'a, Message>
+    where
+        Self: dispatch::Rewritten,
+    {
         let _ = classes;
-        self.into()
-    }
-
-    fn style_id(self, id: &'static str) -> iced::Element<'a, Message> {
-        let _ = id;
         self.into()
     }
 }

@@ -1,5 +1,7 @@
 //! CSS22 10.4 proportional min/max table for tentative replaced both-auto sizes.
 //! Intrinsic measurement and subsequent category-specific margin solving are separate.
+//!
+//! Not yet integrated: the `iced-css` `BoxTree` widget does not call this module.
 use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

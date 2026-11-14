@@ -1,4 +1,7 @@
 //! Computed CSS2.2 z-index values, before stacking-context participation rules.
+//!
+//! Not yet integrated: the `iced-css` `BoxTree` widget does not call this module; it
+//! reads `z-index` from its own paint facts.
 use super::{
     Integer,
     property::{ParsedProperty, SpecifiedValue},

@@ -214,7 +214,7 @@ impl VisitMut for Rewriter {
                 mac.tokens = quote!(#elements);
             }
             Err(_) => {
-                // Left alone, the call would fall back to the trait's no-op and style nothing.
+                // Left alone, the call would fail on the trait's `Rewritten` bound, less clearly.
                 if let Some(span) = style_classes_span(mac.tokens.clone()) {
                     self.errors.push(syn::Error::new(
                         span,

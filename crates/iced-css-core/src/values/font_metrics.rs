@@ -1,4 +1,7 @@
 //! Exact signed design-unit scaling with one final binary32 rounding.
+//!
+//! Not yet integrated: the `iced-css` `BoxTree` widget does not call this module; face
+//! selection and font metrics go through cosmic-text.
 use super::{FiniteF32, float_ratio::Ratio};
 use std::num::NonZeroU16;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

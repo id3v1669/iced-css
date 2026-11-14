@@ -1,5 +1,8 @@
 //! CSS22 11.1.2 used clip rectangles and common-coordinate intersections.
 //! Ancestor eligibility, transforms, raster rounding and native layers are separate.
+//!
+//! Not yet integrated: the `iced-css` `BoxTree` widget does not call this module; it
+//! resolves and intersects clip rectangles with its own code.
 use super::display::Position;
 use crate::values::{
     LengthTarget, NumericLimits,

@@ -1,6 +1,9 @@
 //! CSS2.2 style-label selection within one tentative font family.
 //!
 //! This stage consumes classified availability, not font bytes or native names.
+//!
+//! Not yet integrated: the `iced-css` `BoxTree` widget does not call this module; face
+//! selection and font metrics go through cosmic-text.
 use crate::animation::style::FontStyleKeyword;
 
 /// Supplied eligible CSS style labels for one tentative family.
