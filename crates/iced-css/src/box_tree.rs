@@ -3950,8 +3950,7 @@ fn line_height_of(leaf: &TextLeaf) -> text::LineHeight {
 
 /// The baseline of a laid-out leaf's last line below its top, as cosmic-text places it:
 /// the line's top, half of what its height leaves over its fonts' ascent and descent, and
-/// the ascent, over the runs on that line, from the metrics of the faces that draw them (a
-/// run that wraps onto the line counts the faces of all its text).
+/// the ascent, over the text on that line, from the metrics of the faces that draw it.
 fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
     renderer: &Renderer,
     leaf: &TextLeaf,
@@ -3974,6 +3973,27 @@ fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
     if !top.is_finite() {
         return None;
     }
+    // The last line's text, by the offsets across it: they count from the start of the
+    // part after the last forced break, which the shaper lays out as a line of its own.
+    let whole = leaf.text();
+    let part = cosmic_text::BidiParagraphs::new(&whole)
+        .last()
+        .map_or(0, |part| part.as_ptr() as usize - whole.as_ptr() as usize);
+    let (mut low, mut high) = (usize::MAX, 0);
+    let mut x = 0.0;
+    while x <= shaped.min_bounds().width + 1.0 {
+        if let Some(text::Hit::CharOffset(offset)) = shaped.hit_test(Point::new(x, top + 0.5)) {
+            low = low.min(part + offset);
+            high = high.max(part + offset);
+        }
+        x += 1.0;
+    }
+    let mut starts = Vec::with_capacity(leaf.runs.len());
+    let mut seen = 0;
+    for run in &leaf.runs {
+        starts.push(seen);
+        seen += run.text.len();
+    }
     let base = renderer.default_font();
     let mut fonts = font_system().write().ok()?;
     let fonts = fonts.raw();
@@ -3983,12 +4003,22 @@ fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
         if run.text.is_empty() {
             continue;
         }
+        // What of it is on that line; all of it when the scan found none.
+        let begin = starts[at];
+        let on_line = (low < high)
+            .then(|| {
+                let from = low.clamp(begin, begin + run.text.len()) - begin;
+                let to = high.clamp(begin, begin + run.text.len()) - begin;
+                run.text.get(from..to)
+            })
+            .flatten()
+            .filter(|text| !text.is_empty())
+            .unwrap_or(&run.text);
         let attrs = to_attributes(font_of(base, run));
         // Its faces as cosmic-text shapes it: the family's at its weight, else the common
         // fallbacks and those for its scripts, else the closest match. Each character takes
         // the first that has it, and the first takes what none has.
-        let scripts = run
-            .text
+        let scripts = on_line
             .chars()
             .map(|c| c.script())
             .fold(Vec::new(), |mut all, script| {
@@ -4001,8 +4031,7 @@ fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
                 }
                 all
             });
-        let mut missing: Vec<char> = run
-            .text
+        let mut missing: Vec<char> = on_line
             .chars()
             .filter(|c| {
                 !c.is_whitespace()
@@ -4020,7 +4049,7 @@ fn last_baseline<Renderer: text::Renderer<Font = iced::Font>>(
             &keys,
             &families,
             &scripts,
-            &run.text,
+            on_line,
             attrs.weight,
         );
         let Some(first) = faces.next() else {

@@ -6250,3 +6250,64 @@ fn an_inline_block_whose_text_widens_past_a_float_sits_on_its_last_line() {
     let (blue, red) = lowest("width:120px; height:30px;", "below");
     assert!(blue.abs_diff(red) <= 1, "blue {blue} red {red}");
 }
+
+#[test]
+fn only_the_faces_on_its_last_line_set_an_inline_blocks_baseline() {
+    let lowest = |words: &'static str, css: &str, name: &str| {
+        let root = node(
+            "page",
+            vec![
+                text("a", "x "),
+                node("b", vec![node("r", vec![text("rx", words)])]),
+            ],
+        );
+        let sheet = format!(
+            "#page {{ background-color:white; color:#0000ff; line-height:30px; }}
+         #b {{ display:inline-block; width:20px; {css} }}
+         #r {{ display:inline; color:#ff0000; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        let path = std::env::temp_dir().join(format!("line-faces-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(
+            simulator(view)
+                .snapshot(&Theme::Light)
+                .unwrap()
+                .matches_image(path.join("frame.png"))
+                .unwrap()
+        );
+        let file = std::fs::read_dir(&path)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(file).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let width = reader.info().width as usize;
+        let mut bytes = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut bytes).unwrap();
+        let bottom = |keep: &dyn Fn(&[u8]) -> bool| {
+            bytes[..info.buffer_size()]
+                .chunks(4)
+                .enumerate()
+                .filter(|(_, pixel)| keep(pixel))
+                .map(|(at, _)| at / width)
+                .max()
+                .unwrap()
+        };
+        let blue = bottom(&|pixel| pixel[2] > 150 && pixel[0] < 80 && pixel[1] < 80);
+        let red = bottom(&|pixel| pixel[0] > 150 && pixel[1] < 80 && pixel[2] < 80);
+        let _ = std::fs::remove_dir_all(&path);
+        (blue, red)
+    };
+    // A run that wraps: the Han character its fallback face draws stays on the first line,
+    // and only the default face draws the last.
+    let (blue, red) = lowest("汉 x", "", "wraps");
+    assert!(blue.abs_diff(red) <= 1, "blue {blue} red {red}");
+    // So after a forced break, where the last line's offsets count from the break.
+    let (blue, red) = lowest("汉\nx", "white-space:pre;", "breaks");
+    assert!(blue.abs_diff(red) <= 1, "blue {blue} red {red}");
+}
