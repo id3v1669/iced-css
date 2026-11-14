@@ -2363,11 +2363,29 @@ impl BoxTree {
                 }
             }
         }
+        let mut parent_of = vec![None; self.prepared.boxes.len()];
+        for (arena, value) in self.prepared.boxes.iter().enumerate() {
+            for &child in &value.children {
+                parent_of[child] = Some(arena);
+            }
+        }
         for (arena, leaf) in self.texts.iter_mut().enumerate() {
             let Some(leaf) = leaf.as_mut() else { continue };
             let Some(place) = geometry.get(arena).map(|outer| outer.content) else {
                 continue;
             };
+            // 16.1: an indent's percentage is of its block's containing block's width: the
+            // content box of the box it sits in, or its own at the root.
+            let block = if self.prepared.anonymous[arena] {
+                parent_of[arena]
+            } else {
+                Some(arena)
+            };
+            let basis = block
+                .and_then(|block| parent_of[block])
+                .and_then(|parent| geometry.get(parent))
+                .map_or(place, |outer| outer.content);
+            let basis = (basis.right - basis.left).max(0.0);
             // Inline sides with a percentage: their stand-in spaces, in place.
             let width = if in_row[arena] {
                 0.0
@@ -2411,7 +2429,7 @@ impl BoxTree {
             };
             // A negative one hangs the first line by that share of the width.
             if indent.percent < 0.0 {
-                let hang = -indent.percent / 100.0 * (place.right - place.left).max(0.0);
+                let hang = -indent.percent / 100.0 * basis;
                 changed |= leaf.hang != hang;
                 leaf.hang = hang;
                 continue;
@@ -2428,7 +2446,7 @@ impl BoxTree {
             {
                 first.text.insert(0, mark);
             }
-            let width = indent.percent / 100.0 * (place.right - place.left).max(0.0);
+            let width = indent.percent / 100.0 * basis;
             let lead = leaf.runs.iter().position(|run| !run.text.is_empty());
             let spacer = lead
                 .and_then(|at| indent_run(&leaf.runs[at], width))

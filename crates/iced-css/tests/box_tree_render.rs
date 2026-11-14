@@ -6088,3 +6088,50 @@ fn a_fallback_face_moves_an_inline_blocks_baseline() {
     // The two x's share the line's baseline.
     assert!(blue.abs_diff(red) <= 1, "blue {blue} red {red}");
 }
+
+#[test]
+fn a_percentage_text_indent_is_of_the_containing_block() {
+    let draw = |indent: &str, name: &str| {
+        let root = node("page", vec![node("p", vec![text("t", "indented words")])]);
+        let sheet = format!(
+            "#page {{ width:300px; background-color:white; color:black; }}
+             #p {{ padding:0 50px; text-indent:{indent}; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        simulator(view)
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(name))
+            .unwrap()
+    };
+    // 16.1: half the page's 300px, not half the paragraph's own 200px.
+    let name = format!("indent-containing-{}.png", std::process::id());
+    assert!(draw("150px", &name));
+    assert!(draw("50%", &name));
+    assert!(!draw("100px", &name));
+    // Hanging out by a share of it likewise, into the page's room on the left.
+    let name = format!("indent-containing-hang-{}.png", std::process::id());
+    let hang = |indent: &str| {
+        let root = node(
+            "page",
+            vec![node(
+                "p",
+                vec![text("t", "hanging words that wrap onto a second line")],
+            )],
+        );
+        let sheet = format!(
+            "#page {{ width:300px; padding-left:200px; background-color:white; color:black; }}
+             #p {{ padding:0 50px; text-indent:{indent}; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        simulator(view)
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(&name))
+            .unwrap()
+    };
+    assert!(hang("-150px"));
+    assert!(hang("-50%"));
+    assert!(!hang("-100px"));
+    let _ = std::fs::remove_file(std::env::temp_dir().join(name));
+}
