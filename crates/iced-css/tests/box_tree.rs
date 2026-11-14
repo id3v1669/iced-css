@@ -6389,7 +6389,7 @@ fn clip_cuts_absolute_boxes_and_what_they_hold() {
 }
 
 #[test]
-fn a_huge_text_indent_is_bounded_and_a_row_piece_can_lead() {
+fn a_huge_text_indent_is_bounded_and_a_row_indents_its_first_line() {
     let root = node("page", vec![text("a", "words")]);
     let tree = BoxTree::new(root, "#page { text-indent:1000000000px; font-size:16px; }").unwrap();
     assert_eq!(tree.text_leaves()[0].1.runs[0].text.chars().count(), 512);
@@ -6404,9 +6404,12 @@ fn a_huge_text_indent_is_bounded_and_a_row_piece_can_lead() {
          #chip { display:inline-block; width:5px; text-indent:0; }",
     )
     .unwrap();
+    // 16.1: the line of inline-blocks starts 10px in; its text holds no spaces for it.
     let leaves = tree.text_leaves();
-    assert_eq!(leaves[0].1.text(), "\u{2003}first");
+    assert_eq!(leaves[0].1.text(), "first");
     assert_eq!(leaves[1].1.text(), "later");
+    let g = tree.layout(400.0, None).unwrap();
+    assert_eq!(g[1].unwrap().border.left, 10.0);
 }
 
 #[test]
@@ -7389,4 +7392,52 @@ fn a_table_inside_an_inline_stays_block_level() {
     let g = tree.layout(400.0, None).unwrap();
     // A `table` element is block-level wherever it is: the text after it starts a line.
     assert_eq!(g[4].unwrap().border.left, 0.0);
+}
+
+#[test]
+fn an_inline_block_opening_a_line_takes_its_indent() {
+    let placed = |css: &str| {
+        let tree = BoxTree::new(
+            node("p", vec![node("b", vec![]), text("t", "after")]),
+            &format!(
+                "#p {{ width:200px; {css} }}
+                 #b {{ display:inline-block; width:20px; height:10px; text-indent:0; }}"
+            ),
+        )
+        .unwrap();
+        tree.layout(400.0, None).unwrap()[1].unwrap().border
+    };
+    // 16.1: the first line of the line of inline-blocks starts its indent in.
+    assert_eq!(placed("text-indent:30px;").left, 30.0);
+    // From the right in a right-to-left block (which sits at the right of the 400px),
+    // and out past the edge when negative.
+    assert_eq!(placed("text-indent:30px; direction:rtl;").right, 370.0);
+    assert_eq!(placed("text-indent:-10px;").left, -10.0);
+    assert_eq!(placed("").left, 0.0);
+}
+
+#[test]
+fn only_a_lines_first_row_of_inline_blocks_takes_its_indent() {
+    // Its first line only: a box that wraps starts the next one at the left.
+    let tree = BoxTree::new(
+        node(
+            "p",
+            vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+        ),
+        "#p { width:200px; text-indent:30px; }
+         #a, #b, #c { display:inline-block; width:80px; height:10px; text-indent:0; }",
+    )
+    .unwrap();
+    let g = tree.layout(400.0, None).unwrap();
+    assert_eq!(g[1].unwrap().border.left, 30.0);
+    assert_eq!(g[3].unwrap().border.left, 0.0);
+    // A row after a block in it does not open the paragraph's first line.
+    let tree = BoxTree::new(
+        node("p", vec![node("d", vec![]), node("b", vec![])]),
+        "#p { width:200px; text-indent:30px; } #d { height:10px; }
+         #b { display:inline-block; width:20px; height:10px; text-indent:0; }",
+    )
+    .unwrap();
+    let g = tree.layout(400.0, None).unwrap();
+    assert_eq!(g[2].unwrap().border.left, 0.0);
 }

@@ -2354,8 +2354,8 @@ fn a_percentage_text_indent_takes_its_share_of_the_width() {
     assert!(draw("50px", &name));
     assert!(draw("25%", &name));
     assert!(!draw("50%", &name));
-    // On a line of inline-blocks it takes none, rather than a share of a piece's own width;
-    // an inline-block's own text is a block of its own, which inherits it.
+    // A line of inline-blocks takes it too, as a whole: a quarter of the paragraph's 400px.
+    // An inline-block's own text is a block of its own, which inherits it.
     let row = |indent: &str, own: &str, name: &str| {
         let root = node(
             "p",
@@ -2378,11 +2378,12 @@ fn a_percentage_text_indent_takes_its_share_of_the_width() {
             .unwrap()
     };
     let name = format!("indent-percent-row-{}.png", std::process::id());
-    assert!(row("0", "", &name));
+    assert!(row("100px", "text-indent:0;", &name));
     assert!(row("25%", "text-indent:0;", &name));
+    assert!(!row("0", "", &name));
     // A quarter of the paragraph's 400px, the inline-block's containing block.
     let name = format!("indent-percent-row-own-{}.png", std::process::id());
-    assert!(row("0", "text-indent:100px;", &name));
+    assert!(row("100px", "text-indent:100px;", &name));
     assert!(row("25%", "", &name));
 }
 
@@ -6362,4 +6363,22 @@ fn word_spacing_keeps_its_room_with_the_line_before() {
     // No-break spaces hold their words together: one line, wider than the box.
     let held = lines("mm\u{a0}mm\u{a0}mm\u{a0}mm", "", "held");
     assert_eq!(held.len(), 1, "{held:?}");
+}
+
+#[test]
+fn a_row_of_inline_blocks_takes_a_percentage_of_the_containing_block() {
+    use iced::advanced::renderer::Headless;
+    let renderer = iced_test::futures::futures::executor::block_on(
+        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
+    )
+    .unwrap();
+    // 10% of the page's 400px, inside the paragraph's 50px padding.
+    let tree = BoxTree::new(
+        node("page", vec![node("p", vec![node("b", vec![])])]),
+        "#page { width:400px; } #p { padding:0 50px; text-indent:10%; }
+         #b { display:inline-block; width:20px; height:10px; text-indent:0; }",
+    )
+    .unwrap();
+    let g = tree.layout_with(&renderer, 400.0, None).unwrap();
+    assert_eq!(g[2].unwrap().border.left, 90.0);
 }

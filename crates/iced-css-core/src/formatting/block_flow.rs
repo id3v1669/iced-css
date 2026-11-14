@@ -102,6 +102,9 @@ pub struct FlowBox {
     /// 10.8.1: an inline-block or a piece of text in a row on the line's baseline
     /// (`vertical-align: baseline`), not at `line_align`.
     pub line_baseline: bool,
+    /// 16.1: a row of inline-blocks' first line starts this far in from its start edge,
+    /// or, negative, out past it (`text-indent`).
+    pub first_indent: f32,
     /// `overflow` other than `visible`: 10.8.1, its baseline is its bottom margin edge.
     pub clips: bool,
     /// A caption placed below the table (`caption-side: bottom`).
@@ -152,6 +155,7 @@ impl Default for FlowBox {
             cell_align: RowAlign::Left,
             line_align: RowAlign::Right,
             line_baseline: false,
+            first_indent: 0.0,
             clips: false,
             caption_below: false,
             fixed_table: false,
@@ -1911,6 +1915,17 @@ impl Solver<'_> {
                     FloatSide::Left => near = near.max(float.right),
                     FloatSide::Right => far = far.min(float.left),
                 }
+            }
+            // 16.1: the first line starts its indent in, from its start edge.
+            let indent = if start == 0 {
+                self.boxes[node].first_indent
+            } else {
+                0.0
+            };
+            if cb.direction == Direction::Rtl {
+                far -= indent;
+            } else {
+                near += indent;
             }
             let room = far - near;
             if items[start].width > room

@@ -1920,6 +1920,29 @@ impl BoxTree {
                 parent_of[child] = Some(arena);
             }
         }
+        // An anonymous box must come first in its parent.
+        let leads = |prepared: &PreparedTree, at: usize| {
+            !prepared.anonymous[at]
+                || parent_of[at].is_none_or(|parent: usize| {
+                    prepared.boxes[parent].children.iter().find(|child| {
+                        let child = &prepared.boxes[**child];
+                        child.float.is_none() && !child.out_of_flow
+                    }) == Some(&at)
+                })
+        };
+        // A line of inline-blocks indents its first line itself (`first_indent`), by a
+        // percentage once its width is known; its text pieces take none.
+        for (arena, &owner) in container_of.iter().enumerate() {
+            if prepared.boxes[arena].inline_row.is_none() || !leads(&prepared, arena) {
+                continue;
+            }
+            let percent = styles[owner].text_indent_percent;
+            if percent == 0.0 {
+                prepared.boxes[arena].first_indent = styles[owner].text_indent;
+            } else {
+                prepared.row_indents.push((arena, percent));
+            }
+        }
         for arena in 0..prepared.boxes.len() {
             let owner = if prepared.anonymous[arena] {
                 container_of[arena]
@@ -1934,35 +1957,16 @@ impl BoxTree {
             else {
                 continue;
             };
-            // An anonymous box must come first in its parent, and a text piece in its line.
-            let leads = |at: usize| {
-                !prepared.anonymous[at]
-                    || parent_of[at].is_none_or(|parent: usize| {
-                        prepared.boxes[parent].children.iter().find(|child| {
-                            let child = &prepared.boxes[**child];
-                            child.float.is_none() && !child.out_of_flow
-                        }) == Some(&at)
-                    })
-            };
-            // An inline-block with its own text has its own first line.
-            let line_leads = parent_of[arena]
-                .filter(|parent| {
-                    prepared.anonymous[arena] && prepared.boxes[*parent].inline_row.is_some()
-                })
-                .is_none_or(leads);
-            if !leads(arena) || !line_leads {
-                continue;
-            }
-            // A piece of a line of inline-blocks is sized before any indent: a share of its
-            // width would wrap its first word, and a hanging line would leave its piece.
+            // A piece of a line of inline-blocks takes none: its line indents itself. An
+            // inline-block with its own text has its own first line.
             let in_row = prepared.anonymous[arena]
                 && parent_of[arena]
                     .is_some_and(|parent| prepared.boxes[parent].inline_row.is_some());
+            if !leads(&prepared, arena) || in_row {
+                continue;
+            }
             if indent < 0.0 || percent < 0.0 {
                 // A negative indent hangs the first line out past the start edge.
-                if in_row {
-                    continue;
-                }
                 if percent < 0.0 {
                     let fallback = leaf.runs.first().map_or(0, |run| run.owner);
                     leaf.percent_indent = Some(PercentIndent {
@@ -1976,9 +1980,6 @@ impl BoxTree {
                 continue;
             }
             if percent > 0.0 {
-                if in_row {
-                    continue;
-                }
                 // Its width is known only at layout: the widget sizes it there.
                 let fallback = leaf.runs.first().map_or(0, |run| run.owner);
                 leaf.percent_indent = Some(PercentIndent {
@@ -2390,6 +2391,21 @@ impl BoxTree {
             for &child in &value.children {
                 parent_of[child] = Some(arena);
             }
+        }
+        // A line of inline-blocks' first line, by its block's containing block's width.
+        for &(row, percent) in &self.prepared.row_indents {
+            let block = parent_of[row];
+            let Some(basis) = block
+                .and_then(|block| parent_of[block])
+                .or(block)
+                .and_then(|outer| geometry.get(outer))
+                .map(|outer| (outer.content.right - outer.content.left).max(0.0))
+            else {
+                continue;
+            };
+            let indent = percent / 100.0 * basis;
+            changed |= self.prepared.boxes[row].first_indent != indent;
+            self.prepared.boxes[row].first_indent = indent;
         }
         for (arena, leaf) in self.texts.iter_mut().enumerate() {
             let Some(leaf) = leaf.as_mut() else { continue };

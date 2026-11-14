@@ -497,6 +497,9 @@ pub struct PreparedTree {
     /// A collapsed cell's outer side that draws its table's border, which won there, as
     /// (cell, side, table), by arena slot.
     pub table_borders: Vec<(usize, usize, usize)>,
+    /// A line of inline-blocks whose first line takes a percentage `text-indent`, of its
+    /// block's containing block's width, as (row, percent), by arena slot.
+    pub row_indents: Vec<(usize, f32)>,
     /// Whether the arena slot clips its contents to its padding box (11.1.1). The root's
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
@@ -1081,6 +1084,7 @@ pub fn prepare_captured_tree(
         thin_sides: Vec::new(),
         collapsed_losers: Vec::new(),
         table_borders: Vec::new(),
+        row_indents: Vec::new(),
         clipped,
         scrolls,
     })
@@ -1172,6 +1176,7 @@ impl PreparedTree {
             thin_sides: _,
             collapsed_losers: _,
             table_borders: _,
+            row_indents: _,
             clipped: _,
             scrolls: _,
         } = self;
