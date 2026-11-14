@@ -318,10 +318,9 @@ impl Build {
             let in_row = here == Some(TableRole::Row);
             let wanted = match role {
                 // Only a cell or caption or plain block holds these.
+                // Rule 1 of stage 2: a row, as for a cell, so a cell beside it shares it.
                 None | Some(TableRole::Table { .. }) => {
-                    if in_table {
-                        Some(TableRole::BodyGroup)
-                    } else if group(here) {
+                    if in_table || group(here) {
                         Some(TableRole::Row)
                     } else if in_row {
                         Some(TableRole::Cell)
@@ -508,6 +507,7 @@ pub struct PreparedTree {
     /// `overflow` applies to the viewport, so it never clips here.
     pub clipped: Vec<bool>,
     /// Whether `overflow` is `auto` or `scroll`, so the box scrolls vertically (11.1.1).
+    /// The root's `visible` counts as `auto`: it scrolls the viewport.
     pub scrolls: Vec<bool>,
 }
 
@@ -1015,10 +1015,12 @@ pub fn prepare_captured_tree(
         build
             .clipped
             .push(parent.is_some() && rows[index].overflow.value != BoxOverflow::Visible);
-        build.scrolls.push(matches!(
-            rows[index].overflow.value,
-            BoxOverflow::Auto | BoxOverflow::Scroll
-        ));
+        // 11.1.1: the root's `overflow` applies to the viewport, where `visible` means `auto`.
+        build.scrolls.push(match rows[index].overflow.value {
+            BoxOverflow::Auto | BoxOverflow::Scroll => true,
+            BoxOverflow::Visible => parent.is_none(),
+            BoxOverflow::Hidden => false,
+        });
         build.runs.push(Vec::new());
         build.open.push(None);
         let is_float = value.float.is_some();
@@ -1208,17 +1210,24 @@ impl PreparedTree {
         .map_err(E::Flow)?;
         // Arena order is preorder, so every box's ancestors have settled before it. A
         // relative offset moves a subtree after flow; floats and later flow do not react.
-        let auto = [Dim::Auto; 4];
+        // Parents and offsets by arena slot, so the pass stays linear in the tree.
+        let mut parents = vec![None; boxes.len()];
+        for (arena, value) in boxes.iter().enumerate() {
+            for &child in &value.children {
+                parents[child] = Some(arena);
+            }
+        }
+        let mut offset_of = vec![[Dim::Auto; 4]; boxes.len()];
+        for &(at, offset) in offsets {
+            offset_of[at] = offset;
+        }
         for arena in 0..boxes.len() {
             let (index, position) = positions[arena];
-            let offset = offsets
-                .iter()
-                .find(|(at, _)| *at == arena)
-                .map_or(auto, |(_, offset)| *offset);
+            let offset = offset_of[arena];
             match position {
                 Position::Relative => {
-                    let basis = parent_content(boxes, &geometry, arena, viewport);
-                    let direction = parent_of(boxes, arena)
+                    let basis = parent_content(boxes, &parents, &geometry, arena, viewport);
+                    let direction = parents[arena]
                         .map_or(boxes[arena].direction, |parent| boxes[parent].direction);
                     let (dx, dy) = relative_shift(direction, offset, basis);
                     shift(boxes, &mut geometry, arena, dx, dy);
@@ -1226,6 +1235,7 @@ impl PreparedTree {
                 Position::Absolute | Position::Fixed => {
                     place_absolute(
                         boxes,
+                        &parents,
                         &mut geometry,
                         positions,
                         arena,
@@ -1266,15 +1276,10 @@ impl AbsoluteFailure {
     }
 }
 
-fn parent_of(boxes: &[FlowBox], arena: usize) -> Option<usize> {
-    boxes
-        .iter()
-        .position(|candidate| candidate.children.contains(&arena))
-}
-
 /// 10.1: the padding box of the nearest positioned ancestor, or the initial block.
 fn containing_block(
     boxes: &[FlowBox],
+    parents: &[Option<usize>],
     geometry: &[FlowGeometry],
     positions: &[(usize, Position)],
     arena: usize,
@@ -1290,12 +1295,12 @@ fn containing_block(
     if position == Position::Fixed {
         return (initial, boxes[0].direction);
     }
-    let mut at = parent_of(boxes, arena);
+    let mut at = parents[arena];
     while let Some(ancestor) = at {
         if positions[ancestor].1 != Position::Static {
             return (geometry[ancestor].padding, boxes[ancestor].direction);
         }
-        at = parent_of(boxes, ancestor);
+        at = parents[ancestor];
     }
     (initial, boxes[0].direction)
 }
@@ -1313,6 +1318,7 @@ fn subtree(boxes: &[FlowBox], root: usize) -> Vec<usize> {
 #[allow(clippy::too_many_arguments)]
 fn place_absolute(
     boxes: &[FlowBox],
+    parents: &[Option<usize>],
     geometry: &mut [FlowGeometry],
     positions: &[(usize, Position)],
     arena: usize,
@@ -1325,8 +1331,9 @@ fn place_absolute(
     text_baseline: &mut dyn FnMut(usize, f32, Option<(f32, f32)>) -> Option<f32>,
 ) -> Result<(), AbsoluteFailure> {
     let value = &boxes[arena];
-    let (block, direction) =
-        containing_block(boxes, geometry, positions, arena, position, viewport);
+    let (block, direction) = containing_block(
+        boxes, parents, geometry, positions, arena, position, viewport,
+    );
     let cb_width = block.right - block.left;
     let cb_height = block.bottom - block.top;
     let auto = |dim: Dim, basis: f32| match dim {
@@ -1345,8 +1352,7 @@ fn place_absolute(
     let width = absolute_width(AbsoluteWidthInput {
         containing_width: cb_width,
         containing_direction: direction,
-        static_direction: parent_of(boxes, arena)
-            .map_or(value.direction, |parent| boxes[parent].direction),
+        static_direction: parents[arena].map_or(value.direction, |parent| boxes[parent].direction),
         static_left: static_border.left - block.left,
         static_right: block.right - static_border.right,
         left: auto(offset[3], cb_width),
@@ -1372,7 +1378,12 @@ fn place_absolute(
     // percentages only when it does not depend on content (10.5): a specified height, or
     // `top` and `bottom` both set; otherwise min and max pin it and percentages stay auto.
     let nodes = subtree(boxes, arena);
-    let local = |node: usize| nodes.iter().position(|candidate| *candidate == node);
+    let locals: std::collections::HashMap<usize, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(local, &node)| (node, local))
+        .collect();
+    let local = |node: usize| locals.get(&node).copied();
     let mut solve = |height: Dim, pinned: Dim| -> Result<Vec<FlowGeometry>, FlowError> {
         let mut arena_copy: Vec<FlowBox> = nodes.iter().map(|&node| boxes[node].clone()).collect();
         for item in &mut arena_copy {
@@ -1480,14 +1491,15 @@ fn table_role_of(display: Display) -> Option<TableRole> {
 
 fn parent_content(
     boxes: &[FlowBox],
+    parents: &[Option<usize>],
     geometry: &[FlowGeometry],
     arena: usize,
     viewport: FlowViewport,
 ) -> (f32, Option<f32>) {
-    parent_of(boxes, arena).map_or((viewport.width, viewport.height), |parent| {
+    parents[arena].map_or((viewport.width, viewport.height), |parent| {
         let content: FlowRect = geometry[parent].content;
         // 9.3.2: a percentage of an auto-height containing block computes to auto.
-        let height = containing_height(boxes, geometry, arena, viewport);
+        let height = containing_height(boxes, parents, geometry, arena, viewport);
         (content.right - content.left, height)
     })
 }
@@ -1497,16 +1509,17 @@ fn parent_content(
 /// lays out against none, and a percentage of an indefinite basis is auto (10.5).
 fn containing_height(
     boxes: &[FlowBox],
+    parents: &[Option<usize>],
     geometry: &[FlowGeometry],
     arena: usize,
     viewport: FlowViewport,
 ) -> Option<f32> {
-    let Some(parent) = parent_of(boxes, arena) else {
+    let Some(parent) = parents[arena] else {
         return viewport.height;
     };
     let value = &boxes[parent];
     if value.inline_row.is_some() {
-        return containing_height(boxes, geometry, parent, viewport);
+        return containing_height(boxes, parents, geometry, parent, viewport);
     }
     if value.out_of_flow {
         let content: FlowRect = geometry[parent].content;
@@ -1515,7 +1528,7 @@ fn containing_height(
     let basis = if matches!(value.table, Some(TableRole::Cell | TableRole::Caption)) {
         None
     } else {
-        containing_height(boxes, geometry, parent, viewport)
+        containing_height(boxes, parents, geometry, parent, viewport)
     };
     let vertical = |dim: Dim| match dim {
         Dim::Auto => None,
@@ -2627,7 +2640,8 @@ pub fn evaluate_tree_paint<'r>(
                     .percentage_finite_f32(100.0, limits.numeric)
                     .map_or(0.0, |c| c.value),
             ),
-            other => BackgroundOffset::Px(length(other)),
+            // 14.2.1: negative offsets are permitted.
+            other => BackgroundOffset::Px(signed(other)),
         };
         let position = match defaulted("background-position")? {
             DefaultedValueRef::Compute(SpecifiedValue::LengthPair(x, y)) => [offset(x), offset(y)],

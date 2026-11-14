@@ -1802,14 +1802,32 @@ mod interactive {
 
     #[test]
     fn a_static_root_scrolls_absolute_children_with_the_page() {
+        // 11.1.1: the root's initial `visible` scrolls the viewport as `auto` would.
+        for page in ["#page { overflow:auto; }", ""] {
+            let root = node("page", vec![node("slot", vec![]), node("far", vec![])]);
+            let css = format!(
+                "{page}
+                 #slot {{ height:10px; }}
+                 #far {{ position:absolute; top:500px; left:0; width:5px; height:5px; }}"
+            );
+            root_scrolls_to_far(BoxTree::new(root, &css).unwrap());
+        }
+        // `hidden` on the root does not scroll.
         let root = node("page", vec![node("slot", vec![]), node("far", vec![])]);
         let tree = BoxTree::new(
             root,
-            "#page { overflow:auto; }
+            "#page { overflow:hidden; }
              #slot { height:10px; }
              #far { position:absolute; top:500px; left:0; width:5px; height:5px; }",
         )
         .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(10.0)).into();
+        let mut rig = Rig::new(view);
+        rig.send(wheel(-10000.0), Point::new(5.0, 5.0));
+        assert_eq!(rig.slot().y, 0.0);
+    }
+
+    fn root_scrolls_to_far(tree: BoxTree) {
         let view: View<'_> = tree
             .interactive()
             .widget("slot", space(10.0))
@@ -2526,6 +2544,19 @@ fn missing_table_parts_are_generated_around_misplaced_ones() {
     assert_eq!(g[2].unwrap().border.left, 20.0);
     assert_eq!(g[1].unwrap().border.top, g[2].unwrap().border.top);
     assert_eq!(g[3].unwrap().border.top, 5.0);
+    // A block and a cell directly in a table share one anonymous row, in either order.
+    for (first, second) in [("div", "c"), ("c", "div")] {
+        let root = node("t", vec![node(first, vec![]), node(second, vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#t { display:table; } #c { display:table-cell; }
+             #div, #c { width:20px; height:5px; }",
+        )
+        .unwrap();
+        let g = tree.layout(100.0, None).unwrap();
+        assert_eq!(g[1].unwrap().border.top, g[2].unwrap().border.top);
+        assert_eq!(g[2].unwrap().border.left, 20.0);
+    }
     // A block and text in a row become cells; blank text between parts is nothing.
     let root = node(
         "t",
@@ -3166,6 +3197,17 @@ fn background_image_properties_cascade_and_remote_urls_are_ignored() {
     assert_eq!(
         value.position,
         [BackgroundOffset::Px(10.0), BackgroundOffset::Percent(50.0)]
+    );
+    // Negative pixel offsets, the sprite technique, keep their sign.
+    let root = node("page", vec![node("a", vec![])]);
+    let tree = BoxTree::new(
+        root,
+        "#a { background:url(tile.png) no-repeat -10px -20px; }",
+    )
+    .unwrap();
+    assert_eq!(
+        tree.background_images()[0].1.position,
+        [BackgroundOffset::Px(-10.0), BackgroundOffset::Px(-20.0)]
     );
     // Only files under the base: no absolute paths and no climbing out.
     for escape in ["/etc/x.png", "../x.png", "a/../../x.png", "c:x.png"] {
