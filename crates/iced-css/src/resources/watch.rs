@@ -362,7 +362,8 @@ impl LocalWatchStream {
                         return;
                     }
                     let mut watcher = None;
-                    repair(&mut watcher, &directories, &actor_shared);
+                    let mut failures = RepairFailures::new(directories.len());
+                    repair(&mut watcher, &directories, &actor_shared, &mut failures);
                     if ready_tx.send(()).is_err() {
                         return;
                     }
@@ -375,13 +376,22 @@ impl LocalWatchStream {
                         if actor_shared.stop.load(Ordering::Acquire) {
                             break;
                         }
-                        repair(&mut watcher, &directories, &actor_shared);
+                        repair(&mut watcher, &directories, &actor_shared, &mut failures);
                         actor_shared.raise(reason);
                     }
                     // Watcher destruction occurs on this actor, including unwinding.
                     drop(watcher);
                 }));
-                if result.is_err() {
+                if let Err(payload) = result {
+                    let message = payload
+                        .downcast_ref::<&str>()
+                        .copied()
+                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                        .unwrap_or("non-string panic payload");
+                    log::error!(
+                        target: "iced_css::stylesheet",
+                        "local watch actor panicked; native watching stopped: {message}"
+                    );
                     actor_shared.flags.fetch_or(FAILED | LOSS, Ordering::AcqRel);
                 }
                 actor_shared.stop.store(true, Ordering::Release);
@@ -414,8 +424,15 @@ impl Drop for LocalWatchStream {
     }
 }
 fn native_flags(event: notify::Result<notify::Event>) -> u8 {
-    let Ok(event) = event else {
-        return LOSS;
+    let event = match event {
+        Ok(event) => event,
+        Err(error) => {
+            log::warn!(
+                target: "iced_css::stylesheet",
+                "native watch event error; rescanning local stylesheets: {error}"
+            );
+            return LOSS;
+        }
     };
     if event.need_rescan() {
         return LOSS | NATIVE;
@@ -426,7 +443,26 @@ fn native_flags(event: notify::Result<notify::Event>) -> u8 {
         _ => NATIVE,
     }
 }
-fn repair(watcher: &mut Option<RecommendedWatcher>, directories: &[PathBuf], shared: &Arc<Shared>) {
+/// Failure state of the previous repair, so each failure is logged once when it
+/// begins rather than on every recovery interval.
+struct RepairFailures {
+    watcher: bool,
+    directories: Vec<bool>,
+}
+impl RepairFailures {
+    fn new(directories: usize) -> Self {
+        Self {
+            watcher: false,
+            directories: vec![false; directories],
+        }
+    }
+}
+fn repair(
+    watcher: &mut Option<RecommendedWatcher>,
+    directories: &[PathBuf],
+    shared: &Arc<Shared>,
+    failures: &mut RepairFailures,
+) {
     if shared.stop.load(Ordering::Acquire) {
         return;
     }
@@ -435,19 +471,42 @@ fn repair(watcher: &mut Option<RecommendedWatcher>, directories: &[PathBuf], sha
         signal.raise(native_flags(event));
     }) {
         Ok(watcher) => watcher,
-        Err(_) => {
+        Err(error) => {
+            if !std::mem::replace(&mut failures.watcher, true) {
+                log::warn!(
+                    target: "iced_css::stylesheet",
+                    "native watcher creation failed; relying on periodic rescans: {error}"
+                );
+            }
             shared.raise(LOSS);
             return;
         }
     };
-    for path in directories {
+    failures.watcher = false;
+    for (path, failed) in directories.iter().zip(&mut failures.directories) {
         if shared.stop.load(Ordering::Acquire) {
             return;
         }
-        if !path.metadata().is_ok_and(|m| m.is_dir())
-            || candidate.watch(path, RecursiveMode::NonRecursive).is_err()
-        {
-            shared.raise(LOSS);
+        let failure = if !path.metadata().is_ok_and(|m| m.is_dir()) {
+            Some("not an existing directory".to_owned())
+        } else {
+            candidate
+                .watch(path, RecursiveMode::NonRecursive)
+                .err()
+                .map(|error| error.to_string())
+        };
+        match failure {
+            Some(reason) => {
+                if !std::mem::replace(failed, true) {
+                    log::warn!(
+                        target: "iced_css::stylesheet",
+                        "native watch registration failed for {}; relying on periodic rescans: {reason}",
+                        path.display()
+                    );
+                }
+                shared.raise(LOSS);
+            }
+            None => *failed = false,
         }
     }
     *watcher = Some(candidate);
