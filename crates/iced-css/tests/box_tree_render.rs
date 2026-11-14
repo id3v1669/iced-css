@@ -2354,8 +2354,9 @@ fn a_percentage_text_indent_takes_its_share_of_the_width() {
     assert!(draw("50px", &name));
     assert!(draw("25%", &name));
     assert!(!draw("50%", &name));
-    // On a line of inline-blocks it takes none, rather than a share of a piece's own width.
-    let row = |indent: &str, name: &str| {
+    // On a line of inline-blocks it takes none, rather than a share of a piece's own width;
+    // an inline-block's own text is a block of its own, which inherits it.
+    let row = |indent: &str, own: &str, name: &str| {
         let root = node(
             "p",
             vec![
@@ -2366,7 +2367,7 @@ fn a_percentage_text_indent_takes_its_share_of_the_width() {
         );
         let sheet = format!(
             "#p {{ width:400px; background-color:white; color:black; text-indent:{indent}; }}
-             #b {{ display:inline-block; }}"
+             #b {{ display:inline-block; {own} }}"
         );
         let tree = BoxTree::new(root, &sheet).unwrap();
         let view: Element<'_, u8> = tree.view();
@@ -2377,8 +2378,12 @@ fn a_percentage_text_indent_takes_its_share_of_the_width() {
             .unwrap()
     };
     let name = format!("indent-percent-row-{}.png", std::process::id());
-    assert!(row("0", &name));
-    assert!(row("25%", &name));
+    assert!(row("0", "", &name));
+    assert!(row("25%", "text-indent:0;", &name));
+    // A quarter of the paragraph's 400px, the inline-block's containing block.
+    let name = format!("indent-percent-row-own-{}.png", std::process::id());
+    assert!(row("0", "text-indent:100px;", &name));
+    assert!(row("25%", "", &name));
 }
 
 #[test]
@@ -6134,4 +6139,48 @@ fn a_percentage_text_indent_is_of_the_containing_block() {
     assert!(hang("-50%"));
     assert!(!hang("-100px"));
     let _ = std::fs::remove_file(std::env::temp_dir().join(name));
+}
+
+#[test]
+fn a_shrink_to_fit_box_fits_its_percentage_indent() {
+    use iced::advanced::renderer::Headless;
+    let renderer = iced_test::futures::futures::executor::block_on(
+        iced_test::renderer::Renderer::new(iced::Font::default(), iced::Pixels(16.0), None),
+    )
+    .unwrap();
+    let float = |indent: &str| {
+        let root = node("page", vec![node("f", vec![text("t", "one two")])]);
+        let sheet = format!(
+            "#page {{ width:400px; }}
+             #f {{ float:left; line-height:20px; text-indent:{indent}; }}"
+        );
+        BoxTree::new(root, &sheet)
+            .unwrap()
+            .layout_with(&renderer, 1024.0, None)
+            .unwrap()[1]
+            .unwrap()
+            .border
+    };
+    // A quarter of the page's 400px: as wide as 100px of indent, on one line.
+    let (share, fixed) = (float("25%"), float("100px"));
+    assert_eq!(share, fixed);
+    assert_eq!(share.bottom - share.top, 20.0);
+    // The widget draws it so too.
+    let name = format!("fit-indent-{}.png", std::process::id());
+    let draw = |indent: &str| {
+        let root = node("page", vec![node("f", vec![text("t", "one two")])]);
+        let sheet = format!(
+            "#page {{ width:400px; background-color:white; color:black; }}
+             #f {{ float:left; line-height:20px; text-indent:{indent};
+                   background-color:#ff0000; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &sheet).unwrap().view();
+        simulator(view)
+            .snapshot(&Theme::Light)
+            .unwrap()
+            .matches_image(std::env::temp_dir().join(&name))
+            .unwrap()
+    };
+    assert!(draw("100px"));
+    assert!(draw("25%"));
 }

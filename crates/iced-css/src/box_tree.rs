@@ -2309,9 +2309,15 @@ impl BoxTree {
                         })
                 },
             )?;
+            let before = tree.texts.clone();
             if pass == 1 || !tree.apply_percent_indents(&geometry) {
                 break;
             }
+            // Their spaces are text a shrink-to-fit box fits.
+            tree.refit_texts(&before, |leaf| {
+                let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
+                (narrowest_width(renderer, leaf), longest)
+            });
         }
         Ok(tree.prepared.by_projected(&geometry))
     }
@@ -2571,6 +2577,26 @@ impl BoxTree {
     pub fn set_text_widths(&mut self, mut widths: impl FnMut(&TextLeaf) -> (f32, f32)) {
         for (arena, leaf) in self.texts.iter().enumerate() {
             if let Some(leaf) = leaf {
+                let (minimum, preferred) = widths(leaf);
+                self.prepared.boxes[arena].content = Some(FlowContent {
+                    height: 0.0,
+                    preferred_width: preferred,
+                    preferred_min_width: minimum,
+                });
+            }
+        }
+    }
+
+    /// [`Self::set_text_widths`] again for the leaves whose text differs from `before`.
+    fn refit_texts(
+        &mut self,
+        before: &[Option<TextLeaf>],
+        mut widths: impl FnMut(&TextLeaf) -> (f32, f32),
+    ) {
+        for (arena, leaf) in self.texts.iter().enumerate() {
+            if let Some(leaf) = leaf
+                && before.get(arena).and_then(Option::as_ref) != Some(leaf)
+            {
                 let (minimum, preferred) = widths(leaf);
                 self.prepared.boxes[arena].content = Some(FlowContent {
                     height: 0.0,
@@ -5777,9 +5803,15 @@ where
                     },
                 )
                 .unwrap_or_default();
+            let before = self.tree.texts.clone();
             if pass == 1 || !self.tree.apply_percent_indents(&self.slot_geometry) {
                 break;
             }
+            // Their spaces are text a shrink-to-fit box fits.
+            self.tree.refit_texts(&before, |leaf| {
+                let longest = paragraph(renderer, leaf, f32::INFINITY).min_bounds().width;
+                (narrowest_width(renderer, leaf), longest)
+            });
         }
         let slots = &self.slots;
         self.canvas_height = available.height;
