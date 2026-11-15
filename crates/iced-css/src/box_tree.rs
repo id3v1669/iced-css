@@ -7,21 +7,39 @@
 //! };
 //!
 //! # fn demo() -> Result<(), Box<dyn std::error::Error>> {
+//! #[derive(Debug, Clone)]
+//! enum Message {
+//!     Save,
+//!     OpenCard,
+//! }
+//!
 //! // Capture a tree. `style_id` names each box for the stylesheet.
-//! let card = adapters::column_from_vec::<u8, iced::Theme, iced::Renderer>(vec![], capture_limits())?
-//!     .style_id("card", attribute_limits())?
-//!     .erase();
-//! let root = adapters::column_from_vec(vec![card], capture_limits())?
+//! let leaf = |id: &str| -> Result<_, Box<dyn std::error::Error>> {
+//!     Ok(adapters::column_from_vec::<Message, iced::Theme, iced::Renderer>(vec![], capture_limits())?
+//!         .style_id(id, attribute_limits())?
+//!         .erase())
+//! };
+//! let children = vec![leaf("action")?, leaf("card")?];
+//! let root = adapters::column_from_vec(children, capture_limits())?
 //!     .style_id("page", attribute_limits())?
 //!     .erase();
 //!
 //! // Cascade once; the tree lays out again at any size.
-//! let tree = BoxTree::new(root, "#page { padding:16px; } #card { height:40px; }")?;
+//! let tree = BoxTree::new(
+//!     root,
+//!     "#page { padding: 16px; background-color: #f4f1ea; } #action, #card { height: 40px; }",
+//! )?;
 //! let boxes = tree.layout(800.0, None)?;
-//! assert_eq!(boxes[1].as_ref().map(|card| card.border.top), Some(16.0));
+//! assert_eq!(boxes[1].as_ref().map(|action| action.border.top), Some(16.0));
 //!
-//! // In a view: host iced widgets in leaf boxes, and press boxes by id.
-//! let _view: iced::Element<'_, u8> = tree.interactive().on_press("card", 1).into();
+//! // In a view: host native iced widgets in leaf boxes and handle presses.
+//! let element: iced::Element<'_, Message> = tree
+//!     .clone()
+//!     .interactive()
+//!     .widget("action", iced::widget::button("Save").on_press(Message::Save))
+//!     .on_press("card", Message::OpenCard)
+//!     .into();
+//! # drop(element);
 //! # Ok(())
 //! # }
 //! # demo().unwrap();
