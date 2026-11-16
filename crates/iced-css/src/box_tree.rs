@@ -6196,6 +6196,39 @@ fn paint_box<Renderer: renderer::Renderer>(
             ..bounds
         }
     };
+    // CSS Backgrounds 3: the shadow of the border box, under the background. A box with
+    // no background color still casts it, from a quad that fills with nothing.
+    let shadow = paint
+        .shadow
+        .map_or_else(iced::Shadow::default, |shadow| iced::Shadow {
+            color: Color::from_rgba(
+                shadow.color[0],
+                shadow.color[1],
+                shadow.color[2],
+                shadow.alpha,
+            ),
+            offset: iced::Vector::new(shadow.offset[0], shadow.offset[1]),
+            blur_radius: shadow.blur,
+        });
+    if paint.background.is_none()
+        && paint.shadow.is_some()
+        && parts != BoxParts::Border
+        && outer.width > 0.0
+        && outer.height > 0.0
+    {
+        renderer.fill_quad(
+            Quad {
+                bounds: outer,
+                border: iced::Border {
+                    radius,
+                    ..iced::Border::default()
+                },
+                shadow,
+                ..Quad::default()
+            },
+            Color::TRANSPARENT,
+        );
+    }
     if let Some(color) = paint.background.filter(|_| parts != BoxParts::Border) {
         // 14.2: the background extends under the border. CSS Backgrounds 3: to its curve.
         renderer.fill_quad(
@@ -6205,6 +6238,7 @@ fn paint_box<Renderer: renderer::Renderer>(
                     radius,
                     ..iced::Border::default()
                 },
+                shadow,
                 ..Quad::default()
             },
             Color::from_rgba(
@@ -9428,6 +9462,45 @@ mod tests {
         assert_eq!(corners(&quads[0].0), [12.0; 4]);
         assert!(quads[1..].iter().all(|(quad, _)| corners(quad) == [0.0; 4]));
         // The second radius of a corner, after a slash, is not read.
+        // A shadow rides on the background's quad: offset, blur and color.
+        let quads = drawn(&format!(
+            "{base} #k {{ box-shadow:2px 3px 5px rgba(255, 0, 0, 0.5); border-radius:6px; }}"
+        ));
+        assert_eq!(quads.len(), 1);
+        let shadow = quads[0].0.shadow;
+        assert_eq!(shadow.offset, iced::Vector::new(2.0, 3.0));
+        assert_eq!(shadow.blur_radius, 5.0);
+        assert!((shadow.color.a - 0.5).abs() < 0.01);
+        assert_eq!(
+            (shadow.color.r, shadow.color.g, shadow.color.b),
+            (1.0, 0.0, 0.0)
+        );
+        assert_eq!(corners(&quads[0].0), [6.0; 4]);
+        // The first outer shadow of a list; its spread is not drawn; no color is `color`.
+        let quads = drawn(&format!(
+            "{base} #k {{ color:#00ff00; box-shadow:inset 1px 1px #000000, 0 4px 8px 2px, 9px 9px #ff0000; }}"
+        ));
+        let shadow = quads[0].0.shadow;
+        assert_eq!(shadow.offset, iced::Vector::new(0.0, 4.0));
+        assert_eq!(shadow.blur_radius, 8.0);
+        assert_eq!(shadow.color, Color::from_rgb(0.0, 1.0, 0.0));
+        // Without a background color the shadow is still cast.
+        let quads = drawn("#k { width:100px; height:60px; box-shadow:1px 1px 2px #000000; }");
+        assert_eq!(quads.len(), 1);
+        assert_eq!(quads[0].1, Color::TRANSPARENT);
+        assert_eq!(quads[0].0.shadow.blur_radius, 2.0);
+        // `none`, and invalid lists, cast nothing.
+        for none in [
+            "none",
+            "1px",
+            "1px 2px -3px",
+            "1px 2px red blue",
+            "1px 2px, ",
+            "inset inset 1px 1px",
+        ] {
+            let quads = drawn(&format!("{base} #k {{ box-shadow:{none}; }}"));
+            assert_eq!(quads[0].0.shadow, iced::Shadow::default(), "{none}");
+        }
         let quads = drawn(&format!("{base} #k {{ border-radius:10px / 20px; }}"));
         assert_eq!(corners(&quads[0].0), [10.0; 4]);
         // Invalid values drop the declaration.

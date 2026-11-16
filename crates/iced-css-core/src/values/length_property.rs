@@ -220,6 +220,38 @@ pub(super) fn position_component(
     )
 }
 
+/// One length of a shadow: any sign, no percentage.
+pub(super) fn shadow_length(
+    token: (usize, Token<'_>),
+    limits: ColorLimits,
+    work: &mut usize,
+) -> Result<Option<SpecifiedValue>, PropertyError> {
+    if !matches!(
+        token.1.kind,
+        TokenKind::Number | TokenKind::Dimension | TokenKind::Function
+    ) {
+        return Ok(None);
+    }
+    // A function here is a whole `calc()`; a color function is no length.
+    if token.1.kind == TokenKind::Function
+        && !token.1.raw[..5.min(token.1.raw.len())].eq_ignore_ascii_case("calc(")
+    {
+        return Ok(None);
+    }
+    component(
+        token,
+        Grammar {
+            signed: true,
+            percentage: false,
+            number: false,
+            pair: false,
+            keywords: &[],
+        },
+        limits,
+        work,
+    )
+}
+
 pub(super) fn clip_component(
     token: (usize, Token<'_>),
     limits: ColorLimits,

@@ -38,10 +38,13 @@ mod font_shorthand;
 mod list_shorthand;
 #[path = "owned.rs"]
 mod owned;
+#[path = "shadow.rs"]
+mod shadow;
 #[path = "shorthand.rs"]
 mod shorthand;
 pub use content::ContentItem;
 pub use cursor::Cursor;
+pub use shadow::ShadowValue;
 
 pub(super) fn cursor_keyword_allowed(keyword: Keyword) -> bool {
     cursor::valid_fallback(keyword)
@@ -97,6 +100,8 @@ pub enum SpecifiedValue {
     Content(Vec<ContentItem>),
     Expanded(Vec<ParsedProperty>),
     LengthPair(LengthTarget, LengthTarget),
+    /// `box-shadow`: its shadows, first on top; empty is `none`.
+    Shadows(Vec<ShadowValue>),
     /// A custom property declaration (`--name: value`): its name, with its dashes, and
     /// its value's text. Filed under [`PropertyId::custom`].
     Custom {
@@ -295,11 +300,29 @@ pub(super) fn inner(
         && name != "quotes"
         && name != "text-decoration"
         && name != "border-radius"
+        && name != "box-shadow"
     {
         return Err(PropertyError::Unimplemented(property));
     }
     if recovery_only {
         return Ok(PropertyResult::Invalid);
+    }
+    if name == "box-shadow" {
+        if input.trim().eq_ignore_ascii_case("inherit") {
+            return Ok(PropertyResult::Parsed(ParsedProperty {
+                property,
+                value: SpecifiedValue::Inherit,
+                important,
+            }));
+        }
+        return Ok(match shadow::parse(input, limits, work)? {
+            Some(shadows) => PropertyResult::Parsed(ParsedProperty {
+                property,
+                value: SpecifiedValue::Shadows(shadows),
+                important,
+            }),
+            None => PropertyResult::Invalid,
+        });
     }
     if name == "border-radius" {
         // `inherit` alone inherits every corner.

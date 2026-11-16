@@ -89,6 +89,10 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   width; sides that differ stay square. A corner has one radius (a second, after a slash,
   is not read) and a percentage is of the box's shorter side. Content, background images
   and `overflow` clipping are not cut to the curve. It applies at once in an animation.
+- **Shadows:** `box-shadow` draws the first outer shadow of its list: offset, blur and
+  color, following the box's rounded corners. The spread, `inset` shadows and the rest of
+  the list are not drawn, and a box with no background color shows its shadow through
+  itself. It applies at once in an animation.
 - **Colors:** CSS 2.2 colors, and from CSS Color 3 `rgba()`, `hsl()`, `hsla()`, `#rgba`,
   `#rrggbbaa`, `currentColor`, and `transparent` on every color property. Opacity is kept
   to 1 part in 255. It draws on a box's background and borders; text, outlines, an inline
