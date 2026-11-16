@@ -1,5 +1,7 @@
 //! `calc()` for lengths and percentages (CSS Values 3, section 8): sums and products
-//! reduced at parse time to one coefficient per unit kind.
+//! reduced at parse time to one coefficient per unit kind. CSS Values 4 `min()`, `max()`
+//! and `clamp()` over lengths without percentages: arguments in pixels alone fold to one,
+//! and otherwise `min()` and `max()` of two and `clamp()` keep a lower or upper bound.
 use super::CalcLength;
 #[cfg(test)]
 use super::RelativeUnit;
@@ -14,6 +16,20 @@ const MAX_DEPTH: usize = 32;
 enum Term {
     Number(f64),
     Length([f64; 6]),
+    /// A value within a lower and an upper bound, none holding a percentage.
+    Bounded([f64; 6], Option<[f64; 6]>, Option<[f64; 6]>),
+}
+
+/// Whether `raw` opens one of the math functions: `calc(`, `min(`, `max(`, `clamp(`.
+pub(super) fn is_math_function(raw: &str) -> bool {
+    ["calc(", "min(", "max(", "clamp("]
+        .iter()
+        .any(|name| raw.eq_ignore_ascii_case(name))
+}
+
+/// Whether a sum is pixels alone.
+fn pixels_only(terms: &[f64; 6]) -> bool {
+    terms[1..].iter().all(|term| *term == 0.0)
 }
 
 struct Parser<'a, 'w> {
@@ -89,6 +105,62 @@ impl<'a> Parser<'a, '_> {
             }
             TokenKind::OpenParen => self.group(depth),
             TokenKind::Function if raw.eq_ignore_ascii_case("calc(") => self.group(depth),
+            TokenKind::Function if is_math_function(raw) => self.bounds(raw, depth),
+            _ => None,
+        }
+    }
+    /// `min(`, `max(` or `clamp(`'s arguments through its closing parenthesis.
+    fn bounds(&mut self, name: &str, depth: usize) -> Option<Term> {
+        if depth >= MAX_DEPTH {
+            return None;
+        }
+        let mut arguments = Vec::new();
+        loop {
+            let argument = match self.sum(depth + 1)? {
+                Term::Length(terms) if terms[1] == 0.0 => terms,
+                // A bounded argument folds only where it is pixels alone.
+                Term::Bounded(value, lower, upper)
+                    if pixels_only(&value)
+                        && lower.as_ref().is_none_or(pixels_only)
+                        && upper.as_ref().is_none_or(pixels_only) =>
+                {
+                    let mut pixels = value[0];
+                    if let Some(upper) = upper {
+                        pixels = pixels.min(upper[0]);
+                    }
+                    if let Some(lower) = lower {
+                        pixels = pixels.max(lower[0]);
+                    }
+                    [pixels, 0.0, 0.0, 0.0, 0.0, 0.0]
+                }
+                _ => return None,
+            };
+            arguments.push(argument);
+            match self.take()? {
+                (TokenKind::Delim, ",", _) if arguments.len() < 64 => {}
+                (TokenKind::CloseParen, ..) => break,
+                _ => return None,
+            }
+        }
+        let name = name.to_ascii_lowercase();
+        // Pixels alone: the answer itself.
+        if arguments.iter().all(pixels_only) {
+            let pixels: Vec<f64> = arguments.iter().map(|terms| terms[0]).collect();
+            let answer = match (name.as_str(), pixels.as_slice()) {
+                ("min(", [_, ..]) => pixels.iter().copied().fold(f64::INFINITY, f64::min),
+                ("max(", [_, ..]) => pixels.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                ("clamp(", [lower, value, upper]) => value.min(*upper).max(*lower),
+                _ => return None,
+            };
+            return Some(Term::Length([answer, 0.0, 0.0, 0.0, 0.0, 0.0]));
+        }
+        match (name.as_str(), arguments.as_slice()) {
+            ("min(", [only]) | ("max(", [only]) => Some(Term::Length(*only)),
+            ("min(", [value, upper]) => Some(Term::Bounded(*value, None, Some(*upper))),
+            ("max(", [value, lower]) => Some(Term::Bounded(*value, Some(*lower), None)),
+            ("clamp(", [lower, value, upper]) => {
+                Some(Term::Bounded(*value, Some(*lower), Some(*upper)))
+            }
             _ => None,
         }
     }
@@ -158,21 +230,40 @@ pub(super) fn parse_calc(raw: &str, work: &mut usize) -> Option<CalcLength> {
         work,
         look: None,
     };
-    let (kind, name, _) = parser.take()?;
-    if kind != TokenKind::Function || !name.eq_ignore_ascii_case("calc(") {
+    let (kind, name, _) = parser.peek()?;
+    if kind != TokenKind::Function || !is_math_function(name) {
         return None;
     }
-    let Term::Length(terms) = parser.group(0)? else {
-        return None;
-    };
+    let term = parser.value(0)?;
     if parser.take().is_some() {
         return None;
     }
-    let terms = terms.map(|term| term as f32);
-    terms
-        .iter()
-        .all(|term| term.is_finite())
-        .then(|| CalcLength::new(terms[0], terms[1], [terms[2], terms[3], terms[4], terms[5]]))
+    let narrow = |terms: [f64; 6]| {
+        let terms = terms.map(|term| term as f32);
+        terms.iter().all(|term| term.is_finite()).then_some(terms)
+    };
+    match term {
+        Term::Length(terms) => {
+            let terms = narrow(terms)?;
+            Some(CalcLength::new(
+                terms[0],
+                terms[1],
+                [terms[2], terms[3], terms[4], terms[5]],
+            ))
+        }
+        Term::Bounded(value, lower, upper) => Some(CalcLength::bounded(
+            narrow(value)?,
+            match lower {
+                Some(lower) => Some(narrow(lower)?),
+                None => None,
+            },
+            match upper {
+                Some(upper) => Some(narrow(upper)?),
+                None => None,
+            },
+        )),
+        Term::Number(_) => None,
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +314,37 @@ mod tests {
             calc("calc(/**/10px/**/ + /**/5px)"),
             Some((15.0, 0.0, none))
         );
+    }
+
+    #[test]
+    fn min_max_and_clamp_fold_pixels_and_bound_the_rest() {
+        let none = [0.0; 4];
+        assert_eq!(calc("min(10px, 5px, 7px)"), Some((5.0, 0.0, none)));
+        assert_eq!(calc("max(10px, calc(5px * 3))"), Some((15.0, 0.0, none)));
+        assert_eq!(calc("clamp(10px, 50px, 20px)"), Some((20.0, 0.0, none)));
+        assert_eq!(
+            calc("calc(min(1in, 100px) + 4px)"),
+            Some((100.0, 0.0, none))
+        );
+        // With font-relative terms the bounds are kept for when the font size is known.
+        let mut work = 100_000;
+        let bounded = parse_calc("clamp(1rem, 2em, 30px)", &mut work).unwrap();
+        assert_eq!(bounded.fallback_pixels(10.0, 16.0), 20.0);
+        assert_eq!(bounded.fallback_pixels(20.0, 16.0), 30.0);
+        assert_eq!(bounded.fallback_pixels(4.0, 16.0), 16.0);
+        let lower = parse_calc("max(1em, 12px)", &mut work).unwrap();
+        assert_eq!(lower.fallback_pixels(10.0, 16.0), 12.0);
+        for bad in [
+            "min(10%, 5px)",
+            "clamp(1px, 2px)",
+            "min()",
+            "min(1em, 2em, 3px)",
+            "calc(min(1em, 2px) + 1px)",
+            "max(1px 2px)",
+            "min(5)",
+        ] {
+            assert!(calc(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]

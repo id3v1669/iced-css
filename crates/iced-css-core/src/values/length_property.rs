@@ -238,7 +238,14 @@ pub(super) fn shadow_length(
     }
     // A function here is a whole `calc()`; a color function is no length.
     if token.1.kind == TokenKind::Function
-        && !token.1.raw[..5.min(token.1.raw.len())].eq_ignore_ascii_case("calc(")
+        && !crate::values::calc::is_math_function(
+            &token.1.raw[..=token
+                .1
+                .raw
+                .find('(')
+                .unwrap_or(0)
+                .min(token.1.raw.len() - 1)],
+        )
     {
         return Ok(None);
     }
@@ -269,7 +276,14 @@ pub(super) fn track_length(
         return Ok(None);
     }
     if token.1.kind == TokenKind::Function
-        && !token.1.raw[..5.min(token.1.raw.len())].eq_ignore_ascii_case("calc(")
+        && !crate::values::calc::is_math_function(
+            &token.1.raw[..=token
+                .1
+                .raw
+                .find('(')
+                .unwrap_or(0)
+                .min(token.1.raw.len() - 1)],
+        )
     {
         return Ok(None);
     }

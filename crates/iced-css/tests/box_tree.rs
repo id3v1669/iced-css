@@ -956,6 +956,52 @@ fn viewport_units_measure_the_viewport_the_tree_is_styled_for() {
 }
 
 #[test]
+fn min_max_and_clamp_size_boxes_and_text() {
+    use iced_css::box_tree::MediaEnvironment;
+    let size = |css: &str, width: f32| {
+        let tree = BoxTree::new(node("page", vec![node("a", vec![])]), css)
+            .unwrap()
+            .with_media(MediaEnvironment {
+                viewport: Some((width, 600.0)),
+                dark: None,
+            })
+            .unwrap();
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        (border.right - border.left, border.bottom - border.top)
+    };
+    let fluid = "#a { width:clamp(100px, 50vw, 300px); height:1px; }";
+    assert_eq!(size(fluid, 800.0).0, 300.0);
+    assert_eq!(size(fluid, 400.0).0, 200.0);
+    assert_eq!(size(fluid, 100.0).0, 100.0);
+    assert_eq!(
+        size(
+            "#a { font-size:20px; width:min(10em, 150px); height:max(1em, 5px); }",
+            800.0
+        ),
+        (150.0, 20.0)
+    );
+    // A font size within bounds, and what its `em` then measures.
+    assert_eq!(
+        size(
+            "#a { font-size:clamp(12px, 1vw, 20px); width:10em; height:1px; }",
+            800.0
+        )
+        .0,
+        120.0
+    );
+    // A percentage inside is not taken: the declaration before stands.
+    assert_eq!(
+        size(
+            "#a { width:80px; width:min(50%, 300px); height:1px; }",
+            800.0
+        )
+        .0,
+        80.0
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

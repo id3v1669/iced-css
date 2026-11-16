@@ -307,16 +307,64 @@ pub enum LengthTarget {
 }
 /// A `calc()` sum reduced to one coefficient per unit kind: pixels, percent, then `em`,
 /// `ex`, `rem` and `ch`. Kept as bit patterns, so equality is exact.
+///
+/// CSS Values 4 `min()`, `max()` and `clamp()` add a lower and an upper bound, each a
+/// sum of the same kinds but for percentages, which they never hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CalcLength {
     terms: [u32; 6],
+    /// The lower bound's terms, when `bounds & 1`; the upper's, when `bounds & 2`.
+    lower: [u32; 6],
+    upper: [u32; 6],
+    bounds: u8,
 }
 impl CalcLength {
     pub fn new(pixels: f32, percent: f32, relative: [f32; 4]) -> Self {
         let [em, ex, rem, ch] = relative;
         Self {
             terms: [pixels, percent, em, ex, rem, ch].map(f32::to_bits),
+            lower: [0; 6],
+            upper: [0; 6],
+            bounds: 0,
         }
+    }
+    /// `value` kept within `lower` and `upper`, as `clamp()` keeps it; neither bound may
+    /// hold a percentage, nor may the value.
+    pub fn bounded(value: [f32; 6], lower: Option<[f32; 6]>, upper: Option<[f32; 6]>) -> Self {
+        let bits = |terms: [f32; 6]| terms.map(f32::to_bits);
+        Self {
+            terms: bits(value),
+            lower: lower.map_or([0; 6], bits),
+            upper: upper.map_or([0; 6], bits),
+            bounds: u8::from(lower.is_some()) | (u8::from(upper.is_some()) << 1),
+        }
+    }
+    /// The unbounded sums of the value, then of each bound there is.
+    pub fn parts(self) -> (Self, Option<Self>, Option<Self>) {
+        let part = |terms: [u32; 6]| Self {
+            terms,
+            lower: [0; 6],
+            upper: [0; 6],
+            bounds: 0,
+        };
+        (
+            part(self.terms),
+            (self.bounds & 1 != 0).then(|| part(self.lower)),
+            (self.bounds & 2 != 0).then(|| part(self.upper)),
+        )
+    }
+    /// Its value with `evaluate` measuring each unbounded sum: the value kept within its
+    /// bounds, the lower one winning where they cross (CSS Values 4 `clamp()`).
+    pub fn resolve(self, evaluate: impl Fn(Self) -> f32) -> f32 {
+        let (value, lower, upper) = self.parts();
+        let mut result = evaluate(value);
+        if let Some(upper) = upper {
+            result = result.min(evaluate(upper));
+        }
+        if let Some(lower) = lower {
+            result = result.max(evaluate(lower));
+        }
+        result
     }
     pub fn pixels(self) -> f32 {
         f32::from_bits(self.terms[0])
@@ -334,29 +382,34 @@ impl CalcLength {
             }],
         )
     }
-    /// Whether any font-relative term is present.
+    /// Whether any font-relative term is present, in the value or a bound.
     pub fn is_font_relative(self) -> bool {
-        self.terms[2..]
-            .iter()
-            .any(|bits| f32::from_bits(*bits) != 0.0)
+        let relative =
+            |terms: &[u32; 6]| terms[2..].iter().any(|bits| f32::from_bits(*bits) != 0.0);
+        relative(&self.terms)
+            || (self.bounds & 1 != 0 && relative(&self.lower))
+            || (self.bounds & 2 != 0 && relative(&self.upper))
     }
-    /// Everything but the percentage, in pixels, with `ex` and `ch` as half the font size.
+    /// Everything but the percentage, in pixels, with `ex` and `ch` as half the font size,
+    /// within its bounds.
     pub fn fallback_pixels(self, font_size: f32, root_font_size: f32) -> f32 {
-        [
-            RelativeUnit::Em,
-            RelativeUnit::Ex,
-            RelativeUnit::Rem,
-            RelativeUnit::Ch,
-        ]
-        .into_iter()
-        .fold(self.pixels(), |total, unit| {
-            let count = self.relative(unit);
-            // An absent term adds nothing, whatever the font sizes are.
-            if count == 0.0 {
-                total
-            } else {
-                total + count * unit.fallback_basis(font_size, root_font_size)
-            }
+        self.resolve(|part| {
+            [
+                RelativeUnit::Em,
+                RelativeUnit::Ex,
+                RelativeUnit::Rem,
+                RelativeUnit::Ch,
+            ]
+            .into_iter()
+            .fold(part.pixels(), |total, unit| {
+                let count = part.relative(unit);
+                // An absent term adds nothing, whatever the font sizes are.
+                if count == 0.0 {
+                    total
+                } else {
+                    total + count * unit.fallback_basis(font_size, root_font_size)
+                }
+            })
         })
     }
 }

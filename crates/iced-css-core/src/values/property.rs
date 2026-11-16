@@ -194,7 +194,7 @@ fn significant<'a>(
             })?
             .expect("nonempty input");
         *offset += token.raw.len();
-        if token.kind == TokenKind::Function && token.raw.eq_ignore_ascii_case("calc(") {
+        if token.kind == TokenKind::Function && super::calc::is_math_function(token.raw) {
             return calc_token(input, start, token, offset, work).map(Some);
         }
         if !matches!(token.kind, TokenKind::Space | TokenKind::Comment) {

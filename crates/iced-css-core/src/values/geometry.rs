@@ -48,40 +48,52 @@ pub fn evaluate_length(
 ) -> Result<LengthEvaluation, LengthEvaluationError> {
     let evaluated = match value {
         LengthTarget::Auto => return Ok(LengthEvaluation::Auto),
-        LengthTarget::Calc(sum) => {
+        LengthTarget::Calc(bounded) => {
             let missing = LengthEvaluationError::MissingContext;
-            let mut total = sum.pixels();
-            if sum.percent() != 0.0 {
-                let basis = context
-                    .percentage_basis
-                    .ok_or(missing(LengthBasis::Percentage))?;
-                total += sum.percent() / 100.0 * basis;
+            // CSS Values 4: each part measured alone, then the value kept within its bounds.
+            let (value, lower, upper) = bounded.parts();
+            let measure = |sum: crate::values::CalcLength| -> Result<f32, LengthEvaluationError> {
+                let mut total = sum.pixels();
+                if sum.percent() != 0.0 {
+                    let basis = context
+                        .percentage_basis
+                        .ok_or(missing(LengthBasis::Percentage))?;
+                    total += sum.percent() / 100.0 * basis;
+                }
+                for unit in [
+                    RelativeUnit::Em,
+                    RelativeUnit::Ex,
+                    RelativeUnit::Rem,
+                    RelativeUnit::Ch,
+                ] {
+                    let count = sum.relative(unit);
+                    if count == 0.0 {
+                        continue;
+                    }
+                    let basis = match unit {
+                        RelativeUnit::Em => context.font_size.ok_or(missing(LengthBasis::FontSize)),
+                        RelativeUnit::Ex => context.x_height.ok_or(missing(LengthBasis::XHeight)),
+                        RelativeUnit::Rem => context
+                            .root_font_size
+                            .ok_or(missing(LengthBasis::RootFontSize)),
+                        RelativeUnit::Ch => context
+                            .font_size
+                            .map(|size| size * 0.5)
+                            .ok_or(missing(LengthBasis::FontSize)),
+                    }?;
+                    if !basis.is_finite() || basis < 0.0 {
+                        return Err(LengthEvaluationError::InvalidFontContext);
+                    }
+                    total += count * basis;
+                }
+                Ok(total)
+            };
+            let mut total = measure(value)?;
+            if let Some(upper) = upper {
+                total = total.min(measure(upper)?);
             }
-            for unit in [
-                RelativeUnit::Em,
-                RelativeUnit::Ex,
-                RelativeUnit::Rem,
-                RelativeUnit::Ch,
-            ] {
-                let count = sum.relative(unit);
-                if count == 0.0 {
-                    continue;
-                }
-                let basis = match unit {
-                    RelativeUnit::Em => context.font_size.ok_or(missing(LengthBasis::FontSize)),
-                    RelativeUnit::Ex => context.x_height.ok_or(missing(LengthBasis::XHeight)),
-                    RelativeUnit::Rem => context
-                        .root_font_size
-                        .ok_or(missing(LengthBasis::RootFontSize)),
-                    RelativeUnit::Ch => context
-                        .font_size
-                        .map(|size| size * 0.5)
-                        .ok_or(missing(LengthBasis::FontSize)),
-                }?;
-                if !basis.is_finite() || basis < 0.0 {
-                    return Err(LengthEvaluationError::InvalidFontContext);
-                }
-                total += count * basis;
+            if let Some(lower) = lower {
+                total = total.max(measure(lower)?);
             }
             if !total.is_finite() {
                 return Err(LengthEvaluationError::Conversion(

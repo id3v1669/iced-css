@@ -188,12 +188,14 @@ pub fn compute_font_size(
             LengthTarget::Auto => return Err(FontSizeError::UnresolvedValue),
             // A percentage, `em` and `ch` are of the parent's size; never below zero.
             LengthTarget::Calc(sum) => {
-                let size = sum.pixels()
-                    + sum.percent() / 100.0 * context.parent_size
-                    + sum.relative(RelativeUnit::Em) * context.parent_size
-                    + sum.relative(RelativeUnit::Ex) * context.parent_x_height
-                    + sum.relative(RelativeUnit::Rem) * context.root_size
-                    + sum.relative(RelativeUnit::Ch) * context.parent_size * 0.5;
+                let size = sum.resolve(|sum| {
+                    sum.pixels()
+                        + sum.percent() / 100.0 * context.parent_size
+                        + sum.relative(RelativeUnit::Em) * context.parent_size
+                        + sum.relative(RelativeUnit::Ex) * context.parent_x_height
+                        + sum.relative(RelativeUnit::Rem) * context.root_size
+                        + sum.relative(RelativeUnit::Ch) * context.parent_size * 0.5
+                });
                 if !size.is_finite() {
                     return Err(FontSizeError::UnresolvedValue);
                 }

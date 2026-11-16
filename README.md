@@ -113,6 +113,10 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   `calc()` sums lengths and percentages wherever a length is read, in shorthands too; a
   negative result clips to nothing where a negative length is invalid. Its numbers are
   32-bit floats, and it is not read for `line-height` numbers, `z-index` or colors.
+  `min()`, `max()` and `clamp()` (CSS Values 4) take lengths, alone or inside `calc()`.
+  Limits: no percentages in them, and where their arguments hold font-relative units,
+  `min()` and `max()` take two and nest only where they come to pixels alone; a bounded
+  value does not add to others in `calc()`.
   `box-sizing: border-box` (CSS Sizing 3)
   makes `width`, `height` and their minimums and maximums sizes of the border box; a
   percentage padding above or below is not taken out of a height, and a `:before` or
