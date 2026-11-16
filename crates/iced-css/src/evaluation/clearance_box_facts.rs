@@ -702,19 +702,29 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
         // EML (CSS2.2 15.7, 6.1.2): the font entry computes the row's `font-size` first;
         // its other longhands and its offsets resolve an `em` against it and (EXF, the
         // user's U5=B) an `ex` against its 0.5em x-height.
+        // Row 0 is the source root, computed before every other row: `rem` measures its
+        // font size.
+        let root_font_size = (projected > 0)
+            .then(|| rows[0].font_size.map(|fact| fact.pixels))
+            .flatten();
         let font_size = match font {
             Some(font) => Some(resolve::font_size(
                 &winners,
                 font,
                 original,
                 parent,
+                root_font_size,
                 limits.numeric,
                 &mut receipt.numeric_calls,
             )?),
             None => None,
         };
-        let resolver =
-            resolve::Resolver::new(original, limits.numeric, font_size.map(|fact| fact.pixels));
+        let resolver = resolve::Resolver::new(
+            original,
+            limits.numeric,
+            font_size.map(|fact| fact.pixels),
+            root_font_size,
+        );
         let mut row = resolve::element(
             &winners,
             ids,

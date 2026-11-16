@@ -257,6 +257,32 @@ impl ExactLength {
 pub enum RelativeUnit {
     Em,
     Ex,
+    /// CSS Values 3: the root element's font size.
+    Rem,
+    /// CSS Values 3: the advance of "0". No font is measured for it: half the font size,
+    /// the fallback the specification allows.
+    Ch,
+}
+impl RelativeUnit {
+    fn parse(unit: &str) -> Option<Self> {
+        [
+            ("em", Self::Em),
+            ("ex", Self::Ex),
+            ("rem", Self::Rem),
+            ("ch", Self::Ch),
+        ]
+        .into_iter()
+        .find_map(|(name, value)| unit.eq_ignore_ascii_case(name).then_some(value))
+    }
+    /// What one of it measures where no font is consulted: `ex` and `ch` as half the font
+    /// size.
+    pub fn fallback_basis(self, font_size: f32, root_font_size: f32) -> f32 {
+        match self {
+            Self::Em => font_size,
+            Self::Ex | Self::Ch => font_size * 0.5,
+            Self::Rem => root_font_size,
+        }
+    }
 }
 /// Unbound specified operands. Relative/percentage operands still need their
 /// property-specific context identity before they can be used as target/cache keys.
@@ -344,14 +370,7 @@ impl LengthTarget {
                     &mut budget,
                 )?));
             }
-            let relative = if unit.eq_ignore_ascii_case("em") {
-                Some(RelativeUnit::Em)
-            } else if unit.eq_ignore_ascii_case("ex") {
-                Some(RelativeUnit::Ex)
-            } else {
-                None
-            };
-            if let Some(unit) = relative {
+            if let Some(unit) = RelativeUnit::parse(unit) {
                 return Ok(Self::Relative(
                     Decimal::parse_with(number, limits, &mut budget)?,
                     unit,
@@ -526,11 +545,8 @@ impl LengthTarget {
         let mut budget = Budget::new(limits);
         budget.spend(unit.len())?;
         let value = Decimal::parse_with(number, limits, &mut budget)?;
-        if unit.eq_ignore_ascii_case("em") {
-            return Ok(Self::Relative(value, RelativeUnit::Em));
-        }
-        if unit.eq_ignore_ascii_case("ex") {
-            return Ok(Self::Relative(value, RelativeUnit::Ex));
+        if let Some(unit) = RelativeUnit::parse(unit) {
+            return Ok(Self::Relative(value, unit));
         }
         let (n, d) = if unit.eq_ignore_ascii_case("px") {
             (1, 1)

@@ -84,6 +84,7 @@ fn normal_has_different_computed_meanings_for_letter_and_word_spacing() {
                 font_size: Some(16.0),
                 x_height: Some(7.0),
                 percentage_basis: None,
+                root_font_size: None,
             },
             numeric(),
         )

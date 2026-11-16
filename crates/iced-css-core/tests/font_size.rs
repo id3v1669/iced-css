@@ -56,6 +56,7 @@ fn typed_font_sizes_apply_context_before_the_selected_range_conversion() {
         table: FontSizeTable::new(16.0).unwrap(),
         parent_size: 20.0,
         parent_x_height: 9.0,
+        root_size: 16.0,
     };
     for (raw, expected) in [("2em", 40.0), ("2ex", 18.0), ("150%", 30.0), ("1in", 96.0)] {
         let value = SpecifiedValue::Length(LengthTarget::parse(raw, limits).unwrap());

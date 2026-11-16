@@ -79,6 +79,7 @@ fn computed_axes_preserve_percentages_and_resolve_relative_lengths() {
             font_size: Some(16.0),
             x_height: Some(7.0),
             percentage_basis: None,
+            root_font_size: None,
         },
         numeric(),
     )

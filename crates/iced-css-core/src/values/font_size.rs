@@ -138,6 +138,9 @@ pub struct FontSizeContext {
     pub table: FontSizeTable,
     pub parent_size: f32,
     pub parent_x_height: f32,
+    /// What `rem` measures: the root element's computed font size, or the initial font
+    /// size when this is the root's own (CSS Values 3, 5.1.1).
+    pub root_size: f32,
 }
 pub fn compute_font_size(
     value: &super::property::SpecifiedValue,
@@ -172,6 +175,12 @@ pub fn compute_font_size(
             }
             LengthTarget::Relative(value, RelativeUnit::Ex) => {
                 value.scaled_nonnegative_f32(context.parent_x_height, limits)
+            }
+            LengthTarget::Relative(value, RelativeUnit::Rem) => {
+                value.scaled_nonnegative_f32(context.root_size, limits)
+            }
+            LengthTarget::Relative(value, RelativeUnit::Ch) => {
+                value.scaled_nonnegative_f32(context.parent_size * 0.5, limits)
             }
             LengthTarget::Percentage(value) => {
                 value.percentage_nonnegative_f32(context.parent_size, limits)

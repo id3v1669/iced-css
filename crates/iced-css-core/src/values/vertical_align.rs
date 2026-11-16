@@ -136,6 +136,8 @@ pub fn compute_vertical_align(
             font_size: context.font_size,
             x_height: context.x_height,
             percentage_basis,
+            // No root font size reaches here: a `rem` length is a missing context.
+            root_font_size: None,
         },
         limits,
     )

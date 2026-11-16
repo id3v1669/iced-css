@@ -55,6 +55,7 @@ fn resolved(css: &str, position: Position) -> Result<ClipRegion, ClipError> {
             font_size: Some(20.0),
             x_height: Some(9.0),
             percentage_basis: None,
+            root_font_size: None,
         },
         numeric(),
     )

@@ -153,13 +153,21 @@ pub(super) struct Resolver {
     original: usize,
     numeric: NumericLimits,
     font_size: Option<f32>,
+    /// The root row's computed font size, which `rem` measures; the row's own on the root.
+    root_font_size: Option<f32>,
 }
 impl Resolver {
-    pub(super) fn new(original: usize, numeric: NumericLimits, font_size: Option<f32>) -> Self {
+    pub(super) fn new(
+        original: usize,
+        numeric: NumericLimits,
+        font_size: Option<f32>,
+        root_font_size: Option<f32>,
+    ) -> Self {
         Self {
             original,
             numeric,
             font_size,
+            root_font_size,
         }
     }
     fn invalid(&self, property: PropertyId) -> E {
@@ -238,6 +246,7 @@ impl Resolver {
         let context = LengthContext {
             font_size: self.font_size,
             x_height: self.font_size.map(fallback_x_height),
+            root_font_size: self.root_font_size.or(self.font_size),
             ..LengthContext::default()
         };
         let evaluated =
@@ -299,6 +308,9 @@ impl Resolver {
                         let basis = match unit {
                             RelativeUnit::Em => size,
                             RelativeUnit::Ex => fallback_x_height(size),
+                            RelativeUnit::Rem | RelativeUnit::Ch => {
+                                unit.fallback_basis(size, self.root_font_size.unwrap_or(size))
+                            }
                         };
                         value.scaled_nonnegative_f32(basis, self.numeric)
                     }
@@ -590,11 +602,12 @@ pub(super) fn font_size(
     font: FontContext,
     original: usize,
     parent: Option<(usize, ClearanceBoxFact)>,
+    root_font_size: Option<f32>,
     numeric: NumericLimits,
     calls: &mut usize,
 ) -> Result<FontSizeFact, E> {
     let property = font.property;
-    let resolver = Resolver::new(original, numeric, None);
+    let resolver = Resolver::new(original, numeric, None, None);
     let medium = font.table.entries()[3];
     let parent_fact = match parent {
         Some((original_parent, p)) => Some((
@@ -639,6 +652,8 @@ pub(super) fn font_size(
         table: font.table,
         parent_size,
         parent_x_height: fallback_x_height(parent_size),
+        // CSS Values 3, 5.1.1: on the root's own `font-size`, `rem` is the initial size.
+        root_size: root_font_size.unwrap_or(medium),
     };
     let size = compute_font_size(value, context, numeric)
         .map_err(|error| E::FontSize { original, error })?;

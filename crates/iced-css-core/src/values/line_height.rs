@@ -73,6 +73,9 @@ pub fn compute_line_height(
         SpecifiedValue::Length(LengthTarget::Relative(number, RelativeUnit::Ex)) => {
             number.scaled_nonnegative_f32(font.x_height, limits)
         }
+        SpecifiedValue::Length(LengthTarget::Relative(number, RelativeUnit::Ch)) => {
+            number.scaled_nonnegative_f32(font.size * 0.5, limits)
+        }
         SpecifiedValue::Length(LengthTarget::Percentage(number)) => {
             number.percentage_nonnegative_f32(font.size, limits)
         }

@@ -54,6 +54,7 @@ fn computed_percentage_and_keyword_endpoints_combine_as_absolute_font_sizes() {
         table: FontSizeTable::new(16.0).unwrap(),
         parent_size: 20.0,
         parent_x_height: 8.0,
+        root_size: 16.0,
     };
     let a = compute_font_size(&parsed("font-size:50%").value, context, numeric())
         .unwrap()

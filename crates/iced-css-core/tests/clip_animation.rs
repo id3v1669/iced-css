@@ -74,6 +74,7 @@ fn clip_computation_keeps_auto_sides_until_border_box_resolution() {
             font_size: Some(10.0),
             x_height: Some(4.0),
             percentage_basis: None,
+            root_font_size: None,
         },
         numeric(),
     )

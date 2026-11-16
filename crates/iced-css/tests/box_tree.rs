@@ -271,6 +271,55 @@ fn box_sizing_border_box_sizes_the_border_box() {
 }
 
 #[test]
+fn rem_measures_the_root_font_size_and_ch_half_the_font_size() {
+    let root = || node("page", vec![node("k", vec![node("inner", vec![])])]);
+    let size = |css: &str| {
+        let tree = BoxTree::new(root(), css).unwrap();
+        let geometry = tree.layout(800.0, Some(600.0)).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        let inner = geometry[2].as_ref().unwrap().border;
+        (
+            border.right - border.left,
+            border.bottom - border.top,
+            inner.right - inner.left,
+        )
+    };
+    // The initial font size is 16px.
+    assert_eq!(
+        size("#k { width:10rem; height:2rem; }"),
+        (160.0, 32.0, 160.0)
+    );
+    // The root's font size, whatever the element's own.
+    let sized = "#page { font-size:20px; } #k { font-size:10px; width:10rem; height:2em; }";
+    assert_eq!(size(sized), (200.0, 20.0, 200.0));
+    // On the root's own font-size, `rem` is the initial size; elsewhere the root's.
+    assert_eq!(
+        size("#page { font-size:2rem; } #k { width:5rem; }").0,
+        160.0
+    );
+    assert_eq!(
+        size("#page { font-size:20px; } #k { font-size:2rem; width:1em; }").0,
+        40.0
+    );
+    // Padding, borders, margins and line boxes take it too.
+    assert_eq!(
+        size("#page { font-size:10px; } #k { width:100px; padding:0 1rem; border:1rem solid #000000; }").0,
+        140.0
+    );
+    assert_eq!(
+        size("#page { font-size:10px; } #k { width:100px; } #inner { margin-left:2rem; }").2,
+        80.0
+    );
+    // `ch` is half the element's font size.
+    assert_eq!(
+        size("#k { font-size:20px; width:10ch; height:1CH; }"),
+        (100.0, 10.0, 100.0)
+    );
+    // A negative `rem` is as invalid as any negative width.
+    assert_eq!(size("#k { width:50px; width:-1rem; }").0, 50.0);
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

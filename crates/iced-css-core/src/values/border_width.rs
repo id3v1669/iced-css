@@ -63,6 +63,13 @@ pub fn compute_border_width(
         LengthTarget::Relative(value, RelativeUnit::Ex) => {
             value.scaled_nonnegative_f32(context.x_height, limits)
         }
+        LengthTarget::Relative(value, RelativeUnit::Ch) => {
+            value.scaled_nonnegative_f32(context.size * 0.5, limits)
+        }
+        // This context holds no root font size: the caller resolves `rem` first.
+        LengthTarget::Relative(_, RelativeUnit::Rem) => {
+            return Err(BorderWidthError::UnresolvedWidth);
+        }
         _ => unreachable!("validated border length"),
     }
     .map_err(BorderWidthError::Conversion)

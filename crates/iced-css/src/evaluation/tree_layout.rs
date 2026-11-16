@@ -41,7 +41,7 @@ use iced_css_core::{
     selectors::PseudoElement,
     source::{Metadata, SourceNode},
     values::{
-        ConversionError, LengthTarget, NumericLimits, RelativeUnit,
+        ConversionError, LengthTarget, NumericLimits,
         bidi::ComputedDirection,
         color::Color,
         computed_color::{
@@ -2080,6 +2080,7 @@ fn align_keyword(align: ComputedTextAlign, rtl: bool) -> &'static str {
 fn line_height_of(
     value: &SpecifiedValue,
     font_size: f32,
+    root_font_size: f32,
     numeric: NumericLimits,
 ) -> TextLineHeight {
     let px = |converted: Result<f32, ConversionError>| {
@@ -2098,10 +2099,7 @@ fn line_height_of(
             .percentage_finite_f32(font_size, numeric)
             .map(|c| c.value)),
         SpecifiedValue::Length(LengthTarget::Relative(number, unit)) => {
-            let basis = match unit {
-                RelativeUnit::Em => font_size,
-                RelativeUnit::Ex => font_size * 0.5,
-            };
+            let basis = unit.fallback_basis(font_size, root_font_size);
             px(number.scaled_finite_f32(basis, numeric).map(|c| c.value))
         }
         _ => TextLineHeight::Normal,
@@ -2146,6 +2144,8 @@ pub fn evaluate_tree_paint<'r>(
 ) -> Result<TreePaint, TreeLayoutError> {
     use TreeLayoutError as E;
     let id = |name: &'static str| PropertyId::lookup(name).ok_or(E::Paint { property: name });
+    // Projected 0 is the source root, whose font size `rem` measures.
+    let root_font_size = font_sizes.first().copied().unwrap_or(font_medium);
     let foreground = id("color")?;
     let background = id("background-color")?;
     let border = [
@@ -2287,9 +2287,11 @@ pub fn evaluate_tree_paint<'r>(
         let mut relative = Vec::new();
         for (name, property) in EM_LENGTHS.iter().zip(&em_properties) {
             let em = match defaulted(name)? {
-                DefaultedValueRef::Compute(SpecifiedValue::Length(LengthTarget::Relative(..))) => {
-                    true
-                }
+                // `rem` follows the root's font size, not this element's.
+                DefaultedValueRef::Compute(SpecifiedValue::Length(LengthTarget::Relative(
+                    _,
+                    unit,
+                ))) => *unit != iced_css_core::values::RelativeUnit::Rem,
                 DefaultedValueRef::ParentComputed => {
                     parent_index.is_some_and(|parent| em_lengths[parent].contains(property))
                 }
@@ -2346,10 +2348,7 @@ pub fn evaluate_tree_paint<'r>(
                     unit,
                 ))) => value
                     .scaled_finite_f32(
-                        match unit {
-                            RelativeUnit::Em => font_size,
-                            RelativeUnit::Ex => font_size * 0.5,
-                        },
+                        unit.fallback_basis(font_size, root_font_size),
                         limits.numeric,
                     )
                     .ok()
@@ -2379,7 +2378,9 @@ pub fn evaluate_tree_paint<'r>(
             _ => false,
         };
         let line_height = match defaulted("line-height")? {
-            DefaultedValueRef::Compute(value) => line_height_of(value, font_size, limits.numeric),
+            DefaultedValueRef::Compute(value) => {
+                line_height_of(value, font_size, root_font_size, limits.numeric)
+            }
             DefaultedValueRef::ParentComputed => {
                 inherited.map_or(TextLineHeight::Normal, |style| style.line_height)
             }
@@ -2596,11 +2597,11 @@ pub fn evaluate_tree_paint<'r>(
             LengthTarget::Absolute(value) => value
                 .to_nonnegative_f32(limits.numeric)
                 .map_or(0.0, |c| c.value),
-            LengthTarget::Relative(value, RelativeUnit::Em) => value
-                .scaled_finite_f32(font_size, limits.numeric)
-                .map_or(0.0, |c| c.value),
-            LengthTarget::Relative(value, RelativeUnit::Ex) => value
-                .scaled_finite_f32(font_size * 0.5, limits.numeric)
+            LengthTarget::Relative(value, unit) => value
+                .scaled_finite_f32(
+                    unit.fallback_basis(font_size, root_font_size),
+                    limits.numeric,
+                )
                 .map_or(0.0, |c| c.value),
             _ => 0.0,
         };
@@ -2841,14 +2842,12 @@ pub fn evaluate_tree_paint<'r>(
             LengthTarget::Absolute(value) => {
                 Dim::Px(value.to_finite_f32(limits.numeric).map_or(0.0, |c| c.value))
             }
-            LengthTarget::Relative(value, RelativeUnit::Em) => Dim::Px(
+            LengthTarget::Relative(value, unit) => Dim::Px(
                 value
-                    .scaled_finite_f32(font_size, limits.numeric)
-                    .map_or(0.0, |c| c.value),
-            ),
-            LengthTarget::Relative(value, RelativeUnit::Ex) => Dim::Px(
-                value
-                    .scaled_finite_f32(font_size * 0.5, limits.numeric)
+                    .scaled_finite_f32(
+                        unit.fallback_basis(font_size, root_font_size),
+                        limits.numeric,
+                    )
                     .map_or(0.0, |c| c.value),
             ),
             LengthTarget::Percentage(value) => Dim::Percent(
@@ -3008,11 +3007,11 @@ pub fn evaluate_tree_paint<'r>(
                     LengthTarget::Absolute(length) => length
                         .to_nonnegative_f32(limits.numeric)
                         .map_or(font_size, |c| c.value),
-                    LengthTarget::Relative(number, RelativeUnit::Em) => number
-                        .scaled_finite_f32(font_size, limits.numeric)
-                        .map_or(font_size, |c| c.value),
-                    LengthTarget::Relative(number, RelativeUnit::Ex) => number
-                        .scaled_finite_f32(font_size * 0.5, limits.numeric)
+                    LengthTarget::Relative(number, unit) => number
+                        .scaled_finite_f32(
+                            unit.fallback_basis(font_size, root_font_size),
+                            limits.numeric,
+                        )
                         .map_or(font_size, |c| c.value),
                     LengthTarget::Percentage(number) => number
                         .percentage_finite_f32(font_size, limits.numeric)
@@ -3120,14 +3119,12 @@ pub fn evaluate_tree_paint<'r>(
                 LengthTarget::Absolute(value) => {
                     Dim::Px(value.to_finite_f32(limits.numeric).map_or(0.0, |c| c.value))
                 }
-                LengthTarget::Relative(value, RelativeUnit::Em) => Dim::Px(
+                LengthTarget::Relative(value, unit) => Dim::Px(
                     value
-                        .scaled_finite_f32(size, limits.numeric)
-                        .map_or(0.0, |c| c.value),
-                ),
-                LengthTarget::Relative(value, RelativeUnit::Ex) => Dim::Px(
-                    value
-                        .scaled_finite_f32(size * 0.5, limits.numeric)
+                        .scaled_finite_f32(
+                            unit.fallback_basis(size, root_font_size),
+                            limits.numeric,
+                        )
                         .map_or(0.0, |c| c.value),
                 ),
                 LengthTarget::Percentage(value) => Dim::Percent(
@@ -3254,7 +3251,9 @@ pub fn evaluate_tree_paint<'r>(
             };
             // Its own line height, in its own font size; `inherit` the element's.
             let line_height = match cascaded("line-height")? {
-                DefaultedValueRef::Compute(value) => line_height_of(value, size, limits.numeric),
+                DefaultedValueRef::Compute(value) => {
+                    line_height_of(value, size, root_font_size, limits.numeric)
+                }
                 _ => owner.line_height,
             };
             // Alignment and indent belong to a block container: only a block-level one has

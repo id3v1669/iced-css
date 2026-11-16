@@ -131,6 +131,8 @@ pub(super) struct Collector<'r, R = StandardReservation> {
     capture_bytes: usize,
     capture_work: usize,
     events: usize,
+    /// The first recorded row's font size: the root's, which `rem` measures.
+    root_font_size: Option<f32>,
     reservation: R,
 }
 impl<'r> Collector<'r> {
@@ -157,6 +159,7 @@ impl<'r, R: Reservation> Collector<'r, R> {
             capture_bytes: 0,
             capture_work: 0,
             events: 0,
+            root_font_size: None,
             reservation,
         };
         if let Err(error) = this.initialize(count, reporter) {
@@ -233,6 +236,9 @@ impl<'r, R: Reservation> Collector<'r, R> {
         if self.raw.get(original).is_none_or(Option::is_some) {
             return Err(Error::InvalidObservation);
         }
+        if self.root_font_size.is_none() {
+            self.root_font_size = row.font_size.map(|fact| fact.pixels);
+        }
         let mut sides = std::array::from_fn(|side| RawSide::Silent {
             property: ids[20 + side],
         });
@@ -263,6 +269,10 @@ impl<'r, R: Reservation> Collector<'r, R> {
                     let basis = match unit {
                         RelativeUnit::Em => size,
                         RelativeUnit::Ex => fallback_x_height(size),
+                        // Rows are recorded root first: `rem` measures the first one's.
+                        RelativeUnit::Rem | RelativeUnit::Ch => {
+                            unit.fallback_basis(size, self.root_font_size.unwrap_or(size))
+                        }
                     };
                     Some((size.to_bits(), basis.to_bits()))
                 }

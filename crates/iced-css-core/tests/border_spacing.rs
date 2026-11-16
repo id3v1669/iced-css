@@ -60,6 +60,7 @@ fn parsed_spacing_computes_horizontal_then_vertical_absolute_lengths() {
         font_size: Some(16.0),
         x_height: Some(7.0),
         percentage_basis: None,
+        root_font_size: None,
     };
     for (css, expected) in [
         ("border-spacing:2px", [2.0, 2.0]),

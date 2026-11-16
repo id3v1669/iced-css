@@ -29,6 +29,7 @@ fn evaluates_only_the_explicitly_required_context_and_preserves_auto() {
         font_size: Some(20.0),
         x_height: Some(8.0),
         percentage_basis: Some(200.0),
+        root_font_size: None,
     };
     assert_eq!(number("-1em", context), -20.0);
     assert_eq!(number("2ex", context), 16.0);
@@ -82,6 +83,7 @@ fn resolved_negative_and_percentage_margins_feed_the_block_equation() {
         font_size: Some(20.0),
         x_height: None,
         percentage_basis: Some(200.0),
+        root_font_size: None,
     };
     let input = BlockWidthInput {
         containing_width: 200.0,

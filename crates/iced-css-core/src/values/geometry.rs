@@ -8,6 +8,8 @@ pub struct LengthContext {
     pub font_size: Option<f32>,
     pub x_height: Option<f32>,
     pub percentage_basis: Option<f32>,
+    /// The root element's computed font size, for `rem`.
+    pub root_font_size: Option<f32>,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LengthEvaluation {
@@ -19,6 +21,7 @@ pub enum LengthBasis {
     FontSize,
     XHeight,
     Percentage,
+    RootFontSize,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LengthEvaluationError {
@@ -58,6 +61,12 @@ pub fn evaluate_length(
             let (basis, kind) = match unit {
                 RelativeUnit::Em => (context.font_size, LengthBasis::FontSize),
                 RelativeUnit::Ex => (context.x_height, LengthBasis::XHeight),
+                RelativeUnit::Rem => (context.root_font_size, LengthBasis::RootFontSize),
+                // No font is measured for "0": half the font size.
+                RelativeUnit::Ch => (
+                    context.font_size.map(|size| size * 0.5),
+                    LengthBasis::FontSize,
+                ),
             };
             let basis = basis.ok_or(LengthEvaluationError::MissingContext(kind))?;
             if !basis.is_finite() || basis < 0.0 {

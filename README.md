@@ -71,7 +71,10 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
 - **Block layout:** nested boxes, margin collapsing, floats, clearance, formatting contexts,
-  `min-`/`max-` sizes, percentages, `em` and `ex`. `box-sizing: border-box` (CSS Sizing 3)
+  `min-`/`max-` sizes, percentages, `em` and `ex`, and from CSS Values 3 `rem` (the root's
+  font size) and `ch` (taken as half the font size; no font is measured for it). A `rem`
+  length does not move with an animation of the root's `font-size`.
+  `box-sizing: border-box` (CSS Sizing 3)
   makes `width`, `height` and their minimums and maximums sizes of the border box; a
   percentage padding above or below is not taken out of a height, and a `:before` or
   `:after` box does not read it.
