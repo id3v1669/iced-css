@@ -6827,3 +6827,75 @@ fn transforms_move_and_scale_a_box_and_what_it_holds() {
     let (red, _) = bounds("scale(2, 1)");
     assert_eq!(red, Some([100, 100, 139, 139]));
 }
+
+#[test]
+fn word_break_and_overflow_wrap_break_long_words() {
+    let renderer = renderer();
+    // The box's height and width with a word far longer than its 60 pixels.
+    let laid = |css: &str| {
+        let root = node("page", vec![text("t", "abcdefghijklmnopqrstuvwxyz")]);
+        let tree = BoxTree::new(
+            root,
+            &format!("#page {{ width:60px; font-size:16px; line-height:20px; {css} }}"),
+        )
+        .unwrap();
+        let geometry = tree.layout_with(&renderer, 1024.0, None).unwrap();
+        let border = geometry[0].as_ref().unwrap().border;
+        border.bottom - border.top
+    };
+    // Normally it stays whole on one line, overflowing.
+    assert_eq!(laid(""), 20.0);
+    for css in [
+        "word-break:break-all;",
+        "overflow-wrap:anywhere;",
+        "overflow-wrap:break-word;",
+        "word-break:break-word;",
+    ] {
+        assert!(laid(css) > 40.0, "{css}");
+    }
+    // `nowrap` holds it on its line whatever they say.
+    assert_eq!(laid("word-break:break-all; white-space:nowrap;"), 20.0);
+    // In no room, as narrow as its widest character with `anywhere`, its widest word
+    // otherwise.
+    let shrunk = |css: &str| {
+        let root = node("page", vec![node("f", vec![text("t", "abcdefgh ij")])]);
+        let tree = BoxTree::new(
+            root,
+            &format!("#page {{ width:10px; }} #f {{ float:left; font-size:16px; {css} }}"),
+        )
+        .unwrap();
+        let geometry = tree.layout_with(&renderer, 1024.0, None).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        border.right - border.left
+    };
+    assert!(shrunk("overflow-wrap:anywhere;") < shrunk("overflow-wrap:break-word;") / 3.0);
+}
+
+#[test]
+fn text_overflow_ellipsis_ends_a_cut_line_in_an_ellipsis() {
+    // The rightmost dark pixel of the text, in logical pixels.
+    let ink = |css: &str| {
+        let root = node(
+            "page",
+            vec![node("b", vec![text("t", "abcdefghijklmnopqrstuvwxyz")])],
+        );
+        let css = format!(
+            "#page {{ background-color:#ffffff; }}
+             #b {{ width:100px; overflow:hidden; white-space:nowrap; color:#000000;
+                   font-size:16px; {css} }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &css).unwrap().view();
+        let mut ui = simulator(view);
+        let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "ellipsis");
+        pixels
+            .matching(|pixel| pixel.iter().all(|channel| *channel < 100))
+            .iter()
+            .map(|at| at.0 / 2)
+            .max()
+            .unwrap()
+    };
+    // Clipped, the text runs to the box's edge; with an ellipsis it stops short of it.
+    assert!(ink("") >= 97, "{}", ink(""));
+    let short = ink("text-overflow:ellipsis;");
+    assert!((60..97).contains(&short), "{short}");
+}

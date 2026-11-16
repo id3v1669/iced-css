@@ -526,6 +526,13 @@ const CASES: &[(&str, &str, &str)] = &[
         "#k { transform:scale(2); }",
         "#k { transform-origin:left top; }",
     ),
+    ("overflow-wrap", "", "#b { overflow-wrap:anywhere; }"),
+    ("word-break", "", "#b { word-break:break-all; }"),
+    (
+        "text-overflow",
+        "#b { overflow:hidden; }",
+        "#b { text-overflow:ellipsis; }",
+    ),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

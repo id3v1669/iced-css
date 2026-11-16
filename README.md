@@ -148,6 +148,13 @@ cargo test --workspace --features iced-css/image,iced-css/svg
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` (also with `::`) with counters and
   quotes, `visibility`, outlines and every border style (collapsed tables resolve each stretch of edge between the cells that meet there, where lines cross the later cell's border shows, and each grid line takes its widest border; an inline element's outline goes around each of its pieces on a line), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
+- **Line breaking and overflowing text:** `overflow-wrap` (`break-word`, `anywhere`) and
+  `word-break` (`break-all`, `break-word`) let a wrapping line break inside a word (CSS Text
+  3), and `text-overflow: ellipsis` ends a line that does not wrap with "…" where it would
+  overflow a box that clips (CSS Overflow 3). Limits: the block container's values apply to
+  all of its lines; `break-all` breaks between any two characters even where a word would
+  fit; `keep-all` is `normal`; `text-overflow` takes no string, and a line that wraps, or
+  goes around a float or hangs, is not cut.
 - **Transforms:** `transform` with `translate()`, `translateX()`, `translateY()`, `scale()`,
   `scaleX()` and `scaleY()`, and `transform-origin` (CSS Transforms 1). The box and
   everything it holds are drawn moved and scaled; layout is unchanged. Limits: iced draws

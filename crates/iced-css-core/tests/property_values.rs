@@ -2056,3 +2056,25 @@ fn transform_takes_translations_and_scalings() {
         })
     ));
 }
+
+#[test]
+fn line_breaking_and_text_overflow_keywords_parse() {
+    let valid = |input: &str| matches!(parse(input).unwrap(), PropertyResult::Parsed(_));
+    for good in [
+        "overflow-wrap:anywhere",
+        "overflow-wrap:break-word",
+        "word-break:break-all",
+        "word-break:keep-all",
+        "text-overflow:ellipsis",
+        "text-overflow:clip",
+    ] {
+        assert!(valid(good), "{good}");
+    }
+    for bad in [
+        "overflow-wrap:all",
+        "word-break:anywhere",
+        "text-overflow:'…'",
+    ] {
+        assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
+    }
+}

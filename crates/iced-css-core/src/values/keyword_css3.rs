@@ -109,4 +109,10 @@ pub(super) const KEYWORDS: &[(&str, &[&str])] = &[
         "background-clip",
         &["border-box", "padding-box", "content-box"],
     ),
+    ("overflow-wrap", &["normal", "break-word", "anywhere"]),
+    (
+        "word-break",
+        &["normal", "keep-all", "break-all", "break-word"],
+    ),
+    ("text-overflow", &["clip", "ellipsis"]),
 ];

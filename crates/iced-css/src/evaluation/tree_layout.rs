@@ -2255,6 +2255,11 @@ pub struct TextStyle {
     pub align: &'static str,
     pub white_space: &'static str,
     pub text_transform: &'static str,
+    /// CSS Text 3 `overflow-wrap` and `word-break` keywords: where lines may break.
+    pub overflow_wrap: &'static str,
+    pub word_break: &'static str,
+    /// CSS Overflow 3 `text-overflow: ellipsis`, for the block's own lines.
+    pub ellipsis: bool,
 }
 
 fn clear_side(keyword: &str) -> ClearSide {
@@ -2670,7 +2675,31 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => false,
         };
+        // CSS Text 3: inherited, as their defaulting says.
+        let breaking = |name: &'static str, parent: fn(&TextStyle) -> &'static str| {
+            Ok::<_, E>(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => keyword.as_str(),
+                DefaultedValueRef::ParentComputed => {
+                    parent_index.map_or("normal", |at: usize| parent(&styles[at]))
+                }
+                _ => "normal",
+            })
+        };
+        let overflow_wrap = breaking("overflow-wrap", |style| style.overflow_wrap)?;
+        let word_break = breaking("word-break", |style| style.word_break)?;
+        let ellipsis = match defaulted("text-overflow")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "ellipsis"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_some_and(|at: usize| styles[at].ellipsis)
+            }
+            _ => false,
+        };
         styles.push(TextStyle {
+            overflow_wrap,
+            word_break,
+            ellipsis,
             small_caps,
             word_spacing: 0.0,
             text_indent: 0.0,

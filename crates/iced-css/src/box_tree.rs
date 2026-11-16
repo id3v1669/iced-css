@@ -434,12 +434,33 @@ pub struct TextLeaf {
     pub runs: Vec<TextRun>,
     pub align: &'static str,
     pub wraps: bool,
+    /// CSS Text 3: where a wrapping leaf's lines may break.
+    pub breaks: TextBreaks,
+    /// CSS Overflow 3 `text-overflow: ellipsis` in a box that clips: a line that does not
+    /// wrap ends in "…" where it would overflow.
+    pub ellipsis: bool,
     pub line_height: TextLineHeight,
     /// A percentage `text-indent` this leaf's first line takes once its width is known.
     pub percent_indent: Option<PercentIndent>,
     /// How far a negative `text-indent` pulls the first line out past the left edge, in
     /// pixels: that line lays out this much wider. Left-to-right blocks only.
     pub hang: f32,
+}
+
+/// Where a leaf's lines may break: `word-break` and `overflow-wrap`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextBreaks {
+    /// Between words only.
+    #[default]
+    Words,
+    /// `overflow-wrap: break-word`: a word too long for a line breaks anywhere, though
+    /// the narrowest the leaf can be stays its widest word.
+    LongWords,
+    /// `overflow-wrap: anywhere` or `word-break: break-word`: likewise, and its narrowest
+    /// is its widest character.
+    Anywhere,
+    /// `word-break: break-all`: between any two characters.
+    Everywhere,
 }
 
 /// A percentage `text-indent`, resolved against the width the leaf lays out in.
@@ -1860,6 +1881,32 @@ impl BoxTree {
             } else {
                 styles[container_of[arena]].line_height
             };
+            // CSS Text 3 and Overflow 3: as the block container of the lines says.
+            let block = if prepared.anonymous[arena] && !boxed {
+                &styles[container_of[arena]]
+            } else {
+                lead
+            };
+            let breaks = match (block.word_break, block.overflow_wrap) {
+                ("break-all", _) => TextBreaks::Everywhere,
+                ("break-word", _) | (_, "anywhere") => TextBreaks::Anywhere,
+                (_, "break-word") => TextBreaks::LongWords,
+                _ => TextBreaks::Words,
+            };
+            let clips = |projected: usize| {
+                prepared
+                    .slot
+                    .get(projected)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|slot| prepared.clipped[slot] || prepared.scrolls[slot])
+            };
+            let container = if prepared.anonymous[arena] && !boxed {
+                container_of[arena]
+            } else {
+                prepared.positions[arena].0
+            };
+            let ellipsis = styles[container].ellipsis && clips(container);
             Some(TextLeaf {
                 runs,
                 // 16.2: alignment belongs to the block container of the lines; generated
@@ -1870,6 +1917,8 @@ impl BoxTree {
                     lead.align
                 },
                 wraps,
+                breaks,
+                ellipsis,
                 line_height,
                 percent_indent: None,
                 hang: 0.0,
@@ -2572,6 +2621,8 @@ impl BoxTree {
                         }],
                         align: "right",
                         wraps: false,
+                        breaks: TextBreaks::Words,
+                        ellipsis: false,
                         line_height: style.line_height,
                         percent_indent: None,
                         hang: 0.0,
@@ -5267,10 +5318,11 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
         },
         align_y: iced::alignment::Vertical::Top,
         shaping: text::Shaping::Advanced,
-        wrapping: if leaf.wraps {
-            text::Wrapping::Word
-        } else {
-            text::Wrapping::None
+        wrapping: match (leaf.wraps, leaf.breaks) {
+            (false, _) => text::Wrapping::None,
+            (true, TextBreaks::Words) => text::Wrapping::Word,
+            (true, TextBreaks::LongWords | TextBreaks::Anywhere) => text::Wrapping::WordOrGlyph,
+            (true, TextBreaks::Everywhere) => text::Wrapping::Glyph,
         },
     })
 }
@@ -5747,6 +5799,64 @@ fn pieces<Renderer: text::Renderer<Font = iced::Font>>(
     Some(pieces)
 }
 
+/// A line too long for `width`, cut where it and a "…" after it fit, or `None` when the
+/// whole line fits. With no room even for one character, only the "…" shows.
+fn ellipsized<Renderer: text::Renderer<Font = iced::Font>>(
+    renderer: &Renderer,
+    leaf: &TextLeaf,
+    width: f32,
+) -> Option<TextLeaf> {
+    let fits = |leaf: &TextLeaf| {
+        paragraph::<Renderer>(renderer, leaf, f32::INFINITY)
+            .min_bounds()
+            .width
+            <= width
+    };
+    if fits(leaf) {
+        return None;
+    }
+    let text = leaf.text();
+    let ends: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
+    // The leaf cut before byte `end`, with the "…" on the last run that keeps text.
+    let cut = |end: usize| {
+        let mut cut = slice_leaf(leaf, 0..end);
+        let last = cut
+            .runs
+            .iter()
+            .rposition(|run| !run.text.is_empty())
+            .unwrap_or(0);
+        if let Some(run) = cut.runs.get_mut(last) {
+            run.text.push('\u{2026}');
+        }
+        cut
+    };
+    // The most characters that fit, found by halving.
+    let (mut low, mut high) = (0usize, ends.len());
+    while low < high {
+        let middle = (low + high).div_ceil(2);
+        if fits(&cut(ends[middle - 1]
+            + text[ends[middle - 1]..]
+                .chars()
+                .next()
+                .map_or(0, char::len_utf8)))
+        {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    let end = if low == 0 {
+        0
+    } else {
+        ends[low - 1]
+            + text[ends[low - 1]..]
+                .chars()
+                .next()
+                .map_or(0, char::len_utf8)
+    };
+    Some(cut(end))
+}
+
 /// A leaf over the byte range `range` of its text: every run, cut to it. The shaper skips
 /// empty runs, and keeping them keeps each span's index the run's in the whole leaf.
 fn slice_leaf(leaf: &TextLeaf, range: std::ops::Range<usize>) -> TextLeaf {
@@ -5863,6 +5973,19 @@ fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
         // A no-break space joins its neighbours, so only breaking white space ends a word.
         let breaks =
             |c: char| c.is_whitespace() && !matches!(c, '\u{a0}' | '\u{2007}' | '\u{202f}');
+        // Where a line may break between any two characters, each is a word of its own.
+        if matches!(leaf.breaks, TextBreaks::Anywhere | TextBreaks::Everywhere) {
+            for c in run.text.chars() {
+                if !breaks(c) {
+                    word.push(TextRun {
+                        text: c.to_string(),
+                        ..run.clone()
+                    });
+                }
+                flush(&mut word);
+            }
+            continue;
+        }
         for chunk in run.text.split_inclusive(breaks) {
             let body = chunk.trim_end_matches(breaks);
             if !body.is_empty() {
@@ -7731,6 +7854,16 @@ where
             // A paragraph aligns its lines within its widest line and draws from that
             // block's corner: place the block in the content box.
             // Shaped once: the same paragraph gives the block width and is stored.
+            // CSS Overflow 3: a line that overflows its clipping box ends in "…".
+            if leaf.ellipsis
+                && !leaf.wraps
+                && let Some(cut) = ellipsized(renderer, leaf, width)
+            {
+                let shaped: Renderer::Paragraph = paragraph(renderer, &cut, f32::INFINITY);
+                let corner = block_corner(shaped.min_bounds().width, place, width, place.top);
+                self.paragraphs.insert(arena, (shaped, corner));
+                continue;
+            }
             let shaped: Renderer::Paragraph = shaped_plain
                 .remove(&(arena, width.to_bits()))
                 .unwrap_or_else(|| paragraph(renderer, leaf, width));
