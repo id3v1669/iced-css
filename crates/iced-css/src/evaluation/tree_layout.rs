@@ -51,9 +51,9 @@ use iced_css_core::{
         font_size::{FontSizeError, FontSizeTable},
         font_weight::{FontWeight, compute_font_weight},
         property::{
-            ContentItem, EasingValue, FontFamily, GRID_LIMIT, GridBreadth, GridRepeat,
-            GridTrackEntry, GridTrackSize, GridValue, SpecifiedValue, StepPosition as StepValue,
-            TransitionProperty, TransitionValue,
+            AngleUnit, ContentItem, EasingValue, FontFamily, GRID_LIMIT, GradientDirection,
+            GridBreadth, GridRepeat, GridTrackEntry, GridTrackSize, GridValue, SpecifiedValue,
+            StepPosition as StepValue, TransitionProperty, TransitionValue,
         },
         registry::PropertyId,
         text_align::{ComputedTextAlign, compute_text_align},
@@ -1686,6 +1686,23 @@ pub struct BoxShadow {
     pub alpha: f32,
 }
 
+/// Which way a background gradient runs (CSS Images 3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GradientAim {
+    /// Radians, clockwise from up.
+    Angle(f32),
+    /// `to` a side or corner: across (-1 left, 1 right), down (-1 top, 1 bottom).
+    Toward(i8, i8),
+}
+
+/// A `linear-gradient()` background, its colors computed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradientPaint {
+    pub aim: GradientAim,
+    /// Color, opacity, and where it sits along the gradient line, when given.
+    pub stops: Vec<([f32; 3], f32, Option<Dim>)>,
+}
+
 /// An easing function as the widget runs it.
 pub fn css_easing(
     easing: &EasingValue,
@@ -1901,6 +1918,8 @@ pub struct TreePaint {
     pub transitions: Vec<Vec<ElementTransition>>,
     /// The animations each row asks for, by name; empty when none.
     pub animations: Vec<Vec<ElementAnimation>>,
+    /// Each row's background gradient, if its `background-image` is one.
+    pub gradients: Vec<Option<std::sync::Arc<GradientPaint>>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -2303,6 +2322,7 @@ pub fn evaluate_tree_paint<'r>(
     let mut grid_items: Vec<Option<Box<GridItem>>> = vec![None; projection.len()];
     let mut transitions: Vec<Vec<ElementTransition>> = vec![Vec::new(); projection.len()];
     let mut animations: Vec<Vec<ElementAnimation>> = vec![Vec::new(); projection.len()];
+    let mut gradients: Vec<Option<std::sync::Arc<GradientPaint>>> = vec![None; projection.len()];
     let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
     let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
     let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
@@ -3420,6 +3440,50 @@ pub fn evaluate_tree_paint<'r>(
                 });
             }
         }
+        // CSS Images 3: a linear gradient as the background image. `inherit` takes the
+        // parent's.
+        gradients[index] = match defaulted("background-image")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Gradient(gradient)) => {
+                let number = |value: &iced_css_core::values::Decimal| {
+                    value
+                        .scaled_finite_f32(1.0, limits.numeric)
+                        .map_or(0.0, |converted| converted.value)
+                };
+                let aim = match &gradient.direction {
+                    GradientDirection::Angle(value, unit) => {
+                        let turns = match unit {
+                            AngleUnit::Deg => number(value) / 360.0,
+                            AngleUnit::Rad => number(value) / std::f32::consts::TAU,
+                            AngleUnit::Grad => number(value) / 400.0,
+                            AngleUnit::Turn => number(value),
+                        };
+                        GradientAim::Angle(turns * std::f32::consts::TAU)
+                    }
+                    GradientDirection::Toward(across, down) => GradientAim::Toward(*across, *down),
+                };
+                let mut stops = Vec::with_capacity(gradient.stops.len());
+                for stop in &gradient.stops {
+                    // No color of its own: the element's `color`.
+                    let (color, alpha) = match &stop.color {
+                        Some(color) => (
+                            rgb(color, limits.numeric).unwrap_or([0.0; 3]),
+                            opacity(color).unwrap_or(if rgb(color, limits.numeric).is_some() {
+                                1.0
+                            } else {
+                                0.0
+                            }),
+                        ),
+                        None => (paints[index].color.unwrap_or([0.0; 3]), 1.0),
+                    };
+                    stops.push((color, alpha, stop.position.as_ref().map(own_length)));
+                }
+                Some(std::sync::Arc::new(GradientPaint { aim, stops }))
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.and_then(|parent: usize| gradients[parent].clone())
+            }
+            _ => None,
+        };
         // CSS Backgrounds 3: the first outer shadow; iced draws one, without a spread.
         // Not inherited; `inherit` takes the parent's.
         paints[index].shadow = match defaulted("box-shadow")? {
@@ -4011,5 +4075,6 @@ pub fn evaluate_tree_paint<'r>(
         grid_items,
         transitions,
         animations,
+        gradients,
     })
 }

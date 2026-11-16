@@ -391,17 +391,20 @@ fn image_longhands_admit_one_uri_or_none() {
                 PropertyResult::Parsed(_)
             ));
         }
-        for value in [
-            "url(a) url(b)",
-            "linear-gradient(red,blue)",
-            "red",
-            "'a.png'",
-        ] {
+        for value in ["url(a) url(b)", "red", "'a.png'"] {
             assert_eq!(
                 parse(&format!("{name}:{value}")).unwrap(),
                 PropertyResult::Invalid
             );
         }
+        // CSS Images 3: a gradient is a background image, not a list marker.
+        assert_eq!(
+            matches!(
+                parse(&format!("{name}:linear-gradient(red,blue)")).unwrap(),
+                PropertyResult::Parsed(_)
+            ),
+            name == "background-image"
+        );
     }
 }
 
@@ -1914,4 +1917,68 @@ fn animation_properties_parse_lists_and_the_shorthand() {
         panic!()
     };
     assert!(counts[0].is_none() && counts[1].is_some());
+}
+
+#[test]
+fn background_image_takes_a_linear_gradient() {
+    let gradient = |input: &str| match parse(&format!("background-image:{input}")).unwrap() {
+        PropertyResult::Parsed(ParsedProperty {
+            value: SpecifiedValue::Gradient(gradient),
+            ..
+        }) => Some(gradient),
+        _ => None,
+    };
+    let plain = gradient("linear-gradient(red, blue)").unwrap();
+    assert_eq!(plain.direction, GradientDirection::Toward(0, 1));
+    assert_eq!(plain.stops.len(), 2);
+    assert!(plain.stops.iter().all(|stop| stop.position.is_none()));
+    let angled =
+        gradient("linear-gradient(45deg, rgb(0, 0, 255) 10%, currentColor, #fff 20px 80%)")
+            .unwrap();
+    assert!(matches!(
+        angled.direction,
+        GradientDirection::Angle(_, AngleUnit::Deg)
+    ));
+    // Two places make two stops; `currentColor` is the element's color.
+    assert_eq!(angled.stops.len(), 4);
+    assert!(angled.stops[1].color.is_none());
+    assert_eq!(
+        gradient("linear-gradient(to top right, red, blue)")
+            .unwrap()
+            .direction,
+        GradientDirection::Toward(1, -1)
+    );
+    for unit in ["0.5turn", "100grad", "1rad", "0"] {
+        assert!(
+            gradient(&format!("linear-gradient({unit}, red, blue)")).is_some(),
+            "{unit}"
+        );
+    }
+    for bad in [
+        "linear-gradient(red)",
+        "linear-gradient(to middle, red, blue)",
+        "linear-gradient(to left right, red, blue)",
+        "linear-gradient(red, 50%, blue)",
+        "linear-gradient(red 1px 2px 3px, blue)",
+        "linear-gradient(10px, red, blue)",
+        "linear-gradient(red, blue) red",
+        "radial-gradient(red, blue)",
+        "repeating-linear-gradient(red, blue)",
+        "linear-gradient(red, blue",
+    ] {
+        assert!(gradient(bad).is_none(), "{bad}");
+    }
+    // In the shorthand too, and not as a list image.
+    let PropertyResult::Parsed(ParsedProperty {
+        value: SpecifiedValue::Expanded(leaves),
+        ..
+    }) = parse("background:linear-gradient(red, blue) no-repeat").unwrap()
+    else {
+        panic!()
+    };
+    assert!(matches!(leaves[1].value, SpecifiedValue::Gradient(_)));
+    assert_eq!(
+        parse("list-style-image:linear-gradient(red, blue)").unwrap(),
+        PropertyResult::Invalid
+    );
 }

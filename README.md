@@ -148,6 +148,15 @@ cargo test --workspace --features iced-css/image,iced-css/svg
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` (also with `::`) with counters and
   quotes, `visibility`, outlines and every border style (collapsed tables resolve each stretch of edge between the cells that meet there, where lines cross the later cell's border shows, and each grid line takes its widest border; an inline element's outline goes around each of its pieces on a line), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
+- **Gradients:** `linear-gradient()` as a `background-image` (CSS Images 3), also in the
+  `background` shorthand: an angle (`deg`, `rad`, `grad`, `turn`) or `to` a side or corner,
+  and color stops with up to two places each, the unplaced ones spread between their
+  neighbours. It covers the padding box, over the background color. Limits: no color
+  hints, no repeating or radial gradients, at most eight stops are drawn, colors mix
+  without premultiplying, the gradient does not reach under the borders, and at angles
+  across a corner iced's gradient line is shorter than CSS's, so the corners beyond it
+  show the end colors flat. `background-repeat` and `background-position` do not apply
+  to it, nor does it animate.
 - **Background images** (with the `image` Cargo feature): local files through `url()`, with `repeat`, `position` and
   `attachment`; relative URLs resolve against `BoxTree::with_base`, their `%` escapes decoded
   and their query and fragment dropped. Paths outside the base, also through a symlink, and

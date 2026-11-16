@@ -73,9 +73,9 @@ use crate::{
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
             BackgroundImage, BackgroundOffset, BoxPaint, ElementAnimation, ElementTransition,
-            GeneratedFrame, GeneratedRun, InlineBoxSides, PreparedTree, RunSource, TextLineHeight,
-            TextStyle, TreeLayoutError, TreePaint, evaluate_tree_paint, prepare_captured_tree,
-            prepare_tree_source_projection,
+            GeneratedFrame, GeneratedRun, GradientAim, GradientPaint, InlineBoxSides, PreparedTree,
+            RunSource, TextLineHeight, TextStyle, TreeLayoutError, TreePaint, evaluate_tree_paint,
+            prepare_captured_tree, prepare_tree_source_projection,
         },
     },
     host::{
@@ -836,6 +836,7 @@ struct Style {
     transitions: Vec<Vec<ElementTransition>>,
     animations: Vec<Vec<ElementAnimation>>,
     key: InteractionKey,
+    gradients: Vec<Option<Arc<GradientPaint>>>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -870,6 +871,8 @@ pub struct BoxTree {
     animations: Vec<Vec<ElementAnimation>>,
     /// The interaction state it was styled for.
     key: InteractionKey,
+    /// Background gradients, by projected index (CSS Images 3).
+    gradients: Vec<Option<Arc<GradientPaint>>>,
 }
 
 /// Two trees are equal when they draw alike and restyle from the same sheets.
@@ -881,6 +884,7 @@ impl PartialEq for BoxTree {
             && self.markers == other.markers
             && self.backgrounds == other.backgrounds
             && self.marker_images == other.marker_images
+            && self.gradients == other.gradients
             && (Arc::ptr_eq(&self.source, &other.source)
                 || self.source.sheets == other.source.sheets)
     }
@@ -1095,6 +1099,7 @@ impl BoxTree {
                         && one.markers == other.markers
                         && one.backgrounds == other.backgrounds
                         && one.marker_images == other.marker_images
+                        && one.gradients == other.gradients
                         // What `!important` wins decides which presented values lie over it.
                         && one.important == other.important)
             }
@@ -1119,6 +1124,7 @@ impl BoxTree {
             transitions: self.transitions.clone(),
             animations: self.animations.clone(),
             key: self.key,
+            gradients: self.gradients.clone(),
         }
     }
 
@@ -1140,6 +1146,7 @@ impl BoxTree {
             transitions: style.transitions,
             animations: style.animations,
             key: style.key,
+            gradients: style.gradients,
         }
     }
 
@@ -1431,6 +1438,7 @@ impl BoxTree {
             grid_items,
             transitions,
             animations,
+            gradients,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes, 16.0)
             .map_err(failed)?;
         let weights: Vec<u16> = styles.iter().map(|style| style.weight).collect();
@@ -2700,6 +2708,7 @@ impl BoxTree {
             transitions,
             animations,
             key,
+            gradients,
         })
     }
 
@@ -6280,6 +6289,147 @@ fn draw_column<Renderer: renderer::Renderer>(
     );
 }
 
+/// A box's border widths: top, right, bottom, left.
+fn geometry_border_widths(geometry: &FlowGeometry) -> [f32; 4] {
+    [
+        geometry.padding.top - geometry.border.top,
+        geometry.border.right - geometry.padding.right,
+        geometry.border.bottom - geometry.padding.bottom,
+        geometry.padding.left - geometry.border.left,
+    ]
+}
+
+/// CSS Images 3, 3.1: a gradient over a `width` by `height` box as iced draws one. Stops
+/// without a place share the room between their neighbours; a stop before another is
+/// moved up to it. iced's gradient line is twice the larger of the box's half-extents
+/// along the angle, CSS's the distance between the corners' projections onto it: places
+/// are moved from one to the other, and what falls beyond iced's ends is cut there, so
+/// the corners past iced's ends show the end colors. At most eight stops show.
+fn linear_gradient(
+    gradient: &GradientPaint,
+    width: f32,
+    height: f32,
+    through: f32,
+) -> Option<iced::gradient::Linear> {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    if width <= 0.0 || height <= 0.0 || gradient.stops.len() < 2 {
+        return None;
+    }
+    let angle = match gradient.aim {
+        GradientAim::Angle(angle) => angle,
+        GradientAim::Toward(0, -1) => 0.0,
+        GradientAim::Toward(1, 0) => FRAC_PI_2,
+        GradientAim::Toward(0, _) => PI,
+        GradientAim::Toward(-1, 0) => 3.0 * FRAC_PI_2,
+        // A corner: the line meeting the other two corners lies across the middle.
+        GradientAim::Toward(across, down) => {
+            f32::atan2(f32::from(across) * height, -f32::from(down) * width)
+        }
+    };
+    let (sin, cos) = angle.sin_cos();
+    let css = (width * sin).abs() + (height * cos).abs();
+    let iced = (width * sin.abs()).max(height * cos.abs());
+    if css <= 0.0 || iced <= 0.0 {
+        return None;
+    }
+    // Places along the CSS line, from 0 to 1.
+    let count = gradient.stops.len();
+    let mut places: Vec<Option<f32>> = gradient
+        .stops
+        .iter()
+        .map(|(_, _, position)| {
+            position.map(|position| match position {
+                Dim::Px(pixels) => pixels / css,
+                Dim::Percent(percent) => percent / 100.0,
+                Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => {
+                    pixels / css + percent / 100.0
+                }
+                Dim::Auto => 0.0,
+            })
+        })
+        .collect();
+    places[0] = places[0].or(Some(0.0));
+    places[count - 1] = places[count - 1].or(Some(1.0));
+    let mut highest = f32::NEG_INFINITY;
+    for place in places.iter_mut().flatten() {
+        highest = highest.max(*place);
+        *place = highest;
+    }
+    let mut at = 0;
+    while at < count {
+        if places[at].is_some() {
+            at += 1;
+            continue;
+        }
+        let before = places[at - 1].expect("placed");
+        let next = (at..count)
+            .find(|index| places[*index].is_some())
+            .expect("last placed");
+        let after = places[next].expect("placed");
+        let gaps = (next - at + 1) as f32;
+        for (step, place) in places[at..next].iter_mut().enumerate() {
+            *place = Some(before + (after - before) * (step + 1) as f32 / gaps);
+        }
+        at = next;
+    }
+    let color = |(rgb, alpha, _): &([f32; 3], f32, Option<Dim>)| [rgb[0], rgb[1], rgb[2], *alpha];
+    let stops: Vec<(f32, [f32; 4])> = places
+        .iter()
+        .zip(&gradient.stops)
+        .map(|(place, stop)| {
+            (
+                ((place.expect("placed") - 0.5) * css) / iced + 0.5,
+                color(stop),
+            )
+        })
+        .collect();
+    // The color at `u` along iced's line.
+    let sample = |u: f32| -> [f32; 4] {
+        match stops.iter().position(|stop| stop.0 >= u) {
+            None => stops[count - 1].1,
+            Some(0) => stops[0].1,
+            Some(next) => {
+                let (a, b) = (stops[next - 1], stops[next]);
+                let span = b.0 - a.0;
+                let t = if span > 0.0 { (u - a.0) / span } else { 1.0 };
+                std::array::from_fn(|channel| a.1[channel] + (b.1[channel] - a.1[channel]) * t)
+            }
+        }
+    };
+    let mut shown: Vec<(f32, [f32; 4])> = Vec::new();
+    if stops[0].0 > 0.0 || stops[count - 1].0 < 0.0 {
+        shown.push((0.0, sample(0.0)));
+    }
+    shown.extend(
+        stops
+            .iter()
+            .copied()
+            .filter(|stop| (0.0..=1.0).contains(&stop.0)),
+    );
+    if stops[count - 1].0 < 1.0 || stops[0].0 > 1.0 {
+        shown.push((1.0, sample(1.0)));
+    }
+    if shown.first().is_none_or(|first| first.0 > 0.0) {
+        shown.insert(0, (0.0, sample(0.0)));
+    }
+    if shown.last().is_some_and(|last| last.0 < 1.0) {
+        shown.push((1.0, sample(1.0)));
+    }
+    // Eight at most: the ends, and those between spread evenly.
+    if shown.len() > 8 {
+        let last = shown.len() - 1;
+        shown = (0..8).map(|pick| shown[pick * last / 7]).collect();
+    }
+    let mut linear = iced::gradient::Linear::new(iced::Radians(angle));
+    for (offset, [r, g, b, a]) in shown {
+        linear = linear.add_stop(
+            offset.clamp(0.0, 1.0),
+            Color::from_rgba(r, g, b, a * through),
+        );
+    }
+    Some(linear)
+}
+
 /// Which of a box's quads to draw. An image goes between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BoxParts {
@@ -6338,7 +6488,16 @@ fn draw_box<Renderer: renderer::Renderer>(
             _ => padding.left = border.left + width,
         }
     }
-    paint_box(renderer, origin, tree.paints[index], &here, parts, &cuts);
+    let gradient = tree.gradients.get(index).and_then(Option::as_deref);
+    paint_box(
+        renderer,
+        origin,
+        tree.paints[index],
+        &here,
+        parts,
+        &cuts,
+        gradient,
+    );
 }
 
 /// A box's corner radii in pixels: a percentage is of its border box's shorter side, and
@@ -6404,6 +6563,7 @@ fn paint_box<Renderer: renderer::Renderer>(
     geometry: &FlowGeometry,
     parts: BoxParts,
     cuts: &[(usize, f32, f32)],
+    gradient: Option<&GradientPaint>,
 ) {
     // CSS Color 3 `opacity`, through the box's ancestors: on everything it draws here.
     let through = paint.opacity.unwrap_or(1.0);
@@ -6494,6 +6654,36 @@ fn paint_box<Renderer: renderer::Renderer>(
                 paint.background_fade.unwrap_or(1.0) * through,
             ),
         );
+    }
+    // CSS Images 3: a gradient over the padding box, above the background color.
+    if let Some(gradient) = gradient.filter(|_| parts != BoxParts::Border) {
+        let area = geometry.padding;
+        let bounds = Rectangle {
+            x: area.left + origin.x,
+            y: area.top + origin.y,
+            width: area.right - area.left,
+            height: area.bottom - area.top,
+        };
+        if let Some(linear) = linear_gradient(gradient, bounds.width, bounds.height, through) {
+            let widths = geometry_border_widths(geometry);
+            let inner = |outer: f32, a: f32, b: f32| (outer - a.max(b)).max(0.0);
+            renderer.fill_quad(
+                Quad {
+                    bounds,
+                    border: iced::Border {
+                        radius: iced::border::Radius {
+                            top_left: inner(radius.top_left, widths[3], widths[0]),
+                            top_right: inner(radius.top_right, widths[0], widths[1]),
+                            bottom_right: inner(radius.bottom_right, widths[1], widths[2]),
+                            bottom_left: inner(radius.bottom_left, widths[2], widths[3]),
+                        },
+                        ..iced::Border::default()
+                    },
+                    ..Quad::default()
+                },
+                iced::Background::Gradient(iced::Gradient::Linear(linear)),
+            );
+        }
     }
     // A rounded box whose four sides are one solid border draws it as one curved ring.
     // Sides that differ, or are not solid, or lose a stretch to a neighbour, stay square.
@@ -8057,7 +8247,15 @@ where
                             if let Some(&(arena, paint)) = prepared.generated_boxes.get(at)
                                 && let Some(geometry) = self.slot_geometry.get(arena)
                             {
-                                paint_box(renderer, origin, paint, geometry, BoxParts::All, &[]);
+                                paint_box(
+                                    renderer,
+                                    origin,
+                                    paint,
+                                    geometry,
+                                    BoxParts::All,
+                                    &[],
+                                    None,
+                                );
                             }
                         }
                         PaintStep::Column(at) => {
@@ -8988,6 +9186,59 @@ mod tests {
         let (shown, presenting) = state.styled_for(&tree, hovered, at(1100));
         assert_eq!((width(&shown), presenting), (50.0, false));
         assert!(!state.advance_transitions(&tree, hovered, at(1200)));
+    }
+
+    #[test]
+    fn linear_gradients_compute_and_fit_iced_s_gradient_line() {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![]), node("b", vec![])]),
+            "#a { color:#00ff00; background-image: linear-gradient(to right, #ff0000, currentColor 25%, rgba(0, 0, 255, 0.5)); }
+             #b { background: linear-gradient(45deg, #000000, #ffffff); }",
+        )
+        .unwrap();
+        let a = tree.gradients[1].as_deref().unwrap();
+        assert_eq!(a.aim, GradientAim::Toward(1, 0));
+        assert_eq!(a.stops[1].0, [0.0, 1.0, 0.0]);
+        assert!((a.stops[2].1 - 0.5).abs() < 0.01);
+        assert_eq!(a.stops[1].2, Some(Dim::Percent(25.0)));
+        let offsets = |linear: iced::gradient::Linear| {
+            linear
+                .stops
+                .iter()
+                .flatten()
+                .map(|stop| (stop.offset, stop.color.r))
+                .collect::<Vec<_>>()
+        };
+        // Across: the lines agree.
+        let across = linear_gradient(a, 200.0, 100.0, 1.0).unwrap();
+        assert_eq!(
+            offsets(across)
+                .iter()
+                .map(|stop| stop.0)
+                .collect::<Vec<_>>(),
+            [0.0, 0.25, 1.0]
+        );
+        // Diagonal on a square: CSS's line (the corners' projections, 141) is twice iced's
+        // (the larger half-extent along it, 71), so its ends fall beyond iced's and are cut
+        // there, at the colors a quarter of the way in.
+        let b = tree.gradients[2].as_deref().unwrap();
+        let diagonal = offsets(linear_gradient(b, 100.0, 100.0, 1.0).unwrap());
+        let reach = 0.25;
+        assert_eq!(diagonal.len(), 2);
+        assert!((diagonal[0].1 - reach).abs() < 1e-4);
+        assert!((diagonal[1].1 - (1.0 - reach)).abs() < 1e-4);
+        // A corner, with stops placed between their neighbours.
+        let corner = GradientPaint {
+            aim: GradientAim::Toward(1, 1),
+            stops: vec![
+                ([0.0; 3], 1.0, None),
+                ([0.5; 3], 1.0, None),
+                ([1.0; 3], 1.0, None),
+            ],
+        };
+        let linear = linear_gradient(&corner, 100.0, 100.0, 1.0).unwrap();
+        assert!((linear.angle.0 - 3.0 * std::f32::consts::FRAC_PI_4).abs() < 1e-5);
+        assert_eq!(offsets(linear)[1], (0.5, 0.5));
     }
 
     #[test]

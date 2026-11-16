@@ -6703,3 +6703,21 @@ fn a_no_break_space_holds_a_shrink_to_fit_box_to_both_words() {
     let (held, broken) = (width("mmm\u{a0}mmm"), width("mmm mmm"));
     assert!(held > broken * 1.5, "{held} {broken}");
 }
+
+#[test]
+fn a_linear_gradient_paints_from_one_color_to_the_other() {
+    let root = node("page", vec![node("g", vec![])]);
+    let css = "#page { background-color:#ffffff; }
+        #g { width:200px; height:40px; background: #00ff00 linear-gradient(to right, #ff0000, #0000ff); }";
+    let view: Element<'_, u8> = BoxTree::new(root, css).unwrap().view();
+    let mut ui = simulator(view);
+    let snapshot = ui.snapshot(&Theme::Light).unwrap();
+    let pixels = Pixels::of(&snapshot, "gradient");
+    // The snapshot is at twice the scale: the box spans 400 pixels.
+    let [left, middle, right] = [4, 200, 394].map(|x| pixels.at(x, 40));
+    // Red at the start, blue at the end, a mix between; the color beneath never shows.
+    assert!(left[0] > 200 && left[2] < 50, "{left:?}");
+    assert!(right[2] > 200 && right[0] < 50, "{right:?}");
+    assert!(middle[0] > 60 && middle[2] > 60, "{middle:?}");
+    assert!([left, middle, right].iter().all(|pixel| pixel[1] < 40));
+}

@@ -34,6 +34,8 @@ mod cursor;
 mod font_family;
 #[path = "font_shorthand.rs"]
 mod font_shorthand;
+#[path = "gradient.rs"]
+mod gradient;
 #[path = "grid.rs"]
 mod grid;
 #[path = "list_shorthand.rs"]
@@ -48,6 +50,7 @@ mod shorthand;
 mod transition;
 pub use content::ContentItem;
 pub use cursor::Cursor;
+pub use gradient::{AngleUnit, GradientDirection, GradientStop, LinearGradient};
 pub use grid::{
     GRID_LIMIT, GridBreadth, GridLineValue, GridRepeat, GridTrackEntry, GridTrackSize, GridValue,
 };
@@ -112,6 +115,8 @@ pub enum SpecifiedValue {
     Shadows(Vec<ShadowValue>),
     /// A grid property (CSS Grid Layout 1).
     Grid(GridValue),
+    /// A `background-image` gradient (CSS Images 3).
+    Gradient(LinearGradient),
     /// A transition property's list (CSS Transitions 1).
     Transition(TransitionValue),
     /// A custom property declaration (`--name: value`): its name, with its dashes, and
@@ -700,6 +705,17 @@ pub(super) fn inner(
             SpecifiedValue::Quotes(value)
         }
     } else if image_property {
+        // CSS Images 3: a gradient draws as a background image.
+        if name == "background-image" && first.kind == TokenKind::Function {
+            return Ok(match gradient::parse(input, limits, work)? {
+                Some(gradient) => PropertyResult::Parsed(ParsedProperty {
+                    property,
+                    value: SpecifiedValue::Gradient(gradient),
+                    important,
+                }),
+                None => PropertyResult::Invalid,
+            });
+        }
         if significant(input, &mut offset, work)?.is_some() {
             return Ok(PropertyResult::Invalid);
         }
