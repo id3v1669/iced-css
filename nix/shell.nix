@@ -25,4 +25,8 @@ pkgs.mkShell rec {
   ];
 
   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
+
+  # wgpu probes every backend at start-up, and NVIDIA's EGL library can refuse the
+  # display there, which panics inside khronos-egl. Vulkan is the backend in use anyway.
+  WGPU_BACKEND = "vulkan";
 }
