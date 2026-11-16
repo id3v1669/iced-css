@@ -138,7 +138,8 @@ fn mix(from: Value, to: Value, progress: f32) -> Option<Value> {
                 Dim::Px(pixels) => Some((pixels, 0.0)),
                 Dim::Percent(percent) => Some((0.0, percent)),
                 Dim::Mix(pixels, percent) => Some((pixels, percent)),
-                Dim::Auto => None,
+                // Only layout's own copies hold one.
+                Dim::Auto | Dim::Clamped(..) => None,
             };
             let ((a_pixels, a_percent), (b_pixels, b_percent)) = (parts(a)?, parts(b)?);
             Some(Value::Length(if progress <= 0.0 {
@@ -463,7 +464,7 @@ impl BoxTree {
             let parts = |dim: Dim| match dim {
                 Dim::Px(pixels) => (pixels, 0.0),
                 Dim::Percent(percent) => (0.0, percent),
-                Dim::Mix(pixels, percent) => (pixels, percent),
+                Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => (pixels, percent),
                 Dim::Auto => (0.0, 0.0),
             };
             // Its sides on its line (`read_generated`).
@@ -937,7 +938,7 @@ impl BoxTree {
         let (pixels, percent) = match value {
             Dim::Px(pixels) => (pixels, 0.0),
             Dim::Percent(percent) => (0.0, percent),
-            Dim::Mix(pixels, percent) => (pixels, percent),
+            Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => (pixels, percent),
             Dim::Auto => (0.0, 0.0),
         };
         // A border's width is in its box with the padding: the same spaces inside.

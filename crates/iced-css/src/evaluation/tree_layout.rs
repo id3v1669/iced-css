@@ -30,7 +30,8 @@ use iced_css_core::{
         block::{AutoLength, Direction},
         block_flow::{
             Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
-            RowAlign, TableRole, layout_block_flow_baselines, preferred_content_widths,
+            RowAlign, TableRole, content_boxes, layout_block_flow_baselines,
+            preferred_content_widths,
         },
         clearance::ClearSide,
         display::{Display, Float, Position},
@@ -1199,6 +1200,9 @@ impl PreparedTree {
         if boxes.is_empty() {
             return Ok(Vec::new());
         }
+        // `box-sizing: border-box` sizes as content sizes, for flow and absolute placement.
+        let converted = content_boxes(boxes);
+        let boxes = &*converted;
         let mut geometry = layout_block_flow_baselines(
             boxes,
             viewport,
@@ -1340,6 +1344,7 @@ fn place_absolute(
     let indefinite = initial && viewport.height.is_none();
     let indefinite_auto = |dim: Dim| match dim {
         Dim::Percent(_) | Dim::Mix(..) if indefinite => Dim::Auto,
+        Dim::Clamped(_, percent) if indefinite && percent != 0.0 => Dim::Auto,
         other => other,
     };
     let offset = [
@@ -1355,6 +1360,9 @@ fn place_absolute(
         Dim::Px(number) => AutoLength::Value(number),
         Dim::Percent(number) => AutoLength::Value(basis * number / 100.0),
         Dim::Mix(pixels, percent) => AutoLength::Value(pixels + basis * percent / 100.0),
+        Dim::Clamped(pixels, percent) => {
+            AutoLength::Value((pixels + basis * percent / 100.0).max(0.0))
+        }
     };
     let zero = |dim: Dim, basis: f32| match auto(dim, basis) {
         AutoLength::Auto => 0.0,
@@ -1542,6 +1550,10 @@ fn containing_height(
         Dim::Px(number) => Some(number),
         Dim::Percent(number) => basis.map(|height| height * number / 100.0),
         Dim::Mix(pixels, percent) => basis.map(|height| pixels + height * percent / 100.0),
+        Dim::Clamped(pixels, percent) if percent == 0.0 => Some(pixels.max(0.0)),
+        Dim::Clamped(pixels, percent) => {
+            basis.map(|height| (pixels + height * percent / 100.0).max(0.0))
+        }
     };
     let height = vertical(value.height)?;
     let capped = vertical(value.max_height).map_or(height, |limit| height.min(limit));
@@ -1554,12 +1566,16 @@ fn relative_shift(direction: Direction, offset: [Dim; 4], basis: (f32, Option<f3
         Dim::Px(number) => Some(number),
         Dim::Percent(number) => Some(basis.0 * number / 100.0),
         Dim::Mix(pixels, percent) => Some(pixels + basis.0 * percent / 100.0),
+        Dim::Clamped(pixels, percent) => Some((pixels + basis.0 * percent / 100.0).max(0.0)),
     };
     let vertical = |dim: Dim| match dim {
         Dim::Auto => None,
         Dim::Px(number) => Some(number),
         Dim::Percent(number) => basis.1.map(|height| height * number / 100.0),
         Dim::Mix(pixels, percent) => basis.1.map(|height| pixels + height * percent / 100.0),
+        Dim::Clamped(pixels, percent) => basis
+            .1
+            .map(|height| (pixels + height * percent / 100.0).max(0.0)),
     };
     let [top, right, bottom, left] = offset;
     // 9.4.3: top wins over bottom; the containing block's start edge wins horizontally.
@@ -1664,6 +1680,8 @@ pub struct BoxPaint {
     pub hidden_empty: bool,
     /// `table-layout: fixed`.
     pub fixed_table: bool,
+    /// `box-sizing: border-box`.
+    pub border_box: bool,
     /// Top, right, bottom, left.
     pub border: [Option<[f32; 3]>; 4],
     /// Each border color's opacity while an animation fades it; `None` is opaque.
@@ -2537,7 +2555,18 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => false,
         };
+        // CSS Sizing 3: not inherited; `inherit` takes the parent's.
+        let border_box = match defaulted("box-sizing")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                keyword.as_str() == "border-box"
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.is_some_and(|parent: usize| paints[parent].border_box)
+            }
+            _ => false,
+        };
         paints.push(BoxPaint {
+            border_box,
             cursor,
             clip: None,
             collapsed_cell: None,
@@ -3240,7 +3269,9 @@ pub fn evaluate_tree_paint<'r>(
                         match length(target, size) {
                             Dim::Px(pixels) => (pixels, 0.0),
                             Dim::Percent(percent) => (0.0, percent),
-                            Dim::Mix(pixels, percent) => (pixels, percent),
+                            Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => {
+                                (pixels, percent)
+                            }
                             Dim::Auto => (0.0, 0.0),
                         }
                     }

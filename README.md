@@ -1,7 +1,8 @@
 # iced-css
 
-CSS 2.2 support for [iced](https://github.com/iced-rs/iced): write a stylesheet, capture a
-tree of boxes, and get a laid-out, painted and interactive iced widget.
+CSS 2.2 support for [iced](https://github.com/iced-rs/iced), with parts of later CSS
+modules being added: write a stylesheet, capture a tree of boxes, and get a laid-out,
+painted and interactive iced widget.
 
 ```rust
 use iced_css::{box_tree::{BoxTree, attribute_limits, capture_limits}, capture::adapters};
@@ -70,7 +71,10 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
 - **Block layout:** nested boxes, margin collapsing, floats, clearance, formatting contexts,
-  `min-`/`max-` sizes, percentages, `em` and `ex`.
+  `min-`/`max-` sizes, percentages, `em` and `ex`. `box-sizing: border-box` (CSS Sizing 3)
+  makes `width`, `height` and their minimums and maximums sizes of the border box; a
+  percentage padding above or below is not taken out of a height, and a `:before` or
+  `:after` box does not read it.
 - **Positioning:** relative, absolute and fixed, with `z-index` stacking, on boxes; an inline
   element ignores `position: relative`: its offsets and `z-index` do nothing, and it is no
   containing block for absolute descendants, which take the nearest positioned box instead.
@@ -270,7 +274,7 @@ A cascade over more than 100 million box and rule pairs, counting every rule whe
 
 ## Coverage
 
-`tests/property_coverage.rs` applies each of the 81 CSS 2.2 longhands in a page where it should matter and checks the result changes: 75 do. The rest are `letter-spacing` and the five paged-media properties. That shows a property is read, not that every value is right; there is no conformance suite.
+`tests/property_coverage.rs` applies each of the 81 CSS 2.2 longhands, and each longhand added from a later module, in a page where it should matter and checks the result changes: 75 of the CSS 2.2 ones do, and every later one. The rest are `letter-spacing` and the five paged-media properties. That shows a property is read, not that every value is right; there is no conformance suite.
 
 ## Status
 

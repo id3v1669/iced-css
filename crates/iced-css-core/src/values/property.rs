@@ -1,7 +1,13 @@
 #[path = "decoration.rs"]
 mod decoration;
+#[path = "keyword_css3.rs"]
+mod keyword_css3;
 #[path = "keyword_data.rs"]
 mod keyword_data;
+/// The finite keyword grammars: CSS 2.2's, then those of later modules.
+fn keyword_grammars() -> impl Iterator<Item = &'static (&'static str, &'static [&'static str])> {
+    keyword_data::KEYWORDS.iter().chain(keyword_css3::KEYWORDS)
+}
 #[path = "length_property.rs"]
 mod length_property;
 use super::{
@@ -63,7 +69,7 @@ pub(super) fn initial_finite_keyword(property: PropertyId) -> Option<Keyword> {
 
 /// Validate a finite keyword against the retained, source-derived grammar.
 pub(super) fn finite_keyword_allowed(property: PropertyId, keyword: Keyword) -> bool {
-    keyword_data::KEYWORDS.iter().any(|(name, values)| {
+    keyword_grammars().any(|(name, values)| {
         *name == property.descriptor().name && values.contains(&keyword.as_str())
     })
 }
@@ -215,8 +221,7 @@ pub(super) fn inner(
     work: &mut usize,
 ) -> Result<PropertyResult, PropertyError> {
     let name = property.descriptor().name;
-    let keywords = keyword_data::KEYWORDS
-        .iter()
+    let keywords = keyword_grammars()
         .find(|(property, _)| *property == name)
         .map(|(_, values)| *values)
         .or_else(|| border_styles(name));

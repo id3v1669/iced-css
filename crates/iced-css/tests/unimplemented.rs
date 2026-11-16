@@ -33,7 +33,6 @@ css_todo_test!(specificity_and_important, "ordering, !important");
 css_todo_test!(inheritance, "inheritance");
 css_todo_test!(cascade_keywords, "inherit / initial / unset / revert");
 
-css_todo_test!(box_sizing, "box-sizing");
 css_todo_test!(aspect_ratio, "aspect-ratio");
 css_todo_test!(margin_negative, "negative margins");
 css_todo_test!(margin_collapsing, "margin collapsing");

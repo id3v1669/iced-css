@@ -315,6 +315,12 @@ const CASES: &[(&str, &str, &str)] = &[
     ("width", "", "#k { width:50px; }"),
     ("word-spacing", "", "#b { word-spacing:16px; }"),
     ("z-index", "#b { position:relative; }", "#b { z-index:5; }"),
+    // Later modules.
+    (
+        "box-sizing",
+        "#k { width:50px; padding:5px; }",
+        "#k { box-sizing:border-box; }",
+    ),
 ];
 
 #[test]

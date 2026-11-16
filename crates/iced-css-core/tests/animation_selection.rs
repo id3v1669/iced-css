@@ -59,10 +59,10 @@ fn every_registry_property_has_explicit_eligibility_and_work_is_bounded() {
     for property in PropertyId::all() {
         let result = AnimationSelection::new(&[property], work());
         if property.descriptor().scope == Scope::Paged {
-            paged += 1;
+            paged += usize::from(property.is_css22());
             assert_eq!(result.unwrap_err(), SelectionError::Undefined(property));
         } else {
-            screen += 1;
+            screen += usize::from(property.is_css22());
             if property == id("display") {
                 assert_eq!(result.unwrap_err(), SelectionError::NotAnimatable(property));
             } else {
@@ -75,6 +75,7 @@ fn every_registry_property_has_explicit_eligibility_and_work_is_bounded() {
             }
         }
     }
+    // CSS 2.2's own; properties of later modules are checked the same way above.
     assert_eq!((screen, paged), (90, 5));
     assert_eq!(
         AnimationSelection::new(&[id("border")], NonZeroUsize::new(1).unwrap()).unwrap_err(),

@@ -60,18 +60,18 @@ fn admitted_inventory_matches_retained_definition_fields() {
             }
         );
     }
-    let actual: BTreeSet<_> = PropertyId::all()
+    let actual: BTreeSet<_> = PropertyId::css22()
         .map(|id| id.descriptor().name.to_owned())
         .collect();
     assert_eq!(actual, expected_names);
     assert_eq!(
-        PropertyId::all()
+        PropertyId::css22()
             .filter(|p| p.descriptor().scope == Scope::Screen)
             .count(),
         90
     );
     assert_eq!(
-        PropertyId::all()
+        PropertyId::css22()
             .filter(|p| p.descriptor().scope == Scope::Paged)
             .count(),
         5
@@ -225,12 +225,12 @@ fn shorthands_expand_only_to_their_css22_longhands() {
         assert_eq!(targets(name), expected.into_iter().collect(), "{name}");
     }
     assert_eq!(
-        PropertyId::all()
+        PropertyId::css22()
             .filter(|p| p.descriptor().shorthand)
             .count(),
         14
     );
-    for id in PropertyId::all() {
+    for id in PropertyId::css22() {
         if !id.descriptor().shorthand {
             assert_eq!(id.longhands(), &[id]);
         }
@@ -257,7 +257,7 @@ fn animation_dispatch_preserves_selected_exceptions_and_scope() {
     ] {
         assert_eq!(property(name).descriptor().animation, Some(rule));
     }
-    for id in PropertyId::all() {
+    for id in PropertyId::css22() {
         let d = id.descriptor();
         assert!(!d.owner.is_empty());
         assert_eq!(d.animation.is_some(), d.scope == Scope::Screen);
@@ -310,7 +310,7 @@ fn all_screen_dispatch_and_owner_assignments_match_retained_architecture() {
                 assert_eq!(descriptor.owner, cells[2], "{name}");
             }
         }
-        let screen_names = PropertyId::all()
+        let screen_names = PropertyId::css22()
             .filter(|id| id.descriptor().scope == Scope::Screen)
             .map(|id| id.descriptor().name)
             .collect();

@@ -29,6 +29,9 @@ pub enum Dim {
     /// Pixels plus a percent, as `calc()` mixes them: an animation between a length and a
     /// percentage.
     Mix(f32, f32),
+    /// Pixels plus a percent, never below zero: a `box-sizing: border-box` size less its own
+    /// padding and border, where a percentage is involved.
+    Clamped(f32, f32),
 }
 
 impl Dim {
@@ -38,6 +41,9 @@ impl Dim {
             Self::Px(value) => AutoLength::Value(value),
             Self::Percent(value) => AutoLength::Value(basis * value / 100.0),
             Self::Mix(pixels, percent) => AutoLength::Value(pixels + basis * percent / 100.0),
+            Self::Clamped(pixels, percent) => {
+                AutoLength::Value((pixels + basis * percent / 100.0).max(0.0))
+            }
         }
     }
     fn zero_auto(self, basis: f32) -> f32 {
@@ -50,6 +56,11 @@ impl Dim {
     fn vertical(self, basis: Option<f32>) -> Option<f32> {
         match (self, basis) {
             (Self::Auto, _) | (Self::Percent(_) | Self::Mix(..), None) => None,
+            // Without a percentage it needs no basis.
+            (Self::Clamped(pixels, percent), None) => (percent == 0.0).then(|| pixels.max(0.0)),
+            (Self::Clamped(pixels, percent), Some(basis)) => {
+                Some((pixels + basis * percent / 100.0).max(0.0))
+            }
             (Self::Px(value), _) => Some(value),
             (Self::Percent(value), Some(basis)) => Some(basis * value / 100.0),
             (Self::Mix(pixels, percent), Some(basis)) => Some(pixels + basis * percent / 100.0),
@@ -131,6 +142,9 @@ pub struct FlowBox {
     pub out_of_flow: bool,
     /// `overflow` other than visible, or any other 9.4.1 establishing condition.
     pub establishes_bfc: bool,
+    /// `box-sizing: border-box`: `width`, `height` and their minimums and maximums are
+    /// of the border box. [`content_boxes`] turns them into content sizes before layout.
+    pub border_box: bool,
     pub width: Dim,
     pub min_width: Dim,
     pub max_width: Dim,
@@ -169,6 +183,7 @@ impl Default for FlowBox {
             row_no_wrap: false,
             out_of_flow: false,
             establishes_bfc: false,
+            border_box: false,
             width: Dim::Auto,
             min_width: Dim::Auto,
             max_width: Dim::Auto,
@@ -643,6 +658,8 @@ pub fn layout_block_flow_baselines(
     if boxes.is_empty() || boxes.len() > limits.boxes.get() {
         return Err(FlowError::Boxes);
     }
+    let converted = content_boxes(boxes);
+    let boxes = &*converted;
     validate(boxes)?;
     if tree_depth(boxes) > limits.depth.get() {
         return Err(FlowError::Depth);
@@ -687,6 +704,54 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
     .measure(node)
 }
 
+/// The boxes with every `border_box` size turned into the content size layout works in:
+/// the size less the box's own padding and border across (for widths) or down (for
+/// heights), never below zero. Borrowed when no box asks for it.
+///
+/// A padding percentage is of the containing block's width, which a height does not have
+/// at hand: a percentage padding above or below is not taken out of a height.
+pub fn content_boxes(boxes: &[FlowBox]) -> std::borrow::Cow<'_, [FlowBox]> {
+    if !boxes.iter().any(|value| value.border_box) {
+        return std::borrow::Cow::Borrowed(boxes);
+    }
+    let parts = |dim: Dim| match dim {
+        Dim::Auto => (0.0, 0.0),
+        Dim::Px(pixels) => (pixels, 0.0),
+        Dim::Percent(percent) => (0.0, percent),
+        Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => (pixels, percent),
+    };
+    let inner = |dim: Dim, (frame, frame_percent): (f32, f32)| {
+        if dim == Dim::Auto {
+            return Dim::Auto;
+        }
+        let (pixels, percent) = parts(dim);
+        match (pixels - frame, percent - frame_percent) {
+            (pixels, 0.0) => Dim::Px(pixels.max(0.0)),
+            (pixels, percent) => Dim::Clamped(pixels, percent),
+        }
+    };
+    let mut converted = boxes.to_vec();
+    for value in converted.iter_mut().filter(|value| value.border_box) {
+        value.border_box = false;
+        let side = |at: usize| parts(value.padding[at]);
+        let across = (
+            side(3).0 + side(1).0 + value.border[3] + value.border[1],
+            side(3).1 + side(1).1,
+        );
+        let down = (
+            side(0).0 + side(2).0 + value.border[0] + value.border[2],
+            0.0,
+        );
+        value.width = inner(value.width, across);
+        value.min_width = inner(value.min_width, across);
+        value.max_width = inner(value.max_width, across);
+        value.height = inner(value.height, down);
+        value.min_height = inner(value.min_height, down);
+        value.max_height = inner(value.max_height, down);
+    }
+    std::borrow::Cow::Owned(converted)
+}
+
 fn validate(boxes: &[FlowBox]) -> Result<(), FlowError> {
     let mut seen = vec![false; boxes.len()];
     seen[0] = true;
@@ -712,7 +777,9 @@ fn validate(boxes: &[FlowBox]) -> Result<(), FlowError> {
                 .all(|dim| match dim {
                     Dim::Auto => true,
                     Dim::Px(number) | Dim::Percent(number) => number.is_finite(),
-                    Dim::Mix(pixels, percent) => pixels.is_finite() && percent.is_finite(),
+                    Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => {
+                        pixels.is_finite() && percent.is_finite()
+                    }
                 });
         let content = value.content.unwrap_or_default();
         if !finite_dims

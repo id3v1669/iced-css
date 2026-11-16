@@ -2418,3 +2418,101 @@ fn geometry_that_overflows_f32_is_an_error() {
         Err(FlowError::Nonfinite { .. })
     ));
 }
+
+#[test]
+fn border_box_sizes_lose_their_own_padding_and_border() {
+    let viewport = FlowViewport {
+        left: 0.0,
+        top: 0.0,
+        width: 400.0,
+        height: Some(300.0),
+    };
+    let child = FlowBox {
+        border_box: true,
+        width: Dim::Px(100.0),
+        height: Dim::Px(60.0),
+        min_width: Dim::Px(0.0),
+        padding: [Dim::Px(5.0), Dim::Px(10.0), Dim::Px(5.0), Dim::Px(10.0)],
+        border: [1.0, 2.0, 1.0, 2.0],
+        ..FlowBox::default()
+    };
+    let root = FlowBox {
+        children: vec![1],
+        ..FlowBox::default()
+    };
+    let border = |child: FlowBox| {
+        let geometry = layout_block_flow(&[root.clone(), child], viewport, limits()).unwrap();
+        let area = geometry[1].border;
+        (area.right - area.left, area.bottom - area.top)
+    };
+    // The border box is the size given; the content is what is left.
+    assert_eq!(border(child.clone()), (100.0, 60.0));
+    assert_eq!(
+        border(FlowBox {
+            border_box: false,
+            ..child.clone()
+        }),
+        (124.0, 72.0)
+    );
+    // A percentage is of the containing block, still less the frame.
+    assert_eq!(
+        border(FlowBox {
+            width: Dim::Percent(50.0),
+            ..child.clone()
+        })
+        .0,
+        200.0
+    );
+    // A percentage padding comes out of a width too.
+    let padded = FlowBox {
+        padding: [
+            Dim::Px(0.0),
+            Dim::Percent(10.0),
+            Dim::Px(0.0),
+            Dim::Percent(10.0),
+        ],
+        ..child.clone()
+    };
+    assert_eq!(border(padded).0, 100.0);
+    // Smaller than its own frame: no content, and the frame stays.
+    assert_eq!(
+        border(FlowBox {
+            width: Dim::Px(10.0),
+            height: Dim::Px(4.0),
+            ..child.clone()
+        }),
+        (24.0, 12.0)
+    );
+    // Minimum and maximum are border-box sizes as well.
+    assert_eq!(
+        border(FlowBox {
+            width: Dim::Px(300.0),
+            max_width: Dim::Px(150.0),
+            ..child.clone()
+        })
+        .0,
+        150.0
+    );
+    assert_eq!(
+        border(FlowBox {
+            width: Dim::Px(50.0),
+            min_width: Dim::Px(80.0),
+            ..child.clone()
+        })
+        .0,
+        80.0
+    );
+    // Auto is untouched, and the pass borrows when nothing asks for it.
+    assert_eq!(
+        border(FlowBox {
+            width: Dim::Auto,
+            ..child
+        })
+        .0,
+        400.0
+    );
+    assert!(matches!(
+        content_boxes(&[root]),
+        std::borrow::Cow::Borrowed(_)
+    ));
+}

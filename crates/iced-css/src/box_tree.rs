@@ -1380,6 +1380,8 @@ impl BoxTree {
             value.clips = prepared.clipped[arena] || prepared.scrolls[arena];
             value.caption_below = captions_below[owner];
             value.fixed_table = paints[owner].fixed_table && !prepared.anonymous[arena];
+            // An anonymous box has no sizes of its own to read as its border box's.
+            value.border_box = paints[owner].border_box && !prepared.anonymous[arena];
             if value.inline_row.is_some() {
                 // 16.2: a line's alignment comes from its block container.
                 value.inline_row = Some(match styles[container_of[arena]].align {

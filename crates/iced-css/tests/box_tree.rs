@@ -213,6 +213,64 @@ fn selectors_level3_style_boxes_by_place_negation_and_siblings() {
 }
 
 #[test]
+fn box_sizing_border_box_sizes_the_border_box() {
+    let root = || node("page", vec![node("k", vec![node("inner", vec![])])]);
+    let size = |css: &str| {
+        let tree = BoxTree::new(root(), css).unwrap();
+        let geometry = tree.layout(800.0, Some(600.0)).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        let inner = geometry[2].as_ref().unwrap().border;
+        (
+            border.right - border.left,
+            border.bottom - border.top,
+            inner.right - inner.left,
+        )
+    };
+    let frame = "#k { width:100px; height:50px; padding:10px; border:2px solid #000000; }";
+    assert_eq!(size(frame), (124.0, 74.0, 100.0));
+    assert_eq!(
+        size(&format!("{frame} #k {{ box-sizing:border-box; }}")),
+        (100.0, 50.0, 76.0)
+    );
+    // The initial value again, and any other value drops the declaration.
+    assert_eq!(
+        size(&format!(
+            "{frame} #k {{ box-sizing:border-box; box-sizing:content-box; }}"
+        )),
+        (124.0, 74.0, 100.0)
+    );
+    assert_eq!(
+        size(&format!(
+            "{frame} #k {{ box-sizing:border-box; box-sizing:padding-box; }}"
+        )),
+        (100.0, 50.0, 76.0)
+    );
+    // Not inherited, unless asked.
+    let nested = "#page { box-sizing:border-box; } #k { width:100px; padding:10px; }";
+    assert_eq!(size(nested).0, 120.0);
+    assert_eq!(
+        size(&format!("{nested} #k {{ box-sizing:inherit; }}")).0,
+        100.0
+    );
+    // A percentage width, and a maximum, are border-box sizes too.
+    assert_eq!(
+        size("#k { box-sizing:border-box; width:50%; padding:10px; }").0,
+        400.0
+    );
+    assert_eq!(
+        size("#k { box-sizing:border-box; width:500px; max-width:200px; padding:10px; }").0,
+        200.0
+    );
+    // An absolutely positioned box.
+    assert_eq!(
+        size(
+            "#k { position:absolute; box-sizing:border-box; width:100px; height:50px; padding:10px; }"
+        ),
+        (100.0, 50.0, 80.0)
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",
