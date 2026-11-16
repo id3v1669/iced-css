@@ -40,20 +40,34 @@ fn malformed_member_invalidates_a_previously_matching_list() {
         "screen,",
         ",screen",
         "screen,,print",
-        "screen print",
-        "screen and (color)",
         "\"screen\"",
-        "screen;",
         "screen, url(x)",
         "screen, <!--",
         r"screen, \0",
-        "scr/**/een",
     ] {
         assert!(
             media_matches_screen(input, MediaListContext::MediaRule, limits()).is_err(),
             "{input}"
         );
     }
+    // Media Queries Level 3: a member that starts as a query and goes wrong after matches
+    // nothing, and the rest of the list still counts.
+    for input in [
+        "screen print",
+        "screen and (color)",
+        "screen;",
+        "scr/**/een",
+    ] {
+        assert_eq!(
+            media_matches_screen(input, MediaListContext::MediaRule, limits()),
+            Ok(false),
+            "{input}"
+        );
+    }
+    assert_eq!(
+        media_matches_screen("screen print, all", MediaListContext::MediaRule, limits()),
+        Ok(true)
+    );
 }
 
 #[test]

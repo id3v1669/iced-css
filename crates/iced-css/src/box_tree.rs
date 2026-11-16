@@ -95,6 +95,7 @@ use iced::{
 /// Core types named in this module's signatures, so callers need no second dependency.
 pub use iced_css_core::formatting::block_flow::{FlowGeometry, FlowRect};
 pub use iced_css_core::source::{AttributeError, AttributeLimits};
+pub use iced_css_core::syntax::MediaEnvironment;
 use iced_css_core::values::bidi::{ComputedDirection, ComputedUnicodeBidi};
 use iced_css_core::values::registry::PropertyId;
 use iced_css_core::{
@@ -123,6 +124,7 @@ use iced_css_core::{
         encoding_selection::{EncodingMetadata, SelectionLimits},
         imports::{ImportLimits, ResourceId},
         unicode_intake::IntakeLimits,
+        with_media_environment,
     },
     values::{NumericLimits, color::ColorLimits},
 };
@@ -675,6 +677,8 @@ struct Source {
     sheets: Vec<String>,
     /// What relative `url()`s resolve against.
     base: PathBuf,
+    /// What the sheets' media queries are answered against.
+    media: MediaEnvironment,
     /// Restyles already cascaded. Pointerless, so nothing here keeps the source alive.
     variants: Mutex<Variants>,
     /// The sheets parsed, and the rules every page starts from: the same for every restyle.
@@ -888,6 +892,7 @@ impl BoxTree {
             construction,
             sheets,
             base: base.to_owned(),
+            media: MediaEnvironment::default(),
             variants: Mutex::new(Variants::default()),
             parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
@@ -911,12 +916,47 @@ impl BoxTree {
             construction: self.source.construction.clone(),
             sheets,
             base: self.source.base.clone(),
+            media: self.source.media,
             variants: Mutex::new(Variants::default()),
             parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
             layout_refusal: Mutex::new(None),
         });
         Self::unstated(&source)
+    }
+
+    /// The same captured tree and sheets, with their media queries answered against
+    /// `media`: `@media` and `@import` conditions on the viewport's size and the color
+    /// scheme (Media Queries Level 3). A tree starts with no viewport, where no size
+    /// feature matches. Nothing follows the widget's own size: give the viewport again
+    /// when it changes, for example from the window's resize events. A tree whose
+    /// environment is already `media` is returned as it is.
+    ///
+    /// # Errors
+    /// Returns a stylesheet, cascade or unsupported-display failure.
+    pub fn with_media(&self, media: MediaEnvironment) -> Result<Self, BoxTreeError> {
+        if self.source.media == media {
+            return Ok(self.clone());
+        }
+        let source = Arc::new(Source {
+            reach: Source::reach_of(&self.source.sheets),
+            capture: self.source.capture,
+            construction: self.source.construction.clone(),
+            sheets: self.source.sheets.clone(),
+            base: self.source.base.clone(),
+            media,
+            variants: Mutex::new(Variants::default()),
+            parsed: OnceLock::new(),
+            refused: Mutex::new(BTreeSet::new()),
+            layout_refusal: Mutex::new(None),
+        });
+        Self::unstated(&source)
+    }
+
+    /// What this tree's media queries are answered against.
+    #[must_use]
+    pub fn media(&self) -> MediaEnvironment {
+        self.source.media
     }
 
     /// The styling with no interaction, kept so that leaving it and coming back, or
@@ -1154,7 +1194,7 @@ impl BoxTree {
                 .sheets
                 .iter()
                 .zip(0_u64..)
-                .map(|(css, order)| parse(css, order))
+                .map(|(css, order)| with_media_environment(source.media, || parse(css, order)))
                 .collect::<Result<Vec<_>, _>>()?;
             source.parsed.get_or_init(|| Parsed(catalog, graphs))
         };

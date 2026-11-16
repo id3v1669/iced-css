@@ -515,6 +515,54 @@ fn custom_properties_cascade_inherit_and_substitute() {
 }
 
 #[test]
+fn media_queries_follow_the_environment_given() {
+    use iced_css::box_tree::MediaEnvironment;
+    let root = node("page", vec![node("k", vec![])]);
+    let css = "#k { width:100px; }
+        @media (min-width: 600px) { #k { width:200px; } }
+        @media screen and (min-width: 900px) and (orientation: landscape) { #k { width:300px; } }
+        @media (prefers-color-scheme: dark) { #k { background-color:#ff0000; } }
+        @media print { #k { width:1px; } }";
+    let tree = BoxTree::new(root, css).unwrap();
+    let width = |tree: &BoxTree| {
+        let geometry = tree.layout(2000.0, Some(600.0)).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        border.right - border.left
+    };
+    let at = |width: f32, height: f32, dark: bool| MediaEnvironment {
+        viewport: Some((width, height)),
+        dark: Some(dark),
+    };
+    // No viewport: no size feature matches.
+    assert_eq!(tree.media(), MediaEnvironment::default());
+    assert_eq!(width(&tree), 100.0);
+    assert_eq!(
+        width(&tree.with_media(at(500.0, 400.0, false)).unwrap()),
+        100.0
+    );
+    assert_eq!(
+        width(&tree.with_media(at(700.0, 400.0, false)).unwrap()),
+        200.0
+    );
+    let wide = tree.with_media(at(1000.0, 400.0, false)).unwrap();
+    assert_eq!(width(&wide), 300.0);
+    assert_eq!(wide.paints()[1].background, None);
+    // Taller than wide: the landscape rule drops out.
+    assert_eq!(
+        width(&tree.with_media(at(1000.0, 1200.0, false)).unwrap()),
+        200.0
+    );
+    let dark = tree.with_media(at(1000.0, 400.0, true)).unwrap();
+    assert_eq!(dark.paints()[1].background, Some([1.0, 0.0, 0.0]));
+    // A restyle keeps the environment.
+    let restyled = dark
+        .restyled(&["@media (min-width: 900px) { #k { width:50px; } }"])
+        .unwrap();
+    assert_eq!(restyled.media(), at(1000.0, 400.0, true));
+    assert_eq!(width(&restyled), 50.0);
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",
