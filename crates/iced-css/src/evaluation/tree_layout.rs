@@ -1805,6 +1805,10 @@ pub struct BoxPaint {
     pub fixed_table: bool,
     /// `box-sizing: border-box`.
     pub border_box: bool,
+    /// `background-origin`: what its gradient is placed against.
+    pub background_origin: BoxArea,
+    /// `background-clip`: where its background color and image show.
+    pub background_clip: BoxArea,
     /// `display: flex` or `inline-flex`: how its children are laid out as flex items.
     pub flex: Option<FlexContainer>,
     /// What the box is as a flex item, should its parent be a flex container.
@@ -1870,9 +1874,33 @@ pub enum BackgroundOffset {
     Percent(f32),
 }
 
+/// One of a box's three areas: `background-origin` and `background-clip` (CSS
+/// Backgrounds 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BoxArea {
+    #[default]
+    Border,
+    Padding,
+    Content,
+}
+
+/// `background-size`: `None` is `auto`; a percentage is of the positioning area.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BackgroundSize {
+    Cover,
+    Contain,
+    Sized(Option<BackgroundOffset>, Option<BackgroundOffset>),
+}
+
 /// A box's background image (14.2.1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BackgroundImage {
+    /// CSS Backgrounds 3: its size.
+    pub size: BackgroundSize,
+    /// What it is placed against.
+    pub origin: BoxArea,
+    /// Where it shows.
+    pub clip: BoxArea,
     pub uri: String,
     pub repeat_x: bool,
     pub repeat_y: bool,
@@ -2745,6 +2773,8 @@ pub fn evaluate_tree_paint<'r>(
                 .and_then(|parent: usize| paints[parent].opacity)
                 .unwrap_or(1.0);
         paints.push(BoxPaint {
+            background_origin: BoxArea::Padding,
+            background_clip: BoxArea::Border,
             flex: None,
             flex_item: FlexItem::default(),
             opacity: (through < 1.0).then_some(through),
@@ -2926,7 +2956,53 @@ pub fn evaluate_tree_paint<'r>(
             _ => false,
         };
         background_parts.push((repeat, position, fixed));
+        // CSS Backgrounds 3: its size and boxes. `inherit` on the size reads as `auto`.
+        let area = |name: &'static str, initial: BoxArea, parent: fn(&BoxPaint) -> BoxArea| {
+            Ok::<_, E>(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                    match keyword.as_str() {
+                        "border-box" => BoxArea::Border,
+                        "content-box" => BoxArea::Content,
+                        _ => BoxArea::Padding,
+                    }
+                }
+                DefaultedValueRef::ParentComputed => {
+                    parent_index.map_or(initial, |at: usize| parent(&paints[at]))
+                }
+                _ => initial,
+            })
+        };
+        let origin = area("background-origin", BoxArea::Padding, |paint| {
+            paint.background_origin
+        })?;
+        let clip = area("background-clip", BoxArea::Border, |paint| {
+            paint.background_clip
+        })?;
+        paints[index].background_origin = origin;
+        paints[index].background_clip = clip;
+        let size = match defaulted("background-size")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
+                if keyword.as_str() == "cover" =>
+            {
+                BackgroundSize::Cover
+            }
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
+                if keyword.as_str() == "contain" =>
+            {
+                BackgroundSize::Contain
+            }
+            DefaultedValueRef::Compute(SpecifiedValue::LengthPair(across, down)) => {
+                let side = |target: &LengthTarget| {
+                    (!matches!(target, LengthTarget::Auto)).then(|| offset(target))
+                };
+                BackgroundSize::Sized(side(across), side(down))
+            }
+            _ => BackgroundSize::Sized(None, None),
+        };
         backgrounds.push(uri.map(|uri| BackgroundImage {
+            size,
+            origin,
+            clip,
             uri,
             repeat_x: matches!(repeat, "repeat" | "repeat-x"),
             repeat_y: matches!(repeat, "repeat" | "repeat-y"),

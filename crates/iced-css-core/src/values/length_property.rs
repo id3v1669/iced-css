@@ -287,6 +287,26 @@ pub(super) fn track_length(
     )
 }
 
+/// One `background-size` component: a length or percentage, not negative, or `auto`.
+pub(super) fn size_component(
+    token: (usize, Token<'_>),
+    limits: ColorLimits,
+    work: &mut usize,
+) -> Result<Option<SpecifiedValue>, PropertyError> {
+    component(
+        token,
+        Grammar {
+            signed: false,
+            percentage: true,
+            number: false,
+            pair: false,
+            keywords: &["auto"],
+        },
+        limits,
+        work,
+    )
+}
+
 pub(super) fn clip_component(
     token: (usize, Token<'_>),
     limits: ColorLimits,

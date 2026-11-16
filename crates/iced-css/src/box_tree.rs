@@ -72,10 +72,10 @@ use crate::{
         },
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
-            BackgroundImage, BackgroundOffset, BoxPaint, ElementAnimation, ElementTransition,
-            GeneratedFrame, GeneratedRun, GradientAim, GradientPaint, InlineBoxSides, PreparedTree,
-            RunSource, TextLineHeight, TextStyle, TreeLayoutError, TreePaint, evaluate_tree_paint,
-            prepare_captured_tree, prepare_tree_source_projection,
+            BackgroundImage, BackgroundOffset, BackgroundSize, BoxArea, BoxPaint, ElementAnimation,
+            ElementTransition, GeneratedFrame, GeneratedRun, GradientAim, GradientPaint,
+            InlineBoxSides, PreparedTree, RunSource, TextLineHeight, TextStyle, TreeLayoutError,
+            TreePaint, evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
         },
     },
     host::{
@@ -6102,10 +6102,44 @@ fn draw_background_image<Renderer: BackgroundRenderer>(
     area: Rectangle,
 ) {
     let (value, handle) = background;
-    let Some((width, height)) = renderer.background_size(handle) else {
+    let Some((natural_width, natural_height)) = renderer.background_size(handle) else {
         return;
     };
-    if width <= 0.0 || height <= 0.0 || area.width <= 0.0 || area.height <= 0.0 {
+    if natural_width <= 0.0 || natural_height <= 0.0 || area.width <= 0.0 || area.height <= 0.0 {
+        return;
+    }
+    // CSS Backgrounds 3: `background-size`; an `auto` side keeps the image's proportions.
+    let length = |offset: BackgroundOffset, room: f32| match offset {
+        BackgroundOffset::Px(pixels) => pixels,
+        BackgroundOffset::Percent(percent) => room * percent / 100.0,
+    };
+    let ratio = natural_width / natural_height;
+    let (width, height) = match value.size {
+        BackgroundSize::Cover | BackgroundSize::Contain => {
+            let across = positioning.width / natural_width;
+            let down = positioning.height / natural_height;
+            let scale = if value.size == BackgroundSize::Cover {
+                across.max(down)
+            } else {
+                across.min(down)
+            };
+            (natural_width * scale, natural_height * scale)
+        }
+        BackgroundSize::Sized(None, None) => (natural_width, natural_height),
+        BackgroundSize::Sized(Some(across), None) => {
+            let width = length(across, positioning.width);
+            (width, width / ratio)
+        }
+        BackgroundSize::Sized(None, Some(down)) => {
+            let height = length(down, positioning.height);
+            (height * ratio, height)
+        }
+        BackgroundSize::Sized(Some(across), Some(down)) => (
+            length(across, positioning.width),
+            length(down, positioning.height),
+        ),
+    };
+    if width <= 0.0 || height <= 0.0 {
         return;
     }
     let place = |offset: BackgroundOffset, start: f32, room: f32, extent: f32| match offset {
@@ -6289,14 +6323,35 @@ fn draw_column<Renderer: renderer::Renderer>(
     );
 }
 
-/// A box's border widths: top, right, bottom, left.
-fn geometry_border_widths(geometry: &FlowGeometry) -> [f32; 4] {
-    [
-        geometry.padding.top - geometry.border.top,
-        geometry.border.right - geometry.padding.right,
-        geometry.border.bottom - geometry.padding.bottom,
-        geometry.padding.left - geometry.border.left,
-    ]
+/// One of a box's three areas.
+fn area_rect(geometry: &FlowGeometry, area: BoxArea) -> FlowRect {
+    match area {
+        BoxArea::Border => geometry.border,
+        BoxArea::Padding => geometry.padding,
+        BoxArea::Content => geometry.content,
+    }
+}
+
+/// The corner radii of a box's inner area: each outer radius less the larger of the two
+/// distances in from the border edge at that corner.
+fn inner_radii(
+    radius: iced::border::Radius,
+    outer: FlowRect,
+    inner: FlowRect,
+) -> iced::border::Radius {
+    let [top, right, bottom, left] = [
+        inner.top - outer.top,
+        outer.right - inner.right,
+        outer.bottom - inner.bottom,
+        inner.left - outer.left,
+    ];
+    let less = |radius: f32, a: f32, b: f32| (radius - a.max(b)).max(0.0);
+    iced::border::Radius {
+        top_left: less(radius.top_left, left, top),
+        top_right: less(radius.top_right, top, right),
+        bottom_right: less(radius.bottom_right, right, bottom),
+        bottom_left: less(radius.bottom_left, bottom, left),
+    }
 }
 
 /// CSS Images 3, 3.1: a gradient over a `width` by `height` box as iced draws one. Stops
@@ -6616,7 +6671,10 @@ fn paint_box<Renderer: renderer::Renderer>(
             offset: iced::Vector::new(shadow.offset[0], shadow.offset[1]),
             blur_radius: shadow.blur,
         });
-    if paint.background.is_none()
+    // CSS Backgrounds 3: the background color shows within `background-clip`; the shadow
+    // stays the border box's.
+    let clipped = paint.background_clip != BoxArea::Border;
+    if (paint.background.is_none() || clipped)
         && paint.shadow.is_some()
         && parts != BoxParts::Border
         && outer.width > 0.0
@@ -6637,9 +6695,19 @@ fn paint_box<Renderer: renderer::Renderer>(
     }
     if let Some(color) = paint.background.filter(|_| parts != BoxParts::Border) {
         // 14.2: the background extends under the border. CSS Backgrounds 3: to its curve.
+        let (bounds, radius, shadow) = if clipped {
+            let area = area_rect(geometry, paint.background_clip);
+            (
+                moved_rectangle(area, origin),
+                inner_radii(radius, border, area),
+                iced::Shadow::default(),
+            )
+        } else {
+            (outer, radius, shadow)
+        };
         renderer.fill_quad(
             Quad {
-                bounds: outer,
+                bounds,
                 border: iced::Border {
                     radius,
                     ..iced::Border::default()
@@ -6656,27 +6724,31 @@ fn paint_box<Renderer: renderer::Renderer>(
         );
     }
     // CSS Images 3: a gradient over the padding box, above the background color.
+    // Sized to its `background-origin` box, and shown where that meets its clip box.
     if let Some(gradient) = gradient.filter(|_| parts != BoxParts::Border) {
-        let area = geometry.padding;
-        let bounds = Rectangle {
-            x: area.left + origin.x,
-            y: area.top + origin.y,
-            width: area.right - area.left,
-            height: area.bottom - area.top,
+        let placed = area_rect(geometry, paint.background_origin);
+        let shown = area_rect(geometry, paint.background_clip);
+        let area = FlowRect {
+            left: placed.left.max(shown.left),
+            right: placed.right.min(shown.right),
+            top: placed.top.max(shown.top),
+            bottom: placed.bottom.min(shown.bottom),
         };
-        if let Some(linear) = linear_gradient(gradient, bounds.width, bounds.height, through) {
-            let widths = geometry_border_widths(geometry);
-            let inner = |outer: f32, a: f32, b: f32| (outer - a.max(b)).max(0.0);
+        let bounds = moved_rectangle(area, origin);
+        if bounds.width > 0.0
+            && bounds.height > 0.0
+            && let Some(linear) = linear_gradient(
+                gradient,
+                placed.right - placed.left,
+                placed.bottom - placed.top,
+                through,
+            )
+        {
             renderer.fill_quad(
                 Quad {
                     bounds,
                     border: iced::Border {
-                        radius: iced::border::Radius {
-                            top_left: inner(radius.top_left, widths[3], widths[0]),
-                            top_right: inner(radius.top_right, widths[0], widths[1]),
-                            bottom_right: inner(radius.bottom_right, widths[1], widths[2]),
-                            bottom_left: inner(radius.bottom_left, widths[2], widths[3]),
-                        },
+                        radius: inner_radii(radius, border, area),
                         ..iced::Border::default()
                     },
                     ..Quad::default()
@@ -8154,7 +8226,7 @@ where
             let positioning = if background.0.fixed {
                 viewport_box
             } else {
-                moved_rectangle(geometry.padding, root_origin)
+                moved_rectangle(area_rect(geometry, background.0.origin), root_origin)
             };
             renderer.with_layer(visible, |renderer| {
                 draw_background_image(renderer, background, positioning, visible);
@@ -8211,16 +8283,23 @@ where
                                         BoxParts::Background,
                                     );
                                     // 14.2.1: placed from the padding edge, painted out to the
-                                    // border edge, under the border.
-                                    let padding = moved_rectangle(geometry.padding, origin);
+                                    // border edge, under the border. CSS Backgrounds 3: from
+                                    // its origin box, within its clip box.
+                                    let placed = moved_rectangle(
+                                        area_rect(geometry, background.0.origin),
+                                        origin,
+                                    );
                                     let positioning = if background.0.fixed {
                                         viewport_box
                                     } else {
-                                        padding
+                                        placed
                                     };
-                                    let area = moved_rectangle(geometry.border, origin)
-                                        .intersection(&clip)
-                                        .unwrap_or(Rectangle::new(origin, Size::ZERO));
+                                    let area = moved_rectangle(
+                                        area_rect(geometry, background.0.clip),
+                                        origin,
+                                    )
+                                    .intersection(&clip)
+                                    .unwrap_or(Rectangle::new(origin, Size::ZERO));
                                     draw_background_image(renderer, background, positioning, area);
                                     renderer.with_layer(clip, |renderer| {
                                         draw_box(

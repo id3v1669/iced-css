@@ -101,4 +101,12 @@ pub(super) const KEYWORDS: &[(&str, &[&str])] = &[
             "baseline",
         ],
     ),
+    (
+        "background-origin",
+        &["border-box", "padding-box", "content-box"],
+    ),
+    (
+        "background-clip",
+        &["border-box", "padding-box", "content-box"],
+    ),
 ];

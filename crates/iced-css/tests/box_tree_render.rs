@@ -6721,3 +6721,59 @@ fn a_linear_gradient_paints_from_one_color_to_the_other() {
     assert!(middle[0] > 60 && middle[2] > 60, "{middle:?}");
     assert!([left, middle, right].iter().all(|pixel| pixel[1] < 40));
 }
+
+#[test]
+fn background_clip_keeps_the_color_inside_its_box() {
+    let root = node("page", vec![node("c", vec![]), node("g", vec![])]);
+    let css = "#page { background-color:#ffffff; }
+        #c { width:100px; height:40px; padding:10px; background-color:#ff0000;
+             background-clip:content-box; }
+        #g { width:100px; height:40px; padding:10px;
+             background-image:linear-gradient(to right, #0000ff, #0000ff);
+             background-origin:content-box; background-clip:content-box; }";
+    let view: Element<'_, u8> = BoxTree::new(root, css).unwrap().view();
+    let mut ui = simulator(view);
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "clip");
+    // At twice the scale: the content box of each spans 20 to 220 across.
+    let red = pixels.bounds([255, 0, 0]).unwrap();
+    assert_eq!([red[0], red[1], red[2], red[3]], [20, 20, 219, 99]);
+    let blue = pixels.bounds([0, 0, 255]).unwrap();
+    assert_eq!([blue[0], blue[2]], [20, 219]);
+    assert_eq!(blue[3] - blue[1], 79);
+}
+
+#[cfg(feature = "image")]
+#[test]
+fn background_size_scales_the_image() {
+    let path = scratch().join("sized");
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("tile.png"), checker_png(32)).unwrap();
+    let orange = [230, 74, 25];
+    let bounds = |size: &str| {
+        let root = node("page", vec![node("b", vec![])]);
+        let css = format!(
+            "#page {{ background-color:#ffffff; }}
+             #b {{ width:200px; height:100px; background:url(tile.png) no-repeat;
+                   background-size:{size}; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::with_base(root, &css, &path).unwrap().view();
+        let mut ui = simulator(view);
+        let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "sized");
+        let found = pixels.bounds(orange).unwrap();
+        // Logical pixels: the snapshot is at twice the scale.
+        [(found[2] - found[0] + 1) / 2, (found[3] - found[1] + 1) / 2]
+    };
+    assert_eq!(bounds("auto"), [32, 32]);
+    assert_eq!(bounds("100px 50px"), [100, 50]);
+    assert_eq!(bounds("50%"), [100, 100]);
+    assert_eq!(bounds("contain"), [100, 100]);
+    // `cover` scales the square tile to the box's width, 200: its top-left quarter shows
+    // whole and the bottom-right one is cut off below the box. Scaling softens the
+    // quarter's edges by a few pixels.
+    let cover = bounds("cover");
+    assert!(
+        cover.iter().all(|side| (95..=100).contains(side)),
+        "{cover:?}"
+    );
+}

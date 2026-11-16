@@ -1982,3 +1982,34 @@ fn background_image_takes_a_linear_gradient() {
         PropertyResult::Invalid
     );
 }
+
+#[test]
+fn background_size_origin_and_clip_parse_as_css_backgrounds_3_gives_them() {
+    let value = |input: &str| match parse(input).unwrap() {
+        PropertyResult::Parsed(parsed) => Some(parsed.value),
+        _ => None,
+    };
+    assert!(matches!(
+        value("background-size:cover"),
+        Some(SpecifiedValue::Keyword(keyword)) if keyword.as_str() == "cover"
+    ));
+    // One size leaves the other `auto`.
+    let Some(SpecifiedValue::LengthPair(across, down)) = value("background-size:50%") else {
+        panic!()
+    };
+    assert!(matches!(across, LengthTarget::Percentage(_)));
+    assert_eq!(down, LengthTarget::Auto);
+    assert!(value("background-size:auto 10px").is_some());
+    for bad in [
+        "background-size:-1px",
+        "background-size:cover contain",
+        "background-size:10px 10px 10px",
+        "background-size:cover 10px",
+        "background-origin:margin-box",
+        "background-clip:text",
+    ] {
+        assert_eq!(value(bad), None, "{bad}");
+    }
+    assert!(value("background-origin:content-box").is_some());
+    assert!(value("background-clip:padding-box").is_some());
+}

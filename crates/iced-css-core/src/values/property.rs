@@ -364,6 +364,7 @@ pub(super) fn inner(
             "opacity" | "flex-grow" | "flex-shrink" | "flex-flow" | "flex" | "gap"
         )
         && !grid_property(name)
+        && name != "background-size"
         && !transition_property(name)
     {
         return Err(PropertyError::Unimplemented(property));
@@ -373,6 +374,48 @@ pub(super) fn inner(
     }
     if matches!(name, "flex-flow" | "flex" | "gap") {
         return flex_shorthand(property, input, important, limits, work);
+    }
+    if name == "background-size" {
+        // CSS Backgrounds 3: `cover`, `contain`, or one or two sizes, the second `auto`
+        // when left out.
+        let mut offset = 0;
+        let mut parts = Vec::new();
+        while let Some(token) = significant(input, &mut offset, work)? {
+            if parts.len() == 2 {
+                return Ok(PropertyResult::Invalid);
+            }
+            parts.push(token);
+        }
+        let keyword = |word: &str| {
+            parts.len() == 1
+                && parts[0].1.kind == TokenKind::Ident
+                && parts[0].1.raw.eq_ignore_ascii_case(word)
+        };
+        let value = if keyword("inherit") {
+            SpecifiedValue::Inherit
+        } else if keyword("cover") {
+            SpecifiedValue::Keyword(Keyword("cover"))
+        } else if keyword("contain") {
+            SpecifiedValue::Keyword(Keyword("contain"))
+        } else {
+            let mut sizes = Vec::new();
+            for part in &parts {
+                match length_property::size_component(*part, limits, work)? {
+                    Some(SpecifiedValue::Length(size)) => sizes.push(size),
+                    _ => return Ok(PropertyResult::Invalid),
+                }
+            }
+            match sizes.as_slice() {
+                [across] => SpecifiedValue::LengthPair(across.clone(), LengthTarget::Auto),
+                [across, down] => SpecifiedValue::LengthPair(across.clone(), down.clone()),
+                _ => return Ok(PropertyResult::Invalid),
+            }
+        };
+        return Ok(PropertyResult::Parsed(ParsedProperty {
+            property,
+            value,
+            important,
+        }));
     }
     if transition_property(name) {
         if name == "transition" {

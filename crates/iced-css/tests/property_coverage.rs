@@ -506,6 +506,17 @@ const CASES: &[(&str, &str, &str)] = &[
         "",
         "#k { animation-play-state:paused; }",
     ),
+    (
+        "background-size",
+        "#k { background-image:url(a.png); }",
+        "#k { background-size:cover; }",
+    ),
+    (
+        "background-origin",
+        "",
+        "#k { background-origin:content-box; }",
+    ),
+    ("background-clip", "", "#k { background-clip:padding-box; }"),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

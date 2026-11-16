@@ -148,6 +148,14 @@ cargo test --workspace --features iced-css/image,iced-css/svg
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` (also with `::`) with counters and
   quotes, `visibility`, outlines and every border style (collapsed tables resolve each stretch of edge between the cells that meet there, where lines cross the later cell's border shows, and each grid line takes its widest border; an inline element's outline goes around each of its pieces on a line), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
+- **Background size and boxes:** `background-size` (`cover`, `contain`, or one or two
+  lengths, percentages or `auto`, an `auto` side keeping the image's proportions),
+  `background-origin` (what the image or gradient is placed against) and `background-clip`
+  (where the color and image show), each `border-box`, `padding-box` or `content-box`
+  (CSS Backgrounds 3). Limits: one background layer, not a list; the `background`
+  shorthand neither sets nor resets these three; a gradient takes its origin box's size
+  and is not repeated; `inherit` on `background-size` reads as `auto`; `text` clipping is
+  not known.
 - **Gradients:** `linear-gradient()` as a `background-image` (CSS Images 3), also in the
   `background` shorthand: an angle (`deg`, `rad`, `grad`, `turn`) or `to` a side or corner,
   and color stops with up to two places each, the unplaced ones spread between their
