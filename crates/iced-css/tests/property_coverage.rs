@@ -321,6 +321,26 @@ const CASES: &[(&str, &str, &str)] = &[
         "#k { width:50px; padding:5px; }",
         "#k { box-sizing:border-box; }",
     ),
+    (
+        "border-top-left-radius",
+        "",
+        "#k { border-top-left-radius:5px; }",
+    ),
+    (
+        "border-top-right-radius",
+        "",
+        "#k { border-top-right-radius:5px; }",
+    ),
+    (
+        "border-bottom-right-radius",
+        "",
+        "#k { border-bottom-right-radius:5px; }",
+    ),
+    (
+        "border-bottom-left-radius",
+        "",
+        "#k { border-bottom-left-radius:5px; }",
+    ),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

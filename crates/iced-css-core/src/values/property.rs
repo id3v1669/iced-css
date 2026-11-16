@@ -294,11 +294,53 @@ pub(super) fn inner(
         && name != "background-position"
         && name != "quotes"
         && name != "text-decoration"
+        && name != "border-radius"
     {
         return Err(PropertyError::Unimplemented(property));
     }
     if recovery_only {
         return Ok(PropertyResult::Invalid);
+    }
+    if name == "border-radius" {
+        // `inherit` alone inherits every corner.
+        if input.trim().eq_ignore_ascii_case("inherit") {
+            return Ok(PropertyResult::Parsed(ParsedProperty {
+                property,
+                value: SpecifiedValue::Expanded(
+                    property
+                        .longhands()
+                        .iter()
+                        .map(|longhand| ParsedProperty {
+                            property: *longhand,
+                            value: SpecifiedValue::Inherit,
+                            important,
+                        })
+                        .collect(),
+                ),
+                important,
+            }));
+        }
+        return Ok(
+            match length_property::radius_shorthand(input, limits, work)? {
+                Some(corners) => PropertyResult::Parsed(ParsedProperty {
+                    property,
+                    value: SpecifiedValue::Expanded(
+                        property
+                            .longhands()
+                            .iter()
+                            .zip(corners)
+                            .map(|(longhand, (across, down))| ParsedProperty {
+                                property: *longhand,
+                                value: SpecifiedValue::LengthPair(across, down),
+                                important,
+                            })
+                            .collect(),
+                    ),
+                    important,
+                }),
+                None => PropertyResult::Invalid,
+            },
+        );
     }
     if name == "font" {
         return font_shorthand::parse(input, important, limits, work).map(|value| {

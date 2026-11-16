@@ -69,7 +69,6 @@ css_todo_test!(background_color, "background-color");
 css_todo_test!(gradients, "linear-gradient / radial-gradient");
 css_todo_test!(background_images, "background-image url()");
 css_todo_test!(borders, "border");
-css_todo_test!(border_radius, "border-radius");
 css_todo_test!(box_shadows, "box-shadow");
 css_todo_test!(outline, "outline");
 css_todo_test!(opacity, "opacity");

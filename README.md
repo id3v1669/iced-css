@@ -84,6 +84,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   too (CSS Custom Properties Level 1). A value that does not parse once replaced leaves
   its property inherited or initial. A sheet that uses them cascades every box once
   more per styling. An empty value (`--name:;`) is not read, and nor is `@property`.
+- **Rounded corners:** `border-radius` and its four longhands (CSS Backgrounds 3) round a
+  box's background, and its border when the four sides are one solid ring of one color and
+  width; sides that differ stay square. A corner has one radius (a second, after a slash,
+  is not read) and a percentage is of the box's shorter side. Content, background images
+  and `overflow` clipping are not cut to the curve. It applies at once in an animation.
 - **Colors:** CSS 2.2 colors, and from CSS Color 3 `rgba()`, `hsl()`, `hsla()`, `#rgba`,
   `#rrggbbaa`, `currentColor`, and `transparent` on every color property. Opacity is kept
   to 1 part in 255. It draws on a box's background and borders; text, outlines, an inline

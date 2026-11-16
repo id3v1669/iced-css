@@ -73,6 +73,11 @@ pub(super) fn grammar(name: &str) -> Option<Grammar> {
             value.percentage = false;
             value.pair = true;
         }
+        // CSS Backgrounds 3: a corner's horizontal radius, then its vertical one.
+        "border-top-left-radius"
+        | "border-top-right-radius"
+        | "border-bottom-right-radius"
+        | "border-bottom-left-radius" => value.pair = true,
         _ => return None,
     }
     Some(value)
@@ -232,4 +237,65 @@ pub(super) fn clip_component(
         limits,
         work,
     )
+}
+
+/// The `border-radius` shorthand (CSS Backgrounds 3, 5.5): one to four horizontal radii,
+/// then after a slash one to four vertical ones (the horizontal ones again when there is
+/// no slash), each list filled out as the four-side shorthands are. The corners come top
+/// left, top right, bottom right, bottom left. `None` is invalid.
+pub(super) fn radius_shorthand(
+    input: &str,
+    limits: ColorLimits,
+    work: &mut usize,
+) -> Result<Option<[(LengthTarget, LengthTarget); 4]>, PropertyError> {
+    let grammar = Grammar {
+        signed: false,
+        percentage: true,
+        number: false,
+        pair: false,
+        keywords: &[],
+    };
+    let mut lists: [Vec<LengthTarget>; 2] = [Vec::new(), Vec::new()];
+    let mut list = 0;
+    let mut offset = 0;
+    while let Some(token) = significant(input, &mut offset, work)? {
+        if token.1.kind == TokenKind::Delim && token.1.raw == "/" {
+            if list == 1 || lists[0].is_empty() {
+                return Ok(None);
+            }
+            list = 1;
+            continue;
+        }
+        let Some(SpecifiedValue::Length(length)) = component(token, grammar, limits, work)? else {
+            return Ok(None);
+        };
+        if lists[list].len() == 4 {
+            return Ok(None);
+        }
+        lists[list].push(length);
+    }
+    if lists[0].is_empty() || (list == 1 && lists[1].is_empty()) {
+        return Ok(None);
+    }
+    // One value is every corner; two are the two diagonals; three leave the last corner
+    // to follow the second.
+    let four = |values: &[LengthTarget]| -> [LengthTarget; 4] {
+        let pick = |at: usize| values[at].clone();
+        match values.len() {
+            1 => [pick(0), pick(0), pick(0), pick(0)],
+            2 => [pick(0), pick(1), pick(0), pick(1)],
+            3 => [pick(0), pick(1), pick(2), pick(1)],
+            _ => [pick(0), pick(1), pick(2), pick(3)],
+        }
+    };
+    let across = four(&lists[0]);
+    let down = if list == 1 {
+        four(&lists[1])
+    } else {
+        across.clone()
+    };
+    let mut corners = across.into_iter().zip(down);
+    Ok(Some(std::array::from_fn(|_| {
+        corners.next().expect("four corners")
+    })))
 }

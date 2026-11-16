@@ -6097,6 +6097,61 @@ fn draw_box<Renderer: renderer::Renderer>(
     paint_box(renderer, origin, tree.paints[index], &here, parts, &cuts);
 }
 
+/// A box's corner radii in pixels: a percentage is of its border box's shorter side, and
+/// radii too large for a side shrink together until they fit (CSS Backgrounds 3, 5.5).
+fn corner_radii(radius: [[f32; 2]; 4], border: FlowRect) -> iced::border::Radius {
+    let (width, height) = (border.right - border.left, border.bottom - border.top);
+    let basis = width.min(height).max(0.0);
+    let mut corners = radius.map(|[pixels, percent]| (pixels + percent / 100.0 * basis).max(0.0));
+    // Top, right, bottom, left: the two corners on each side.
+    let mut scale = 1.0_f32;
+    for (side, (first, second)) in [
+        (width, (0, 1)),
+        (height, (1, 2)),
+        (width, (2, 3)),
+        (height, (3, 0)),
+    ] {
+        let sum = corners[first] + corners[second];
+        if sum > side && sum > 0.0 {
+            scale = scale.min(side.max(0.0) / sum);
+        }
+    }
+    for corner in &mut corners {
+        *corner *= scale;
+    }
+    iced::border::Radius {
+        top_left: corners[0],
+        top_right: corners[1],
+        bottom_right: corners[2],
+        bottom_left: corners[3],
+    }
+}
+
+/// The width of a box's border when its four sides are one solid ring: one color at one
+/// opacity, one width. `None` when they differ or draw nothing.
+fn uniform_border(paint: &BoxPaint, geometry: &FlowGeometry) -> Option<f32> {
+    let (border, padding) = (geometry.border, geometry.padding);
+    let widths = [
+        padding.top - border.top,
+        border.right - padding.right,
+        border.bottom - padding.bottom,
+        padding.left - border.left,
+    ];
+    let same = |values: [f32; 4]| values.iter().all(|value| (value - values[0]).abs() < 0.01);
+    (widths[0] > 0.0
+        && same(widths)
+        && paint
+            .border
+            .iter()
+            .all(|color| color.is_some() && *color == paint.border[0])
+        && paint
+            .border_fade
+            .iter()
+            .all(|fade| *fade == paint.border_fade[0])
+        && paint.border_style.iter().all(|style| *style == "solid"))
+    .then_some(widths[0])
+}
+
 /// A box's background and border bands from its paint, offset to the layout origin.
 fn paint_box<Renderer: renderer::Renderer>(
     renderer: &mut Renderer,
@@ -6131,17 +6186,24 @@ fn paint_box<Renderer: renderer::Renderer>(
         (false, parts) => parts,
     };
     let border = geometry.border;
+    let radius = corner_radii(paint.radius, border);
+    let rounded = radius != iced::border::Radius::default();
+    let outer = {
+        let bounds = rectangle(border.left, border.right, border.top, border.bottom);
+        Rectangle {
+            x: bounds.x + origin.x,
+            y: bounds.y + origin.y,
+            ..bounds
+        }
+    };
     if let Some(color) = paint.background.filter(|_| parts != BoxParts::Border) {
-        // 14.2: the background extends under the border.
+        // 14.2: the background extends under the border. CSS Backgrounds 3: to its curve.
         renderer.fill_quad(
             Quad {
-                bounds: {
-                    let bounds = rectangle(border.left, border.right, border.top, border.bottom);
-                    Rectangle {
-                        x: bounds.x + origin.x,
-                        y: bounds.y + origin.y,
-                        ..bounds
-                    }
+                bounds: outer,
+                border: iced::Border {
+                    radius,
+                    ..iced::Border::default()
                 },
                 ..Quad::default()
             },
@@ -6152,6 +6214,35 @@ fn paint_box<Renderer: renderer::Renderer>(
                 paint.background_fade.unwrap_or(1.0),
             ),
         );
+    }
+    // A rounded box whose four sides are one solid border draws it as one curved ring.
+    // Sides that differ, or are not solid, or lose a stretch to a neighbour, stay square.
+    if rounded
+        && parts != BoxParts::Background
+        && cuts.is_empty()
+        && let Some(width) = uniform_border(&paint, geometry)
+        && let Some(color) = paint.border[0]
+    {
+        if outer.width > 0.0 && outer.height > 0.0 {
+            renderer.fill_quad(
+                Quad {
+                    bounds: outer,
+                    border: iced::Border {
+                        color: Color::from_rgba(
+                            color[0],
+                            color[1],
+                            color[2],
+                            paint.border_fade[0].unwrap_or(1.0),
+                        ),
+                        width,
+                        radius,
+                    },
+                    ..Quad::default()
+                },
+                Color::TRANSPARENT,
+            );
+        }
+        return;
     }
     if parts != BoxParts::Background {
         let bands = border_bands(border, geometry.padding);
@@ -9240,6 +9331,112 @@ mod tests {
         assert_eq!(drawn(BoxParts::Background), 1);
         assert_eq!(drawn(BoxParts::Border), 0);
         assert_eq!(drawn(BoxParts::CellBorder), 4);
+    }
+
+    /// Every quad as drawn, with its border.
+    #[derive(Default)]
+    struct Quads(Vec<(Quad, Color)>);
+    impl renderer::Renderer for Quads {
+        fn start_layer(&mut self, _: Rectangle) {}
+        fn end_layer(&mut self) {}
+        fn start_transformation(&mut self, _: Transformation) {}
+        fn end_transformation(&mut self) {}
+        fn fill_quad(&mut self, quad: Quad, background: impl Into<Background>) {
+            let Background::Color(color) = background.into() else {
+                panic!("box paint is a solid color");
+            };
+            self.0.push((quad, color));
+        }
+        fn allocate_image(
+            &mut self,
+            _: &iced::advanced::image::Handle,
+            _: impl FnOnce(Result<iced::advanced::image::Allocation, iced::advanced::image::Error>)
+            + Send
+            + 'static,
+        ) {
+        }
+        fn reset(&mut self, _: Rectangle) {}
+    }
+
+    #[test]
+    fn rounded_boxes_draw_a_curved_background_and_one_ring_for_a_uniform_border() {
+        let drawn = |css: &str| {
+            let tree = BoxTree::new(node("page", vec![node("k", vec![])]), css).unwrap();
+            let geometry = tree.layout(400.0, None).unwrap();
+            let mut renderer = Quads::default();
+            draw_box(
+                &tree,
+                &geometry,
+                &mut renderer,
+                Point::ORIGIN,
+                1,
+                BoxParts::All,
+            );
+            renderer.0
+        };
+        let corners = |quad: &Quad| {
+            let radius = quad.border.radius;
+            [
+                radius.top_left,
+                radius.top_right,
+                radius.bottom_right,
+                radius.bottom_left,
+            ]
+        };
+        let base = "#k { width:100px; height:60px; background-color:#0000ff; }";
+        // No radius: square corners, as before.
+        let quads = drawn(base);
+        assert_eq!(quads.len(), 1);
+        assert_eq!(corners(&quads[0].0), [0.0; 4]);
+        // One value rounds every corner of the background.
+        let quads = drawn(&format!("{base} #k {{ border-radius:10px; }}"));
+        assert_eq!(quads.len(), 1);
+        assert_eq!(corners(&quads[0].0), [10.0; 4]);
+        // Four values, clockwise from the top left; a longhand over the shorthand.
+        let quads = drawn(&format!(
+            "{base} #k {{ border-radius:1px 2px 3px 4px; border-bottom-right-radius:9px; }}"
+        ));
+        assert_eq!(corners(&quads[0].0), [1.0, 2.0, 9.0, 4.0]);
+        // A percentage is of the shorter side; radii too large for a side shrink to fit.
+        let quads = drawn(&format!("{base} #k {{ border-radius:50%; }}"));
+        assert_eq!(corners(&quads[0].0), [30.0; 4]);
+        let quads = drawn(&format!("{base} #k {{ border-radius:100px; }}"));
+        assert!(
+            corners(&quads[0].0)
+                .iter()
+                .all(|corner| (corner - 30.0).abs() < 0.001)
+        );
+        // A uniform solid border is one ring on the same curve, over the background.
+        let quads = drawn(&format!(
+            "{base} #k {{ border:4px solid #ff0000; border-radius:12px; }}"
+        ));
+        assert_eq!(quads.len(), 2);
+        let (ring, fill) = &quads[1];
+        assert_eq!(*fill, Color::TRANSPARENT);
+        assert_eq!(ring.border.width, 4.0);
+        assert_eq!(ring.border.color, Color::from_rgb(1.0, 0.0, 0.0));
+        assert_eq!(corners(ring), [12.0; 4]);
+        assert_eq!(
+            ring.bounds,
+            Rectangle::new(Point::ORIGIN, Size::new(108.0, 68.0))
+        );
+        // Sides that differ stay square bands; the background is still rounded.
+        let quads = drawn(&format!(
+            "{base} #k {{ border:4px solid #ff0000; border-left-color:#00ff00; border-radius:12px; }}"
+        ));
+        assert_eq!(quads.len(), 5);
+        assert_eq!(corners(&quads[0].0), [12.0; 4]);
+        assert!(quads[1..].iter().all(|(quad, _)| corners(quad) == [0.0; 4]));
+        // The second radius of a corner, after a slash, is not read.
+        let quads = drawn(&format!("{base} #k {{ border-radius:10px / 20px; }}"));
+        assert_eq!(corners(&quads[0].0), [10.0; 4]);
+        // Invalid values drop the declaration.
+        for bad in ["-1px", "1px 2px 3px 4px 5px", "1px / ", "/ 1px", "red"] {
+            let quads = drawn(&format!(
+                "{base} #k {{ border-radius:7px; border-radius:{bad}; }}"
+            ));
+            assert_eq!(corners(&quads[0].0), [7.0; 4], "{bad}");
+        }
     }
 
     #[test]

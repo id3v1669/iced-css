@@ -1707,6 +1707,9 @@ pub struct BoxPaint {
     pub fixed_table: bool,
     /// `box-sizing: border-box`.
     pub border_box: bool,
+    /// `border-radius`: each corner's radius as pixels plus a percent of the border box's
+    /// shorter side, from the top left clockwise. Only a corner's first radius is read.
+    pub radius: [[f32; 2]; 4],
     /// Top, right, bottom, left.
     pub border: [Option<[f32; 3]>; 4],
     /// Each border color's opacity while an animation fades it; `None` is opaque.
@@ -2604,6 +2607,7 @@ pub fn evaluate_tree_paint<'r>(
             _ => false,
         };
         paints.push(BoxPaint {
+            radius: [[0.0; 2]; 4],
             border_box,
             cursor,
             clip: None,
@@ -2911,6 +2915,34 @@ pub fn evaluate_tree_paint<'r>(
             };
         }
         box_lengths.push(lengths);
+        // CSS Backgrounds 3: the corner radii. Not inherited; `inherit` takes the parent's.
+        for (corner, name) in [
+            "border-top-left-radius",
+            "border-top-right-radius",
+            "border-bottom-right-radius",
+            "border-bottom-left-radius",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let radius = match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::LengthPair(across, _)) => {
+                    match own_length(across) {
+                        Dim::Px(pixels) => [pixels.max(0.0), 0.0],
+                        Dim::Percent(percent) => [0.0, percent.max(0.0)],
+                        Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => {
+                            [pixels, percent]
+                        }
+                        Dim::Auto => [0.0; 2],
+                    }
+                }
+                DefaultedValueRef::ParentComputed => {
+                    parent_index.map_or([0.0; 2], |parent: usize| paints[parent].radius[corner])
+                }
+                _ => [0.0; 2],
+            };
+            paints[index].radius[corner] = radius;
+        }
         let mut widths = [0.0_f32; 4];
         for (at, name) in [
             "border-top-width",
