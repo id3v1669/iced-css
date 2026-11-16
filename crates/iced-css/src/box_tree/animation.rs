@@ -2897,23 +2897,33 @@ impl BoxTreeAnimations {
     /// `tree` with the current presented values over it, for drawing.
     #[must_use]
     pub fn presented(&self, tree: &BoxTree) -> BoxTree {
+        self.presented_over(tree, None)
+    }
+
+    /// `tree` with `under` (another set's presented values), then these, over it.
+    pub(super) fn presented_over(
+        &self,
+        tree: &BoxTree,
+        under: Option<Arc<Vec<Presented>>>,
+    ) -> BoxTree {
         let mut presented = tree.clone();
-        let list: Vec<Presented> = self
-            .tracks
-            .iter()
-            .filter(|track| track.capture == tree.source.capture)
-            .filter_map(|track| {
-                let now = mix(track.start, track.target, self.progress(track)?)?;
-                Some(Presented {
-                    id: track.id.clone(),
-                    property: track.property,
-                    field: track.field,
-                    target: track.target,
-                    now,
-                    followers: track.followers.clone(),
-                })
-            })
-            .collect();
+        let mut list: Vec<Presented> = under.map(|under| (*under).clone()).unwrap_or_default();
+        list.extend(
+            self.tracks
+                .iter()
+                .filter(|track| track.capture == tree.source.capture)
+                .filter_map(|track| {
+                    let now = mix(track.start, track.target, self.progress(track)?)?;
+                    Some(Presented {
+                        id: track.id.clone(),
+                        property: track.property,
+                        field: track.field,
+                        target: track.target,
+                        now,
+                        followers: track.followers.clone(),
+                    })
+                }),
+        );
         if !list.is_empty() {
             presented.presentation = Some(Arc::new(list));
             presented.present();

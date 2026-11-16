@@ -137,6 +137,7 @@ use std::{
         Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 
 mod animation;
@@ -3478,6 +3479,7 @@ where
             base: tree.clone(),
             tree,
             key: (None, None, None),
+            presenting: false,
             measured: false,
             geometry: Vec::new(),
             slot_geometry: Vec::new(),
@@ -3537,6 +3539,78 @@ struct Interaction {
     source: Option<Arc<Source>>,
     /// Scrolling moved boxes under the pointer: the next redraw finds what it is over.
     rehover: bool,
+    /// The interaction state last laid out, so a change of it can start transitions.
+    seen: Option<InteractionKey>,
+    /// Transitions an interaction restyle started (CSS Transitions 1), once any has.
+    transitions: Option<WidgetTransitions>,
+}
+
+/// The widget's own running transitions, shared by the clones of its state.
+#[derive(Clone, Default)]
+struct WidgetTransitions(Arc<Mutex<BoxTreeAnimations>>);
+
+impl std::fmt::Debug for WidgetTransitions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WidgetTransitions")
+    }
+}
+
+impl WidgetTransitions {
+    fn lock(&self) -> std::sync::MutexGuard<'_, BoxTreeAnimations> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Interaction {
+    /// The tree to draw for `key` over `base`, and whether it shows transitions. A
+    /// change of interaction state starts the transitions its new styling asks for, from
+    /// the styling it leaves (CSS Transitions 1).
+    fn styled_for(&mut self, base: &BoxTree, key: InteractionKey, now: Instant) -> (BoxTree, bool) {
+        let previous = self.seen.replace(key);
+        if let Some(previous) = previous.filter(|previous| *previous != key) {
+            let after = base.unpresented_variant(key);
+            if after
+                .transitions
+                .iter()
+                .any(|transitions| !transitions.is_empty())
+            {
+                let before = base.unpresented_variant(previous);
+                let held = self
+                    .transitions
+                    .get_or_insert_with(WidgetTransitions::default);
+                // A refused timing starts nothing; the change shows at once.
+                let _ = held.lock().transition(&before, &after, now);
+            }
+            // What headed for the styling left behind stops here.
+            if let Some(held) = &self.transitions {
+                held.lock().advance(now, &after);
+            }
+        }
+        match &self.transitions {
+            Some(held) if held.lock().is_animating() => {
+                let shown = base.unpresented_variant(key);
+                (
+                    held.lock()
+                        .presented_over(&shown, base.presentation.clone()),
+                    true,
+                )
+            }
+            _ => (base.variant(key), false),
+        }
+    }
+
+    /// Moves the widget's transitions on to `now`; whether they still run.
+    fn advance_transitions(&mut self, base: &BoxTree, key: InteractionKey, now: Instant) -> bool {
+        let Some(held) = &self.transitions else {
+            return false;
+        };
+        let mut animations = held.lock();
+        if !animations.is_animating() {
+            return false;
+        }
+        animations.advance(now, &base.unpresented_variant(key));
+        true
+    }
 }
 
 impl PartialEq for Interaction {
@@ -3560,6 +3634,11 @@ impl Interaction {
         let carried = Carried::new(old.construction.nodes(), source.construction.nodes());
         for held in [&mut self.hovered, &mut self.active, &mut self.focused] {
             *held = held.and_then(|node| carried.at(node));
+        }
+        if let Some(seen) = &mut self.seen {
+            for held in [&mut seen.0, &mut seen.1, &mut seen.2] {
+                *held = held.and_then(|node| carried.at(node));
+            }
         }
         for offsets in [&mut self.scrolled, &mut self.scrolled_x] {
             *offsets = std::mem::take(offsets)
@@ -4723,6 +4802,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     /// The base restyled for `key`.
     tree: BoxTree,
     key: InteractionKey,
+    /// `tree` shows the widget's own transitions, so it is styled again each layout.
+    presenting: bool,
     measured: bool,
     geometry: Vec<Option<FlowGeometry>>,
     /// The same layout by arena slot, including anonymous blocks.
@@ -6896,10 +6977,20 @@ where
         state.follow(&self.base.source);
         let interaction = state.clone();
         let key = (interaction.hovered, interaction.active, interaction.focused);
-        if key != self.key {
-            self.key = key;
-            self.tree = self.base.variant(key);
-            self.measured = false;
+        let changed = state.seen != Some(key);
+        let animating = state
+            .transitions
+            .as_ref()
+            .is_some_and(|held| held.lock().is_animating());
+        if key != self.key || changed || self.presenting || animating {
+            let (styled, presenting) = state.styled_for(&self.base, key, Instant::now());
+            // Unchanged and not moving: the tree in hand keeps its measurements.
+            if key != self.key || presenting || self.presenting {
+                self.key = key;
+                self.tree = styled;
+                self.measured = false;
+            }
+            self.presenting = presenting;
         }
         if !self.measured {
             self.measured = true;
@@ -7260,6 +7351,15 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        // Each frame moves the widget's own transitions on, and asks for the next while
+        // they run; the frame after the last shows where they end.
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            let state = tree.state.downcast_mut::<Interaction>();
+            if state.advance_transitions(&self.base, self.key, *now) {
+                shell.invalidate_layout();
+                shell.request_redraw();
+            }
+        }
         let top = cursor
             .position_in(layout.bounds())
             .and_then(|point| self.hit(point));
@@ -8667,6 +8767,56 @@ mod tests {
             .find(|(_, leaf)| leaf.text() == "fixed")
             .unwrap();
         assert_eq!(fixed.1.runs[0].color, Some([1.0; 3]));
+    }
+
+    #[test]
+    fn hovering_starts_the_transitions_its_styling_asks_for() {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![]), node("b", vec![])]),
+            "#a, #b { width:100px; height:10px; }
+             #a:hover { width:200px; transition: width 1s linear; }
+             #b:hover { width:300px; }",
+        )
+        .unwrap();
+        let by_id = |id: &str| {
+            tree.originals[tree
+                .ids
+                .iter()
+                .position(|value| value.as_deref() == Some(id))
+                .unwrap()]
+        };
+        let (a, b) = (by_id("a"), by_id("b"));
+        let width = |shown: &BoxTree, at: usize| {
+            let geometry = shown.layout(600.0, None).unwrap();
+            let border = geometry[at].unwrap().border;
+            border.right - border.left
+        };
+        let start = Instant::now();
+        let at = |millis: u64| start + std::time::Duration::from_millis(millis);
+        let mut state = Interaction::default();
+        let none = (None, None, None);
+        // The first styling seen starts nothing.
+        let (shown, moving) = state.styled_for(&tree, none, start);
+        assert_eq!((width(&shown, 1), moving), (100.0, false));
+        // Hovering `a`: its hover rule asks for a transition.
+        let (_, moving) = state.styled_for(&tree, (Some(a), None, None), start);
+        assert!(moving);
+        assert!(state.advance_transitions(&tree, (Some(a), None, None), at(500)));
+        let (shown, _) = state.styled_for(&tree, (Some(a), None, None), at(500));
+        assert_eq!(width(&shown, 1), 150.0);
+        // Leaving it halfway: no rule asks for one back, so it applies at once.
+        let (shown, _) = state.styled_for(&tree, none, at(500));
+        assert_eq!(width(&shown, 1), 100.0);
+        // `b` asks for none.
+        let (shown, moving) = state.styled_for(&tree, (Some(b), None, None), at(600));
+        assert_eq!((width(&shown, 2), moving), (300.0, false));
+        // Hovering `a` again runs to the end, and then shows the hover styling alone.
+        let (_, moving) = state.styled_for(&tree, (Some(a), None, None), at(1000));
+        assert!(moving);
+        assert!(state.advance_transitions(&tree, (Some(a), None, None), at(2100)));
+        assert!(!state.advance_transitions(&tree, (Some(a), None, None), at(2200)));
+        let (shown, moving) = state.styled_for(&tree, (Some(a), None, None), at(2100));
+        assert_eq!((width(&shown, 1), moving), (200.0, false));
     }
 
     #[test]

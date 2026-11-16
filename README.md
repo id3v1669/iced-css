@@ -173,9 +173,10 @@ CSS Transitions 1: `BoxTreeAnimations::transition(from, to, now)` starts what `t
 `transition-delay` (and the `transition` shorthand) ask for, on every element whose values
 changed, with or without an id: `linear`, `ease` and its kin, `cubic-bezier()`, `step-start`,
 `step-end` and `steps()` with every jump position; a negative delay starts partway. Call it
-where you would call `request`, between trees restyled from one capture. Limits: hovering,
-pressing or focusing (the widget's own restyles) starts no transition; `:before` and `:after`
-do not transition; an easing that overshoots is cut off at the ends; `inherit` on a
+where you would call `request`, between trees restyled from one capture. The widget runs
+the transitions of its own restyles itself: hovering, pressing or focusing a box starts what
+the new styling asks for, drawn over the application's animations and moved on each frame.
+Limits: `:before` and `:after` do not transition; an easing that overshoots is cut off at the ends; `inherit` on a
 transition property reads as its initial value; no transition events.
 
 What animates:
