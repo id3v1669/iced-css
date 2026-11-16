@@ -72,9 +72,10 @@ use crate::{
         },
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
-            BackgroundImage, BackgroundOffset, BoxPaint, GeneratedFrame, GeneratedRun,
-            InlineBoxSides, PreparedTree, RunSource, TextLineHeight, TextStyle, TreeLayoutError,
-            TreePaint, evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
+            BackgroundImage, BackgroundOffset, BoxPaint, ElementTransition, GeneratedFrame,
+            GeneratedRun, InlineBoxSides, PreparedTree, RunSource, TextLineHeight, TextStyle,
+            TreeLayoutError, TreePaint, evaluate_tree_paint, prepare_captured_tree,
+            prepare_tree_source_projection,
         },
     },
     host::{
@@ -811,6 +812,7 @@ struct Style {
     em_lengths: Vec<Vec<PropertyId>>,
     weights: Vec<u16>,
     marker_images: BTreeMap<usize, image::Handle>,
+    transitions: Vec<Vec<ElementTransition>>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -839,6 +841,8 @@ pub struct BoxTree {
     marker_images: BTreeMap<usize, image::Handle>,
     /// Temporary values of running animations, laid over every interaction styling.
     presentation: Option<Arc<Vec<animation::Presented>>>,
+    /// The transitions each element asks for, by projected index (CSS Transitions 1).
+    transitions: Vec<Vec<ElementTransition>>,
 }
 
 /// Two trees are equal when they draw alike and restyle from the same sheets.
@@ -1085,6 +1089,7 @@ impl BoxTree {
             em_lengths: self.em_lengths.clone(),
             weights: self.weights.clone(),
             marker_images: self.marker_images.clone(),
+            transitions: self.transitions.clone(),
         }
     }
 
@@ -1103,6 +1108,7 @@ impl BoxTree {
             weights: style.weights,
             marker_images: style.marker_images,
             presentation: None,
+            transitions: style.transitions,
         }
     }
 
@@ -1307,6 +1313,7 @@ impl BoxTree {
             outside_items,
             grids,
             grid_items,
+            transitions,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes, 16.0)
             .map_err(failed)?;
         let weights: Vec<u16> = styles.iter().map(|style| style.weight).collect();
@@ -2573,6 +2580,7 @@ impl BoxTree {
             weights,
             marker_images: marker_image_handles,
             presentation: None,
+            transitions,
         })
     }
 

@@ -6,6 +6,7 @@
 use super::{BoxTree, BoxTreeError, failed};
 use crate::animation::{
     clock::AnimationTiming,
+    easing::CssEasing,
     engine::{ProgressEngine, ProgressLimits},
 };
 use crate::evaluation::tree_layout::RunSource;
@@ -20,7 +21,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     num::{NonZeroU64, NonZeroUsize},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -232,6 +233,13 @@ pub(super) struct Presented {
 impl BoxTree {
     /// The first element with this CSS id, by projected index.
     fn element(&self, id: &str) -> Option<usize> {
+        // An element with no id of its own, as a transition addresses it.
+        if let Some(projected) = id.strip_prefix(UNNAMED) {
+            return projected
+                .parse()
+                .ok()
+                .filter(|projected| *projected < self.originals.len());
+        }
         let nodes = self.source.construction.nodes();
         self.originals
             .iter()
@@ -2410,6 +2418,27 @@ impl From<AnimationTiming> for Transition {
     }
 }
 
+/// How a track eases: an iced easing from a request, or a transition's CSS one,
+/// begun partway when its delay was negative.
+#[derive(Debug, Clone, Copy)]
+enum Ease {
+    Iced(Easing),
+    Css { easing: CssEasing, from: f32 },
+}
+
+impl Ease {
+    fn value(self, linear: f32) -> f32 {
+        match self {
+            Self::Iced(easing) => easing.value(linear),
+            Self::Css { easing, from } => easing.value(from + linear * (1.0 - from)),
+        }
+    }
+}
+
+/// How a transition names an element that has no id: never a CSS id, which cannot hold
+/// this character.
+const UNNAMED: &str = "\u{0}";
+
 #[derive(Debug)]
 struct Track {
     id: String,
@@ -2420,7 +2449,7 @@ struct Track {
     followers: Followers,
     /// The capture it belongs to: another tree with this id is another element.
     capture: u64,
-    easing: Easing,
+    easing: Ease,
 }
 
 /// Running explicit animations. It lives in the application state, beside the tree, and
@@ -2516,6 +2545,21 @@ impl BoxTreeAnimations {
                 .ok_or_else(|| BoxTreeError(format!("unknown property {name}")))?;
             longhands.extend_from_slice(property.longhands());
         }
+        self.start(from, to, id, longhands, timing, Ease::Iced(easing), now)
+    }
+
+    /// Starts `longhands` of the element `id` addresses; see [`Self::request`].
+    #[allow(clippy::too_many_arguments)]
+    fn start(
+        &mut self,
+        from: &BoxTree,
+        to: &BoxTree,
+        id: &str,
+        mut longhands: Vec<PropertyId>,
+        timing: AnimationTiming,
+        easing: Ease,
+        now: Instant,
+    ) -> Result<usize, BoxTreeError> {
         let mut seen = Vec::new();
         longhands.retain(|longhand| {
             let new = !seen.contains(longhand);
@@ -2703,6 +2747,87 @@ impl BoxTreeAnimations {
             let _ = self.engine.remove_source(&source);
         }
         Ok(count)
+    }
+
+    /// CSS Transitions 1: starts what `to`'s `transition-*` properties ask for, on every
+    /// element whose values there differ from what `from` presents. Keep `to` as your
+    /// tree, as after [`Self::request`]; `from` is the tree it replaces, restyled from the
+    /// same capture (another capture starts nothing). Each transition runs as a request
+    /// would, with the same exceptions; an easing that overshoots is cut off at the ends,
+    /// and a negative delay starts that far in.
+    ///
+    /// Returns the animations started.
+    ///
+    /// # Errors
+    /// Returns a refused timing; transitions already started stay.
+    pub fn transition(
+        &mut self,
+        from: &BoxTree,
+        to: &BoxTree,
+        now: Instant,
+    ) -> Result<usize, BoxTreeError> {
+        if from.source.capture != to.source.capture {
+            return Ok(0);
+        }
+        let nodes = to.source.construction.nodes();
+        let mut started = 0;
+        for (projected, transitions) in to.transitions.iter().enumerate() {
+            if transitions.is_empty() || projected >= from.originals.len() {
+                continue;
+            }
+            // Its id, when that finds it; otherwise its place.
+            let id = nodes[to.originals[projected]]
+                .metadata()
+                .css_id()
+                .filter(|id| to.element(id) == Some(projected))
+                .map_or_else(|| format!("{UNNAMED}{projected}"), str::to_owned);
+            // A later transition naming a longhand wins it.
+            let mut chosen: Vec<(PropertyId, usize)> = Vec::new();
+            for (at, transition) in transitions.iter().enumerate() {
+                let longhands: Vec<PropertyId> = match &transition.properties {
+                    Some(longhands) => longhands.clone(),
+                    None => PropertyId::all()
+                        .filter(|property| {
+                            !property.descriptor().shorthand
+                                && field(property.descriptor().name).is_some()
+                        })
+                        .collect(),
+                };
+                for longhand in longhands {
+                    match chosen.iter_mut().find(|(held, _)| *held == longhand) {
+                        Some(entry) => entry.1 = at,
+                        None => chosen.push((longhand, at)),
+                    }
+                }
+            }
+            for (at, transition) in transitions.iter().enumerate() {
+                let longhands: Vec<PropertyId> = chosen
+                    .iter()
+                    .filter(|(_, index)| *index == at)
+                    .map(|(longhand, _)| *longhand)
+                    .collect();
+                if longhands.is_empty() {
+                    continue;
+                }
+                let millis =
+                    |value: f32| Duration::from_secs_f64(f64::from(value.max(0.0)) / 1000.0);
+                // A negative delay has used up part of the duration already.
+                let skipped = (-transition.delay).max(0.0);
+                if skipped >= transition.duration {
+                    continue;
+                }
+                let timing = AnimationTiming::new(
+                    millis(transition.duration - skipped),
+                    millis(transition.delay),
+                );
+                let easing = Ease::Css {
+                    easing: transition.easing,
+                    from: skipped / transition.duration,
+                };
+                started += self.start(from, to, &id, longhands, timing, easing, now)?;
+            }
+        }
+        Ok(started)
     }
 
     /// A track and its value at the engine's current time, unless it has finished.

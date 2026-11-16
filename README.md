@@ -166,7 +166,19 @@ cargo test --workspace --features iced-css/image,iced-css/svg
 
 `BoxTreeAnimations` runs explicit requests between two styled trees. A style change without
 a request applies at once. Time comes from luminate; a `Transition` adds an easing, cut off
-at the two ends. What animates:
+at the two ends.
+
+CSS Transitions 1: `BoxTreeAnimations::transition(from, to, now)` starts what `to`'s
+`transition-property`, `transition-duration`, `transition-timing-function` and
+`transition-delay` (and the `transition` shorthand) ask for, on every element whose values
+changed, with or without an id: `linear`, `ease` and its kin, `cubic-bezier()`, `step-start`,
+`step-end` and `steps()` with every jump position; a negative delay starts partway. Call it
+where you would call `request`, between trees restyled from one capture. Limits: hovering,
+pressing or focusing (the widget's own restyles) starts no transition; `:before` and `:after`
+do not transition; an easing that overshoots is cut off at the ends; `inherit` on a
+transition property reads as its initial value; no transition events.
+
+What animates:
 
 - **Colors:** `color`, which reaches what inherits or uses it, plus `background-color`,
   border and outline colors.

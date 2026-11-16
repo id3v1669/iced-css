@@ -106,6 +106,12 @@ const UNREAD: &[&str] = &[
     "widows",
     // iced has no spacing between letters.
     "letter-spacing",
+    // These act between two trees, through `BoxTreeAnimations::transition` (see
+    // tests/box_tree.rs), not on one.
+    "transition-property",
+    "transition-duration",
+    "transition-timing-function",
+    "transition-delay",
 ];
 
 /// Property, what it needs around it, and a declaration that should show.
@@ -451,6 +457,18 @@ const CASES: &[(&str, &str, &str)] = &[
         "#b { display:grid; grid-template-columns:200px; } #k { width:10px; }",
         "#k { justify-self:end; }",
     ),
+    (
+        "transition-property",
+        "#k { transition-duration:1s; }",
+        "#k { transition-property:width; }",
+    ),
+    ("transition-duration", "", "#k { transition-duration:1s; }"),
+    (
+        "transition-timing-function",
+        "#k { transition-duration:1s; }",
+        "#k { transition-timing-function:linear; }",
+    ),
+    ("transition-delay", "", "#k { transition-delay:1s; }"),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

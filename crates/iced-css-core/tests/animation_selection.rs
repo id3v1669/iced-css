@@ -63,8 +63,15 @@ fn every_registry_property_has_explicit_eligibility_and_work_is_bounded() {
             assert_eq!(result.unwrap_err(), SelectionError::Undefined(property));
         } else {
             screen += usize::from(property.is_css22());
-            if property == id("display") {
-                assert_eq!(result.unwrap_err(), SelectionError::NotAnimatable(property));
+            // CSS Transitions 1: the transition properties do not animate, like `display`.
+            let not_animatable = property.descriptor().name == "display"
+                || property.descriptor().name.starts_with("transition");
+            if not_animatable {
+                // A shorthand names its first longhand.
+                assert_eq!(
+                    result.unwrap_err(),
+                    SelectionError::NotAnimatable(property.longhands()[0])
+                );
             } else {
                 let selected = result.unwrap();
                 let actual: Vec<_> = selected.properties().collect();

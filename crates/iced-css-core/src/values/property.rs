@@ -44,12 +44,15 @@ mod owned;
 mod shadow;
 #[path = "shorthand.rs"]
 mod shorthand;
+#[path = "transition.rs"]
+mod transition;
 pub use content::ContentItem;
 pub use cursor::Cursor;
 pub use grid::{
     GRID_LIMIT, GridBreadth, GridLineValue, GridRepeat, GridTrackEntry, GridTrackSize, GridValue,
 };
 pub use shadow::ShadowValue;
+pub use transition::{EasingValue, StepPosition, TimeValue, TransitionProperty, TransitionValue};
 
 pub(super) fn cursor_keyword_allowed(keyword: Keyword) -> bool {
     cursor::valid_fallback(keyword)
@@ -109,6 +112,8 @@ pub enum SpecifiedValue {
     Shadows(Vec<ShadowValue>),
     /// A grid property (CSS Grid Layout 1).
     Grid(GridValue),
+    /// A transition property's list (CSS Transitions 1).
+    Transition(TransitionValue),
     /// A custom property declaration (`--name: value`): its name, with its dashes, and
     /// its value's text. Filed under [`PropertyId::custom`].
     Custom {
@@ -241,6 +246,17 @@ fn border_styles(name: &str) -> Option<&'static [&'static str]> {
         _ => None,
     }
 }
+/// The transition properties, whose grammars live in `transition.rs`.
+fn transition_property(name: &str) -> bool {
+    matches!(
+        name,
+        "transition-property"
+            | "transition-duration"
+            | "transition-timing-function"
+            | "transition-delay"
+            | "transition"
+    )
+}
 /// The grid properties, whose grammars live in `grid.rs`.
 fn grid_property(name: &str) -> bool {
     matches!(
@@ -334,6 +350,7 @@ pub(super) fn inner(
             "opacity" | "flex-grow" | "flex-shrink" | "flex-flow" | "flex" | "gap"
         )
         && !grid_property(name)
+        && !transition_property(name)
     {
         return Err(PropertyError::Unimplemented(property));
     }
@@ -342,6 +359,19 @@ pub(super) fn inner(
     }
     if matches!(name, "flex-flow" | "flex" | "gap") {
         return flex_shorthand(property, input, important, limits, work);
+    }
+    if transition_property(name) {
+        if name == "transition" {
+            return transition::shorthand(property, input, important, limits, work);
+        }
+        return Ok(match transition::parse(property, input, limits, work)? {
+            Some(value) => PropertyResult::Parsed(ParsedProperty {
+                property,
+                value,
+                important,
+            }),
+            None => PropertyResult::Invalid,
+        });
     }
     if grid_property(name) {
         if property.descriptor().shorthand {

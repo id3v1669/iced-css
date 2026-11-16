@@ -51,8 +51,9 @@ use iced_css_core::{
         font_size::{FontSizeError, FontSizeTable},
         font_weight::{FontWeight, compute_font_weight},
         property::{
-            ContentItem, FontFamily, GRID_LIMIT, GridBreadth, GridRepeat, GridTrackEntry,
-            GridTrackSize, GridValue, SpecifiedValue,
+            ContentItem, EasingValue, FontFamily, GRID_LIMIT, GridBreadth, GridRepeat,
+            GridTrackEntry, GridTrackSize, GridValue, SpecifiedValue, StepPosition as StepValue,
+            TransitionProperty, TransitionValue,
         },
         registry::PropertyId,
         text_align::{ComputedTextAlign, compute_text_align},
@@ -1685,6 +1686,18 @@ pub struct BoxShadow {
     pub alpha: f32,
 }
 
+/// One transition an element's `transition-*` lists ask for (CSS Transitions 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementTransition {
+    /// The longhands it moves; `None` is `all`.
+    pub properties: Option<Vec<PropertyId>>,
+    /// Milliseconds, never negative.
+    pub duration: f32,
+    /// Milliseconds; a negative delay starts partway.
+    pub delay: f32,
+    pub easing: crate::animation::easing::CssEasing,
+}
+
 /// Cascaded paint colors of one box. `None` means transparent or not representable.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BoxPaint {
@@ -1829,6 +1842,8 @@ pub struct TreePaint {
     pub grids: Vec<Option<Box<GridContainer>>>,
     /// Where the row goes as a grid item; `None` is placed automatically.
     pub grid_items: Vec<Option<Box<GridItem>>>,
+    /// The transitions each row asks for; empty when none can run.
+    pub transitions: Vec<Vec<ElementTransition>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -2229,6 +2244,7 @@ pub fn evaluate_tree_paint<'r>(
     let mut paints: Vec<BoxPaint> = Vec::with_capacity(projection.len());
     let mut grids: Vec<Option<Box<GridContainer>>> = vec![None; projection.len()];
     let mut grid_items: Vec<Option<Box<GridItem>>> = vec![None; projection.len()];
+    let mut transitions: Vec<Vec<ElementTransition>> = vec![Vec::new(); projection.len()];
     let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
     let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
     let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
@@ -3229,6 +3245,88 @@ pub fn evaluate_tree_paint<'r>(
         if item != GridItem::default() {
             grid_items[index] = Some(Box::new(item));
         }
+        // CSS Transitions 1. None of these inherits; `inherit` on one reads as its initial
+        // value. The list of properties sets how many transitions there are, and the other
+        // lists repeat to match it.
+        let transition_of = |name: &'static str| {
+            Ok::<_, E>(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Transition(value)) => Some(value),
+                _ => None,
+            })
+        };
+        let times = |value: Option<&TransitionValue>| match value {
+            Some(TransitionValue::Times(times)) => times
+                .iter()
+                .map(|time| {
+                    time.value
+                        .scaled_finite_f32(1.0, limits.numeric)
+                        .map_or(0.0, |converted| {
+                            converted.value * if time.milliseconds { 1.0 } else { 1000.0 }
+                        })
+                })
+                .collect(),
+            _ => vec![0.0],
+        };
+        let durations: Vec<f32> = times(transition_of("transition-duration")?);
+        let delays: Vec<f32> = times(transition_of("transition-delay")?);
+        if durations.iter().any(|duration| *duration > 0.0)
+            || delays.iter().any(|delay| *delay > 0.0)
+        {
+            use crate::animation::easing::{CssEasing, StepPosition};
+            let number = |value: &iced_css_core::values::Decimal| {
+                value
+                    .scaled_finite_f32(1.0, limits.numeric)
+                    .map_or(0.0, |converted| converted.value)
+            };
+            let easings: Vec<CssEasing> = match transition_of("transition-timing-function")? {
+                Some(TransitionValue::Easings(easings)) => easings
+                    .iter()
+                    .map(|easing| match easing {
+                        EasingValue::Linear => CssEasing::Linear,
+                        EasingValue::CubicBezier(points) => {
+                            CssEasing::CubicBezier(points.each_ref().map(number))
+                        }
+                        EasingValue::Steps(count, position) => CssEasing::Steps(
+                            *count,
+                            match position {
+                                StepValue::JumpStart => StepPosition::JumpStart,
+                                StepValue::JumpEnd => StepPosition::JumpEnd,
+                                StepValue::JumpNone => StepPosition::JumpNone,
+                                StepValue::JumpBoth => StepPosition::JumpBoth,
+                            },
+                        ),
+                    })
+                    .collect(),
+                _ => vec![CssEasing::EASE],
+            };
+            let properties = match transition_of("transition-property")? {
+                Some(TransitionValue::Properties(properties)) => properties.clone(),
+                _ => vec![TransitionProperty::All],
+            };
+            for (at, property) in properties.iter().enumerate() {
+                let properties = match property {
+                    TransitionProperty::All => None,
+                    TransitionProperty::None => continue,
+                    // An unknown name holds its place in the lists and moves nothing.
+                    TransitionProperty::Named(name) => match PropertyId::lookup(name) {
+                        Some(property) => Some(property.longhands().to_vec()),
+                        None => continue,
+                    },
+                };
+                let duration = durations[at % durations.len()].max(0.0);
+                let delay = delays[at % delays.len()];
+                // A transition taking no time at all is none (2.1).
+                if duration + delay.max(0.0) <= 0.0 {
+                    continue;
+                }
+                transitions[index].push(ElementTransition {
+                    properties,
+                    duration,
+                    delay,
+                    easing: easings[at % easings.len()],
+                });
+            }
+        }
         // CSS Backgrounds 3: the first outer shadow; iced draws one, without a spread.
         // Not inherited; `inherit` takes the parent's.
         paints[index].shadow = match defaulted("box-shadow")? {
@@ -3818,5 +3916,6 @@ pub fn evaluate_tree_paint<'r>(
         outside_items,
         grids,
         grid_items,
+        transitions,
     })
 }

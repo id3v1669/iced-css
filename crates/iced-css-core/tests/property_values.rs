@@ -1756,3 +1756,86 @@ fn grid_properties_parse_css_grid_track_lists_lines_and_shorthands() {
     }
     assert!(PropertyId::lookup("grid").is_some_and(|grid| grid.descriptor().shorthand));
 }
+
+#[test]
+fn transition_properties_parse_lists_easings_and_the_shorthand() {
+    let valid = |input: &str| matches!(parse(input).unwrap(), PropertyResult::Parsed(_));
+    for good in [
+        "transition-property:none",
+        "transition-property:all",
+        "transition-property:width, color, no-such-thing",
+        "transition-duration:1s, 200ms",
+        "transition-delay:-1.5s",
+        "transition-timing-function:ease, linear, step-start",
+        "transition-timing-function:cubic-bezier(0.1, -2, 0.9, 3)",
+        "transition-timing-function:steps(4), steps(2, jump-none), steps(1, start)",
+        "transition:width 1s",
+        "transition:1s ease-in 2s opacity, color 3ms",
+        "transition:none",
+        "transition:all 0s steps(3, jump-both)",
+    ] {
+        assert!(valid(good), "{good}");
+    }
+    for bad in [
+        "transition-property:none, width",
+        "transition-property:initial",
+        "transition-property:width color",
+        "transition-duration:-1s",
+        "transition-duration:1",
+        "transition-duration:1px",
+        "transition-timing-function:cubic-bezier(1.5, 0, 0, 1)",
+        "transition-timing-function:cubic-bezier(0, 0, 1)",
+        "transition-timing-function:steps(0)",
+        "transition-timing-function:steps(1, jump-none)",
+        "transition-timing-function:bounce",
+        "transition:width 1s 2s 3s",
+        "transition:width color 1s",
+        "transition:none 1s, width 2s",
+        "transition:-1s width",
+        "transition:width 1s,",
+    ] {
+        assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
+    }
+    let PropertyResult::Parsed(ParsedProperty {
+        value: SpecifiedValue::Expanded(leaves),
+        ..
+    }) = parse("transition:opacity 1s, 200ms linear").unwrap()
+    else {
+        panic!()
+    };
+    let names: Vec<&str> = leaves
+        .iter()
+        .map(|leaf| leaf.property.descriptor().name)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "transition-property",
+            "transition-duration",
+            "transition-timing-function",
+            "transition-delay"
+        ]
+    );
+    assert_eq!(
+        leaves[0].value,
+        SpecifiedValue::Transition(TransitionValue::Properties(vec![
+            TransitionProperty::Named("opacity".into()),
+            TransitionProperty::All,
+        ]))
+    );
+    let SpecifiedValue::Transition(TransitionValue::Times(durations)) = &leaves[1].value else {
+        panic!()
+    };
+    assert_eq!(
+        durations
+            .iter()
+            .map(|time| time.milliseconds)
+            .collect::<Vec<_>>(),
+        [false, true]
+    );
+    let SpecifiedValue::Transition(TransitionValue::Easings(easings)) = &leaves[2].value else {
+        panic!()
+    };
+    assert_eq!(easings[1], EasingValue::Linear);
+    assert!(matches!(easings[0], EasingValue::CubicBezier(_)));
+}

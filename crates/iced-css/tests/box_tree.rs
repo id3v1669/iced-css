@@ -778,6 +778,64 @@ fn display_grid_places_children_in_tracks() {
 }
 
 #[test]
+fn transitions_start_on_a_restyle_as_their_properties_ask() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    // The second child has no id: a transition reaches it all the same.
+    let root = || {
+        let unnamed: Element = adapters::column_from_vec(vec![], capture_limits())
+            .unwrap()
+            .erase();
+        node("page", vec![node("a", vec![]), unnamed])
+    };
+    let sizes = |width: u32, height: u32, transition: &str| {
+        format!("#a, #page > :last-child {{ width:{width}px; height:{height}px; {transition} }}")
+    };
+    // Width and height of a, then of the unnamed box.
+    let shown = |tree: &BoxTree| {
+        let geometry = tree.layout(600.0, None).unwrap();
+        [1, 2].map(|at| {
+            let border = geometry[at].as_ref().unwrap().border;
+            (border.right - border.left, border.bottom - border.top)
+        })
+    };
+    let transition = "transition: width 1s linear, height 2s steps(2) 0.5s;";
+    let from = BoxTree::new(root(), &sizes(100, 10, transition)).unwrap();
+    let to = from.restyled(&[&sizes(200, 30, transition)]).unwrap();
+    let start = Instant::now();
+    let mut animations = BoxTreeAnimations::new();
+    assert_eq!(animations.transition(&from, &to, start).unwrap(), 4);
+    animations.advance(start + Duration::from_millis(500), &to);
+    // Width halfway; height still waiting out its delay.
+    assert_eq!(shown(&animations.presented(&to)), [(150.0, 10.0); 2]);
+    animations.advance(start + Duration::from_millis(1500), &to);
+    // Width done; height half way through two steps.
+    assert_eq!(shown(&animations.presented(&to)), [(200.0, 20.0); 2]);
+    animations.advance(start + Duration::from_millis(2600), &to);
+    assert!(!animations.is_animating());
+    assert_eq!(shown(&animations.presented(&to)), [(200.0, 30.0); 2]);
+    // A negative delay starts partway; a property not listed changes at once.
+    let transition = "transition-property: width; transition-duration: 1s; transition-timing-function: linear; transition-delay: -500ms;";
+    let from = BoxTree::new(root(), &sizes(100, 10, transition)).unwrap();
+    let to = from.restyled(&[&sizes(200, 30, transition)]).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    assert_eq!(animations.transition(&from, &to, start).unwrap(), 2);
+    animations.advance(start + Duration::from_millis(250), &to);
+    assert_eq!(shown(&animations.presented(&to)), [(175.0, 30.0); 2]);
+    // No transition, or one that takes no time, starts nothing.
+    for transition in ["", "transition: none 1s;", "transition: width 0s;"] {
+        let from = BoxTree::new(root(), &sizes(100, 10, transition)).unwrap();
+        let to = from.restyled(&[&sizes(200, 30, transition)]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        assert_eq!(
+            animations.transition(&from, &to, start).unwrap(),
+            0,
+            "{transition}"
+        );
+    }
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",
