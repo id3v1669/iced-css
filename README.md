@@ -179,6 +179,22 @@ the new styling asks for, drawn over the application's animations and moved on e
 Limits: `:before` and `:after` do not transition; an easing that overshoots is cut off at the ends; `inherit` on a
 transition property reads as its initial value; no transition events.
 
+CSS Animations 1: `@keyframes` (`from`, `to` and percentages, with a keyframe's own
+`animation-timing-function` easing the stretch after it) and `animation-name`,
+`animation-duration`, `animation-timing-function`, `animation-delay`,
+`animation-iteration-count` (with `infinite`), `animation-direction`,
+`animation-fill-mode`, `animation-play-state` and the `animation` shorthand. The widget runs
+the animations the styling it draws names, from when it first draws that styling, hovered,
+pressed and focused stylings included; `BoxTreeAnimations::play(tree, now)` runs them for a
+tree drawn elsewhere through `presented`. A keyframe value lies over the element's normal
+declarations and under its important ones; a keyframe that leaves a property out takes the
+element's own value at `from` and `to` and is skipped between. Limits: only the properties
+listed below move (others, as `display`, stay as styled); keyframe values holding `var()` are
+left out; `:before` and `:after` are not animated; with two animations of one property the
+later wins whole, without adding; no animation events. Animation time is the frame time
+given to `play` and `advance` (the widget's redraw times): luminate's two-ended progress
+does not model iterations, reversal and pausing.
+
 What animates:
 
 - **Colors:** `color`, which reaches what inherits or uses it, plus `background-color`,

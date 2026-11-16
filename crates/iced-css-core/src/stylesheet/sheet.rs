@@ -55,6 +55,22 @@ pub enum SheetEntryKind {
     Page(ParsedPageRule),
     Import(ImportPrelude),
     Media(ParsedMediaRule),
+    /// `@keyframes` (CSS Animations 1).
+    Keyframes(ParsedKeyframes),
+}
+/// A `@keyframes` rule: its name and its keyframes in source order.
+#[derive(Debug)]
+pub struct ParsedKeyframes {
+    pub name: String,
+    pub frames: Vec<ParsedKeyframe>,
+}
+/// One keyframe rule: where it sits, from 0 to 1 (one or more places), and the
+/// declarations it gives. `!important` ones and the animation and transition properties
+/// were dropped, as section 3 says, except `animation-timing-function`.
+#[derive(Debug)]
+pub struct ParsedKeyframe {
+    pub offsets: Vec<f32>,
+    pub declarations: Vec<crate::values::property::ParsedProperty>,
 }
 #[derive(Debug)]
 pub struct ParsedMediaRule {
@@ -139,6 +155,8 @@ pub fn parse_stylesheet(
                     owner.supports(&statement)?.map(SheetEntryKind::Media)
                 } else if name.text.eq_ignore_ascii_case("page") {
                     owner.page(&statement)?.map(SheetEntryKind::Page)
+                } else if name.text.eq_ignore_ascii_case("keyframes") {
+                    owner.keyframes(&statement)?.map(SheetEntryKind::Keyframes)
                 } else {
                     owner.reject(
                         statement.span,
@@ -326,6 +344,66 @@ impl Owner {
         };
         self.group(statement, body, matches).map(Some)
     }
+    /// CSS Animations 1, section 3: a name, an identifier or a string, and keyframe rules
+    /// whose selectors are `from`, `to` or percentages. An invalid keyframe rule is left
+    /// out; an invalid name drops the whole rule.
+    fn keyframes(
+        &mut self,
+        statement: &Statement<'_>,
+    ) -> Result<Option<ParsedKeyframes>, RuleAssemblyError> {
+        let limits = self.limits.rules;
+        let reject = |owner: &mut Self| {
+            owner.reject(statement.span.clone(), SheetRejectionReason::InvalidRule)
+        };
+        let (Some(body), Some(name)) = (statement.body, keyframes_name(statement.prelude, limits))
+        else {
+            reject(self)?;
+            return Ok(None);
+        };
+        let mut frames = Vec::new();
+        for child in Statements::new(body, StatementContext::Block, limits.recovery) {
+            self.tick()?;
+            let Ok(child) = child else {
+                continue;
+            };
+            let (StatementKind::QualifiedRule, Some(block)) = (child.kind, child.body) else {
+                continue;
+            };
+            let Some(offsets) = keyframe_offsets(child.prelude) else {
+                continue;
+            };
+            let mut declarations = Vec::new();
+            for item in Declarations::new(
+                block,
+                DeclarationLimits {
+                    recovery: limits.recovery,
+                    name_bytes: limits.name_bytes,
+                },
+            ) {
+                self.records.spend(1)?;
+                let Ok(DeclarationItem::Declaration(declaration)) = item else {
+                    continue;
+                };
+                if let Ok(PropertyResult::Parsed(parsed)) =
+                    parse_property(&declaration, limits.values)
+                {
+                    let name = parsed.property.descriptor().name;
+                    // `animation-timing-function` stays: it eases from this keyframe on.
+                    if !parsed.important
+                        && (name == "animation-timing-function"
+                            || !(name.starts_with("animation") || name.starts_with("transition")))
+                    {
+                        declarations.push(parsed);
+                    }
+                }
+            }
+            frames.push(ParsedKeyframe {
+                offsets,
+                declarations,
+            });
+        }
+        Ok(Some(ParsedKeyframes { name, frames }))
+    }
     /// The style rules of a conditional group: parsed whether or not it applies.
     fn group(
         &mut self,
@@ -493,4 +571,47 @@ fn rebase_locations(
     for rejection in rejected {
         rejection.span = shift(rejection.span.clone(), base);
     }
+}
+
+/// A `@keyframes` name: a custom identifier other than `none` and the CSS-wide keywords,
+/// or a string.
+fn keyframes_name(prelude: &str, limits: super::RuleAssemblyLimits) -> Option<String> {
+    use crate::syntax::{TokenKind, decode_string_budget, scan_token_budget};
+    let mut work = limits.values.syntax.work.get();
+    let text = prelude.trim();
+    let token = scan_token_budget(text, &mut work).ok()??;
+    if token.raw.len() != text.len() || token.invalid_escape {
+        return None;
+    }
+    match token.kind {
+        TokenKind::Ident => {
+            let name = decode_identifier_budget(token.raw, limits.name_bytes, &mut work)
+                .ok()?
+                .text;
+            let reserved = ["none", "initial", "inherit", "unset", "default"];
+            (!reserved.iter().any(|word| name.eq_ignore_ascii_case(word))).then_some(name)
+        }
+        TokenKind::String => decode_string_budget(token.raw, limits.name_bytes, &mut work)
+            .ok()
+            .map(|decoded| decoded.text),
+        _ => None,
+    }
+}
+
+/// A keyframe selector list: `from`, `to` and percentages from 0% to 100%.
+fn keyframe_offsets(prelude: &str) -> Option<Vec<f32>> {
+    prelude
+        .split(',')
+        .map(|part| {
+            let part = part.trim();
+            if part.eq_ignore_ascii_case("from") {
+                Some(0.0)
+            } else if part.eq_ignore_ascii_case("to") {
+                Some(1.0)
+            } else {
+                let number: f32 = part.strip_suffix('%')?.parse().ok()?;
+                (number.is_finite() && (0.0..=100.0).contains(&number)).then_some(number / 100.0)
+            }
+        })
+        .collect()
 }

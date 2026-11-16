@@ -836,6 +836,82 @@ fn transitions_start_on_a_restyle_as_their_properties_ask() {
 }
 
 #[test]
+fn keyframe_animations_run_their_timeline() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let root = || node("page", vec![node("a", vec![])]);
+    let keyframes = "@keyframes grow {
+        from { width: 100px }
+        50% { width: 300px; animation-timing-function: steps(2) }
+        to { width: 200px }
+    }";
+    let sheet = |animation: &str| {
+        format!("{keyframes} #a {{ width:50px; height:10px; animation: {animation}; }}")
+    };
+    let width = |tree: &BoxTree| {
+        let geometry = tree.layout(600.0, None).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        border.right - border.left
+    };
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let tree = BoxTree::new(root(), &sheet("grow 1s linear 2 alternate both")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    assert_eq!(animations.play(&tree, start), 1);
+    // Along the first iteration: linear to 50%, then two steps.
+    for (millis, expected) in [(0, 100.0), (250, 200.0), (600, 300.0), (800, 250.0)] {
+        animations.advance(at(millis), &tree);
+        assert_eq!(width(&animations.presented(&tree)), expected, "{millis}");
+    }
+    assert!(animations.is_animating());
+    // The second runs backwards: at a quarter of it, three quarters through.
+    animations.advance(at(1250), &tree);
+    assert_eq!(width(&animations.presented(&tree)), 250.0);
+    // Done, it holds where it ended: back at the start, after two iterations.
+    animations.advance(at(2100), &tree);
+    assert!(!animations.is_animating());
+    assert_eq!(width(&animations.presented(&tree)), 100.0);
+    // Without a fill it shows the element's own value before and after.
+    let tree = BoxTree::new(root(), &sheet("grow 1s linear 500ms")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(100), &tree);
+    assert_eq!(width(&animations.presented(&tree)), 50.0);
+    animations.advance(at(750), &tree);
+    assert_eq!(width(&animations.presented(&tree)), 200.0);
+    animations.advance(at(1600), &tree);
+    assert_eq!(width(&animations.presented(&tree)), 50.0);
+    // Paused, it holds; running again, it goes on from there.
+    let tree = BoxTree::new(root(), &sheet("grow 1s linear")).unwrap();
+    let paused = tree
+        .restyled(&[
+            &sheet("grow 1s linear"),
+            "#a { animation-play-state: paused; }",
+        ])
+        .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(250), &tree);
+    assert_eq!(animations.play(&paused, at(250)), 0);
+    animations.advance(at(5000), &paused);
+    assert!(!animations.is_animating());
+    assert_eq!(width(&animations.presented(&paused)), 200.0);
+    let running = paused.restyled(&[&sheet("grow 1s linear")]).unwrap();
+    animations.play(&running, at(5000));
+    animations.advance(at(5125), &running);
+    assert_eq!(width(&animations.presented(&running)), 250.0);
+    // A name no longer listed stops at once; an unknown one does nothing.
+    let none = running.restyled(&[&sheet("none")]).unwrap();
+    animations.play(&none, at(5200));
+    assert!(!animations.is_animating());
+    assert_eq!(width(&animations.presented(&none)), 50.0);
+    let unknown = BoxTree::new(root(), &sheet("nowhere 1s")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&unknown, start);
+    assert!(!animations.is_animating());
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

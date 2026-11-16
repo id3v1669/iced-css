@@ -1686,6 +1686,61 @@ pub struct BoxShadow {
     pub alpha: f32,
 }
 
+/// An easing function as the widget runs it.
+pub fn css_easing(
+    easing: &EasingValue,
+    numeric: NumericLimits,
+) -> crate::animation::easing::CssEasing {
+    use crate::animation::easing::{CssEasing, StepPosition};
+    let number = |value: &iced_css_core::values::Decimal| {
+        value
+            .scaled_finite_f32(1.0, numeric)
+            .map_or(0.0, |converted| converted.value)
+    };
+    match easing {
+        EasingValue::Linear => CssEasing::Linear,
+        EasingValue::CubicBezier(points) => CssEasing::CubicBezier(points.each_ref().map(number)),
+        EasingValue::Steps(count, position) => CssEasing::Steps(
+            *count,
+            match position {
+                StepValue::JumpStart => StepPosition::JumpStart,
+                StepValue::JumpEnd => StepPosition::JumpEnd,
+                StepValue::JumpNone => StepPosition::JumpNone,
+                StepValue::JumpBoth => StepPosition::JumpBoth,
+            },
+        ),
+    }
+}
+
+/// Which way an animation's iterations run (`animation-direction`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnimationDirection {
+    Normal,
+    Reverse,
+    Alternate,
+    AlternateReverse,
+}
+
+/// One animation an element's `animation-*` lists ask for (CSS Animations 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementAnimation {
+    /// The `@keyframes` it runs.
+    pub name: String,
+    /// Milliseconds of one iteration, never negative.
+    pub duration: f32,
+    /// Milliseconds; a negative delay starts partway.
+    pub delay: f32,
+    pub easing: crate::animation::easing::CssEasing,
+    /// How many iterations; infinite is `f32::INFINITY`.
+    pub iterations: f32,
+    pub direction: AnimationDirection,
+    /// `animation-fill-mode`: shows the first keyframe during the delay.
+    pub fill_backwards: bool,
+    /// Holds the last keyframe once done.
+    pub fill_forwards: bool,
+    pub paused: bool,
+}
+
 /// One transition an element's `transition-*` lists ask for (CSS Transitions 1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElementTransition {
@@ -1844,6 +1899,8 @@ pub struct TreePaint {
     pub grid_items: Vec<Option<Box<GridItem>>>,
     /// The transitions each row asks for; empty when none can run.
     pub transitions: Vec<Vec<ElementTransition>>,
+    /// The animations each row asks for, by name; empty when none.
+    pub animations: Vec<Vec<ElementAnimation>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -2245,6 +2302,7 @@ pub fn evaluate_tree_paint<'r>(
     let mut grids: Vec<Option<Box<GridContainer>>> = vec![None; projection.len()];
     let mut grid_items: Vec<Option<Box<GridItem>>> = vec![None; projection.len()];
     let mut transitions: Vec<Vec<ElementTransition>> = vec![Vec::new(); projection.len()];
+    let mut animations: Vec<Vec<ElementAnimation>> = vec![Vec::new(); projection.len()];
     let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
     let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
     let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
@@ -3272,30 +3330,11 @@ pub fn evaluate_tree_paint<'r>(
         if durations.iter().any(|duration| *duration > 0.0)
             || delays.iter().any(|delay| *delay > 0.0)
         {
-            use crate::animation::easing::{CssEasing, StepPosition};
-            let number = |value: &iced_css_core::values::Decimal| {
-                value
-                    .scaled_finite_f32(1.0, limits.numeric)
-                    .map_or(0.0, |converted| converted.value)
-            };
+            use crate::animation::easing::CssEasing;
             let easings: Vec<CssEasing> = match transition_of("transition-timing-function")? {
                 Some(TransitionValue::Easings(easings)) => easings
                     .iter()
-                    .map(|easing| match easing {
-                        EasingValue::Linear => CssEasing::Linear,
-                        EasingValue::CubicBezier(points) => {
-                            CssEasing::CubicBezier(points.each_ref().map(number))
-                        }
-                        EasingValue::Steps(count, position) => CssEasing::Steps(
-                            *count,
-                            match position {
-                                StepValue::JumpStart => StepPosition::JumpStart,
-                                StepValue::JumpEnd => StepPosition::JumpEnd,
-                                StepValue::JumpNone => StepPosition::JumpNone,
-                                StepValue::JumpBoth => StepPosition::JumpBoth,
-                            },
-                        ),
-                    })
+                    .map(|easing| css_easing(easing, limits.numeric))
                     .collect(),
                 _ => vec![CssEasing::EASE],
             };
@@ -3324,6 +3363,60 @@ pub fn evaluate_tree_paint<'r>(
                     duration,
                     delay,
                     easing: easings[at % easings.len()],
+                });
+            }
+        }
+        // CSS Animations 1, likewise: the list of names sets how many there are.
+        if let Some(TransitionValue::Names(names)) = transition_of("animation-name")? {
+            let durations: Vec<f32> = times(transition_of("animation-duration")?);
+            let delays: Vec<f32> = times(transition_of("animation-delay")?);
+            let easings: Vec<crate::animation::easing::CssEasing> =
+                match transition_of("animation-timing-function")? {
+                    Some(TransitionValue::Easings(easings)) => easings
+                        .iter()
+                        .map(|easing| css_easing(easing, limits.numeric))
+                        .collect(),
+                    _ => vec![crate::animation::easing::CssEasing::EASE],
+                };
+            let counts: Vec<f32> = match transition_of("animation-iteration-count")? {
+                Some(TransitionValue::Counts(counts)) => counts
+                    .iter()
+                    .map(|count| match count {
+                        None => f32::INFINITY,
+                        Some(count) => count
+                            .scaled_finite_f32(1.0, limits.numeric)
+                            .map_or(1.0, |converted| converted.value.max(0.0)),
+                    })
+                    .collect(),
+                _ => vec![1.0],
+            };
+            let words = |name: &'static str, initial: &'static str| {
+                Ok::<_, E>(match transition_of(name)? {
+                    Some(TransitionValue::Keywords(words)) => words.clone(),
+                    _ => vec![initial],
+                })
+            };
+            let directions = words("animation-direction", "normal")?;
+            let fills = words("animation-fill-mode", "none")?;
+            let states = words("animation-play-state", "running")?;
+            for (at, name) in names.iter().enumerate() {
+                let Some(name) = name else { continue };
+                let fill = fills[at % fills.len()];
+                animations[index].push(ElementAnimation {
+                    name: name.clone(),
+                    duration: durations[at % durations.len()].max(0.0),
+                    delay: delays[at % delays.len()],
+                    easing: easings[at % easings.len()],
+                    iterations: counts[at % counts.len()],
+                    direction: match directions[at % directions.len()] {
+                        "reverse" => AnimationDirection::Reverse,
+                        "alternate" => AnimationDirection::Alternate,
+                        "alternate-reverse" => AnimationDirection::AlternateReverse,
+                        _ => AnimationDirection::Normal,
+                    },
+                    fill_backwards: matches!(fill, "backwards" | "both"),
+                    fill_forwards: matches!(fill, "forwards" | "both"),
+                    paused: states[at % states.len()] == "paused",
                 });
             }
         }
@@ -3917,5 +4010,6 @@ pub fn evaluate_tree_paint<'r>(
         grids,
         grid_items,
         transitions,
+        animations,
     })
 }

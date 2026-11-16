@@ -72,9 +72,9 @@ use crate::{
         },
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
-            BackgroundImage, BackgroundOffset, BoxPaint, ElementTransition, GeneratedFrame,
-            GeneratedRun, InlineBoxSides, PreparedTree, RunSource, TextLineHeight, TextStyle,
-            TreeLayoutError, TreePaint, evaluate_tree_paint, prepare_captured_tree,
+            BackgroundImage, BackgroundOffset, BoxPaint, ElementAnimation, ElementTransition,
+            GeneratedFrame, GeneratedRun, InlineBoxSides, PreparedTree, RunSource, TextLineHeight,
+            TextStyle, TreeLayoutError, TreePaint, evaluate_tree_paint, prepare_captured_tree,
             prepare_tree_source_projection,
         },
     },
@@ -693,6 +693,26 @@ struct Source {
     layout_refusal: Mutex<Option<String>>,
 }
 
+/// One keyframe rule of a `@keyframes`, as the animations read it.
+#[derive(Debug, Clone)]
+pub(crate) struct KeyframeSummary {
+    pub(crate) offsets: Vec<f32>,
+    pub(crate) longhands: Vec<PropertyId>,
+    /// Its `animation-timing-function`, for the stretch after it.
+    pub(crate) easing: Option<crate::animation::easing::CssEasing>,
+}
+
+/// The `@keyframes` rules of `graphs` by name; of two with one name, the later wins.
+fn keyframe_rules(
+    graphs: &[OwnedStylesheetGraph],
+) -> std::collections::HashMap<&str, &iced_css_core::stylesheet::ParsedKeyframes> {
+    graphs
+        .iter()
+        .flat_map(OwnedStylesheetGraph::keyframes)
+        .map(|rule| (rule.name.as_str(), rule))
+        .collect()
+}
+
 /// A source's sheets as rule graphs, after the rules every page starts from.
 struct Parsed(UaDisplayCatalog, Vec<OwnedStylesheetGraph>);
 
@@ -814,6 +834,8 @@ struct Style {
     weights: Vec<u16>,
     marker_images: BTreeMap<usize, image::Handle>,
     transitions: Vec<Vec<ElementTransition>>,
+    animations: Vec<Vec<ElementAnimation>>,
+    key: InteractionKey,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -844,6 +866,10 @@ pub struct BoxTree {
     presentation: Option<Arc<Vec<animation::Presented>>>,
     /// The transitions each element asks for, by projected index (CSS Transitions 1).
     transitions: Vec<Vec<ElementTransition>>,
+    /// The animations each element asks for, by projected index (CSS Animations 1).
+    animations: Vec<Vec<ElementAnimation>>,
+    /// The interaction state it was styled for.
+    key: InteractionKey,
 }
 
 /// Two trees are equal when they draw alike and restyle from the same sheets.
@@ -1091,6 +1117,8 @@ impl BoxTree {
             weights: self.weights.clone(),
             marker_images: self.marker_images.clone(),
             transitions: self.transitions.clone(),
+            animations: self.animations.clone(),
+            key: self.key,
         }
     }
 
@@ -1110,6 +1138,8 @@ impl BoxTree {
             marker_images: style.marker_images,
             presentation: None,
             transitions: style.transitions,
+            animations: style.animations,
+            key: style.key,
         }
     }
 
@@ -1140,6 +1170,65 @@ impl BoxTree {
     }
 
     fn styled(source: &Arc<Source>, key: InteractionKey) -> Result<Self, BoxTreeError> {
+        Self::styled_with(source, key, &[])
+    }
+
+    /// The `@keyframes` rule `name` names in this tree's sheets, as its keyframes: their
+    /// places, the longhands each declares, and the easing each sets for what follows it.
+    pub(crate) fn keyframe_rule(&self, name: &str) -> Option<Vec<KeyframeSummary>> {
+        let Parsed(_, graphs) = self.source.parsed.get()?;
+        let rules = keyframe_rules(graphs);
+        let rule = rules.get(name)?;
+        Some(
+            rule.frames
+                .iter()
+                .map(|frame| {
+                    let mut longhands = Vec::new();
+                    let mut easing = None;
+                    for parsed in &frame.declarations {
+                        if parsed.property.descriptor().name == "animation-timing-function" {
+                            if let iced_css_core::values::property::SpecifiedValue::Transition(
+                                iced_css_core::values::property::TransitionValue::Easings(list),
+                            ) = &parsed.value
+                            {
+                                easing = list.first().map(|easing| {
+                                    crate::evaluation::tree_layout::css_easing(
+                                        easing,
+                                        colors().numeric,
+                                    )
+                                });
+                            }
+                            continue;
+                        }
+                        for longhand in parsed.property.longhands() {
+                            if !longhands.contains(longhand) {
+                                longhands.push(*longhand);
+                            }
+                        }
+                    }
+                    KeyframeSummary {
+                        offsets: frame.offsets.clone(),
+                        longhands,
+                        easing,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// This tree's styling with a keyframe layer over it; see [`Self::styled_with`].
+    pub(crate) fn keyframe_layer(&self, layer: &[(usize, String, usize)]) -> Option<Self> {
+        Self::styled_with(&self.source, self.key, layer).ok()
+    }
+
+    /// This styling with keyframes laid over it: each (source node, `@keyframes` name,
+    /// keyframe rule index) puts that rule's declarations over the node's own winners, as
+    /// an animation at that keyframe does (CSS Animations 1).
+    fn styled_with(
+        source: &Arc<Source>,
+        key: InteractionKey,
+        layer: &[(usize, String, usize)],
+    ) -> Result<Self, BoxTreeError> {
         let construction = source.construction.clone();
 
         let count = construction.nodes().len();
@@ -1276,6 +1365,32 @@ impl BoxTree {
             Some(variables) => bundle.with_variables(variables),
             None => bundle,
         };
+        // A keyframe layer: of two `@keyframes` with one name, the later wins.
+        let mut animated: std::collections::HashMap<
+            usize,
+            Vec<&iced_css_core::values::property::ParsedProperty>,
+        > = std::collections::HashMap::new();
+        if !layer.is_empty() {
+            let rules = keyframe_rules(graphs);
+            for (node, name, frame) in layer {
+                if let Some(frame) = rules
+                    .get(name.as_str())
+                    .and_then(|rule| rule.frames.get(*frame))
+                {
+                    animated
+                        .entry(*node)
+                        .or_default()
+                        .extend(frame.declarations.iter().filter(|parsed| {
+                            parsed.property.descriptor().name != "animation-timing-function"
+                        }));
+                }
+            }
+        }
+        let bundle = if animated.is_empty() {
+            bundle
+        } else {
+            bundle.with_animated(&animated)
+        };
         let display = evaluate_source_display(
             snapshot,
             &bundle,
@@ -1315,6 +1430,7 @@ impl BoxTree {
             grids,
             grid_items,
             transitions,
+            animations,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes, 16.0)
             .map_err(failed)?;
         let weights: Vec<u16> = styles.iter().map(|style| style.weight).collect();
@@ -2582,6 +2698,8 @@ impl BoxTree {
             marker_images: marker_image_handles,
             presentation: None,
             transitions,
+            animations,
+            key,
         })
     }
 
@@ -3541,11 +3659,12 @@ struct Interaction {
     rehover: bool,
     /// The interaction state last laid out, so a change of it can start transitions.
     seen: Option<InteractionKey>,
-    /// Transitions an interaction restyle started (CSS Transitions 1), once any has.
+    /// The widget's own animations, once it has any: transitions its interaction restyles
+    /// started (CSS Transitions 1), and the `@keyframes` animations its stylings name.
     transitions: Option<WidgetTransitions>,
 }
 
-/// The widget's own running transitions, shared by the clones of its state.
+/// The widget's own animations, shared by the clones of its state.
 #[derive(Clone, Default)]
 struct WidgetTransitions(Arc<Mutex<BoxTreeAnimations>>);
 
@@ -3586,14 +3705,26 @@ impl Interaction {
                 held.lock().advance(now, &after);
             }
         }
+        // CSS Animations 1: the animations this styling names run by themselves.
+        let shown = base.unpresented_variant(key);
+        let named = shown.animations.iter().any(|list| !list.is_empty());
+        if named
+            || self
+                .transitions
+                .as_ref()
+                .is_some_and(|held| held.lock().has_keyframes())
+        {
+            let held = self
+                .transitions
+                .get_or_insert_with(WidgetTransitions::default);
+            held.lock().play(&shown, now);
+        }
         match &self.transitions {
-            Some(held) if held.lock().is_animating() => {
-                let shown = base.unpresented_variant(key);
-                (
-                    held.lock()
-                        .presented_over(&shown, base.presentation.clone()),
-                    true,
-                )
+            Some(held) if held.lock().presents() => {
+                let presented = held
+                    .lock()
+                    .presented_over(&shown, base.presentation.clone());
+                (presented, true)
             }
             _ => (base.variant(key), false),
         }
@@ -3609,6 +3740,7 @@ impl Interaction {
             return false;
         }
         animations.advance(now, &base.unpresented_variant(key));
+        // The frame after the last shows where it ends.
         true
     }
 }
@@ -8817,6 +8949,45 @@ mod tests {
         assert!(!state.advance_transitions(&tree, (Some(a), None, None), at(2200)));
         let (shown, moving) = state.styled_for(&tree, (Some(a), None, None), at(2100));
         assert_eq!((width(&shown, 1), moving), (200.0, false));
+    }
+
+    #[test]
+    fn the_widget_runs_the_animations_its_styling_names() {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![])]),
+            "@keyframes grow { from { width: 100px } to { width: 300px } }
+             #a { width:50px; height:10px; }
+             #a:hover { animation: grow 1s linear; }",
+        )
+        .unwrap();
+        let a = tree.originals[tree
+            .ids
+            .iter()
+            .position(|value| value.as_deref() == Some("a"))
+            .unwrap()];
+        let width = |shown: &BoxTree| {
+            let geometry = shown.layout(600.0, None).unwrap();
+            let border = geometry[1].unwrap().border;
+            border.right - border.left
+        };
+        let start = Instant::now();
+        let at = |millis: u64| start + std::time::Duration::from_millis(millis);
+        let mut state = Interaction::default();
+        let none = (None, None, None);
+        let hovered = (Some(a), None, None);
+        let (shown, presenting) = state.styled_for(&tree, none, start);
+        assert_eq!((width(&shown), presenting), (50.0, false));
+        // Hovering names the animation: it starts there.
+        let (shown, presenting) = state.styled_for(&tree, hovered, start);
+        assert_eq!((width(&shown), presenting), (100.0, true));
+        assert!(state.advance_transitions(&tree, hovered, at(500)));
+        let (shown, _) = state.styled_for(&tree, hovered, at(500));
+        assert_eq!(width(&shown), 200.0);
+        // Its end shows the element's own value again, and frames stop.
+        assert!(state.advance_transitions(&tree, hovered, at(1100)));
+        let (shown, presenting) = state.styled_for(&tree, hovered, at(1100));
+        assert_eq!((width(&shown), presenting), (50.0, false));
+        assert!(!state.advance_transitions(&tree, hovered, at(1200)));
     }
 
     #[test]

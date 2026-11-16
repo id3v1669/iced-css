@@ -184,3 +184,49 @@ fn local_screen_rules_preserve_order_without_import_or_page_leakage() {
         .collect();
     assert_eq!(properties, ["width", "color", "display"]);
 }
+
+#[test]
+fn keyframes_rules_keep_their_name_places_and_animatable_declarations() {
+    let css = "@keyframes spin { from { width: 1px; color: red } 50%, 75% { width: 2px !important; height: 3px; animation-timing-function: linear; animation-duration: 1s } to { width: 4px } bad { width: 5px } 120% { width: 6px } }
+               @keyframes \"quoted name\" { to { width: 1px } }
+               @keyframes none { to { width: 1px } }
+               @keyframes { to { width: 1px } }
+               a { width: 1px }";
+    let sheet = parse_stylesheet(css, context(), sheet_limits()).unwrap();
+    let keyframes: Vec<_> = sheet
+        .entries
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            SheetEntryKind::Keyframes(keyframes) => Some(keyframes),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keyframes.len(), 2);
+    assert_eq!(keyframes[0].name, "spin");
+    assert_eq!(keyframes[1].name, "quoted name");
+    let spin = &keyframes[0].frames;
+    // Invalid keyframe selectors leave their rule out.
+    assert_eq!(
+        spin.iter()
+            .map(|frame| frame.offsets.clone())
+            .collect::<Vec<_>>(),
+        [vec![0.0], vec![0.5, 0.75], vec![1.0]]
+    );
+    let names = |frame: usize| {
+        spin[frame]
+            .declarations
+            .iter()
+            .map(|parsed| parsed.property.descriptor().name)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(0), ["width", "color"]);
+    // `!important` and the animation properties are dropped, but not the easing.
+    assert_eq!(names(1), ["height", "animation-timing-function"]);
+    // The style rule after them is still read.
+    assert!(
+        sheet
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.kind, SheetEntryKind::Style(_)))
+    );
+}

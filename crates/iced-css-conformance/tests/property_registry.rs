@@ -89,7 +89,6 @@ fn decoded_lookup_is_ascii_case_insensitive_and_baseline_bounded() {
         "co\\6cor",
         "COLOR:",
         "transform",
-        "animation",
         "--x",
         "property-name",
         "speak",
@@ -98,7 +97,12 @@ fn decoded_lookup_is_ascii_case_insensitive_and_baseline_bounded() {
     ] {
         assert_eq!(PropertyId::lookup(name), None, "{name}");
     } // A property of a later module is known, and is not one of CSS 2.2's.
-    assert!(PropertyId::lookup("opacity").is_some_and(|property| !property.is_css22()));
+    for later in ["opacity", "animation"] {
+        assert!(
+            PropertyId::lookup(later).is_some_and(|property| !property.is_css22()),
+            "{later}"
+        );
+    }
 }
 
 // Hand-reviewed constituent sets from CSS2.2 chapter prose. This catches missing

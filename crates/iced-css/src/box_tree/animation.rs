@@ -9,7 +9,7 @@ use crate::animation::{
     easing::CssEasing,
     engine::{ProgressEngine, ProgressLimits},
 };
-use crate::evaluation::tree_layout::RunSource;
+use crate::evaluation::tree_layout::{AnimationDirection, ElementAnimation, RunSource};
 use iced::animation::Easing;
 use iced_css_core::{
     animation::registry::AnimationSelection,
@@ -2473,6 +2473,132 @@ pub struct BoxTreeAnimations {
     engine: ProgressEngine,
     sources: BTreeMap<String, SourceRef>,
     tracks: Vec<Track>,
+    /// CSS animations of `@keyframes`, by element and place in its list.
+    keyframed: Vec<Keyframed>,
+    /// The styling their keyframe values were read from: source, interaction state.
+    keyframes_of: Option<(usize, InteractionKey)>,
+    /// The time last given; keyframe animations are sampled at it.
+    clock: Option<Instant>,
+}
+
+type InteractionKey = (Option<usize>, Option<usize>, Option<usize>);
+
+/// One keyframe of one animated longhand: where it sits, its value, and the easing from
+/// it to the next (the keyframe's `animation-timing-function`, else the animation's).
+#[derive(Debug, Clone, Copy)]
+struct Stop {
+    offset: f32,
+    value: Value,
+    easing: Option<CssEasing>,
+}
+
+/// One longhand a keyframe animation moves.
+#[derive(Debug, Clone)]
+struct KeyTrack {
+    property: PropertyId,
+    field: Field,
+    stops: Vec<Stop>,
+}
+
+/// One running CSS animation (CSS Animations 1). The time comes from the frames given to
+/// `play` and `advance`: a keyframe timeline repeats, reverses and pauses, which a two-ended
+/// progress cannot model.
+#[derive(Debug, Clone)]
+struct Keyframed {
+    capture: u64,
+    id: String,
+    projected: usize,
+    index: usize,
+    animation: ElementAnimation,
+    started: Instant,
+    paused_at: Option<Instant>,
+    paused_for: Duration,
+    tracks: Vec<KeyTrack>,
+}
+
+impl Keyframed {
+    /// Milliseconds since its delay ended, at `now`.
+    fn local_time(&self, now: Instant) -> f32 {
+        let at = self.paused_at.unwrap_or(now).max(self.started);
+        let elapsed = at
+            .duration_since(self.started)
+            .saturating_sub(self.paused_for);
+        elapsed.as_secs_f32() * 1000.0 - self.animation.delay
+    }
+
+    /// The active duration, in milliseconds.
+    fn active(&self) -> f32 {
+        let iterations = self.animation.iterations;
+        if iterations == 0.0 || self.animation.duration == 0.0 {
+            0.0
+        } else {
+            self.animation.duration * iterations
+        }
+    }
+
+    /// Whether it still has frames to show at `now`.
+    fn running(&self, now: Instant) -> bool {
+        self.paused_at.is_none() && self.local_time(now) < self.active()
+    }
+
+    /// 4.x: where in its keyframes it is at `now`, from 0 to 1, or `None` where it shows
+    /// nothing (before its delay without a backwards fill, after it without a forwards one).
+    fn progress(&self, now: Instant) -> Option<f32> {
+        let animation = &self.animation;
+        let time = self.local_time(now);
+        let active = self.active();
+        let (iteration, within) = if time < 0.0 {
+            if !animation.fill_backwards {
+                return None;
+            }
+            (0.0, 0.0)
+        } else if time >= active {
+            if !animation.fill_forwards {
+                return None;
+            }
+            let iterations = animation.iterations;
+            if iterations.fract() == 0.0 && iterations > 0.0 {
+                (iterations - 1.0, 1.0)
+            } else {
+                (iterations.floor(), iterations.fract())
+            }
+        } else {
+            let at = time / animation.duration;
+            (at.floor(), at.fract())
+        };
+        let odd = iteration % 2.0 == 1.0;
+        let reversed = match animation.direction {
+            AnimationDirection::Normal => false,
+            AnimationDirection::Reverse => true,
+            AnimationDirection::Alternate => odd,
+            AnimationDirection::AlternateReverse => !odd,
+        };
+        Some(if reversed { 1.0 - within } else { within })
+    }
+}
+
+impl KeyTrack {
+    /// Its value at `progress`, easing each stretch between two keyframes.
+    fn value(&self, progress: f32, easing: CssEasing) -> Option<Value> {
+        let next = self
+            .stops
+            .iter()
+            .position(|stop| stop.offset > progress)
+            .unwrap_or(self.stops.len() - 1)
+            .max(1);
+        let (from, to) = (self.stops[next - 1], self.stops[next]);
+        let span = to.offset - from.offset;
+        if span <= 0.0 {
+            return Some(if progress >= to.offset {
+                to.value
+            } else {
+                from.value
+            });
+        }
+        let local = ((progress - from.offset) / span).clamp(0.0, 1.0);
+        let eased = from.easing.unwrap_or(easing).value(local);
+        mix(from.value, to.value, eased)
+    }
 }
 
 impl Default for BoxTreeAnimations {
@@ -2499,6 +2625,9 @@ impl BoxTreeAnimations {
             ),
             sources: BTreeMap::new(),
             tracks: Vec::new(),
+            keyframed: Vec::new(),
+            keyframes_of: None,
+            clock: None,
         }
     }
 
@@ -2749,6 +2878,195 @@ impl BoxTreeAnimations {
         Ok(count)
     }
 
+    /// CSS Animations 1: runs the animations `tree`'s `animation-*` properties name with its
+    /// `@keyframes`. Call it with each new tree you keep, as with `advance`: an animation
+    /// whose name stays at its place in an element's list keeps running, a new one starts at
+    /// `now`, one no longer named stops, and `animation-play-state` pauses and resumes. The
+    /// widget does this for the trees it draws by itself; call it to draw a
+    /// [`Self::presented`] tree elsewhere.
+    ///
+    /// Returns the animations started. Keyframe values that hold `var()`, and properties
+    /// that cannot move between values (as `display`), are left out; `:before` and
+    /// `:after` are not animated.
+    pub fn play(&mut self, tree: &BoxTree, now: Instant) -> usize {
+        self.clock = Some(now);
+        let capture = tree.source.capture;
+        let nodes = tree.source.construction.nodes();
+        let mut listed: Vec<(String, usize, String)> = Vec::new();
+        let mut started = 0;
+        for (projected, animations) in tree.animations.iter().enumerate() {
+            if animations.is_empty() {
+                continue;
+            }
+            let id = nodes[tree.originals[projected]]
+                .metadata()
+                .css_id()
+                .filter(|id| tree.element(id) == Some(projected))
+                .map_or_else(|| format!("{UNNAMED}{projected}"), str::to_owned);
+            for (index, animation) in animations.iter().enumerate() {
+                listed.push((id.clone(), index, animation.name.clone()));
+                match self.keyframed.iter_mut().find(|running| {
+                    running.capture == capture
+                        && running.id == id
+                        && running.index == index
+                        && running.animation.name == animation.name
+                }) {
+                    Some(running) => {
+                        match (running.paused_at, animation.paused) {
+                            (None, true) => running.paused_at = Some(now),
+                            (Some(at), false) => {
+                                running.paused_for += now.saturating_duration_since(at);
+                                running.paused_at = None;
+                            }
+                            _ => {}
+                        }
+                        running.animation = animation.clone();
+                        running.projected = projected;
+                    }
+                    None => {
+                        started += 1;
+                        self.keyframed.push(Keyframed {
+                            capture,
+                            id: id.clone(),
+                            projected,
+                            index,
+                            animation: animation.clone(),
+                            started: now,
+                            paused_at: animation.paused.then_some(now),
+                            paused_for: Duration::ZERO,
+                            tracks: Vec::new(),
+                        });
+                        // Its keyframes are read below, with the others.
+                        self.keyframes_of = None;
+                    }
+                }
+            }
+        }
+        self.keyframed.retain(|running| {
+            running.capture == capture
+                && listed.iter().any(|(id, index, name)| {
+                    *id == running.id && *index == running.index && *name == running.animation.name
+                })
+        });
+        let styling = (Arc::as_ptr(&tree.source) as usize, tree.key);
+        if self.keyframes_of != Some(styling) {
+            self.keyframes_of = Some(styling);
+            self.read_keyframes(tree);
+        }
+        started
+    }
+
+    /// Reads every animation's keyframe values from `tree` styled with each keyframe laid
+    /// over it: one styling per keyframe place in the longest rule.
+    fn read_keyframes(&mut self, tree: &BoxTree) {
+        let rules: Vec<Option<Vec<crate::box_tree::KeyframeSummary>>> = self
+            .keyframed
+            .iter()
+            .map(|running| tree.keyframe_rule(&running.animation.name))
+            .collect();
+        let frames = rules.iter().flatten().map(Vec::len).max().unwrap_or(0);
+        let mut layers: Vec<Option<BoxTree>> = Vec::with_capacity(frames);
+        for frame in 0..frames {
+            let layer: Vec<(usize, String, usize)> = self
+                .keyframed
+                .iter()
+                .zip(&rules)
+                .filter(|(_, rule)| rule.as_ref().is_some_and(|rule| frame < rule.len()))
+                .map(|(running, _)| {
+                    (
+                        tree.originals[running.projected],
+                        running.animation.name.clone(),
+                        frame,
+                    )
+                })
+                .collect();
+            layers.push(tree.keyframe_layer(&layer));
+        }
+        let animatable = |property: PropertyId| {
+            matches!(
+                property.descriptor().animation,
+                Some(
+                    AnimationRule::ByComputedValue
+                        | AnimationRule::Visibility
+                        | AnimationRule::FontWeight
+                )
+            )
+        };
+        for (running, rule) in self.keyframed.iter_mut().zip(&rules) {
+            running.tracks.clear();
+            let Some(rule) = rule else { continue };
+            let projected = running.projected;
+            let mut properties: Vec<PropertyId> = Vec::new();
+            for frame in rule {
+                for longhand in &frame.longhands {
+                    if !properties.contains(longhand) && animatable(*longhand) {
+                        properties.push(*longhand);
+                    }
+                }
+            }
+            for property in properties {
+                let Some(field) = field(property.descriptor().name) else {
+                    continue;
+                };
+                let Some(base) = tree.read(projected, field) else {
+                    continue;
+                };
+                let mut stops: Vec<Stop> = Vec::new();
+                for (frame, summary) in rule.iter().enumerate() {
+                    if !summary.longhands.contains(&property) {
+                        continue;
+                    }
+                    let Some(value) = layers[frame]
+                        .as_ref()
+                        .and_then(|layer| layer.read(projected, field))
+                    else {
+                        continue;
+                    };
+                    for offset in &summary.offsets {
+                        // A later keyframe at the same place wins it.
+                        stops.retain(|stop| stop.offset != *offset);
+                        stops.push(Stop {
+                            offset: *offset,
+                            value,
+                            easing: summary.easing,
+                        });
+                    }
+                }
+                stops.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+                // 3: where no keyframe gives 0% or 100%, the element's own value stands.
+                if stops.first().is_none_or(|stop| stop.offset > 0.0) {
+                    stops.insert(
+                        0,
+                        Stop {
+                            offset: 0.0,
+                            value: base,
+                            easing: None,
+                        },
+                    );
+                }
+                if stops.last().is_some_and(|stop| stop.offset < 1.0) {
+                    stops.push(Stop {
+                        offset: 1.0,
+                        value: base,
+                        easing: None,
+                    });
+                }
+                // Two values with nothing between them do not animate.
+                if stops
+                    .windows(2)
+                    .any(|pair| mix(pair[0].value, pair[1].value, 0.5).is_none())
+                {
+                    continue;
+                }
+                running.tracks.push(KeyTrack {
+                    property,
+                    field,
+                    stops,
+                });
+            }
+        }
+    }
+
     /// CSS Transitions 1: starts what `to`'s `transition-*` properties ask for, on every
     /// element whose values there differ from what `from` presents. Keep `to` as your
     /// tree, as after [`Self::request`]; `from` is the tree it replaces, restyled from the
@@ -2855,6 +3173,7 @@ impl BoxTreeAnimations {
     /// Moves time on, and lets go of finished animations and of any `tree`, your current
     /// committed one, no longer heads for: an unrequested style change cancels them.
     pub fn advance(&mut self, now: Instant, tree: &BoxTree) {
+        self.clock = Some(now);
         self.engine.advance(now);
         let (running, done): (Vec<Track>, Vec<Track>) = std::mem::take(&mut self.tracks)
             .into_iter()
@@ -2892,6 +3211,27 @@ impl BoxTreeAnimations {
     #[must_use]
     pub fn is_animating(&self) -> bool {
         !self.tracks.is_empty()
+            || self.clock.is_some_and(|now| {
+                self.keyframed
+                    .iter()
+                    .any(|running| !running.tracks.is_empty() && running.running(now))
+            })
+    }
+
+    /// Whether anything shows over a tree: a running track, or a keyframe animation with a
+    /// value now (one that ended or paused may hold one).
+    pub(crate) fn presents(&self) -> bool {
+        !self.tracks.is_empty()
+            || self.clock.is_some_and(|now| {
+                self.keyframed
+                    .iter()
+                    .any(|running| !running.tracks.is_empty() && running.progress(now).is_some())
+            })
+    }
+
+    /// Whether any keyframe animation is held, running or not.
+    pub(crate) fn has_keyframes(&self) -> bool {
+        !self.keyframed.is_empty()
     }
 
     /// `tree` with the current presented values over it, for drawing.
@@ -2908,6 +3248,50 @@ impl BoxTreeAnimations {
     ) -> BoxTree {
         let mut presented = tree.clone();
         let mut list: Vec<Presented> = under.map(|under| (*under).clone()).unwrap_or_default();
+        // Keyframe animations first: a transition of the same value lies over them.
+        if let Some(now) = self.clock {
+            for running in &self.keyframed {
+                if running.capture != tree.source.capture {
+                    continue;
+                }
+                let Some(progress) = running.progress(now) else {
+                    continue;
+                };
+                for track in &running.tracks {
+                    let (Some(value), Some(target)) = (
+                        track.value(progress, running.animation.easing),
+                        tree.read(running.projected, track.field),
+                    ) else {
+                        continue;
+                    };
+                    let projected = running.projected;
+                    list.push(Presented {
+                        id: running.id.clone(),
+                        property: track.property,
+                        field: track.field,
+                        target,
+                        now: value,
+                        followers: match track.field {
+                            Field::Color => tree.followers(tree, projected, target, target),
+                            Field::FontWeight => tree.weight_followers(tree, projected, target),
+                            Field::FontSize => match target {
+                                Value::Length(Dim::Px(size)) => {
+                                    tree.size_followers(tree, projected, size, size)
+                                }
+                                _ => Followers::default(),
+                            },
+                            Field::Visibility => match target {
+                                Value::Visible(shown) => {
+                                    tree.visibility_followers(tree, projected, shown, shown)
+                                }
+                                _ => Followers::default(),
+                            },
+                            _ => Followers::default(),
+                        },
+                    });
+                }
+            }
+        }
         list.extend(
             self.tracks
                 .iter()

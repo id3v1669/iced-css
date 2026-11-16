@@ -200,6 +200,21 @@ impl OwnedStylesheetGraph {
             }
         })
     }
+    /// The `@keyframes` rules of every sheet the graph visited, in that order: of two
+    /// with one name, the later wins (CSS Animations 1, section 3).
+    pub fn keyframes(&self) -> impl Iterator<Item = &super::ParsedKeyframes> {
+        self.visited_sheets.iter().flat_map(|sheet| {
+            self.resources[*sheet]
+                .candidate
+                .sheet()
+                .entries
+                .iter()
+                .filter_map(|entry| match &entry.kind {
+                    SheetEntryKind::Keyframes(keyframes) => Some(keyframes),
+                    _ => None,
+                })
+        })
+    }
     /// Recover a declaration's original source/property and import occurrence.
     /// Returned references borrow this graph. Work is bounded by visited rules;
     /// resource base URI association remains external.

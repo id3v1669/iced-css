@@ -255,6 +255,15 @@ fn transition_property(name: &str) -> bool {
             | "transition-timing-function"
             | "transition-delay"
             | "transition"
+            | "animation-name"
+            | "animation-duration"
+            | "animation-timing-function"
+            | "animation-delay"
+            | "animation-iteration-count"
+            | "animation-direction"
+            | "animation-fill-mode"
+            | "animation-play-state"
+            | "animation"
     )
 }
 /// The grid properties, whose grammars live in `grid.rs`.
@@ -363,6 +372,9 @@ pub(super) fn inner(
     if transition_property(name) {
         if name == "transition" {
             return transition::shorthand(property, input, important, limits, work);
+        }
+        if name == "animation" {
+            return transition::animation_shorthand(property, input, important, limits, work);
         }
         return Ok(match transition::parse(property, input, limits, work)? {
             Some(value) => PropertyResult::Parsed(ParsedProperty {

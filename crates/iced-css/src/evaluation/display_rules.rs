@@ -219,6 +219,8 @@ pub struct DisplayRuleBundle<'a> {
     membership_work: usize,
     /// What each element's `var()` values parse to, once [`resolve_variables`] has run.
     variables: Option<&'a ResolvedVariables>,
+    /// Keyframe declarations laid over each source node's own winners (CSS Animations 1).
+    animated: Option<&'a HashMap<usize, Vec<&'a ParsedProperty>>>,
 }
 
 /// What a tree's values holding `var()` parse to: per element and pseudo-element, per
@@ -396,6 +398,12 @@ impl<'a> DisplayRuleBundle<'a> {
         self.variables = Some(variables);
         self
     }
+    /// Lay `animated`, by source node, over each element's winners as an animation does.
+    #[must_use]
+    pub fn with_animated(mut self, animated: &'a HashMap<usize, Vec<&'a ParsedProperty>>) -> Self {
+        self.animated = Some(animated);
+        self
+    }
     /// After a cascade for `node` and `pseudo`: put each winner that holds `var()` as it
     /// parses for that target, or empty its slot where it is invalid there (or where no
     /// variables were resolved), so the property is inherited or initial.
@@ -416,6 +424,25 @@ impl<'a> DisplayRuleBundle<'a> {
                     .as_deref()
             });
             winners.substitute(property, value);
+        }
+        // An element's own animations; its `:before` and `:after` have none here.
+        if let (None, Some(values)) = (
+            pseudo,
+            self.animated.and_then(|animated| animated.get(&node)),
+        ) {
+            for value in values {
+                let leaves = match &value.value {
+                    SpecifiedValue::Expanded(leaves) => leaves.as_slice(),
+                    _ => std::slice::from_ref(*value),
+                };
+                // A keyframe value holding `var()` is not substituted here: left out.
+                for leaf in leaves
+                    .iter()
+                    .filter(|leaf| !matches!(leaf.value, SpecifiedValue::Pending { .. }))
+                {
+                    winners.animate(leaf);
+                }
+            }
         }
     }
     /// Count and validate original ranges, reserve once, then emit in source order.
@@ -519,6 +546,7 @@ impl<'a> DisplayRuleBundle<'a> {
             work: limits.work.get() - remaining,
             membership_work,
             variables: None,
+            animated: None,
         })
     }
     pub fn offers(&self) -> &[PositionedRuleOffer<'a>] {

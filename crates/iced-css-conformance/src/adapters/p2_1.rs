@@ -126,6 +126,7 @@ fn stylesheet(css: &str, context: RuleContext, limits: StylesheetLimits) -> crat
             SheetEntryKind::Page(_) => "page",
             SheetEntryKind::Media(_) => "media",
             SheetEntryKind::Import(_) => "import",
+            SheetEntryKind::Keyframes(_) => "keyframes",
         })
         .collect();
     let properties: Vec<_> = sheet

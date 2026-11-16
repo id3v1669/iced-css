@@ -63,9 +63,12 @@ fn every_registry_property_has_explicit_eligibility_and_work_is_bounded() {
             assert_eq!(result.unwrap_err(), SelectionError::Undefined(property));
         } else {
             screen += usize::from(property.is_css22());
-            // CSS Transitions 1: the transition properties do not animate, like `display`.
-            let not_animatable = property.descriptor().name == "display"
-                || property.descriptor().name.starts_with("transition");
+            // CSS Transitions 1 and Animations 1: their own properties do not animate,
+            // like `display`.
+            let name = property.descriptor().name;
+            let not_animatable = name == "display"
+                || name.starts_with("transition")
+                || name.starts_with("animation");
             if not_animatable {
                 // A shorthand names its first longhand.
                 assert_eq!(

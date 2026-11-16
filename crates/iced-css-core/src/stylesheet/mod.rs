@@ -373,8 +373,8 @@ fn parse_context_property(
 
 mod sheet;
 pub use sheet::{
-    ParsedMediaRule, ParsedStylesheet, SheetEntry, SheetEntryKind, SheetRejection,
-    SheetRejectionReason, StylesheetLimits, parse_stylesheet,
+    ParsedKeyframe, ParsedKeyframes, ParsedMediaRule, ParsedStylesheet, SheetEntry, SheetEntryKind,
+    SheetRejection, SheetRejectionReason, StylesheetLimits, parse_stylesheet,
 };
 
 mod intake;

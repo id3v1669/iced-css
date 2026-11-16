@@ -96,7 +96,6 @@ css_todo_test!(
     transform_scale_rotate_skew,
     "transform: scale / rotate / skew"
 );
-css_todo_test!(keyframes_animations, "@keyframes / animation");
 
 css_todo_test!(media_queries_size, "@media width/height/orientation");
 css_todo_test!(media_prefers_color_scheme, "@media prefers-color-scheme");

@@ -112,6 +112,15 @@ const UNREAD: &[&str] = &[
     "transition-duration",
     "transition-timing-function",
     "transition-delay",
+    // Likewise, through the widget or `BoxTreeAnimations::play` over time.
+    "animation-name",
+    "animation-duration",
+    "animation-timing-function",
+    "animation-delay",
+    "animation-iteration-count",
+    "animation-direction",
+    "animation-fill-mode",
+    "animation-play-state",
 ];
 
 /// Property, what it needs around it, and a declaration that should show.
@@ -469,6 +478,34 @@ const CASES: &[(&str, &str, &str)] = &[
         "#k { transition-timing-function:linear; }",
     ),
     ("transition-delay", "", "#k { transition-delay:1s; }"),
+    ("animation-name", "", "#k { animation-name:spin; }"),
+    ("animation-duration", "", "#k { animation-duration:1s; }"),
+    (
+        "animation-timing-function",
+        "",
+        "#k { animation-timing-function:linear; }",
+    ),
+    ("animation-delay", "", "#k { animation-delay:1s; }"),
+    (
+        "animation-iteration-count",
+        "",
+        "#k { animation-iteration-count:2; }",
+    ),
+    (
+        "animation-direction",
+        "",
+        "#k { animation-direction:reverse; }",
+    ),
+    (
+        "animation-fill-mode",
+        "",
+        "#k { animation-fill-mode:both; }",
+    ),
+    (
+        "animation-play-state",
+        "",
+        "#k { animation-play-state:paused; }",
+    ),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

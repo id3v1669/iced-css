@@ -111,6 +111,31 @@ impl<'a> PropertyWinners<'a> {
             (None, _) => {}
         }
     }
+    /// CSS Animations 1, section 3: an animation's value for a longhand lies over every
+    /// normal declaration and under the important ones. `value` is a longhand's leaf; a
+    /// slot whose winner is important keeps it.
+    pub fn animate(&mut self, value: &'a ParsedProperty) {
+        let slot = &mut self.slots[value.property.slot()];
+        if slot
+            .as_ref()
+            .is_some_and(|candidate| candidate.value.important)
+        {
+            return;
+        }
+        let key = slot.as_ref().map_or(
+            CascadeKey {
+                level: super::Level::AuthorNormal,
+                specificity: Specificity::ZERO,
+                order: u64::MAX,
+            },
+            |candidate| candidate.key,
+        );
+        *slot = Some(Candidate {
+            key,
+            declaration: NonZeroU64::MAX,
+            value,
+        });
+    }
     /// The longhands whose winner still holds `var()`.
     pub fn pending(&self) -> impl Iterator<Item = (PropertyId, &'a ParsedProperty)> + '_ {
         self.slots.iter().filter_map(|slot| {

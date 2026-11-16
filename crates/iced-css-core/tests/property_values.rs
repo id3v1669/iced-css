@@ -1839,3 +1839,79 @@ fn transition_properties_parse_lists_easings_and_the_shorthand() {
     assert_eq!(easings[1], EasingValue::Linear);
     assert!(matches!(easings[0], EasingValue::CubicBezier(_)));
 }
+
+#[test]
+fn animation_properties_parse_lists_and_the_shorthand() {
+    let valid = |input: &str| matches!(parse(input).unwrap(), PropertyResult::Parsed(_));
+    for good in [
+        "animation-name:none",
+        "animation-name:spin, 'fade in', none",
+        "animation-duration:1s, 0ms",
+        "animation-delay:-2s",
+        "animation-iteration-count:infinite, 2.5, 0",
+        "animation-direction:alternate-reverse, normal",
+        "animation-fill-mode:both",
+        "animation-play-state:paused, running",
+        "animation-timing-function:steps(3, end)",
+        "animation:spin 1s",
+        "animation:2s ease-in 1s infinite alternate both paused spin, fade 100ms",
+        "animation:none",
+        "animation:reverse 3 spin",
+    ] {
+        assert!(valid(good), "{good}");
+    }
+    for bad in [
+        "animation-name:initial",
+        "animation-name:a b",
+        "animation-duration:-1s",
+        "animation-iteration-count:-1",
+        "animation-direction:sideways",
+        "animation-fill-mode:forwards backwards",
+        "animation-play-state:stopped",
+        "animation:spin fade",
+        "animation:1s 2s 3s spin",
+        "animation:-1s spin",
+        "animation:spin 1s,",
+    ] {
+        assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
+    }
+    let PropertyResult::Parsed(ParsedProperty {
+        value: SpecifiedValue::Expanded(leaves),
+        ..
+    }) = parse("animation:infinite alternate spin 2s, 1s fade").unwrap()
+    else {
+        panic!()
+    };
+    let names: Vec<&str> = leaves
+        .iter()
+        .map(|leaf| leaf.property.descriptor().name)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "animation-name",
+            "animation-duration",
+            "animation-timing-function",
+            "animation-delay",
+            "animation-iteration-count",
+            "animation-direction",
+            "animation-fill-mode",
+            "animation-play-state"
+        ]
+    );
+    assert_eq!(
+        leaves[0].value,
+        SpecifiedValue::Transition(TransitionValue::Names(vec![
+            Some("spin".into()),
+            Some("fade".into())
+        ]))
+    );
+    assert_eq!(
+        leaves[5].value,
+        SpecifiedValue::Transition(TransitionValue::Keywords(vec!["alternate", "normal"]))
+    );
+    let SpecifiedValue::Transition(TransitionValue::Counts(counts)) = &leaves[4].value else {
+        panic!()
+    };
+    assert!(counts[0].is_none() && counts[1].is_some());
+}
