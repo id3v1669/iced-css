@@ -73,9 +73,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
 - **Media queries:** `@media` and `@import` conditions from Media Queries Level 3:
   `width` and `height` with `min-` and `max-`, `orientation`, and `prefers-color-scheme`,
   with `not`, `only` and `and`. They are answered against the environment the application
-  gives with `BoxTree::with_media` (a viewport size and whether the scheme is dark), not
-  the widget's own size: give it again when the window is resized. With no viewport no
-  size feature matches. Other features match nothing.
+  gives with `BoxTree::with_media` (a viewport size and whether the scheme is dark). Where
+  it gives no viewport, the widget answers them, and viewport units, with its own size,
+  restyling when that changes; an unbounded height counts as none. `BoxTree::layout` and
+  the others outside the widget have no size of their own: there, with no viewport, no size
+  feature matches. Other features match nothing.
 - **`@supports`:** a group of rules that applies when its condition holds (CSS
   Conditional 3): a declaration is supported when this library parses it, with `not`,
   `and` and `or`. `selector()` and other functions are not supported conditions.
@@ -109,7 +111,7 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   length does not move with an animation of the root's `font-size`. `vw`, `vh`, `vmin` and
   `vmax` measure the viewport given to `BoxTree::with_media`, as pixels when the sheets are
   parsed, in `calc()` and `var()` too; with no viewport given they are no length, so the
-  declaration is dropped. They do not follow the widget's own size.
+  declaration is dropped. A widget given no viewport measures them against its own size.
   `calc()` sums lengths and percentages wherever a length is read, in shorthands too; a
   negative result clips to nothing where a negative length is invalid. Its numbers are
   32-bit floats, and it is not read for `line-height` numbers, `z-index` or colors.

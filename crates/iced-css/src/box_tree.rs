@@ -713,6 +713,9 @@ struct Source {
     refused: Mutex<BTreeSet<InteractionKey>>,
     /// Why the widget's last layout was refused, said once until a layout succeeds.
     layout_refusal: Mutex<Option<String>>,
+    /// Whether the sheets could ask about the viewport: a media query, an import's
+    /// condition or a viewport unit.
+    follows: OnceLock<bool>,
 }
 
 /// One keyframe rule of a `@keyframes`, as the animations read it.
@@ -733,6 +736,27 @@ fn keyframe_rules(
         .flat_map(OwnedStylesheetGraph::keyframes)
         .map(|rule| (rule.name.as_str(), rule))
         .collect()
+}
+
+impl Source {
+    /// Whether the sheets could ask about the viewport, so that a widget given none
+    /// answers them with its own size. A rule that only seems to (a `vw` inside a
+    /// string, say) costs a restyle on a resize, nothing more.
+    fn follows_size(&self) -> bool {
+        *self.follows.get_or_init(|| {
+            self.sheets.iter().any(|css| {
+                let lower = css.to_ascii_lowercase();
+                let bytes = lower.as_bytes();
+                lower.contains("@media")
+                    || lower.contains("@import")
+                    || ["vw", "vh", "vmin", "vmax"].iter().any(|unit| {
+                        lower.match_indices(unit).any(|(at, _)| {
+                            at > 0 && (bytes[at - 1].is_ascii_digit() || bytes[at - 1] == b'.')
+                        })
+                    })
+            })
+        })
+    }
 }
 
 /// A source's sheets as rule graphs, after the rules every page starts from.
@@ -960,6 +984,7 @@ impl BoxTree {
             parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
             layout_refusal: Mutex::new(None),
+            follows: OnceLock::new(),
         });
         Self::unstated(&source)
     }
@@ -984,15 +1009,17 @@ impl BoxTree {
             parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
             layout_refusal: Mutex::new(None),
+            follows: OnceLock::new(),
         });
         Self::unstated(&source)
     }
 
     /// The same captured tree and sheets, with their media queries answered against
     /// `media`: `@media` and `@import` conditions on the viewport's size and the color
-    /// scheme (Media Queries Level 3). A tree starts with no viewport, where no size
-    /// feature matches. Nothing follows the widget's own size: give the viewport again
-    /// when it changes, for example from the window's resize events. A tree whose
+    /// scheme (Media Queries Level 3), and viewport units measure. A tree starts with no
+    /// viewport, where no size feature matches outside the widget; a widget given such a
+    /// tree answers them with its own size. A viewport given here wins over that: give it
+    /// again when it changes, for example from the window's resize events. A tree whose
     /// environment is already `media` is returned as it is.
     ///
     /// # Errors
@@ -1012,6 +1039,7 @@ impl BoxTree {
             parsed: OnceLock::new(),
             refused: Mutex::new(BTreeSet::new()),
             layout_refusal: Mutex::new(None),
+            follows: OnceLock::new(),
         });
         Self::unstated(&source)
     }
@@ -3668,6 +3696,7 @@ where
         let tree = view.tree;
         let (ids, elements): (Vec<_>, Vec<_>) = view.widgets.into_iter().unzip();
         Element::new(BoxTreeWidget {
+            given: tree.clone(),
             base: tree.clone(),
             tree,
             key: (None, None, None),
@@ -3733,6 +3762,9 @@ struct Interaction {
     rehover: bool,
     /// The interaction state last laid out, so a change of it can start transitions.
     seen: Option<InteractionKey>,
+    /// The tree given restyled for the widget's own size: the given source, the
+    /// environment, and the tree. Kept across view rebuilds.
+    sized: Option<(usize, MediaEnvironment, BoxTree)>,
     /// The widget's own animations, once it has any: transitions its interaction restyles
     /// started (CSS Transitions 1), and the `@keyframes` animations its stylings name.
     transitions: Option<WidgetTransitions>,
@@ -5113,6 +5145,10 @@ fn apply_scrolling(
 }
 
 struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::Font>> {
+    /// The tree the application gave.
+    given: BoxTree,
+    /// That tree as the widget draws it: restyled for its own size where the application
+    /// gives no viewport and the sheets ask about one.
     base: BoxTree,
     /// The base restyled for `key`.
     tree: BoxTree,
@@ -7696,9 +7732,41 @@ where
         // A rebuilt view keeps this state, moved to this capture's nodes; `styled` ignores
         // a node this tree lacks.
         state.follow(&self.base.source);
+        // Media Queries 3 and CSS Values 3: with no viewport given, the widget's own area
+        // is the viewport its media queries and viewport units measure. An unbounded height
+        // is none.
+        let mut resized = false;
+        if self.given.source.media.viewport.is_none() && self.given.source.follows_size() {
+            let height = if available.height.is_finite() {
+                available.height
+            } else {
+                0.0
+            };
+            let environment = MediaEnvironment {
+                viewport: Some((available.width, height)),
+                ..self.given.source.media
+            };
+            let given = Arc::as_ptr(&self.given.source) as usize;
+            let sized = match state
+                .sized
+                .as_ref()
+                .filter(|(source, held, _)| *source == given && *held == environment)
+            {
+                Some((_, _, tree)) => Some(tree.clone()),
+                None => self.given.with_media(environment).ok().inspect(|tree| {
+                    state.sized = Some((given, environment, tree.clone()));
+                }),
+            };
+            if let Some(sized) = sized
+                && !Arc::ptr_eq(&sized.source, &self.base.source)
+            {
+                self.base = sized;
+                resized = true;
+            }
+        }
         let interaction = state.clone();
         let key = (interaction.hovered, interaction.active, interaction.focused);
-        let changed = state.seen != Some(key);
+        let changed = state.seen != Some(key) || resized;
         let animating = state
             .transitions
             .as_ref()
@@ -7706,7 +7774,7 @@ where
         if key != self.key || changed || self.presenting || animating {
             let (styled, presenting) = state.styled_for(&self.base, key, Instant::now());
             // Unchanged and not moving: the tree in hand keeps its measurements.
-            if key != self.key || presenting || self.presenting {
+            if key != self.key || presenting || self.presenting || resized {
                 self.key = key;
                 self.tree = styled;
                 self.measured = false;

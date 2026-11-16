@@ -6942,3 +6942,43 @@ fn a_sticky_header_stays_at_the_top_of_its_scrolling_box() {
     assert_eq!(header("sticky"), (Some([30, 49]), Some([0, 19])));
     assert_eq!(header("static").1, None);
 }
+
+#[test]
+fn media_queries_follow_the_widget_s_own_size_when_no_viewport_is_given() {
+    // The color of the box at its middle, and its width in logical pixels, in a window
+    // of `width`.
+    let shown = |width: f32, viewport: Option<(f32, f32)>| {
+        let root = node("page", vec![node("a", vec![])]);
+        let css = "#page { background:#ffffff; }
+            #a { height:20px; width:50vw; background:#0000ff; }
+            @media (max-width: 500px) { #a { background:#ff0000; } }";
+        let mut tree = BoxTree::new(root, css).unwrap();
+        if let Some(viewport) = viewport {
+            tree = tree
+                .with_media(iced_css::box_tree::MediaEnvironment {
+                    viewport: Some(viewport),
+                    dark: None,
+                })
+                .unwrap();
+        }
+        let view: Element<'_, u8> = tree.view();
+        let _one_at_a_time = one_at_a_time();
+        let mut ui = iced_test::Simulator::with_size(
+            iced_test::core::Settings::default(),
+            iced::Size::new(width, 200.0),
+            view,
+        );
+        let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "widget-size");
+        let color = pixels.at(10, 20);
+        let blue = pixels
+            .bounds([0, 0, 255])
+            .or(pixels.bounds([255, 0, 0]))
+            .unwrap();
+        (color, (blue[2] - blue[0] + 1) / 2)
+    };
+    // Wide: the box is blue, half the widget wide; narrow, the query holds.
+    assert_eq!(shown(800.0, None), ([0, 0, 255], 400));
+    assert_eq!(shown(400.0, None), ([255, 0, 0], 200));
+    // A viewport the application gives wins over the widget's size.
+    assert_eq!(shown(400.0, Some((1000.0, 800.0))).0, [0, 0, 255]);
+}
