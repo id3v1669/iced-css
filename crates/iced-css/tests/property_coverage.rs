@@ -112,6 +112,9 @@ const UNREAD: &[&str] = &[
     "transition-duration",
     "transition-timing-function",
     "transition-delay",
+    // Drawn only, not laid out (see tests/box_tree_render.rs).
+    "transform",
+    "transform-origin",
     // Likewise, through the widget or `BoxTreeAnimations::play` over time.
     "animation-name",
     "animation-duration",
@@ -517,6 +520,12 @@ const CASES: &[(&str, &str, &str)] = &[
         "#k { background-origin:content-box; }",
     ),
     ("background-clip", "", "#k { background-clip:padding-box; }"),
+    ("transform", "", "#k { transform:translate(5px); }"),
+    (
+        "transform-origin",
+        "#k { transform:scale(2); }",
+        "#k { transform-origin:left top; }",
+    ),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

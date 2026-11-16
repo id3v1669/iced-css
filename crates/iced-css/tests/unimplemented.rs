@@ -91,7 +91,6 @@ css_todo_test!(pseudo_state, ":disabled / :enabled / :checked");
 css_todo_test!(pseudo_hover_structural, ":hover changing structure");
 css_todo_test!(pseudo_element_placeholder, "::placeholder");
 
-css_todo_test!(transform_translate, "transform: translate");
 css_todo_test!(
     transform_scale_rotate_skew,
     "transform: scale / rotate / skew"

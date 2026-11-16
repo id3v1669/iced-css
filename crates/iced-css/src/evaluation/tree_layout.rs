@@ -53,7 +53,7 @@ use iced_css_core::{
         property::{
             AngleUnit, ContentItem, EasingValue, FontFamily, GRID_LIMIT, GradientDirection,
             GridBreadth, GridRepeat, GridTrackEntry, GridTrackSize, GridValue, SpecifiedValue,
-            StepPosition as StepValue, TransitionProperty, TransitionValue,
+            StepPosition as StepValue, TransformFunction, TransitionProperty, TransitionValue,
         },
         registry::PropertyId,
         text_align::{ComputedTextAlign, compute_text_align},
@@ -1686,6 +1686,22 @@ pub struct BoxShadow {
     pub alpha: f32,
 }
 
+/// One step of an element's `transform` (CSS Transforms 1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TransformStep {
+    /// Across, then down; a percentage is of the border box.
+    Translate(Dim, Dim),
+    /// Across, then down.
+    Scale(f32, f32),
+}
+
+/// An element's `transform`, and its `transform-origin` against its border box.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementTransform {
+    pub steps: Vec<TransformStep>,
+    pub origin: [Dim; 2],
+}
+
 /// Which way a background gradient runs (CSS Images 3).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GradientAim {
@@ -1948,6 +1964,8 @@ pub struct TreePaint {
     pub animations: Vec<Vec<ElementAnimation>>,
     /// Each row's background gradient, if its `background-image` is one.
     pub gradients: Vec<Option<std::sync::Arc<GradientPaint>>>,
+    /// Each row's `transform`, when it has one.
+    pub transforms: Vec<Option<std::sync::Arc<ElementTransform>>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -2351,6 +2369,8 @@ pub fn evaluate_tree_paint<'r>(
     let mut transitions: Vec<Vec<ElementTransition>> = vec![Vec::new(); projection.len()];
     let mut animations: Vec<Vec<ElementAnimation>> = vec![Vec::new(); projection.len()];
     let mut gradients: Vec<Option<std::sync::Arc<GradientPaint>>> = vec![None; projection.len()];
+    let mut transforms: Vec<Option<std::sync::Arc<ElementTransform>>> =
+        vec![None; projection.len()];
     let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
     let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
     let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
@@ -3516,6 +3536,40 @@ pub fn evaluate_tree_paint<'r>(
                 });
             }
         }
+        // CSS Transforms 1: not inherited; `inherit` takes the parent's.
+        transforms[index] = match defaulted("transform")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Transform(functions))
+                if !functions.is_empty() =>
+            {
+                let number = |value: &iced_css_core::values::Decimal| {
+                    value
+                        .scaled_finite_f32(1.0, limits.numeric)
+                        .map_or(1.0, |converted| converted.value)
+                };
+                let steps = functions
+                    .iter()
+                    .map(|function| match function {
+                        TransformFunction::Translate(across, down) => {
+                            TransformStep::Translate(own_length(across), own_length(down))
+                        }
+                        TransformFunction::Scale(across, down) => {
+                            TransformStep::Scale(number(across), number(down))
+                        }
+                    })
+                    .collect();
+                let origin = match defaulted("transform-origin")? {
+                    DefaultedValueRef::Compute(SpecifiedValue::LengthPair(across, down)) => {
+                        [own_length(across), own_length(down)]
+                    }
+                    _ => [Dim::Percent(50.0); 2],
+                };
+                Some(std::sync::Arc::new(ElementTransform { steps, origin }))
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.and_then(|parent: usize| transforms[parent].clone())
+            }
+            _ => None,
+        };
         // CSS Images 3: a linear gradient as the background image. `inherit` takes the
         // parent's.
         gradients[index] = match defaulted("background-image")? {
@@ -4152,5 +4206,6 @@ pub fn evaluate_tree_paint<'r>(
         transitions,
         animations,
         gradients,
+        transforms,
     })
 }

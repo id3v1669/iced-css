@@ -6777,3 +6777,53 @@ fn background_size_scales_the_image() {
         "{cover:?}"
     );
 }
+
+#[test]
+fn transforms_move_and_scale_a_box_and_what_it_holds() {
+    let bounds = |transform: &str| {
+        let root = node("page", vec![node("t", vec![node("inner", vec![])])]);
+        let css = format!(
+            "#page {{ background-color:#ffffff; }}
+             #t {{ width:40px; height:40px; margin:100px; background-color:#ff0000;
+                   transform:{transform}; }}
+             #inner {{ width:10px; height:10px; background-color:#00ff00; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &css).unwrap().view();
+        let mut ui = simulator(view);
+        let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "transform");
+        // Logical pixels: the snapshot is at twice the scale.
+        let logical = |found: [usize; 4]| found.map(|edge| edge / 2);
+        (
+            pixels.bounds([255, 0, 0]).map(logical),
+            pixels.bounds([0, 255, 0]).map(logical),
+        )
+    };
+    let (red, green) = bounds("none");
+    assert_eq!(red, Some([100, 100, 139, 139]));
+    assert_eq!(green, Some([100, 100, 109, 109]));
+    // A translation moves the box and its child, a percentage of its own size.
+    let (red, green) = bounds("translate(20px, 50%)");
+    assert_eq!(red, Some([120, 120, 159, 159]));
+    assert_eq!(green, Some([120, 120, 129, 129]));
+    // A scaling grows about the center by default, or about the origin given.
+    let (red, _) = bounds("scale(2)");
+    assert_eq!(red, Some([80, 80, 159, 159]));
+    let (red, green) = bounds("scale(1.5)");
+    assert_eq!(red.map(|edges| edges[2] - edges[0]), Some(59));
+    assert!(green.is_some());
+    let root = node("page", vec![node("t", vec![])]);
+    let css = "#t { width:40px; height:40px; margin:100px; background-color:#ff0000;
+               transform:scale(2); transform-origin:left top; }";
+    let view: Element<'_, u8> = BoxTree::new(root, css).unwrap().view();
+    let mut ui = simulator(view);
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "origin");
+    assert_eq!(
+        pixels
+            .bounds([255, 0, 0])
+            .map(|found| found.map(|edge| edge / 2)),
+        Some([100, 100, 179, 179])
+    );
+    // Unequal scales iced cannot draw: the box stays as laid out.
+    let (red, _) = bounds("scale(2, 1)");
+    assert_eq!(red, Some([100, 100, 139, 139]));
+}

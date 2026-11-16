@@ -73,9 +73,10 @@ use crate::{
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
             BackgroundImage, BackgroundOffset, BackgroundSize, BoxArea, BoxPaint, ElementAnimation,
-            ElementTransition, GeneratedFrame, GeneratedRun, GradientAim, GradientPaint,
-            InlineBoxSides, PreparedTree, RunSource, TextLineHeight, TextStyle, TreeLayoutError,
-            TreePaint, evaluate_tree_paint, prepare_captured_tree, prepare_tree_source_projection,
+            ElementTransform, ElementTransition, GeneratedFrame, GeneratedRun, GradientAim,
+            GradientPaint, InlineBoxSides, PreparedTree, RunSource, TextLineHeight, TextStyle,
+            TransformStep, TreeLayoutError, TreePaint, evaluate_tree_paint, prepare_captured_tree,
+            prepare_tree_source_projection,
         },
     },
     host::{
@@ -837,6 +838,7 @@ struct Style {
     animations: Vec<Vec<ElementAnimation>>,
     key: InteractionKey,
     gradients: Vec<Option<Arc<GradientPaint>>>,
+    transforms: Vec<Option<Arc<ElementTransform>>>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -873,6 +875,8 @@ pub struct BoxTree {
     key: InteractionKey,
     /// Background gradients, by projected index (CSS Images 3).
     gradients: Vec<Option<Arc<GradientPaint>>>,
+    /// Transforms, by projected index (CSS Transforms 1).
+    transforms: Vec<Option<Arc<ElementTransform>>>,
 }
 
 /// Two trees are equal when they draw alike and restyle from the same sheets.
@@ -885,6 +889,7 @@ impl PartialEq for BoxTree {
             && self.backgrounds == other.backgrounds
             && self.marker_images == other.marker_images
             && self.gradients == other.gradients
+            && self.transforms == other.transforms
             && (Arc::ptr_eq(&self.source, &other.source)
                 || self.source.sheets == other.source.sheets)
     }
@@ -1100,6 +1105,7 @@ impl BoxTree {
                         && one.backgrounds == other.backgrounds
                         && one.marker_images == other.marker_images
                         && one.gradients == other.gradients
+                        && one.transforms == other.transforms
                         // What `!important` wins decides which presented values lie over it.
                         && one.important == other.important)
             }
@@ -1125,6 +1131,7 @@ impl BoxTree {
             animations: self.animations.clone(),
             key: self.key,
             gradients: self.gradients.clone(),
+            transforms: self.transforms.clone(),
         }
     }
 
@@ -1147,6 +1154,7 @@ impl BoxTree {
             animations: style.animations,
             key: style.key,
             gradients: style.gradients,
+            transforms: style.transforms,
         }
     }
 
@@ -1439,6 +1447,7 @@ impl BoxTree {
             transitions,
             animations,
             gradients,
+            transforms,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes, 16.0)
             .map_err(failed)?;
         let weights: Vec<u16> = styles.iter().map(|style| style.weight).collect();
@@ -2709,6 +2718,7 @@ impl BoxTree {
             animations,
             key,
             gradients,
+            transforms,
         })
     }
 
@@ -6485,6 +6495,56 @@ fn linear_gradient(
     Some(linear)
 }
 
+/// The arena slot a paint step draws, for its transform.
+fn step_arena(prepared: &PreparedTree, step: PaintStep) -> Option<usize> {
+    match step {
+        PaintStep::Box(index)
+        | PaintStep::Outline(index)
+        | PaintStep::Marker(index)
+        | PaintStep::CellBorder(index) => prepared.slot.get(index).copied().flatten(),
+        PaintStep::Text(arena) => Some(arena),
+        PaintStep::Generated(at) => prepared.generated_boxes.get(at).map(|(arena, _)| *arena),
+        PaintStep::Column(_) | PaintStep::ColumnGroup(_) => None,
+    }
+}
+
+/// CSS Transforms 1: an element's own transform about its origin, for a border box at
+/// `border`, when iced can draw it: translations and equal positive scalings.
+fn local_transformation(
+    transform: &ElementTransform,
+    border: Rectangle,
+) -> Option<iced::Transformation> {
+    let resolve = |dim: Dim, basis: f32| match dim {
+        Dim::Px(pixels) => pixels,
+        Dim::Percent(percent) => basis * percent / 100.0,
+        Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => {
+            pixels + basis * percent / 100.0
+        }
+        Dim::Auto => 0.0,
+    };
+    let (width, height) = (border.width, border.height);
+    let origin = (
+        border.x + resolve(transform.origin[0], width),
+        border.y + resolve(transform.origin[1], height),
+    );
+    let mut matrix = iced::Transformation::translate(origin.0, origin.1);
+    for step in &transform.steps {
+        matrix = matrix
+            * match *step {
+                TransformStep::Translate(across, down) => {
+                    iced::Transformation::translate(resolve(across, width), resolve(down, height))
+                }
+                TransformStep::Scale(across, down)
+                    if (across - down).abs() <= f32::EPSILON && across > 0.0 =>
+                {
+                    iced::Transformation::scale(across)
+                }
+                TransformStep::Scale(..) => return None,
+            };
+    }
+    Some(matrix * iced::Transformation::translate(-origin.0, -origin.1))
+}
+
 /// Which of a box's quads to draw. An image goes between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BoxParts {
@@ -7319,6 +7379,37 @@ where
                 }
             }
         }
+    }
+
+    /// Each arena slot's transform, its ancestors' with its element's own, drawn at
+    /// `origin`; `None` draws as laid out.
+    fn transformations(&self, origin: Point) -> Vec<Option<iced::Transformation>> {
+        let prepared = &self.tree.prepared;
+        let count = prepared.boxes.len();
+        let mut found: Vec<Option<iced::Transformation>> = vec![None; count];
+        if self.tree.transforms.iter().all(Option::is_none) || count == 0 {
+            return found;
+        }
+        let mut stack = vec![(0usize, None::<iced::Transformation>)];
+        while let Some((arena, above)) = stack.pop() {
+            let owner = prepared.positions[arena].0;
+            let own = (prepared.slot.get(owner).copied().flatten() == Some(arena))
+                .then(|| self.tree.transforms.get(owner).cloned().flatten())
+                .flatten()
+                .and_then(|transform| {
+                    let border = self.geometry.get(owner)?.as_ref()?.border;
+                    local_transformation(&transform, moved_rectangle(border, origin))
+                });
+            let here = match (above, own) {
+                (Some(above), Some(own)) => Some(above * own),
+                (above, own) => above.or(own),
+            };
+            found[arena] = here;
+            for &child in &prepared.boxes[arena].children {
+                stack.push((child, here));
+            }
+        }
+        found
     }
 
     fn embedded(&self) -> BTreeSet<usize> {
@@ -8232,6 +8323,7 @@ where
                 draw_background_image(renderer, background, positioning, visible);
             });
         }
+        let transformations = self.transformations(origin);
         // A layer draws its text and images over its quads, so anything painted after them
         // needs a layer of its own, as does any change of clip.
         let mut start = 0;
@@ -8257,7 +8349,10 @@ where
                     {
                         continue;
                     }
-                    match *step {
+                    // CSS Transforms 1: drawn through its boxes' transforms.
+                    let transformation = step_arena(prepared, *step)
+                        .and_then(|arena| transformations.get(arena).copied().flatten());
+                    let paint = |renderer: &mut Renderer| match *step {
                         PaintStep::Box(index) => {
                             let root = index == prepared.positions[0].0;
                             let image = self
@@ -8447,6 +8542,13 @@ where
                                 );
                             }
                         }
+                    };
+                    match transformation {
+                        Some(transformation) => {
+                            renderer
+                                .with_transformation(transformation, |renderer| paint(renderer));
+                        }
+                        None => paint(renderer),
                     }
                 }
             });

@@ -2013,3 +2013,46 @@ fn background_size_origin_and_clip_parse_as_css_backgrounds_3_gives_them() {
     assert!(value("background-origin:content-box").is_some());
     assert!(value("background-clip:padding-box").is_some());
 }
+
+#[test]
+fn transform_takes_translations_and_scalings() {
+    let functions = |input: &str| match parse(&format!("transform:{input}")).unwrap() {
+        PropertyResult::Parsed(ParsedProperty {
+            value: SpecifiedValue::Transform(functions),
+            ..
+        }) => Some(functions),
+        _ => None,
+    };
+    assert_eq!(functions("none"), Some(Vec::new()));
+    let list = functions(
+        "translate(10px, 50%) scale(2) translateX(1em) scaleY(0.5) translateY(-3px) scale(1, 2)",
+    )
+    .unwrap();
+    assert_eq!(list.len(), 6);
+    assert!(matches!(
+        list[0],
+        TransformFunction::Translate(_, LengthTarget::Percentage(_))
+    ));
+    assert!(matches!(list[1], TransformFunction::Scale(_, _)));
+    assert!(functions("translate(10px)").is_some());
+    for bad in [
+        "rotate(45deg)",
+        "translate(10px, 20px, 30px)",
+        "translate(left)",
+        "scale(10px)",
+        "scale()",
+        "translate(10px) none",
+        "10px",
+        "translate(10px",
+        "matrix(1, 0, 0, 1, 0, 0)",
+    ] {
+        assert!(functions(bad).is_none(), "{bad}");
+    }
+    assert!(matches!(
+        parse("transform-origin:left top").unwrap(),
+        PropertyResult::Parsed(ParsedProperty {
+            value: SpecifiedValue::LengthPair(..),
+            ..
+        })
+    ));
+}

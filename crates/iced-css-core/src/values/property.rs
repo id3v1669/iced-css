@@ -46,6 +46,8 @@ mod owned;
 mod shadow;
 #[path = "shorthand.rs"]
 mod shorthand;
+#[path = "transform.rs"]
+mod transform;
 #[path = "transition.rs"]
 mod transition;
 pub use content::ContentItem;
@@ -55,6 +57,7 @@ pub use grid::{
     GRID_LIMIT, GridBreadth, GridLineValue, GridRepeat, GridTrackEntry, GridTrackSize, GridValue,
 };
 pub use shadow::ShadowValue;
+pub use transform::TransformFunction;
 pub use transition::{EasingValue, StepPosition, TimeValue, TransitionProperty, TransitionValue};
 
 pub(super) fn cursor_keyword_allowed(keyword: Keyword) -> bool {
@@ -117,6 +120,8 @@ pub enum SpecifiedValue {
     Grid(GridValue),
     /// A `background-image` gradient (CSS Images 3).
     Gradient(LinearGradient),
+    /// `transform`: its functions in order; empty is `none` (CSS Transforms 1).
+    Transform(Vec<TransformFunction>),
     /// A transition property's list (CSS Transitions 1).
     Transition(TransitionValue),
     /// A custom property declaration (`--name: value`): its name, with its dashes, and
@@ -355,6 +360,8 @@ pub(super) fn inner(
         && name != "cursor"
         && name != "clip"
         && name != "background-position"
+        && name != "transform-origin"
+        && name != "transform"
         && name != "quotes"
         && name != "text-decoration"
         && name != "border-radius"
@@ -374,6 +381,21 @@ pub(super) fn inner(
     }
     if matches!(name, "flex-flow" | "flex" | "gap") {
         return flex_shorthand(property, input, important, limits, work);
+    }
+    if name == "transform" {
+        let value = if input.trim().eq_ignore_ascii_case("inherit") {
+            SpecifiedValue::Inherit
+        } else {
+            match transform::parse(input, limits, work)? {
+                Some(functions) => SpecifiedValue::Transform(functions),
+                None => return Ok(PropertyResult::Invalid),
+            }
+        };
+        return Ok(PropertyResult::Parsed(ParsedProperty {
+            property,
+            value,
+            important,
+        }));
     }
     if name == "background-size" {
         // CSS Backgrounds 3: `cover`, `contain`, or one or two sizes, the second `auto`
@@ -708,7 +730,8 @@ pub(super) fn inner(
             };
             SpecifiedValue::ClipRect(value)
         }
-    } else if name == "background-position" {
+    } else if name == "background-position" || name == "transform-origin" {
+        // CSS Transforms 1: a transform's origin is a position, as a background's is.
         drop(identifier);
         let Some(value) = position::parse(input, limits, work)? else {
             return Ok(PropertyResult::Invalid);

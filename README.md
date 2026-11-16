@@ -148,6 +148,14 @@ cargo test --workspace --features iced-css/image,iced-css/svg
 - **Also:** `inline-block` and `inline-table` lines, lists and markers, `:before`/`:after` (also with `::`) with counters and
   quotes, `visibility`, outlines and every border style (collapsed tables resolve each stretch of edge between the cells that meet there, where lines cross the later cell's border shows, and each grid line takes its widest border; an inline element's outline goes around each of its pieces on a line), `overflow` and `clip` clipping, wheel scrolling, `cursor`, `empty-cells`
   and `table-layout`.
+- **Transforms:** `transform` with `translate()`, `translateX()`, `translateY()`, `scale()`,
+  `scaleX()` and `scaleY()`, and `transform-origin` (CSS Transforms 1). The box and
+  everything it holds are drawn moved and scaled; layout is unchanged. Limits: iced draws
+  only translations and one scale for both axes, so a transform with unequal or negative
+  scales is not applied; no rotations, skews, `matrix()` or 3D; presses and hovering find
+  boxes where they are laid out, not where they are drawn; a transform does not make a
+  stacking context or a containing block; inside a scrolled box the origin of a scaling
+  does not follow the scroll; it does not animate.
 - **Background size and boxes:** `background-size` (`cover`, `contain`, or one or two
   lengths, percentages or `auto`, an `auto` side keeping the image's proportions),
   `background-origin` (what the image or gradient is placed against) and `background-clip`

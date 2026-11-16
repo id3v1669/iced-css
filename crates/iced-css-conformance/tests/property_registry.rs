@@ -88,7 +88,6 @@ fn decoded_lookup_is_ascii_case_insensitive_and_baseline_bounded() {
         "color ",
         "co\\6cor",
         "COLOR:",
-        "transform",
         "--x",
         "property-name",
         "speak",
@@ -97,7 +96,7 @@ fn decoded_lookup_is_ascii_case_insensitive_and_baseline_bounded() {
     ] {
         assert_eq!(PropertyId::lookup(name), None, "{name}");
     } // A property of a later module is known, and is not one of CSS 2.2's.
-    for later in ["opacity", "animation"] {
+    for later in ["opacity", "animation", "transform"] {
         assert!(
             PropertyId::lookup(later).is_some_and(|property| !property.is_css22()),
             "{later}"
