@@ -144,6 +144,12 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   `auto`; a percentage gap is none; `left` and `right` read as start and end whatever the
   direction; `justify-self` does nothing outside a grid; `inherit` on a grid property
   reads as its initial value; none of them animates. At most 1000 tracks per axis.
+- **Sticky:** `position: sticky` (CSS Positioned Layout 3) lays a box out where flow puts it
+  and, as its nearest scrolling box (or the window, for the root) scrolls, keeps it its
+  `top`, `bottom`, `left` or `right` inside that box's padding box, within its parent's
+  content box. It paints and contains as a positioned box. Limits: only the widget moves it
+  (`BoxTree::layout` gives where flow puts it); its parent's content box is its limit even
+  where the parent is the scroller itself.
 - **Positioning:** relative, absolute and fixed, with `z-index` stacking, on boxes; an inline
   element ignores `position: relative`: its offsets and `z-index` do nothing, and it is no
   containing block for absolute descendants, which take the nearest positioned box instead.

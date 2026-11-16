@@ -70,7 +70,11 @@ pub(super) const KEYWORDS: &[(&str, &[&str])] = &[
         &["auto", "always", "avoid", "left", "right"],
     ),
     ("page-break-inside", &["avoid", "auto"]),
-    ("position", &["static", "relative", "absolute", "fixed"]),
+    // CSS Positioned Layout 3 `sticky`, added by hand to the generated CSS 2.2 list.
+    (
+        "position",
+        &["static", "relative", "absolute", "fixed", "sticky"],
+    ),
     ("table-layout", &["auto", "fixed"]),
     ("text-align", &["left", "right", "center", "justify"]),
     (

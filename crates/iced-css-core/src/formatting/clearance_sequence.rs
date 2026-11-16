@@ -776,6 +776,7 @@ mod tests {
             flow: Flow::Normal,
             flex: false,
             grid: false,
+            sticky: false,
         }
     }
 

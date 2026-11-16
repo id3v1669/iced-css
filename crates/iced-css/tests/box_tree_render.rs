@@ -6899,3 +6899,46 @@ fn text_overflow_ellipsis_ends_a_cut_line_in_an_ellipsis() {
     let short = ink("text-overflow:ellipsis;");
     assert!((60..97).contains(&short), "{short}");
 }
+
+#[test]
+fn a_sticky_header_stays_at_the_top_of_its_scrolling_box() {
+    // The red header's top and bottom, in logical pixels, before and after scrolling 60
+    // pixels down.
+    let header = |position: &str| {
+        let root = node(
+            "page",
+            vec![node(
+                "list",
+                vec![
+                    node("above", vec![]),
+                    node("head", vec![]),
+                    node("body", vec![]),
+                ],
+            )],
+        );
+        let css = format!(
+            "#page {{ background:#ffffff; }}
+             #list {{ overflow:auto; width:100px; height:100px; }}
+             #above {{ height:30px; background:#0000ff; }}
+             #head {{ height:20px; background:#ff0000; position:{position}; top:0; }}
+             #body {{ height:400px; background:#ffffff; }}"
+        );
+        let view: Element<'_, u8> = BoxTree::new(root, &css).unwrap().view();
+        let mut ui = simulator(view);
+        let vertical = |found: Option<[usize; 4]>| found.map(|edges| [edges[1] / 2, edges[3] / 2]);
+        let before = vertical(
+            Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "sticky").bounds([255, 0, 0]),
+        );
+        ui.point_at(Point::new(50.0, 50.0));
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+            delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y: -60.0 },
+        })]);
+        let after = vertical(
+            Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "sticky").bounds([255, 0, 0]),
+        );
+        (before, after)
+    };
+    // In its place before; scrolled past the top it would leave the box, but sticks there.
+    assert_eq!(header("sticky"), (Some([30, 49]), Some([0, 19])));
+    assert_eq!(header("static").1, None);
+}

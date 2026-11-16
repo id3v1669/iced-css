@@ -73,6 +73,9 @@ pub struct DisplayResolution {
     /// `display: grid` or `inline-grid` (CSS Grid 1), likewise: its children are grid
     /// items.
     pub grid: bool,
+    /// `position: sticky` (CSS Positioned Layout 3): `position` holds `Relative`, so it
+    /// paints and contains as a positioned box, but its offsets do not move it in layout.
+    pub sticky: bool,
 }
 impl Display {
     fn transformed(self) -> Self {
@@ -107,6 +110,7 @@ pub fn resolve_display(
             flow: Flow::Suppressed,
             flex: false,
             grid: false,
+            sticky: false,
         };
     }
     let (display, float, flow) = if matches!(position, Position::Absolute | Position::Fixed) {
@@ -135,5 +139,6 @@ pub fn resolve_display(
         flow,
         flex: false,
         grid: false,
+        sticky: false,
     }
 }

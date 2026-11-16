@@ -164,7 +164,7 @@ fn complete_keyword_property_grammars_are_scoped_to_their_own_literals() {
         "white-space:block",
         "display:'block'",
         "float:left right",
-        "position:sticky",
+        "position:middle",
     ] {
         assert_eq!(parse(input).unwrap(), PropertyResult::Invalid, "{input}");
     }

@@ -4849,6 +4849,115 @@ fn narrowed(clip: Option<FlowRect>, more: FlowRect) -> FlowRect {
     })
 }
 
+/// CSS Positioned Layout 3: moves each sticky box, with what scrolls with it, to keep it
+/// its offsets inside its nearest scroller's padding box (the viewport's, for the root),
+/// as far as its containing block, its parent's content box, lets it go. Run after
+/// scrolling: the geometry is where things show.
+fn apply_sticky(
+    prepared: &PreparedTree,
+    geometry: &mut [FlowGeometry],
+    sticky: impl Fn(usize) -> Option<[Dim; 4]>,
+    viewport: Size,
+) {
+    let count = prepared.boxes.len().min(geometry.len());
+    if !(0..count).any(|arena| sticky(arena).is_some()) {
+        return;
+    }
+    let mut parents = vec![None; count];
+    for (arena, value) in prepared.boxes.iter().enumerate().take(count) {
+        for &child in &value.children {
+            if child < count {
+                parents[child] = Some(arena);
+            }
+        }
+    }
+    // Parents before children: a sticky box inside another moves with it first.
+    let mut order = Vec::with_capacity(count);
+    let mut stack = vec![0usize];
+    while let Some(arena) = stack.pop() {
+        order.push(arena);
+        stack.extend(
+            prepared.boxes[arena]
+                .children
+                .iter()
+                .rev()
+                .filter(|child| **child < count),
+        );
+    }
+    for arena in order {
+        let Some(offsets) = sticky(arena) else {
+            continue;
+        };
+        let Some(parent) = parents[arena] else {
+            continue;
+        };
+        let mut scroller = parent;
+        while scroller != 0 && !prepared.scrolls[scroller] {
+            scroller = parents[scroller].unwrap_or(0);
+        }
+        let seen = if scroller == 0 {
+            FlowRect {
+                left: 0.0,
+                right: viewport.width,
+                top: 0.0,
+                bottom: viewport.height,
+            }
+        } else {
+            geometry[scroller].padding
+        };
+        let inside = geometry[parent].content;
+        let border = geometry[arena].border;
+        let resolve = |dim: Dim, basis: f32| match dim {
+            Dim::Auto => None,
+            Dim::Px(pixels) => Some(pixels),
+            Dim::Percent(percent) => Some(basis * percent / 100.0),
+            Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => {
+                Some(pixels + basis * percent / 100.0)
+            }
+        };
+        let (width, height) = (seen.right - seen.left, seen.bottom - seen.top);
+        // Along one axis: pushed in from the start edge, then held off the end edge, never
+        // out of the containing block.
+        let shift = |start: Option<f32>,
+                     end: Option<f32>,
+                     (low, high): (f32, f32),
+                     (near, far): (f32, f32),
+                     (first, last): (f32, f32)| {
+            let mut moved = 0.0_f32;
+            if let Some(start) = start {
+                moved = moved.max(low + start - near);
+            }
+            if let Some(end) = end {
+                moved = moved.min(high - end - far);
+            }
+            moved.clamp((first - near).min(0.0), (last - far).max(0.0))
+        };
+        let down = shift(
+            resolve(offsets[0], height),
+            resolve(offsets[2], height),
+            (seen.top, seen.bottom),
+            (border.top, border.bottom),
+            (inside.top, inside.bottom),
+        );
+        let across = shift(
+            resolve(offsets[3], width),
+            resolve(offsets[1], width),
+            (seen.left, seen.right),
+            (border.left, border.right),
+            (inside.left, inside.right),
+        );
+        if down == 0.0 && across == 0.0 {
+            continue;
+        }
+        geometry[arena].move_by(across, down);
+        let mut moved = Vec::new();
+        scrolling_descendants(prepared, arena, |child, _| moved.push(child));
+        for child in moved {
+            geometry[child].move_by(across, down);
+        }
+    }
+}
+
 /// How far each scrolling box can scroll down and across, after moving its contents by
 /// its offsets. Parents come first in arena order, so nested scrollers measure moved
 /// contents. Across, a box scrolls toward its end: an ltr box's contents past its right,
@@ -7776,6 +7885,17 @@ where
                     positions[arena].1,
                     outer.border,
                 )
+            },
+            available,
+        );
+        apply_sticky(
+            &self.tree.prepared,
+            &mut self.slot_geometry,
+            |arena| {
+                paints[positions[arena].0].sticky.filter(|_| {
+                    // The element's own box, not an anonymous one around its text.
+                    self.tree.prepared.slot[positions[arena].0] == Some(arena)
+                })
             },
             available,
         );

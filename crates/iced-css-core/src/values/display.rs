@@ -84,12 +84,22 @@ pub fn compute_display_style(
         }
         _ => (false, false),
     };
+    // CSS Positioned Layout 3: a sticky box is positioned, as a relative one is, but
+    // stays where flow puts it; the widget moves it as its scroller scrolls.
+    fn position_of(value: &SpecifiedValue) -> Result<Position, DisplayError> {
+        match value {
+            SpecifiedValue::Keyword(keyword) if keyword.as_str() == "sticky" => {
+                Ok(Position::Relative)
+            }
+            other => Position::from_resolved(other),
+        }
+    }
     let position = selected(
         "position",
         winners,
         parent.map(|p| p.position),
         Position::from_keyword,
-        Position::from_resolved,
+        position_of,
     )?;
     let float = selected(
         "float",
@@ -105,5 +115,16 @@ pub fn compute_display_style(
     // An absolutely positioned or suppressed box is still a flex container inside.
     resolved.flex = flex && resolved.display != Display::None;
     resolved.grid = grid && resolved.display != Display::None;
+    resolved.sticky = resolved.position == Position::Relative
+        && matches!(
+            winners
+                .defaulted(
+                    PropertyId::lookup("position").expect("registered"),
+                    parent.is_some()
+                )
+                .map_err(ComputedDisplayError::Defaulting)?,
+            DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
+                if keyword.as_str() == "sticky"
+        );
     Ok(resolved)
 }

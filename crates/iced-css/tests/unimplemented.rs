@@ -45,7 +45,6 @@ css_todo_test!(overflow, "overflow");
 css_todo_test!(position_relative, "position: relative");
 css_todo_test!(position_absolute, "position: absolute");
 css_todo_test!(position_fixed, "position: fixed");
-css_todo_test!(position_sticky, "position: sticky");
 css_todo_test!(z_index, "z-index");
 css_todo_test!(float_and_clear, "float / clear");
 

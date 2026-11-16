@@ -959,7 +959,8 @@ pub fn prepare_captured_tree(
         }
         // Absent offsets are all auto: every positioned box is a containing block.
         build.positions.push((index, resolution.position));
-        if let Some(offset) = row.offset {
+        // A sticky box's offsets do not move it in layout.
+        if let Some(offset) = row.offset.filter(|_| !resolution.sticky) {
             offsets.push((
                 build.boxes.len(),
                 offset
@@ -1821,6 +1822,9 @@ pub struct BoxPaint {
     pub fixed_table: bool,
     /// `box-sizing: border-box`.
     pub border_box: bool,
+    /// CSS Positioned Layout 3 `position: sticky`: its `top`, `right`, `bottom` and
+    /// `left`, `Auto` where it has none.
+    pub sticky: Option<[Dim; 4]>,
     /// `background-origin`: what its gradient is placed against.
     pub background_origin: BoxArea,
     /// `background-clip`: where its background color and image show.
@@ -2822,6 +2826,7 @@ pub fn evaluate_tree_paint<'r>(
                 .and_then(|parent: usize| paints[parent].opacity)
                 .unwrap_or(1.0);
         paints.push(BoxPaint {
+            sticky: None,
             background_origin: BoxArea::Padding,
             background_clip: BoxArea::Border,
             flex: None,
@@ -3564,6 +3569,17 @@ pub fn evaluate_tree_paint<'r>(
                     paused: states[at % states.len()] == "paused",
                 });
             }
+        }
+        // CSS Positioned Layout 3: a sticky box's offsets.
+        if matches!(keyword_of_own("position")?, Some("sticky")) {
+            let mut offsets = [Dim::Auto; 4];
+            for (side, name) in ["top", "right", "bottom", "left"].into_iter().enumerate() {
+                if let DefaultedValueRef::Compute(SpecifiedValue::Length(target)) = defaulted(name)?
+                {
+                    offsets[side] = own_length(target);
+                }
+            }
+            paints[index].sticky = Some(offsets);
         }
         // CSS Transforms 1: not inherited; `inherit` takes the parent's.
         transforms[index] = match defaulted("transform")? {

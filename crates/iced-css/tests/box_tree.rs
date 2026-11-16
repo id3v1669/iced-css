@@ -1002,6 +1002,26 @@ fn min_max_and_clamp_size_boxes_and_text() {
 }
 
 #[test]
+fn a_sticky_box_lays_out_where_flow_puts_it() {
+    let top = |css: &str| {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![]), node("b", vec![])]),
+            &format!("#a, #b {{ height:10px; }} {css}"),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        (
+            geometry[1].as_ref().unwrap().border.top,
+            geometry[2].as_ref().unwrap().border.top,
+        )
+    };
+    // Its offsets do not move it, as a relative box's would; only scrolling does, in the
+    // widget.
+    assert_eq!(top("#a { position:sticky; top:50px; }"), (0.0, 10.0));
+    assert_eq!(top("#a { position:relative; top:50px; }"), (50.0, 10.0));
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

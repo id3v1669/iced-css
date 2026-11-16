@@ -40,6 +40,7 @@ fn display() -> DisplayResolution {
         flow: Flow::Normal,
         flex: false,
         grid: false,
+        sticky: false,
     }
 }
 fn input(s: &[SourceNode]) -> ClearanceOwnerInput<'_> {
