@@ -238,6 +238,7 @@ fn ppm_red_guard_ke_float_margin_top_percentage() {
 fn ppm_lp(text: &str, origin: BoxFactOrigin) -> LengthPercentageBoxFact {
     LengthPercentageBoxFact::Percentage(PercentageBoxFact {
         value: pct_value(text),
+        offset: 0.0,
         origin,
     })
 }
@@ -246,6 +247,7 @@ fn ppm_lp(text: &str, origin: BoxFactOrigin) -> LengthPercentageBoxFact {
 fn ppm_max(text: &str, origin: BoxFactOrigin) -> BoxMaxFact {
     BoxMaxFact::Percentage(PercentageBoxFact {
         value: pct_value(text),
+        offset: 0.0,
         origin,
     })
 }
@@ -868,7 +870,7 @@ fn ppm_representation_measurement() {
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     assert_eq!(
         measured.map(|(_, size, align)| (size, align)),
-        [(32, 8), (32, 8), (872, 8)]
+        [(40, 8), (40, 8), (1016, 8)]
     );
 }
 

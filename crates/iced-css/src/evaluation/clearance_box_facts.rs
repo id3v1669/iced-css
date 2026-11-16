@@ -50,6 +50,8 @@ pub struct AbsoluteBoxFact {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PercentageBoxFact {
     pub value: CompactDecimal,
+    /// Pixels added to the percentage: the rest of a `calc()` sum, 0 otherwise.
+    pub offset: f32,
     pub origin: BoxFactOrigin,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]

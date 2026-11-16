@@ -3159,7 +3159,7 @@ mod tests {
                 size_of::<PrincipalChildBox>(),
                 std::mem::align_of::<PrincipalChildBox>()
             ),
-            (344, 8)
+            (392, 8)
         );
     }
 

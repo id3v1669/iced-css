@@ -48,6 +48,51 @@ pub fn evaluate_length(
 ) -> Result<LengthEvaluation, LengthEvaluationError> {
     let evaluated = match value {
         LengthTarget::Auto => return Ok(LengthEvaluation::Auto),
+        LengthTarget::Calc(sum) => {
+            let missing = LengthEvaluationError::MissingContext;
+            let mut total = sum.pixels();
+            if sum.percent() != 0.0 {
+                let basis = context
+                    .percentage_basis
+                    .ok_or(missing(LengthBasis::Percentage))?;
+                total += sum.percent() / 100.0 * basis;
+            }
+            for unit in [
+                RelativeUnit::Em,
+                RelativeUnit::Ex,
+                RelativeUnit::Rem,
+                RelativeUnit::Ch,
+            ] {
+                let count = sum.relative(unit);
+                if count == 0.0 {
+                    continue;
+                }
+                let basis = match unit {
+                    RelativeUnit::Em => context.font_size.ok_or(missing(LengthBasis::FontSize)),
+                    RelativeUnit::Ex => context.x_height.ok_or(missing(LengthBasis::XHeight)),
+                    RelativeUnit::Rem => context
+                        .root_font_size
+                        .ok_or(missing(LengthBasis::RootFontSize)),
+                    RelativeUnit::Ch => context
+                        .font_size
+                        .map(|size| size * 0.5)
+                        .ok_or(missing(LengthBasis::FontSize)),
+                }?;
+                if !basis.is_finite() || basis < 0.0 {
+                    return Err(LengthEvaluationError::InvalidFontContext);
+                }
+                total += count * basis;
+            }
+            if !total.is_finite() {
+                return Err(LengthEvaluationError::Conversion(
+                    ConversionError::Unrepresentable,
+                ));
+            }
+            FiniteF32 {
+                value: total,
+                rounded_to_zero: false,
+            }
+        }
         LengthTarget::Absolute(value) => value.to_finite_f32(limits)?,
         LengthTarget::Percentage(value) => {
             let basis = context

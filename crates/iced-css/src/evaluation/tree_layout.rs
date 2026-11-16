@@ -1600,10 +1600,39 @@ fn dim(fact: BoxLengthFact, numeric: NumericLimits) -> Result<Dim, ConversionErr
     Ok(match fact {
         BoxLengthFact::Absolute(value) => Dim::Px(value.pixels),
         BoxLengthFact::Auto { .. } => Dim::Auto,
-        BoxLengthFact::Percentage(value) => {
-            Dim::Percent(value.value.percentage_finite_f32(100.0, numeric)?.value)
-        }
+        BoxLengthFact::Percentage(value) => percent_dim(value, numeric)?,
     })
+}
+
+/// A percentage fact: with pixels beside it, a `calc()` sum as layout mixes them.
+fn percent_dim(
+    fact: crate::evaluation::clearance_box_facts::PercentageBoxFact,
+    numeric: NumericLimits,
+) -> Result<Dim, ConversionError> {
+    let percent = fact.value.percentage_finite_f32(100.0, numeric)?.value;
+    Ok(if fact.offset == 0.0 {
+        Dim::Percent(percent)
+    } else {
+        Dim::Mix(fact.offset, percent)
+    })
+}
+
+/// A `calc()` sum against a font size: pixels, or pixels with its percentage.
+fn calc_dim(sum: iced_css_core::values::CalcLength, font_size: f32, root_font_size: f32) -> Dim {
+    let pixels = sum.fallback_pixels(font_size, root_font_size);
+    if sum.percent() == 0.0 {
+        Dim::Px(pixels)
+    } else {
+        Dim::Mix(pixels, sum.percent())
+    }
+}
+
+/// A size or padding that may not be negative: a `calc()` sum clips to nothing.
+fn never_negative(dim: Dim) -> Dim {
+    match dim {
+        Dim::Mix(pixels, percent) => Dim::Clamped(pixels, percent),
+        other => other,
+    }
 }
 
 fn length_dim(
@@ -1612,9 +1641,7 @@ fn length_dim(
 ) -> Result<Dim, ConversionError> {
     Ok(match fact {
         LengthPercentageBoxFact::Absolute(value) => Dim::Px(value.pixels),
-        LengthPercentageBoxFact::Percentage(value) => {
-            Dim::Percent(value.value.percentage_finite_f32(100.0, numeric)?.value)
-        }
+        LengthPercentageBoxFact::Percentage(value) => percent_dim(value, numeric)?,
     })
 }
 
@@ -1622,24 +1649,22 @@ fn max_dim(fact: BoxMaxFact, numeric: NumericLimits) -> Result<Dim, ConversionEr
     Ok(match fact {
         BoxMaxFact::Absolute(value) => Dim::Px(value.pixels),
         BoxMaxFact::None { .. } => Dim::Auto,
-        BoxMaxFact::Percentage(value) => {
-            Dim::Percent(value.value.percentage_finite_f32(100.0, numeric)?.value)
-        }
+        BoxMaxFact::Percentage(value) => percent_dim(value, numeric)?,
     })
 }
 
 fn flow_box(row: &ClearanceBoxFact, numeric: NumericLimits) -> Result<FlowBox, ConversionError> {
     let side = |index: usize| dim(row.margin[index], numeric);
-    let pad = |index: usize| length_dim(row.padding[index], numeric);
+    let pad = |index: usize| length_dim(row.padding[index], numeric).map(never_negative);
     Ok(FlowBox {
         clear: row.clear.value,
         establishes_bfc: row.overflow.value != BoxOverflow::Visible,
-        width: dim(row.width, numeric)?,
-        min_width: length_dim(row.min_width, numeric)?,
-        max_width: max_dim(row.max_width, numeric)?,
-        height: dim(row.height, numeric)?,
-        min_height: length_dim(row.min_height, numeric)?,
-        max_height: max_dim(row.max_height, numeric)?,
+        width: never_negative(dim(row.width, numeric)?),
+        min_width: never_negative(length_dim(row.min_width, numeric)?),
+        max_width: never_negative(max_dim(row.max_width, numeric)?),
+        height: never_negative(dim(row.height, numeric)?),
+        min_height: never_negative(length_dim(row.min_height, numeric)?),
+        max_height: never_negative(max_dim(row.max_height, numeric)?),
         margin: [side(0)?, side(1)?, side(2)?, side(3)?],
         padding: [pad(0)?, pad(1)?, pad(2)?, pad(3)?],
         border: row.border_widths(),
@@ -2870,6 +2895,7 @@ pub fn evaluate_tree_paint<'r>(
                     .map_or(0.0, |c| c.value),
             ),
             LengthTarget::Auto => Dim::Auto,
+            LengthTarget::Calc(sum) => calc_dim(*sum, font_size, root_font_size),
         };
         let mut lengths = [Dim::Px(0.0); 10];
         for (at, name) in BOX_LENGTHS.iter().enumerate() {
@@ -3030,6 +3056,10 @@ pub fn evaluate_tree_paint<'r>(
                     LengthTarget::Percentage(number) => number
                         .percentage_finite_f32(font_size, limits.numeric)
                         .map_or(font_size, |c| c.value),
+                    // Its percentage is of the element's font size, as `em` is.
+                    LengthTarget::Calc(sum) => (sum.fallback_pixels(font_size, root_font_size)
+                        + sum.percent() / 100.0 * font_size)
+                        .max(0.0),
                     LengthTarget::Auto => font_size,
                 },
                 DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
@@ -3147,6 +3177,7 @@ pub fn evaluate_tree_paint<'r>(
                         .map_or(0.0, |c| c.value),
                 ),
                 LengthTarget::Auto => Dim::Auto,
+                LengthTarget::Calc(sum) => calc_dim(*sum, size, root_font_size),
             };
             // `inherit` takes the element's computed value (`box_lengths`).
             let dim = |name: &'static str, initial: Dim| {

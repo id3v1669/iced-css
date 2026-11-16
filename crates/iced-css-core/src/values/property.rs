@@ -154,11 +154,44 @@ fn significant<'a>(
             })?
             .expect("nonempty input");
         *offset += token.raw.len();
+        if token.kind == TokenKind::Function && token.raw.eq_ignore_ascii_case("calc(") {
+            return calc_token(input, start, token, offset, work).map(Some);
+        }
         if !matches!(token.kind, TokenKind::Space | TokenKind::Comment) {
             return Ok(Some((start, token)));
         }
     }
     Ok(None)
+}
+/// A whole `calc(...)` as one function token whose text runs through its closing
+/// parenthesis (or to the end of the value when it has none): the component parsers take
+/// one token for one length.
+fn calc_token<'a>(
+    input: &'a str,
+    start: usize,
+    mut token: Token<'a>,
+    offset: &mut usize,
+    work: &mut usize,
+) -> Result<(usize, Token<'a>), PropertyError> {
+    let mut depth = 1usize;
+    while depth > 0 && *offset < input.len() {
+        let at = *offset;
+        let inner = scan_token_budget(&input[at..], work)
+            .map_err(|mut error| {
+                error.offset += at;
+                PropertyError::Syntax(error)
+            })?
+            .expect("nonempty input");
+        *offset += inner.raw.len();
+        token.invalid_escape |= inner.invalid_escape;
+        match inner.kind {
+            TokenKind::Function | TokenKind::OpenParen => depth += 1,
+            TokenKind::CloseParen => depth -= 1,
+            _ => {}
+        }
+    }
+    token.raw = &input[start..*offset];
+    Ok((start, token))
 }
 fn numeric(
     value: Result<LengthTarget, NumericError>,

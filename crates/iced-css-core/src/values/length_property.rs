@@ -117,6 +117,10 @@ fn component(
         };
     }
     let value = match token.kind {
+        // A whole `calc(...)`, as `significant` groups it.
+        TokenKind::Function => crate::values::calc::parse_calc(token.raw, work)
+            .filter(|sum| grammar.percentage || sum.percent() == 0.0)
+            .map(LengthTarget::Calc),
         TokenKind::Percentage if !grammar.percentage => return Ok(None),
         TokenKind::Number | TokenKind::Percentage => {
             numeric(LengthTarget::parse(token.raw, limits.numeric))?

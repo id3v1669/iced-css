@@ -362,6 +362,82 @@ fn css_color_3_values_paint_boxes() {
 }
 
 #[test]
+fn calc_mixes_lengths_and_percentages() {
+    let root = || node("page", vec![node("k", vec![node("inner", vec![])])]);
+    let size = |css: &str| {
+        let tree = BoxTree::new(root(), css).unwrap();
+        let geometry = tree.layout(800.0, Some(600.0)).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        let inner = geometry[2].as_ref().unwrap().border;
+        (
+            border.right - border.left,
+            border.bottom - border.top,
+            inner.left - border.left,
+        )
+    };
+    assert_eq!(
+        size("#k { width:calc(100% - 200px); height:calc(10px * 3); }"),
+        (600.0, 30.0, 0.0)
+    );
+    assert_eq!(
+        size("#k { width:calc(50% + 2em); font-size:10px; }").0,
+        420.0
+    );
+    assert_eq!(
+        size("#page { font-size:20px; } #k { width:calc(1rem + 1px); }").0,
+        21.0
+    );
+    assert_eq!(size("#k { width:calc((100% - 100px) / 2); }").0, 350.0);
+    // Margins, padding and max sizes; in shorthands too.
+    assert_eq!(
+        size("#k { width:100px; } #inner { margin-left:calc(10% + 5px); }").2,
+        15.0
+    );
+    assert_eq!(
+        size("#k { width:100px; padding:0 calc(5px * 2); }").0,
+        120.0
+    );
+    assert_eq!(
+        size("#k { width:500px; max-width:calc(50% - 100px); }").0,
+        300.0
+    );
+    assert_eq!(
+        size("#k { width:100px; } #inner { margin:0 0 0 calc(2px + 3px); }").2,
+        5.0
+    );
+    // A negative result clips to nothing where a negative is not allowed, and stays one
+    // where it is.
+    assert_eq!(size("#k { width:calc(10% - 200px); }").0, 0.0);
+    assert_eq!(size("#k { width:calc(10px - 200px); }").0, 0.0);
+    assert_eq!(
+        size("#k { width:100px; } #inner { margin-left:calc(10px - 30px); }").2,
+        -20.0
+    );
+    // Invalid sums drop the declaration.
+    for bad in [
+        "calc(100% - 20)",
+        "calc(100%-20px)",
+        "calc(1px * 1px)",
+        "calc()",
+    ] {
+        assert_eq!(
+            size(&format!("#k {{ width:50px; width:{bad}; }}")).0,
+            50.0,
+            "{bad}"
+        );
+    }
+    // Border widths take a sum of lengths; a percentage there is invalid.
+    assert_eq!(
+        size("#k { width:100px; border:1px solid #000000; border-left-width:calc(1px + 4px); }").0,
+        106.0
+    );
+    assert_eq!(
+        size("#k { width:100px; border:1px solid #000000; border-left-width:calc(1px + 4%); }").0,
+        102.0
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

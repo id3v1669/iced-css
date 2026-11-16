@@ -277,7 +277,8 @@ impl<'r, R: Reservation> Collector<'r, R> {
                     Some((size.to_bits(), basis.to_bits()))
                 }
                 LengthTarget::Absolute(_) => None,
-                LengthTarget::Percentage(_) | LengthTarget::Auto => {
+                // A `calc()` width converts without a range event to report.
+                LengthTarget::Percentage(_) | LengthTarget::Auto | LengthTarget::Calc(_) => {
                     return Err(Error::InvalidWinner);
                 }
             };

@@ -400,6 +400,7 @@ fn pct_value(text: &str) -> CompactDecimal {
 fn pct_fact(text: &str, origin: BoxFactOrigin) -> BoxLengthFact {
     BoxLengthFact::Percentage(PercentageBoxFact {
         value: pct_value(text),
+        offset: 0.0,
         origin,
     })
 }

@@ -2,11 +2,12 @@
 pub mod bidi;
 mod exact;
 pub use exact::{
-    BorderLengthView, CompactDecimal, ConversionError, CounterError, CounterLimits, CounterStyle,
-    Decimal, DecimalArithmeticError, DecimalScalingError, ExactLength, FiniteF32, Integer,
-    IntegerInterpolationError, LengthTarget, NonnegativeF32, RangeEvent, RelativeUnit,
+    BorderLengthView, CalcLength, CompactDecimal, ConversionError, CounterError, CounterLimits,
+    CounterStyle, Decimal, DecimalArithmeticError, DecimalScalingError, ExactLength, FiniteF32,
+    Integer, IntegerInterpolationError, LengthTarget, NonnegativeF32, RangeEvent, RelativeUnit,
     format_counter, format_counters,
 };
+mod calc;
 use std::num::NonZeroUsize;
 #[derive(Debug, Clone, Copy)]
 pub struct NumericLimits {

@@ -765,7 +765,7 @@ fn eml_representation_measurement() {
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     assert_eq!(
         measured.map(|(_, size, align)| (size, align)),
-        [(872, 8), (24, 8)]
+        [(1016, 8), (24, 8)]
     );
 }
 

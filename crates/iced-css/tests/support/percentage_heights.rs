@@ -923,7 +923,7 @@ fn pht_representation_measurement() {
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     assert_eq!(
         measured.map(|(_, size, align)| (size, align)),
-        [(872, 8), (1, 1)]
+        [(1016, 8), (1, 1)]
     );
 }
 

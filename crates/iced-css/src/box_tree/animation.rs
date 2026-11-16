@@ -137,9 +137,11 @@ fn mix(from: Value, to: Value, progress: f32) -> Option<Value> {
             let parts = |dim: Dim| match dim {
                 Dim::Px(pixels) => Some((pixels, 0.0)),
                 Dim::Percent(percent) => Some((0.0, percent)),
-                Dim::Mix(pixels, percent) => Some((pixels, percent)),
-                // Only layout's own copies hold one.
-                Dim::Auto | Dim::Clamped(..) => None,
+                // A clipped sum (a `calc()` size) mixes as its parts do.
+                Dim::Mix(pixels, percent) | Dim::Clamped(pixels, percent) => {
+                    Some((pixels, percent))
+                }
+                Dim::Auto => None,
             };
             let ((a_pixels, a_percent), (b_pixels, b_percent)) = (parts(a)?, parts(b)?);
             Some(Value::Length(if progress <= 0.0 {

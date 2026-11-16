@@ -292,6 +292,63 @@ pub enum LengthTarget {
     Relative(Decimal, RelativeUnit),
     Percentage(Decimal),
     Auto,
+    /// A `calc()` sum (CSS Values 3).
+    Calc(CalcLength),
+}
+/// A `calc()` sum reduced to one coefficient per unit kind: pixels, percent, then `em`,
+/// `ex`, `rem` and `ch`. Kept as bit patterns, so equality is exact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CalcLength {
+    terms: [u32; 6],
+}
+impl CalcLength {
+    pub fn new(pixels: f32, percent: f32, relative: [f32; 4]) -> Self {
+        let [em, ex, rem, ch] = relative;
+        Self {
+            terms: [pixels, percent, em, ex, rem, ch].map(f32::to_bits),
+        }
+    }
+    pub fn pixels(self) -> f32 {
+        f32::from_bits(self.terms[0])
+    }
+    pub fn percent(self) -> f32 {
+        f32::from_bits(self.terms[1])
+    }
+    pub fn relative(self, unit: RelativeUnit) -> f32 {
+        f32::from_bits(
+            self.terms[match unit {
+                RelativeUnit::Em => 2,
+                RelativeUnit::Ex => 3,
+                RelativeUnit::Rem => 4,
+                RelativeUnit::Ch => 5,
+            }],
+        )
+    }
+    /// Whether any font-relative term is present.
+    pub fn is_font_relative(self) -> bool {
+        self.terms[2..]
+            .iter()
+            .any(|bits| f32::from_bits(*bits) != 0.0)
+    }
+    /// Everything but the percentage, in pixels, with `ex` and `ch` as half the font size.
+    pub fn fallback_pixels(self, font_size: f32, root_font_size: f32) -> f32 {
+        [
+            RelativeUnit::Em,
+            RelativeUnit::Ex,
+            RelativeUnit::Rem,
+            RelativeUnit::Ch,
+        ]
+        .into_iter()
+        .fold(self.pixels(), |total, unit| {
+            let count = self.relative(unit);
+            // An absent term adds nothing, whatever the font sizes are.
+            if count == 0.0 {
+                total
+            } else {
+                total + count * unit.fallback_basis(font_size, root_font_size)
+            }
+        })
+    }
 }
 /// Borrowed normalized operands for bounded border diagnostic identity.
 /// This view performs neither conversion nor allocation. Limbs remain owned by
@@ -325,7 +382,7 @@ impl LengthTarget {
                 scale: value.scale,
                 unit: *unit,
             }),
-            Self::Percentage(_) | Self::Auto => None,
+            Self::Percentage(_) | Self::Auto | Self::Calc(_) => None,
         }
     }
 
@@ -574,7 +631,8 @@ impl LengthTarget {
         match self {
             Self::Absolute(value) => value.negative,
             Self::Relative(value, _) | Self::Percentage(value) => value.is_negative(),
-            Self::Auto => false,
+            // A sum has no sign until it is used; a negative result is clipped there.
+            Self::Auto | Self::Calc(_) => false,
         }
     }
 }

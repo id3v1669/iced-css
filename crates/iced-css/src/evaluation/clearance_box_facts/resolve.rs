@@ -209,6 +209,45 @@ impl Resolver {
             return Err(self.invalid(property));
         };
         match target {
+            // CSS Values 3: a `calc()` sum. Its lengths resolve against the row's font
+            // sizes at once; a percentage stays, with the pixels beside it. A negative
+            // result where none is allowed clips to nothing (8.1.4).
+            LengthTarget::Calc(sum) => {
+                if sum.is_font_relative() && self.font_size.is_none() {
+                    return Err(self.unsupported(property, BoxFactUnsupported::RelativeLength));
+                }
+                *calls += 1;
+                let size = self.font_size.unwrap_or(0.0);
+                let pixels = sum.fallback_pixels(size, self.root_font_size.unwrap_or(size));
+                if !pixels.is_finite() {
+                    return Err(self.invalid(property));
+                }
+                if sum.percent() == 0.0 {
+                    let pixels = if signed { pixels } else { pixels.max(0.0) };
+                    return Ok(BoxLengthFact::Absolute(AbsoluteBoxFact {
+                        pixels: if pixels == 0. { 0. } else { pixels },
+                        rounded_to_zero: false,
+                        origin: BoxFactOrigin::Specified,
+                    }));
+                }
+                if !percentage {
+                    return Err(self.unsupported(property, BoxFactUnsupported::PercentageLength));
+                }
+                let value = iced_css_core::values::Decimal::parse(
+                    &format!("{:.4}", sum.percent()),
+                    self.numeric,
+                )
+                .ok()
+                .and_then(|percent| percent.compact())
+                .ok_or_else(|| {
+                    self.unsupported(property, BoxFactUnsupported::PercentagePrecision)
+                })?;
+                return Ok(BoxLengthFact::Percentage(PercentageBoxFact {
+                    value,
+                    offset: pixels,
+                    origin: BoxFactOrigin::Specified,
+                }));
+            }
             LengthTarget::Relative(..) if self.font_size.is_some() => {}
             LengthTarget::Relative(..) => {
                 return Err(self.unsupported(property, BoxFactUnsupported::RelativeLength));
@@ -222,6 +261,7 @@ impl Resolver {
                 })?;
                 return Ok(BoxLengthFact::Percentage(PercentageBoxFact {
                     value,
+                    offset: 0.0,
                     origin: BoxFactOrigin::Specified,
                 }));
             }
@@ -300,6 +340,26 @@ impl Resolver {
                     }
                     (LengthTarget::Percentage(..) | LengthTarget::Auto, _) => {
                         return Err(self.invalid(property));
+                    }
+                    // A sum without a percentage (the grammar admits none here).
+                    (LengthTarget::Calc(sum), size) => {
+                        if sum.percent() != 0.0 {
+                            return Err(self.invalid(property));
+                        }
+                        if sum.is_font_relative() && size.is_none() {
+                            return Err(
+                                self.unsupported(property, BoxFactUnsupported::RelativeLength)
+                            );
+                        }
+                        let size = size.unwrap_or(0.0);
+                        let pixels = sum.fallback_pixels(size, self.root_font_size.unwrap_or(size));
+                        if !pixels.is_finite() {
+                            return Err(self.invalid(property));
+                        }
+                        Ok(iced_css_core::values::NonnegativeF32 {
+                            value: pixels.max(0.0),
+                            event: None,
+                        })
                     }
                     _ if target.is_negative() => return Err(self.invalid(property)),
                     // EML, EXF (the user's U5=B): an `em` or `ex` width against the row's
@@ -492,7 +552,9 @@ pub(super) fn element(
                         };
                         let reason = match target {
                             LengthTarget::Relative(..) => BoxFactUnsupported::RelativeLength,
-                            LengthTarget::Percentage(..) => BoxFactUnsupported::PercentageLength,
+                            LengthTarget::Percentage(..) | LengthTarget::Calc(..) => {
+                                BoxFactUnsupported::PercentageLength
+                            }
                             LengthTarget::Auto => BoxFactUnsupported::AutoForProperty,
                             LengthTarget::Absolute(..) => {
                                 if target.is_negative() {
