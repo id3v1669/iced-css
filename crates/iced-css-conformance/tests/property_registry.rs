@@ -88,7 +88,6 @@ fn decoded_lookup_is_ascii_case_insensitive_and_baseline_bounded() {
         "color ",
         "co\\6cor",
         "COLOR:",
-        "opacity",
         "transform",
         "animation",
         "--x",
@@ -98,7 +97,8 @@ fn decoded_lookup_is_ascii_case_insensitive_and_baseline_bounded() {
         "",
     ] {
         assert_eq!(PropertyId::lookup(name), None, "{name}");
-    }
+    } // A property of a later module is known, and is not one of CSS 2.2's.
+    assert!(PropertyId::lookup("opacity").is_some_and(|property| !property.is_css22()));
 }
 
 // Hand-reviewed constituent sets from CSS2.2 chapter prose. This catches missing

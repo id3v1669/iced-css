@@ -71,7 +71,6 @@ css_todo_test!(background_images, "background-image url()");
 css_todo_test!(borders, "border");
 css_todo_test!(box_shadows, "box-shadow");
 css_todo_test!(outline, "outline");
-css_todo_test!(opacity, "opacity");
 
 css_todo_test!(text_color, "color");
 css_todo_test!(font_size_units, "font-size");

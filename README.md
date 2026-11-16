@@ -89,6 +89,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   width; sides that differ stay square. A corner has one radius (a second, after a slash,
   is not read) and a percentage is of the box's shorter side. Content, background images
   and `overflow` clipping are not cut to the curve. It applies at once in an animation.
+- **Opacity:** `opacity` multiplies through a box's ancestors onto what each box draws
+  itself: its background, borders, shadow and text. There is no group blending, so
+  overlapping boxes inside a see-through one show through each other. An inline
+  element's background and borders, list markers, outlines and images ignore it. It
+  applies at once in an animation.
 - **Shadows:** `box-shadow` draws the first outer shadow of its list: offset, blur and
   color, following the box's rounded corners. The spread, `inset` shadows and the rest of
   the list are not drawn, and a box with no background color shows its shadow through

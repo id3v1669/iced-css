@@ -342,6 +342,7 @@ const CASES: &[(&str, &str, &str)] = &[
         "#k { border-bottom-left-radius:5px; }",
     ),
     ("box-shadow", "", "#k { box-shadow:1px 2px 3px #000000; }"),
+    ("opacity", "", "#k { opacity:0.5; }"),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

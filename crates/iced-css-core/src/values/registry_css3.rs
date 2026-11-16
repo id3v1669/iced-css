@@ -128,6 +128,22 @@ pub(super) static PROPERTIES: &[PropertyDescriptor] = &[
         ],
     },
     PropertyDescriptor {
+        name: "opacity",
+        source: "css-color-3#transparency",
+        grammar: "<alphavalue>",
+        initial: "1",
+        applies_to: "all elements",
+        percentages: "N/A",
+        media: "visual",
+        computed: "the specified value, clipped to the range 0 to 1",
+        owner: "Painting and resources; text color integration",
+        inheritance: Inheritance::No,
+        scope: Scope::Screen,
+        animation: Some(AnimationRule::ByComputedValue),
+        shorthand: false,
+        targets: &[PropertyId(BASE + 7)],
+    },
+    PropertyDescriptor {
         name: "box-shadow",
         source: "css-backgrounds-3#box-shadow",
         grammar: "none | <shadow>#",
@@ -141,7 +157,7 @@ pub(super) static PROPERTIES: &[PropertyDescriptor] = &[
         scope: Scope::Screen,
         animation: Some(AnimationRule::ByComputedValue),
         shorthand: false,
-        targets: &[PropertyId(BASE + 7)],
+        targets: &[PropertyId(BASE + 8)],
     },
 ];
 /// The name the registry files every custom property under.

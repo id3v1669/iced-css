@@ -1718,6 +1718,10 @@ pub struct BoxPaint {
     pub border_box: bool,
     /// `box-shadow`: the first outer shadow of the list; `None` draws none.
     pub shadow: Option<BoxShadow>,
+    /// `opacity` below 1, multiplied through the box's ancestors; `None` is opaque.
+    pub opacity: Option<f32>,
+    /// The box's own computed `opacity`, for a child's `inherit`.
+    pub own_opacity: Option<f32>,
     /// `border-radius`: each corner's radius as pixels plus a percent of the border box's
     /// shorter side, from the top left clockwise. Only a corner's first radius is read.
     pub radius: [[f32; 2]; 4],
@@ -2617,7 +2621,24 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => false,
         };
+        // CSS Color 3: this box's own opacity, and with its ancestors' what it draws at.
+        // There is no group to blend: each thing a box draws takes the product.
+        let own_opacity = match defaulted("opacity")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Number(number)) => number
+                .scaled_finite_f32(1.0, limits.numeric)
+                .map_or(1.0, |converted| converted.value.clamp(0.0, 1.0)),
+            DefaultedValueRef::ParentComputed => parent_index
+                .and_then(|parent: usize| paints[parent].own_opacity)
+                .unwrap_or(1.0),
+            _ => 1.0,
+        };
+        let through = own_opacity
+            * parent_index
+                .and_then(|parent: usize| paints[parent].opacity)
+                .unwrap_or(1.0);
         paints.push(BoxPaint {
+            opacity: (through < 1.0).then_some(through),
+            own_opacity: (own_opacity < 1.0).then_some(own_opacity),
             shadow: None,
             radius: [[0.0; 2]; 4],
             border_box,

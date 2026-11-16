@@ -359,6 +359,8 @@ pub struct TextRun {
     /// A side border in this run's room: at its start (`true`) or end, its width and color.
     pub edge: Option<(bool, f32, [f32; 3])>,
     pub color: Option<[f32; 3]>,
+    /// The opacity `color` draws at: its element's `opacity` through its ancestors.
+    pub alpha: f32,
     pub background: Option<[f32; 3]>,
     /// The source node of the inline element whose background `background` is, for
     /// animating it; `None` for a run's own or no background.
@@ -1645,6 +1647,11 @@ impl BoxTree {
                         inline_boxes: Vec::new(),
                         edge: None,
                         color,
+                        alpha: match run {
+                            RunSource::Node(at) | RunSource::Before(at) | RunSource::After(at) => {
+                                raw_paints[at].opacity.unwrap_or(1.0)
+                            }
+                        },
                         background,
                         background_from,
                         backgrounds,
@@ -1850,6 +1857,7 @@ impl BoxTree {
                             TextRun {
                                 size: prepared.font_sizes[at],
                                 color: raw_paints[at].color,
+                                alpha: raw_paints[at].opacity.unwrap_or(1.0),
                                 visible: raw_paints[at].visible,
                                 weight: item.weight,
                                 italic: item.italic,
@@ -2382,6 +2390,7 @@ impl BoxTree {
                             inline_boxes: Vec::new(),
                             edge: None,
                             color: raw_paints[projected].color,
+                            alpha: raw_paints[projected].opacity.unwrap_or(1.0),
                             background: None,
                             background_from: None,
                             percent_room: None,
@@ -4969,7 +4978,7 @@ fn paragraph<Renderer: text::Renderer<Font = iced::Font>>(
                 return span.color(Color::TRANSPARENT);
             }
             if let Some(c) = run.color {
-                span = span.color(Color::from_rgb(c[0], c[1], c[2]));
+                span = span.color(Color::from_rgba(c[0], c[1], c[2], run.alpha));
             }
             span
         })
@@ -6161,6 +6170,8 @@ fn paint_box<Renderer: renderer::Renderer>(
     parts: BoxParts,
     cuts: &[(usize, f32, f32)],
 ) {
+    // CSS Color 3 `opacity`, through the box's ancestors: on everything it draws here.
+    let through = paint.opacity.unwrap_or(1.0);
     let quad = |renderer: &mut Renderer, bounds: Rectangle, color: [f32; 3], alpha: f32| {
         if bounds.width > 0.0 && bounds.height > 0.0 {
             renderer.fill_quad(
@@ -6172,7 +6183,7 @@ fn paint_box<Renderer: renderer::Renderer>(
                     },
                     ..Quad::default()
                 },
-                Color::from_rgba(color[0], color[1], color[2], alpha),
+                Color::from_rgba(color[0], color[1], color[2], alpha * through),
             );
         }
     };
@@ -6205,7 +6216,7 @@ fn paint_box<Renderer: renderer::Renderer>(
                 shadow.color[0],
                 shadow.color[1],
                 shadow.color[2],
-                shadow.alpha,
+                shadow.alpha * through,
             ),
             offset: iced::Vector::new(shadow.offset[0], shadow.offset[1]),
             blur_radius: shadow.blur,
@@ -6245,7 +6256,7 @@ fn paint_box<Renderer: renderer::Renderer>(
                 color[0],
                 color[1],
                 color[2],
-                paint.background_fade.unwrap_or(1.0),
+                paint.background_fade.unwrap_or(1.0) * through,
             ),
         );
     }
@@ -6266,7 +6277,7 @@ fn paint_box<Renderer: renderer::Renderer>(
                             color[0],
                             color[1],
                             color[2],
-                            paint.border_fade[0].unwrap_or(1.0),
+                            paint.border_fade[0].unwrap_or(1.0) * through,
                         ),
                         width,
                         radius,
@@ -9461,6 +9472,53 @@ mod tests {
         assert_eq!(quads.len(), 5);
         assert_eq!(corners(&quads[0].0), [12.0; 4]);
         assert!(quads[1..].iter().all(|(quad, _)| corners(quad) == [0.0; 4]));
+        // `opacity` multiplies through ancestors, onto the background and the borders.
+        let faded = |css: &str| {
+            let tree = BoxTree::new(node("page", vec![node("k", vec![])]), css).unwrap();
+            let geometry = tree.layout(400.0, None).unwrap();
+            let mut renderer = Quads::default();
+            draw_box(
+                &tree,
+                &geometry,
+                &mut renderer,
+                Point::ORIGIN,
+                1,
+                BoxParts::All,
+            );
+            renderer
+                .0
+                .iter()
+                .map(|(_, color)| color.a)
+                .collect::<Vec<_>>()
+        };
+        let bordered = format!("{base} #k {{ border:2px solid #ff0000; }}");
+        assert_eq!(faded(&bordered), [1.0; 5]);
+        assert_eq!(
+            faded(&format!("{bordered} #k {{ opacity:0.5; }}")),
+            [0.5; 5]
+        );
+        assert_eq!(
+            faded(&format!(
+                "{bordered} #page {{ opacity:0.5; }} #k {{ opacity:0.5; }}"
+            )),
+            [0.25; 5]
+        );
+        // Out of range clips; `inherit` takes the parent's own, not its product.
+        assert_eq!(faded(&format!("{bordered} #k {{ opacity:7; }}")), [1.0; 5]);
+        assert_eq!(faded(&format!("{bordered} #k {{ opacity:-1; }}")), [0.0; 5]);
+        assert_eq!(
+            faded(&format!(
+                "{bordered} #page {{ opacity:0.5; }} #k {{ opacity:inherit; }}"
+            )),
+            [0.25; 5]
+        );
+        for bad in ["50%", "1 2", "half", "0.5px"] {
+            assert_eq!(
+                faded(&format!("{bordered} #k {{ opacity:0.5; opacity:{bad}; }}")),
+                [0.5; 5],
+                "{bad}"
+            );
+        }
         // The second radius of a corner, after a slash, is not read.
         // A shadow rides on the background's quad: offset, blur and color.
         let quads = drawn(&format!(

@@ -301,11 +301,40 @@ pub(super) fn inner(
         && name != "text-decoration"
         && name != "border-radius"
         && name != "box-shadow"
+        && name != "opacity"
     {
         return Err(PropertyError::Unimplemented(property));
     }
     if recovery_only {
         return Ok(PropertyResult::Invalid);
+    }
+    if name == "opacity" {
+        // CSS Color 3: one number, of any size (it is clipped when computed), or `inherit`.
+        let mut offset = 0;
+        let Some((_, token)) = significant(input, &mut offset, work)? else {
+            return Ok(PropertyResult::Invalid);
+        };
+        if significant(input, &mut offset, work)?.is_some() {
+            return Ok(PropertyResult::Invalid);
+        }
+        let value = match token.kind {
+            TokenKind::Ident if token.raw.eq_ignore_ascii_case("inherit") => {
+                SpecifiedValue::Inherit
+            }
+            TokenKind::Number => match super::Decimal::parse(token.raw, limits.numeric) {
+                Ok(number) => SpecifiedValue::Number(number),
+                Err(NumericError::InvalidNumber | NumericError::UnsupportedUnit) => {
+                    return Ok(PropertyResult::Invalid);
+                }
+                Err(error) => return Err(PropertyError::Numeric(error)),
+            },
+            _ => return Ok(PropertyResult::Invalid),
+        };
+        return Ok(PropertyResult::Parsed(ParsedProperty {
+            property,
+            value,
+            important,
+        }));
     }
     if name == "box-shadow" {
         if input.trim().eq_ignore_ascii_case("inherit") {
