@@ -8,6 +8,7 @@ pub use exact::{
     format_counter, format_counters,
 };
 mod calc;
+pub mod custom;
 use std::num::NonZeroUsize;
 #[derive(Debug, Clone, Copy)]
 pub struct NumericLimits {

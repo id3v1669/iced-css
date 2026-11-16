@@ -321,6 +321,8 @@ const CASES: &[(&str, &str, &str)] = &[
         "#k { width:50px; padding:5px; }",
         "#k { box-sizing:border-box; }",
     ),
+    // Every custom property, filed under one identity.
+    ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];
 
 #[test]

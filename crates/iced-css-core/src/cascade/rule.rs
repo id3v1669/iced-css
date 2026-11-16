@@ -278,3 +278,63 @@ fn add(value: &mut usize, amount: usize) -> Result<(), RuleBatchError> {
     *value = value.checked_add(amount).ok_or(RuleBatchError::Count)?;
     Ok(())
 }
+
+/// Call `visit` with every declaration of every rule that applies to `target`, with the
+/// cascade position it has there: what [`cascade_positioned_rules`] offers to a winner
+/// table, for a caller that cascades by something other than property identity (custom
+/// properties, by name).
+///
+/// # Errors
+/// As [`cascade_positioned_rules`]: membership, matching and count limits.
+pub fn matched_declarations<'a, S: SelectorSource>(
+    rules: impl IntoIterator<Item = PositionedRuleOffer<'a>>,
+    target: RuleTarget<'_, S>,
+    sheets: &AuthorSheets,
+    limits: RuleBatchLimits,
+    visit: &mut dyn FnMut(&'a ParsedProperty, super::CascadeKey),
+) -> Result<(), RuleBatchError> {
+    let mut remaining = limits.rules.get();
+    for offer in rules {
+        remaining = remaining.checked_sub(1).ok_or(RuleBatchError::Rules)?;
+        let rule = offer.rule;
+        let origin = match rule.origin {
+            RuleOrigin::UserAgent => Origin::UserAgent,
+            RuleOrigin::User => Origin::User,
+            RuleOrigin::Author(sheet) => {
+                if !sheets
+                    .applies(sheet)
+                    .map_err(|error| RuleBatchError::Rule(RuleCascadeError::Membership(error)))?
+                {
+                    continue;
+                }
+                Origin::Author
+            }
+        };
+        let Some(specificity) = matching_specificity(
+            rule.selectors,
+            target.source,
+            target.node,
+            target.pseudo,
+            limits.per_rule.matching,
+        )
+        .map_err(|error| RuleBatchError::Rule(RuleCascadeError::Match(error)))?
+        else {
+            continue;
+        };
+        for (ordinal, declaration) in rule.declarations.iter().enumerate() {
+            let position = offer
+                .context
+                .offset(ordinal)
+                .ok_or(RuleBatchError::Rule(RuleCascadeError::Identity))?;
+            visit(
+                &declaration.parsed,
+                super::CascadeKey {
+                    level: origin.level(declaration.parsed.important),
+                    specificity,
+                    order: position.first_order,
+                },
+            );
+        }
+    }
+    Ok(())
+}

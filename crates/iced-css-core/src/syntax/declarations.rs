@@ -124,11 +124,24 @@ impl<'a> Declarations<'a> {
                 span,
             }));
         }
-        if first.kind != TokenKind::Ident || recovered.invalid_tokens {
+        let end = self.offset - usize::from(recovered.boundary == Boundary::Semicolon);
+        // CSS Custom Properties: a name of two dashes and an identifier. The CSS 2.2
+        // scanner reads the first dash as a delimiter and the rest, dash first, as the
+        // identifier right after it.
+        let custom = if first.kind == TokenKind::Delim && first.raw == "-" && start + 1 < end {
+            self.token(start + 1, end)?
+                .filter(|token| token.kind == TokenKind::Ident && token.raw.starts_with('-'))
+        } else {
+            None
+        };
+        if (first.kind != TokenKind::Ident && custom.is_none()) || recovered.invalid_tokens {
             return Ok(Some(malformed()));
         }
-        let end = self.offset - usize::from(recovered.boundary == Boundary::Semicolon);
-        let mut cursor = start + first.raw.len();
+        let name_raw = match custom {
+            Some(rest) => &self.input[start..start + 1 + rest.raw.len()],
+            None => first.raw,
+        };
+        let mut cursor = start + name_raw.len();
         if !self
             .significant(&mut cursor, end)?
             .is_some_and(|(_, token)| token.kind == TokenKind::Colon)
@@ -171,11 +184,17 @@ impl<'a> Declarations<'a> {
             return Ok(Some(malformed()));
         }
         let name = match decode_identifier_budget(
-            first.raw,
+            // The identifier after a custom property's first dash; the dash goes back on.
+            &name_raw[usize::from(custom.is_some())..],
             self.limits.name_bytes,
             &mut self.remaining,
         ) {
-            Ok(name) => name,
+            Ok(mut name) => {
+                if custom.is_some() {
+                    name.text.insert(0, '-');
+                }
+                name
+            }
             Err(mut error) if matches!(error.fault, SyntaxFault::Resource(_)) => {
                 error.offset += start;
                 return Err(error);

@@ -63,6 +63,10 @@ impl PropertyId {
     pub fn css22() -> impl ExactSizeIterator<Item = Self> {
         (0..PROPERTIES.len()).map(Self)
     }
+    /// The identity every custom property declaration (`--name`) is filed under.
+    pub fn custom() -> Self {
+        Self::lookup(css3::CUSTOM_PROPERTY).expect("registered")
+    }
     /// Whether CSS 2.2 defines it; the rest come from later modules.
     pub fn is_css22(self) -> bool {
         self.0 < PROPERTIES.len()

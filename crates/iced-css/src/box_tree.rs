@@ -67,7 +67,9 @@ use crate::{
     capture::{CaptureLimits, CapturedElement, Construction, source::ConstructionState},
     evaluation::{
         clearance_box_facts::ClearanceBoxFactsLimits,
-        display_rules::{BundleLimits, DisplayRuleBundle, GraphBinding, GraphOrigin},
+        display_rules::{
+            BundleLimits, DisplayRuleBundle, GraphBinding, GraphOrigin, resolve_variables,
+        },
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
             BackgroundImage, BackgroundOffset, BoxPaint, GeneratedFrame, GeneratedRun,
@@ -1202,6 +1204,29 @@ impl BoxTree {
             },
         )
         .map_err(failed)?;
+        // CSS Custom Properties: each element's custom properties, and what its values
+        // holding `var()` parse to with them, before the passes that read the winners.
+        let variables = if bundle.uses_variables() {
+            let source = snapshot.selector_source(selectors()).map_err(failed)?;
+            let count = snapshot.construction().nodes().len();
+            let mut per_target = per_target();
+            per_target.per_rule.matching.retained_bytes = per_target
+                .per_rule
+                .matching
+                .retained_bytes
+                .min(nz(isize::MAX as usize));
+            // Every parent follows its children in the source's order.
+            Some(
+                resolve_variables(&bundle, &source, (0..count).rev(), per_target, colors())
+                    .map_err(failed)?,
+            )
+        } else {
+            None
+        };
+        let bundle = match &variables {
+            Some(variables) => bundle.with_variables(variables),
+            None => bundle,
+        };
         let display = evaluate_source_display(
             snapshot,
             &bundle,

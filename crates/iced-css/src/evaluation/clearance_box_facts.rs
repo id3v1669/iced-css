@@ -701,6 +701,8 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
             target: BoxFactTarget::Element,
             error,
         })?;
+        // Winners holding `var()`, as they parse for this target.
+        bundle.resolve(&mut winners, original, None);
         // EML (CSS2.2 15.7, 6.1.2): the font entry computes the row's `font-size` first;
         // its other longhands and its offsets resolve an `em` against it and (EXF, the
         // user's U5=B) an `ex` against its 0.5em x-height.
@@ -805,6 +807,8 @@ pub(super) fn evaluate_box_rows_observed<'h, 'r>(
                 target,
                 error,
             })?;
+            // Winners holding `var()`, as they parse for this target.
+            bundle.resolve(&mut winners, original, Some(pseudo));
             let absence = resolve::pseudo(&winners, ids[24], original, target)?;
             match target {
                 BoxFactTarget::Before => row.before = absence,

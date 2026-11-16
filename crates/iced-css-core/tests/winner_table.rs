@@ -135,7 +135,9 @@ fn repeated_borrowed_leaf_is_idempotent_but_recreated_equal_objects_conflict() {
 
 #[test]
 fn all_registry_inherit_routes_touch_only_their_expanded_targets() {
-    for property in PropertyId::all() {
+    // Every property with a name of its own: custom properties are filed under one
+    // identity that no declaration names.
+    for property in PropertyId::all().filter(|property| *property != PropertyId::custom()) {
         let declaration = parsed(&format!("{}:inherit", property.descriptor().name));
         let mut table = PropertyWinners::new();
         assert_eq!(

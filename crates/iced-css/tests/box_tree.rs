@@ -438,6 +438,83 @@ fn calc_mixes_lengths_and_percentages() {
 }
 
 #[test]
+fn custom_properties_cascade_inherit_and_substitute() {
+    let root = || node("page", vec![node("k", vec![node("inner", vec![])])]);
+    let read = |css: &str| {
+        let tree = BoxTree::new(root(), css).unwrap();
+        let geometry = tree.layout(800.0, Some(600.0)).unwrap();
+        let width = |at: usize| {
+            let border = geometry[at].as_ref().unwrap().border;
+            border.right - border.left
+        };
+        (
+            width(1),
+            width(2),
+            tree.paints()[1].background,
+            tree.paints()[2].background,
+        )
+    };
+    let red = Some([1.0, 0.0, 0.0]);
+    let lime = Some([0.0, 1.0, 0.0]);
+    // Declared on an ancestor, used below it.
+    let (k, inner, ..) =
+        read("#page { --w:120px; } #k { width:var(--w); } #inner { width:var(--w); }");
+    assert_eq!((k, inner), (120.0, 120.0));
+    // The nearer declaration wins for the element and what is under it.
+    let (k, inner, ..) =
+        read("#page { --w:120px; } #k { --w:200px; width:var(--w); } #inner { width:var(--w); }");
+    assert_eq!((k, inner), (200.0, 200.0));
+    // A fallback where the property is not set; none, and the declaration is as unset.
+    assert_eq!(read("#k { width:var(--none, 77px); }").0, 77.0);
+    assert_eq!(read("#k { width:50px; width:var(--none); }").0, 800.0);
+    // Specificity and `!important` decide between declarations of one name.
+    assert_eq!(
+        read("#k { --w:10px; } * { --w:20px; } #k { width:var(--w); }").0,
+        10.0
+    );
+    assert_eq!(
+        read("* { --w:20px !important; } #k { --w:10px; width:var(--w); }").0,
+        20.0
+    );
+    // In a shorthand, in `calc()`, and from one custom property into another.
+    let (.., background, _) = read("#page { --c:#ff0000; } #k { background:var(--c); }");
+    assert_eq!(background, red);
+    assert_eq!(
+        read("#page { --gap:10px; } #k { width:calc(100px + var(--gap) * 2); }").0,
+        120.0
+    );
+    assert_eq!(
+        read("#page { --a:30px; --b:var(--a); } #k { width:var(--b); }").0,
+        30.0
+    );
+    let (k, ..) = read("#page { --pad:0 15px; } #k { width:100px; padding:var(--pad); }");
+    assert_eq!(k, 130.0);
+    // A value that does not parse once substituted is as unset: inherited or initial,
+    // not the earlier declaration.
+    let (.., background, _) =
+        read("#page { --c:12px; } #k { background-color:#00ff00; background-color:var(--c); }");
+    assert_eq!(background, None);
+    assert_eq!(
+        read("#page { --w:red; } #k { width:50px; width:var(--w); }").0,
+        800.0
+    );
+    // A cycle makes its properties invalid: a reference to one takes its own fallback.
+    assert_eq!(
+        read("#page { --a:var(--b); --b:var(--a); } #k { width:var(--a, 5px); }").0,
+        5.0
+    );
+    // An inherited property that takes a variable still inherits its computed value.
+    let css = "#page { --c:#00ff00; } #k { color:var(--c); }";
+    let tree = BoxTree::new(root(), css).unwrap();
+    assert_eq!(tree.paints()[2].color, lime);
+    // Names are case-sensitive.
+    assert_eq!(
+        read("#page { --W:10px; } #k { width:var(--w, 20px); }").0,
+        20.0
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",
@@ -1125,6 +1202,25 @@ mod interactive {
         rig.send(mouse::Event::ButtonPressed(mouse::Button::Left), on);
         assert_eq!(rig.slot().y, 50.0);
         rig.send(mouse::Event::ButtonReleased(mouse::Button::Left), on);
+        assert_eq!(rig.slot().y, 30.0);
+        let off = Point::new(5.0, 150.0);
+        rig.send(mouse::Event::CursorMoved { position: off }, off);
+        assert_eq!(rig.slot().y, 10.0);
+    }
+
+    #[test]
+    fn a_custom_property_set_on_hover_restyles_what_uses_it() {
+        let root = node("page", vec![node("top", vec![]), node("slot", vec![])]);
+        let tree = BoxTree::new(
+            root,
+            "#top { --h:10px; height:var(--h); } #top:hover { --h:30px; }",
+        )
+        .unwrap();
+        let view: View<'_> = tree.interactive().widget("slot", space(1.0)).into();
+        let mut rig = Rig::new(view);
+        assert_eq!(rig.slot().y, 10.0);
+        let on = Point::new(5.0, 5.0);
+        rig.send(mouse::Event::CursorMoved { position: on }, on);
         assert_eq!(rig.slot().y, 30.0);
         let off = Point::new(5.0, 150.0);
         rig.send(mouse::Event::CursorMoved { position: off }, off);

@@ -1,12 +1,23 @@
 //! Bounded, immutable UA/user/author rule admission with original provenance.
 use iced_css_core::{
     cascade::{
-        rule::{PositionedRuleOffer, RuleContext, RuleOrigin},
+        CascadeKey,
+        rule::{
+            PositionedRuleOffer, RuleBatchError, RuleBatchLimits, RuleContext, RuleOrigin,
+            RuleTarget, cascade_positioned_rules, matched_declarations,
+        },
         sheets::{AuthorSheets, SheetError, SheetId},
         ua_display::UaDisplayCatalog,
+        winner_table::PropertyWinners,
     },
-    selectors::{SelectorSource, SimpleSelector},
+    selectors::{PseudoElement, SelectorSource, SimpleSelector},
     stylesheet::owned_graph::OwnedStylesheetGraph,
+    values::{
+        color::ColorLimits,
+        custom::{self, CustomValues},
+        property::{ParsedProperty, PropertyResult, SpecifiedValue, parse_value},
+        registry::PropertyId,
+    },
 };
 use std::{collections::HashMap, num::NonZeroUsize};
 
@@ -206,8 +217,207 @@ pub struct DisplayRuleBundle<'a> {
     retained_bytes: usize,
     work: usize,
     membership_work: usize,
+    /// What each element's `var()` values parse to, once [`resolve_variables`] has run.
+    variables: Option<&'a ResolvedVariables>,
+}
+
+/// What a tree's values holding `var()` parse to: per element and pseudo-element, per
+/// longhand. `None` was invalid at computed-value time.
+#[derive(Debug, Default)]
+pub struct ResolvedVariables {
+    values: HashMap<(usize, u8, PropertyId), Option<Box<ParsedProperty>>>,
+}
+
+const TARGETS: [Option<PseudoElement>; 5] = [
+    None,
+    Some(PseudoElement::Before),
+    Some(PseudoElement::After),
+    Some(PseudoElement::FirstLine),
+    Some(PseudoElement::FirstLetter),
+];
+fn target_key(pseudo: Option<PseudoElement>) -> u8 {
+    TARGETS
+        .iter()
+        .position(|target| *target == pseudo)
+        .expect("listed") as u8
+}
+fn holds_variables(parsed: &ParsedProperty) -> bool {
+    match &parsed.value {
+        SpecifiedValue::Custom { .. } | SpecifiedValue::Pending { .. } => true,
+        SpecifiedValue::Expanded(leaves) => leaves.iter().any(holds_variables),
+        _ => false,
+    }
+}
+
+/// Compute every element's custom properties, top down, and parse each winning value that
+/// holds `var()` with them substituted (CSS Custom Properties Level 1). `order` lists the
+/// source's nodes, every parent before its children.
+///
+/// # Errors
+/// The cascade's own limits, as the passes that follow would meet them.
+pub fn resolve_variables<S: SelectorSource<Node = usize>>(
+    bundle: &DisplayRuleBundle<'_>,
+    source: &S,
+    order: impl IntoIterator<Item = usize>,
+    per_target: RuleBatchLimits,
+    values: ColorLimits,
+) -> Result<ResolvedVariables, RuleBatchError> {
+    let mut resolved = ResolvedVariables::default();
+    // Which pseudo-elements any rule with a custom property or a `var()` targets: the
+    // others have their element's custom properties and nothing to parse.
+    let targeted = TARGETS.map(|target| {
+        target.is_none()
+            || bundle.offers.iter().any(|offer| {
+                offer
+                    .rule
+                    .selectors
+                    .iter()
+                    .any(|selector| selector.pseudo == target)
+                    && offer
+                        .rule
+                        .declarations
+                        .iter()
+                        .any(|declaration| holds_variables(&declaration.parsed))
+            })
+    });
+    let mut computed: HashMap<usize, std::rc::Rc<CustomValues>> = HashMap::new();
+    let none = std::rc::Rc::new(CustomValues::new());
+    for node in order {
+        let inherited = source
+            .parent(node)
+            .and_then(|parent| computed.get(&parent).cloned())
+            .unwrap_or_else(|| none.clone());
+        let mut element = inherited.clone();
+        for (target, _) in TARGETS.into_iter().zip(targeted).filter(|(_, on)| *on) {
+            let rule_target = || RuleTarget {
+                source,
+                node,
+                pseudo: target,
+            };
+            let offers = bundle.offers_for(source, node);
+            // This target's own custom declarations, each name's winner.
+            let mut own: Vec<(&str, &str, CascadeKey)> = Vec::new();
+            matched_declarations(
+                offers.iter().copied(),
+                rule_target(),
+                bundle.sheets,
+                per_target,
+                &mut |parsed, key| {
+                    if let SpecifiedValue::Custom { name, raw } = &parsed.value {
+                        match own.iter_mut().find(|(other, ..)| other == name) {
+                            Some(current) if key >= current.2 => *current = (name, raw, key),
+                            Some(_) => {}
+                            None => own.push((name, raw, key)),
+                        }
+                    }
+                },
+            )?;
+            let mut work = 1_000_000usize;
+            // A pseudo-element inherits from its element.
+            let base = if target.is_none() {
+                &inherited
+            } else {
+                &element
+            };
+            let own: Vec<(&str, &str)> = own.iter().map(|(name, raw, _)| (*name, *raw)).collect();
+            let environment = if own.is_empty() {
+                base.clone()
+            } else {
+                std::rc::Rc::new(custom::compute(base, &own, &mut work))
+            };
+            if target.is_none() {
+                element = environment.clone();
+            }
+            let mut winners = PropertyWinners::new();
+            cascade_positioned_rules(
+                &mut winners,
+                offers,
+                rule_target(),
+                bundle.sheets,
+                per_target,
+            )?;
+            // A shorthand's value, parsed once for all its longhands.
+            let mut shorthands: Vec<(PropertyId, &str, Option<ParsedProperty>)> = Vec::new();
+            for (property, pending) in winners.pending() {
+                let SpecifiedValue::Pending { raw, shorthand } = &pending.value else {
+                    continue;
+                };
+                let mut parse = |property: PropertyId| {
+                    let lookup = |name: &str| environment.get(name).cloned().flatten();
+                    let text = custom::substitute(raw, &lookup, &mut work)?;
+                    match parse_value(property, &text, pending.important, values) {
+                        Ok(PropertyResult::Parsed(parsed)) => Some(parsed),
+                        _ => None,
+                    }
+                };
+                let value = match shorthand {
+                    None => parse(property),
+                    Some(shorthand) => {
+                        let found = shorthands
+                            .iter()
+                            .position(|(other, text, _)| other == shorthand && *text == raw);
+                        let at = found.unwrap_or_else(|| {
+                            let whole = parse(*shorthand);
+                            shorthands.push((*shorthand, raw, whole));
+                            shorthands.len() - 1
+                        });
+                        match shorthands[at].2.as_ref().map(|whole| &whole.value) {
+                            Some(SpecifiedValue::Expanded(leaves)) => leaves
+                                .iter()
+                                .find(|leaf| leaf.property == property)
+                                .cloned(),
+                            _ => None,
+                        }
+                    }
+                };
+                resolved
+                    .values
+                    .insert((node, target_key(target), property), value.map(Box::new));
+            }
+        }
+        computed.insert(node, element);
+    }
+    Ok(resolved)
 }
 impl<'a> DisplayRuleBundle<'a> {
+    /// Whether any rule declares a custom property or holds a `var()`.
+    pub fn uses_variables(&self) -> bool {
+        self.offers.iter().any(|offer| {
+            offer
+                .rule
+                .declarations
+                .iter()
+                .any(|declaration| holds_variables(&declaration.parsed))
+        })
+    }
+    /// Use `variables`, from [`resolve_variables`] over these same rules and source.
+    #[must_use]
+    pub fn with_variables(mut self, variables: &'a ResolvedVariables) -> Self {
+        self.variables = Some(variables);
+        self
+    }
+    /// After a cascade for `node` and `pseudo`: put each winner that holds `var()` as it
+    /// parses for that target, or empty its slot where it is invalid there (or where no
+    /// variables were resolved), so the property is inherited or initial.
+    pub fn resolve<'w>(
+        &self,
+        winners: &mut PropertyWinners<'w>,
+        node: usize,
+        pseudo: Option<PseudoElement>,
+    ) where
+        'a: 'w,
+    {
+        let pending: Vec<PropertyId> = winners.pending().map(|(property, _)| property).collect();
+        for property in pending {
+            let value = self.variables.and_then(|variables| {
+                variables
+                    .values
+                    .get(&(node, target_key(pseudo), property))?
+                    .as_deref()
+            });
+            winners.substitute(property, value);
+        }
+    }
     /// Count and validate original ranges, reserve once, then emit in source order.
     /// Users must precede authors. Author IDs identify registered roots, not order.
     ///
@@ -308,6 +518,7 @@ impl<'a> DisplayRuleBundle<'a> {
             retained_bytes,
             work: limits.work.get() - remaining,
             membership_work,
+            variables: None,
         })
     }
     pub fn offers(&self) -> &[PositionedRuleOffer<'a>] {

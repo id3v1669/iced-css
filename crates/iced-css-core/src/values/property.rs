@@ -97,6 +97,19 @@ pub enum SpecifiedValue {
     Content(Vec<ContentItem>),
     Expanded(Vec<ParsedProperty>),
     LengthPair(LengthTarget, LengthTarget),
+    /// A custom property declaration (`--name: value`): its name, with its dashes, and
+    /// its value's text. Filed under [`PropertyId::custom`].
+    Custom {
+        name: String,
+        raw: String,
+    },
+    /// A value holding `var()`: its text, parsed only once an element's custom properties
+    /// are substituted into it. `shorthand` is the shorthand it was written for, when
+    /// this is one of that shorthand's longhands.
+    Pending {
+        raw: String,
+        shorthand: Option<PropertyId>,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedProperty {
@@ -604,9 +617,52 @@ pub fn parse_property(
     declaration: &Declaration<'_>,
     limits: ColorLimits,
 ) -> Result<PropertyResult, PropertyError> {
+    // CSS Custom Properties: any name of two dashes and more declares one. Its value is
+    // kept as written; nothing in it is invalid until it is used.
+    if declaration.name.text.len() > 2 && declaration.name.text.starts_with("--") {
+        return Ok(if declaration.recovery_only {
+            PropertyResult::Invalid
+        } else {
+            PropertyResult::Parsed(ParsedProperty {
+                property: PropertyId::custom(),
+                value: SpecifiedValue::Custom {
+                    name: declaration.name.text.clone(),
+                    raw: declaration.value.to_owned(),
+                },
+                important: declaration.important,
+            })
+        });
+    }
     let Some(property) = PropertyId::lookup(&declaration.name.text) else {
         return Ok(PropertyResult::Unknown);
     };
+    // A value with `var()` in it is valid at parse time, whatever else it holds: it is
+    // parsed for each element once its custom properties are substituted.
+    if super::custom::has_reference(declaration.value) && !declaration.recovery_only {
+        let pending = |property: PropertyId, shorthand| ParsedProperty {
+            property,
+            value: SpecifiedValue::Pending {
+                raw: declaration.value.to_owned(),
+                shorthand,
+            },
+            important: declaration.important,
+        };
+        return Ok(PropertyResult::Parsed(if property.descriptor().shorthand {
+            ParsedProperty {
+                property,
+                value: SpecifiedValue::Expanded(
+                    property
+                        .longhands()
+                        .iter()
+                        .map(|longhand| pending(*longhand, Some(property)))
+                        .collect(),
+                ),
+                important: declaration.important,
+            }
+        } else {
+            pending(property, None)
+        }));
+    }
     let mut work = limits.syntax.work.get();
     inner(
         property,
@@ -622,4 +678,20 @@ pub fn parse_property(
         }
         error
     })
+}
+
+/// Parse a value for a known property from text that is not a declaration in a sheet: a
+/// value with its `var()` references substituted. A value that still holds `var()` is
+/// invalid here.
+pub fn parse_value(
+    property: PropertyId,
+    value: &str,
+    important: bool,
+    limits: ColorLimits,
+) -> Result<PropertyResult, PropertyError> {
+    if super::custom::has_reference(value) || property == PropertyId::custom() {
+        return Ok(PropertyResult::Invalid);
+    }
+    let mut work = limits.syntax.work.get();
+    inner(property, value, important, false, limits, &mut work)
 }

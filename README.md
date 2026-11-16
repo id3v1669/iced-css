@@ -70,6 +70,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   and the `^=`, `$=` and `*=` attribute matches. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
+- **Custom properties:** `--name` declarations cascade and inherit, and `var(--name)` or
+  `var(--name, fallback)` is replaced wherever a value is read, in shorthands and `calc()`
+  too (CSS Custom Properties Level 1). A value that does not parse once replaced leaves
+  its property inherited or initial. A sheet that uses them cascades every box once
+  more per styling. An empty value (`--name:;`) is not read, and nor is `@property`.
 - **Colors:** CSS 2.2 colors, and from CSS Color 3 `rgba()`, `hsl()`, `hsla()`, `#rgba`,
   `#rrggbbaa`, `currentColor`, and `transparent` on every color property. Opacity is kept
   to 1 part in 255. It draws on a box's background and borders; text, outlines, an inline

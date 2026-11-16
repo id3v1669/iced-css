@@ -2279,6 +2279,8 @@ pub fn evaluate_tree_paint<'r>(
                 error,
             })
         })?;
+        // Winners holding `var()`, as they parse for this target.
+        bundle.resolve(&mut winners, original, None);
         let parent = snapshot.construction().nodes()[original]
             .parent()
             .map(|parent| colors[projection.projected[parent]]);
@@ -2984,6 +2986,8 @@ pub fn evaluate_tree_paint<'r>(
                     error,
                 })
             })?;
+            // Winners holding `var()`, as they parse for this target.
+            bundle.resolve(&mut winners, original, Some(pseudo));
             let cascaded = |name: &'static str| {
                 let property = id(name)?;
                 winners

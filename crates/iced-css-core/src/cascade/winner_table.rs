@@ -99,6 +99,25 @@ impl<'a> PropertyWinners<'a> {
         }
         Ok(self.slots[property.slot()].as_ref())
     }
+    /// Put `value` in place of a longhand's winner, keeping its cascade position: for a
+    /// winner that holds `var()`, once it is parsed for this element. `None` empties the
+    /// slot: the value was invalid at computed-value time, and the property is inherited
+    /// or initial. A slot with no winner stays empty.
+    pub fn substitute(&mut self, property: PropertyId, value: Option<&'a ParsedProperty>) {
+        let slot = &mut self.slots[property.slot()];
+        match (slot.as_mut(), value) {
+            (Some(candidate), Some(value)) => candidate.value = value,
+            (Some(_), None) => *slot = None,
+            (None, _) => {}
+        }
+    }
+    /// The longhands whose winner still holds `var()`.
+    pub fn pending(&self) -> impl Iterator<Item = (PropertyId, &'a ParsedProperty)> + '_ {
+        self.slots.iter().filter_map(|slot| {
+            let value = slot.as_ref()?.value;
+            matches!(value.value, SpecifiedValue::Pending { .. }).then_some((value.property, value))
+        })
+    }
     /// Returns replaced slot count. Validate all expanded targets and order ties
     /// before changing any slot. Storage and structural loops have a registry-size
     /// bound and perform no allocation, data clone or arbitrary value comparison.

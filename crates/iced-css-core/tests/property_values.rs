@@ -809,7 +809,7 @@ fn generated_content_admits_css22_items_and_validates_function_arguments() {
         "counter(x,)",
         "url(a), 'b'",
         "1",
-        "var(x)",
+        "env(x)",
     ] {
         assert_eq!(
             parse(&format!("content:{value}")).unwrap(),
@@ -1376,4 +1376,54 @@ fn font_expansion_preserves_system_requests_defaults_and_shared_normal_roles() {
         parse("font:+100 12px serif"),
         Err(PropertyError::UnimplementedNumericSpelling(_))
     ));
+}
+
+#[test]
+fn custom_properties_and_var_parse_at_use_not_in_the_sheet() {
+    use iced_css_core::values::registry::PropertyId;
+    // Any name of two dashes and more declares one; its value is kept as written.
+    let PropertyResult::Parsed(custom) = parse("--Main-Color: #f00 ").unwrap() else {
+        panic!("custom property");
+    };
+    assert_eq!(custom.property, PropertyId::custom());
+    assert_eq!(
+        custom.value,
+        SpecifiedValue::Custom {
+            name: "--Main-Color".into(),
+            raw: "#f00".into(),
+        }
+    );
+    assert!(matches!(
+        parse("--x: any(thing) [at all] !important").unwrap(),
+        PropertyResult::Parsed(ParsedProperty {
+            important: true,
+            ..
+        })
+    ));
+    // A value with var() is valid whatever else it holds, and waits.
+    let PropertyResult::Parsed(pending) = parse("width: var(--w, 10px)").unwrap() else {
+        panic!("pending");
+    };
+    assert_eq!(
+        pending.value,
+        SpecifiedValue::Pending {
+            raw: "var(--w, 10px)".into(),
+            shorthand: None,
+        }
+    );
+    // A shorthand gives each of its longhands the same pending text.
+    let PropertyResult::Parsed(margin) = parse("margin: 0 VAR(--m)").unwrap() else {
+        panic!("pending shorthand");
+    };
+    let SpecifiedValue::Expanded(leaves) = &margin.value else {
+        panic!("expanded");
+    };
+    assert_eq!(leaves.len(), 4);
+    assert!(leaves.iter().all(|leaf| matches!(
+        &leaf.value,
+        SpecifiedValue::Pending { raw, shorthand: Some(from) }
+            if raw == "0 VAR(--m)" && *from == margin.property
+    )));
+    // An unknown property stays unknown.
+    assert_eq!(parse("nope: var(--x)").unwrap(), PropertyResult::Unknown);
 }

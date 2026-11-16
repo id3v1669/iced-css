@@ -101,7 +101,6 @@ css_todo_test!(
     "unimplemented property under Compile"
 );
 css_todo_test!(calc_and_math_fns, "calc() / min() / max() / clamp()");
-css_todo_test!(custom_properties, "--x / var() / @property");
 
 css_todo_test!(pseudo_hover_active, ":hover / :active");
 css_todo_test!(pseudo_focus, ":focus / :focus-visible");

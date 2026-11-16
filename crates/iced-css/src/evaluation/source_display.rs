@@ -319,6 +319,8 @@ pub fn evaluate_source_display<'snapshot, 'bundle, 'rules>(
             per_target,
         )
         .map_err(|error| SourceDisplayError::Cascade { index, error })?;
+        // Winners holding `var()`, as they parse for this target.
+        bundle.resolve(&mut winners, index, None);
         let parent = nodes[index].parent().map(|parent| {
             resolutions[parent]
                 .as_ref()
