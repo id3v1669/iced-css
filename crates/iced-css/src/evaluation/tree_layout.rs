@@ -1709,8 +1709,18 @@ fn rgb(color: &Color, numeric: NumericLimits) -> Option<[f32; 3]> {
             };
             Some([unit(r), unit(g), unit(b)])
         }
-        // A system palette and outline invert have no fixed value here.
-        Color::Transparent | Color::Invert | Color::System(_) => None,
+        Color::SrgbA([r, g, b, _]) => Some([*r, *g, *b].map(|value| f32::from(value) / 255.0)),
+        // A system palette and outline invert have no fixed value here; `currentColor` is
+        // resolved before paint.
+        Color::Transparent | Color::Invert | Color::System(_) | Color::CurrentColor => None,
+    }
+}
+
+/// A color's opacity below 1, as a fade; `None` is opaque (or not a color that draws).
+fn opacity(color: &Color) -> Option<f32> {
+    match color {
+        Color::SrgbA([_, _, _, alpha]) => Some(f32::from(*alpha) / 255.0),
+        _ => None,
     }
 }
 
@@ -2575,13 +2585,17 @@ pub fn evaluate_tree_paint<'r>(
             hidden_empty: false,
             fixed_table,
             // A system color has no palette here: text stays visible, in black.
+            // Text has no opacity of its own here: a see-through color draws opaque, and
+            // one with none at all draws nothing.
             color: match row[0].value() {
                 Color::System(_) | Color::Invert => Some([0.0; 3]),
+                Color::SrgbA([_, _, _, 0]) => None,
                 _ => paint(0),
             },
             background: paint(1),
-            background_fade: None,
-            border_fade: [None; 4],
+            // CSS Color 3: an opacity below 1, as an animation's fade is drawn.
+            background_fade: opacity(row[1].value()),
+            border_fade: std::array::from_fn(|side| opacity(row[2 + side].value())),
             under_text: None,
             under_text_border: [None; 4],
             border_style: ["solid"; 4],

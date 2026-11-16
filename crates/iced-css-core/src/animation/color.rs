@@ -218,6 +218,8 @@ pub enum ColorEndpointComponent<'a> {
 pub enum ColorEndpointAdmissionError {
     UnsupportedProperty,
     UnresolvedSystem(SystemColor),
+    /// `currentColor` reached admission without being resolved to the foreground color.
+    UnresolvedCurrentColor,
     Numeric(NumericError),
     Scaling(DecimalScalingError),
 }
@@ -276,6 +278,14 @@ impl ColorAnimationEndpoint {
             }
             Color::System(key) => return Err(ColorEndpointAdmissionError::UnresolvedSystem(*key)),
             Color::Transparent => 0.0,
+            // Resolved to the foreground color before a computed color exists.
+            Color::CurrentColor => return Err(ColorEndpointAdmissionError::UnresolvedCurrentColor),
+            Color::SrgbA([r, g, b, alpha]) => {
+                for (out, v) in numerators.iter_mut().zip([r, g, b]) {
+                    *out = from_f32(f32::from(*v), 100.0, limits)?;
+                }
+                f32::from(*alpha) / 255.0
+            }
             Color::Srgb(rgb) => {
                 for (out, v) in numerators.iter_mut().zip(rgb) {
                     *out = from_f32(f32::from(*v), 100.0, limits)?;

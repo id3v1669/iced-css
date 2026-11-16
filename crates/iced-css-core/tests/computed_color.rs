@@ -178,8 +178,9 @@ fn missing_context_and_forged_alternatives_are_rejected() {
     assert!(compute_color(&empty, id("width"), Default::default()).is_err());
     assert!(ComputedColor::try_from(&parsed("color:inherit")).is_err());
     for (name, color) in [
-        ("color", Color::Transparent),
-        ("outline-color", Color::Transparent),
+        // `currentColor` is resolved by `compute_color`, never admitted as computed.
+        ("color", Color::CurrentColor),
+        ("background-color", Color::CurrentColor),
         ("background-color", Color::Invert),
     ] {
         let mut forged = parsed(&format!("{name}:red"));

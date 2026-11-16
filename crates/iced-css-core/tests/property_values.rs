@@ -286,8 +286,6 @@ fn color_and_border_style_longhands_apply_their_own_special_keywords() {
     for input in [
         "outline-style:hidden",
         "outline-style:solid dotted",
-        "outline-color:transparent",
-        "color:transparent",
         "background-color:invert",
         "border-left-color:invert",
         "border-top-style:transparent",
@@ -1005,7 +1003,6 @@ fn border_and_outline_shorthands_require_unique_roles_and_reset_omissions() {
         "border:red blue",
         "border:inherit solid",
         "outline:hidden",
-        "outline:transparent",
         "border:invert",
         "border:solid 1%",
         "outline:initial",

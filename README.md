@@ -70,6 +70,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   and the `^=`, `$=` and `*=` attribute matches. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
+- **Colors:** CSS 2.2 colors, and from CSS Color 3 `rgba()`, `hsl()`, `hsla()`, `#rgba`,
+  `#rrggbbaa`, `currentColor`, and `transparent` on every color property. Opacity is kept
+  to 1 part in 255. It draws on a box's background and borders; text, outlines, an inline
+  element's background and borders, and generated content draw a see-through color
+  opaque (and one with no opacity at all not at all).
 - **Block layout:** nested boxes, margin collapsing, floats, clearance, formatting contexts,
   `min-`/`max-` sizes, percentages, `em` and `ex`, and from CSS Values 3 `rem` (the root's
   font size) and `ch` (taken as half the font size; no font is measured for it). A `rem`

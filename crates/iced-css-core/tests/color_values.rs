@@ -54,24 +54,25 @@ fn rgb_forms_retain_exact_signed_operands_before_device_gamut_mapping() {
     );
 }
 #[test]
-fn invalid_css_and_newer_color_syntax_are_rejected() {
+fn invalid_css_and_color_syntax_past_level3_are_rejected() {
     for input in [
         "grey",
         "rebeccapurple",
-        "transparent",
         "inherit",
         "#ff",
-        "#ffff",
-        "#ffffffff",
+        "#fffff",
+        "#fffffff",
+        "#fffffffff",
         "rgb(1,2%,3)",
         "rgb(1.0,2,3)",
         "rgb(1e2,0,0)",
         "rgb(1e2%,0%,0%)",
         "rgb(1 2 3)",
+        "rgb(1,2,3,4,5)",
+        "hsl(0deg,0%,0%)",
+        "color(srgb 1 0 0)",
+        "lab(50% 0 0)",
         "rgb(1,2)",
-        "rgb(1,2,3,4)",
-        "rgba(1,2,3,1)",
-        "hsl(0,0%,0%)",
         "red blue",
         "rgb/**/(1,2,3)",
         r"\0",

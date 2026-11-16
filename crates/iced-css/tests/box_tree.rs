@@ -320,6 +320,48 @@ fn rem_measures_the_root_font_size_and_ch_half_the_font_size() {
 }
 
 #[test]
+fn css_color_3_values_paint_boxes() {
+    let root = || node("page", vec![node("k", vec![])]);
+    let paint = |css: &str| {
+        let tree = BoxTree::new(root(), css).unwrap();
+        tree.paints()[1]
+    };
+    let red = Some([1.0, 0.0, 0.0]);
+    // An opacity below 1 is the background's fade; an opaque one has none.
+    let half = paint("#k { background-color:rgba(255, 0, 0, 0.5); }");
+    assert_eq!(half.background, red);
+    assert!((half.background_fade.unwrap() - 0.5).abs() < 0.01);
+    assert_eq!(
+        paint("#k { background:#ff000080; }").background_fade,
+        half.background_fade
+    );
+    let opaque = paint("#k { background-color:rgba(255, 0, 0, 1); }");
+    assert_eq!((opaque.background, opaque.background_fade), (red, None));
+    assert_eq!(
+        paint("#k { background-color:hsl(0, 100%, 50%); }").background,
+        red
+    );
+    // Borders, side by side.
+    let sides =
+        paint("#k { border:2px solid #ff0000; border-left-color:hsla(0, 100%, 50%, 0.25); }");
+    assert_eq!(sides.border, [red; 4]);
+    assert_eq!(sides.border_fade[0], None);
+    assert!((sides.border_fade[3].unwrap() - 0.25).abs() < 0.01);
+    // `currentColor` is the element's own color, and inherits as `color` does.
+    let current = paint("#page { color:#ff0000; } #k { background-color:currentColor; }");
+    assert_eq!(current.background, red);
+    assert_eq!(
+        paint("#page { color:#ff0000; } #k { color:#00ff00; color:currentColor; }").color,
+        red
+    );
+    // `transparent` is a color everywhere: text with none draws nothing.
+    assert_eq!(paint("#k { color:transparent; }").color, None);
+    assert_eq!(paint("#k { color:rgba(0, 0, 0, 0); }").color, None);
+    // Text has no opacity of its own: a see-through color draws opaque.
+    assert_eq!(paint("#k { color:rgba(255, 0, 0, 0.5); }").color, red);
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",
@@ -680,10 +722,10 @@ fn inline_text_box_paint_is_dropped_but_its_color_stays() {
     assert_eq!(tree.paints()[1].background, None);
     assert_eq!(tree.paints()[1].border[0], None);
     assert_eq!(tree.paints()[1].color, Some([0.0, 1.0, 0.0]));
-    // CSS 2.2 `color` does not accept transparent: the declaration is dropped.
+    // CSS Color 3: `color` accepts transparent, and the text draws nothing.
     let root = node("page", vec![text("copy", "words")]);
     let tree = BoxTree::new(root, "#copy { color:transparent; }").unwrap();
-    assert_eq!(tree.paints()[1].color, Some([0.0, 0.0, 0.0]));
+    assert_eq!(tree.paints()[1].color, None);
 }
 
 #[test]

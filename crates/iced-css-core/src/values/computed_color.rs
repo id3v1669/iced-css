@@ -68,12 +68,10 @@ impl<'a> ComputedColor<'a> {
         if !supported(property) {
             return Err(ColorComputationError::UnsupportedProperty);
         }
+        // CSS Color 3: `transparent` is a color on every property. `currentColor` is
+        // resolved before a computed color is made.
         match value {
-            Color::Transparent
-                if !border(property) && property.descriptor().name != "background-color" =>
-            {
-                return Err(ColorComputationError::InvalidValue);
-            }
+            Color::CurrentColor => return Err(ColorComputationError::Unresolved),
             Color::Invert if property.descriptor().name != "outline-color" => {
                 return Err(ColorComputationError::InvalidValue);
             }
@@ -136,6 +134,25 @@ pub fn compute_color<'a>(
         .defaulted(property, context.parent.is_some())
         .map_err(ColorComputationError::Defaulting)?
     {
+        // CSS Color 3, 4.4: the element's `color`; on `color` itself it is `inherit`.
+        DefaultedValueRef::Compute(SpecifiedValue::Color(Color::CurrentColor)) => {
+            if property.descriptor().name != "color" {
+                let foreground = context
+                    .current_color
+                    .ok_or(ColorComputationError::MissingCurrentColor)?;
+                if foreground.property.descriptor().name != "color" {
+                    return Err(ColorComputationError::InvalidCurrentColor);
+                }
+                foreground.value
+            } else if let Some(parent) = context.parent {
+                if parent.property != property {
+                    return Err(ColorComputationError::ParentPropertyMismatch);
+                }
+                parent.value
+            } else {
+                reference(property, InitialReference::UserAgentColor, context)?
+            }
+        }
         DefaultedValueRef::Compute(SpecifiedValue::Color(value)) => value,
         DefaultedValueRef::Compute(SpecifiedValue::InitialReference(value)) => {
             reference(property, *value, context)?
