@@ -256,6 +256,37 @@ pub(super) fn shadow_length(
     )
 }
 
+/// One track breadth of a grid (CSS Grid 1): a length or percentage, not negative.
+pub(super) fn track_length(
+    token: (usize, Token<'_>),
+    limits: ColorLimits,
+    work: &mut usize,
+) -> Result<Option<SpecifiedValue>, PropertyError> {
+    if !matches!(
+        token.1.kind,
+        TokenKind::Number | TokenKind::Dimension | TokenKind::Percentage | TokenKind::Function
+    ) {
+        return Ok(None);
+    }
+    if token.1.kind == TokenKind::Function
+        && !token.1.raw[..5.min(token.1.raw.len())].eq_ignore_ascii_case("calc(")
+    {
+        return Ok(None);
+    }
+    component(
+        token,
+        Grammar {
+            signed: false,
+            percentage: true,
+            number: false,
+            pair: false,
+            keywords: &[],
+        },
+        limits,
+        work,
+    )
+}
+
 pub(super) fn clip_component(
     token: (usize, Token<'_>),
     limits: ColorLimits,

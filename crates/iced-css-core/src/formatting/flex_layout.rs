@@ -104,7 +104,7 @@ struct Item {
 
 /// Where each of `count` things starts along an axis with `free` space to share, and the
 /// space between two of them beyond the gap.
-fn spread(space: FlexSpace, free: f32, count: usize) -> (f32, f32) {
+pub(super) fn spread(space: FlexSpace, free: f32, count: usize) -> (f32, f32) {
     let free = free.max(0.0);
     let n = count as f32;
     match space {
@@ -242,7 +242,7 @@ impl Solver<'_> {
     }
 
     /// Sets a laid-out box's content height, moving its lower edges.
-    fn set_content_height(&mut self, node: usize, height: f32) {
+    pub(super) fn set_content_height(&mut self, node: usize, height: f32) {
         let geometry = &mut self.geometry[node];
         let delta = height - (geometry.content.bottom - geometry.content.top);
         geometry.content.bottom += delta;
@@ -252,7 +252,12 @@ impl Solver<'_> {
 
     /// Lays `node` out at the origin with content width `width`, as a formatting context of
     /// its own, and returns its border box height.
-    fn lay_item(&mut self, node: usize, cb: Containing, width: f32) -> Result<f32, FlowError> {
+    pub(super) fn lay_item(
+        &mut self,
+        node: usize,
+        cb: Containing,
+        width: f32,
+    ) -> Result<f32, FlowError> {
         let padding = self.paddings(node, cb.width);
         self.finish_bfc_box(
             node,

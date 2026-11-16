@@ -42,11 +42,6 @@ css_todo_test!(display_inline_flow, "display: inline / inline-block");
 css_todo_test!(visibility, "visibility");
 css_todo_test!(overflow, "overflow");
 
-css_todo_test!(grid_templates, "grid-template-columns/rows");
-css_todo_test!(grid_placement, "grid-column / grid-row / grid-area");
-css_todo_test!(grid_gaps, "grid gaps");
-css_todo_test!(grid_auto, "grid-auto-flow / minmax() / auto-fill");
-
 css_todo_test!(position_relative, "position: relative");
 css_todo_test!(position_absolute, "position: absolute");
 css_todo_test!(position_fixed, "position: fixed");

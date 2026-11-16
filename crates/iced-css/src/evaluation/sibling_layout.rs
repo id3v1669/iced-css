@@ -3181,6 +3181,7 @@ mod tests {
                 float: Float::None,
                 flow: Flow::Normal,
                 flex: false,
+                grid: false,
             },
             context: ChildContext::OrdinaryNonBfc,
             content: OwnerContent::NoOwnContentNonReplaced,

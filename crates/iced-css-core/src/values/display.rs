@@ -48,12 +48,16 @@ pub fn compute_display_style(
     winners: &PropertyWinners<'_>,
     parent: Option<&DisplayResolution>,
 ) -> Result<DisplayResolution, ComputedDisplayError> {
-    // CSS Flexbox 1: a flex container is a block outside, or an inline-block, with its
-    // children laid out as flex items (`flex` says so).
+    // CSS Flexbox 1 and CSS Grid 1: a flex or grid container is a block outside, or an
+    // inline-block, with its children laid out as items (`flex` or `grid` says so).
     fn display_of(value: &SpecifiedValue) -> Result<Display, DisplayError> {
         match value {
-            SpecifiedValue::Keyword(keyword) if keyword.as_str() == "flex" => Ok(Display::Block),
-            SpecifiedValue::Keyword(keyword) if keyword.as_str() == "inline-flex" => {
+            SpecifiedValue::Keyword(keyword) if matches!(keyword.as_str(), "flex" | "grid") => {
+                Ok(Display::Block)
+            }
+            SpecifiedValue::Keyword(keyword)
+                if matches!(keyword.as_str(), "inline-flex" | "inline-grid") =>
+            {
                 Ok(Display::InlineBlock)
             }
             other => Display::from_resolved(other),
@@ -67,15 +71,18 @@ pub fn compute_display_style(
         display_of,
     )?;
     let display_property = PropertyId::lookup("display").expect("registered");
-    let flex = match winners
+    let (flex, grid) = match winners
         .defaulted(display_property, parent.is_some())
         .map_err(ComputedDisplayError::Defaulting)?
     {
-        DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
-            matches!(keyword.as_str(), "flex" | "inline-flex")
+        DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => (
+            matches!(keyword.as_str(), "flex" | "inline-flex"),
+            matches!(keyword.as_str(), "grid" | "inline-grid"),
+        ),
+        DefaultedValueRef::ParentComputed => {
+            parent.map_or((false, false), |parent| (parent.flex, parent.grid))
         }
-        DefaultedValueRef::ParentComputed => parent.is_some_and(|parent| parent.flex),
-        _ => false,
+        _ => (false, false),
     };
     let position = selected(
         "position",
@@ -91,11 +98,12 @@ pub fn compute_display_style(
         Float::from_keyword,
         Float::from_resolved,
     )?;
-    // 4: a flex item is blockified, as the root is, and does not float.
-    let item = parent.is_some_and(|parent| parent.flex);
+    // 4: a flex or grid item is blockified, as the root is, and does not float.
+    let item = parent.is_some_and(|parent| parent.flex || parent.grid);
     let float = if item { Float::None } else { float };
     let mut resolved = resolve_display(display, position, float, parent.is_none() || item);
     // An absolutely positioned or suppressed box is still a flex container inside.
     resolved.flex = flex && resolved.display != Display::None;
+    resolved.grid = grid && resolved.display != Display::None;
     Ok(resolved)
 }

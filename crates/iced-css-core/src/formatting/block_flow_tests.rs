@@ -2871,3 +2871,272 @@ mod flex {
         assert_eq!((got[1].0, got[1].1), (0.0, 0.0));
     }
 }
+
+mod grid {
+    use super::*;
+
+    fn px(value: f32) -> TrackSize {
+        TrackSize::breadth(Breadth::Fixed(Dim::Px(value)))
+    }
+    fn fr(value: f32) -> TrackSize {
+        TrackSize::breadth(Breadth::Flex(value))
+    }
+    fn list(sizes: &[TrackSize]) -> TrackList {
+        TrackList {
+            sizes: sizes.to_vec(),
+            names: vec![Vec::new(); sizes.len() + 1],
+            repeat: None,
+        }
+    }
+    fn container(grid: GridContainer, children: usize) -> FlowBox {
+        FlowBox {
+            children: (1..=children).collect(),
+            establishes_bfc: true,
+            grid: Some(Box::new(grid)),
+            ..FlowBox::default()
+        }
+    }
+    fn item(height: f32) -> FlowBox {
+        FlowBox {
+            height: Dim::Px(height),
+            ..FlowBox::default()
+        }
+    }
+    fn at(base: FlowBox, row: [i32; 2], column: [i32; 2]) -> FlowBox {
+        let line = |number: i32| GridLine {
+            number,
+            ..GridLine::default()
+        };
+        FlowBox {
+            grid_item: Some(Box::new(GridItem {
+                row: [line(row[0]), line(row[1])],
+                column: [line(column[0]), line(column[1])],
+                justify: None,
+            })),
+            ..base
+        }
+    }
+    /// Border boxes as (left, top, width, height), of a 300 by 200 viewport's layout.
+    fn laid(boxes: &[FlowBox]) -> Vec<(f32, f32, f32, f32)> {
+        let viewport = FlowViewport {
+            left: 0.0,
+            top: 0.0,
+            width: 300.0,
+            height: Some(200.0),
+        };
+        layout_block_flow(boxes, viewport, limits())
+            .unwrap()
+            .iter()
+            .map(|geometry| {
+                let area = geometry.border;
+                (
+                    area.left,
+                    area.top,
+                    area.right - area.left,
+                    area.bottom - area.top,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fixed_and_flexible_columns_share_the_width_and_items_flow_into_rows() {
+        let grid = GridContainer {
+            columns: list(&[px(100.0), fr(1.0), fr(3.0)]),
+            ..GridContainer::default()
+        };
+        let got = laid(&[
+            container(grid, 4),
+            item(10.0),
+            item(20.0),
+            item(30.0),
+            item(5.0),
+        ]);
+        assert_eq!(got[1], (0.0, 0.0, 100.0, 10.0));
+        assert_eq!((got[2].0, got[2].2), (100.0, 50.0));
+        assert_eq!((got[3].0, got[3].2), (150.0, 150.0));
+        // The fourth wraps to a second row, below the tallest of the first.
+        assert_eq!((got[4].0, got[4].1), (0.0, 30.0));
+        assert_eq!(got[0].3, 35.0);
+    }
+
+    #[test]
+    fn gaps_go_between_tracks_and_auto_items_stretch_across_their_row() {
+        let grid = GridContainer {
+            columns: list(&[fr(1.0), fr(1.0)]),
+            gap: [5.0, 10.0],
+            ..GridContainer::default()
+        };
+        let auto = FlowBox::default;
+        let got = laid(&[container(grid, 3), item(40.0), auto(), auto()]);
+        assert_eq!(got[1], (0.0, 0.0, 145.0, 40.0));
+        assert_eq!(got[2], (155.0, 0.0, 145.0, 40.0));
+        assert_eq!((got[3].0, got[3].1, got[3].3), (0.0, 45.0, 0.0));
+    }
+
+    #[test]
+    fn line_numbers_place_items_and_auto_items_fill_around_them() {
+        let grid = GridContainer {
+            columns: list(&[px(50.0), px(50.0), px(50.0)]),
+            rows: list(&[px(20.0), px(20.0)]),
+            ..GridContainer::default()
+        };
+        let auto = FlowBox::default;
+        // The first spans the last two columns of the second row; -1 is the last line.
+        let got = laid(&[
+            container(grid, 3),
+            at(auto(), [2, 3], [2, -1]),
+            auto(),
+            auto(),
+        ]);
+        assert_eq!(got[1], (50.0, 20.0, 100.0, 20.0));
+        assert_eq!((got[2].0, got[2].1), (0.0, 0.0));
+        assert_eq!((got[3].0, got[3].1), (50.0, 0.0));
+    }
+
+    #[test]
+    fn a_column_flow_fills_columns_first_and_adds_implicit_ones() {
+        let grid = GridContainer {
+            rows: list(&[px(20.0), px(20.0)]),
+            auto_columns: vec![px(70.0)],
+            column_flow: true,
+            ..GridContainer::default()
+        };
+        let auto = FlowBox::default;
+        let got = laid(&[container(grid, 3), auto(), auto(), auto()]);
+        assert_eq!((got[1].0, got[1].1), (0.0, 0.0));
+        assert_eq!((got[2].0, got[2].1), (0.0, 20.0));
+        assert_eq!((got[3].0, got[3].1, got[3].2), (70.0, 0.0, 70.0));
+    }
+
+    #[test]
+    fn auto_fill_repeats_as_many_tracks_as_fit() {
+        let grid = GridContainer {
+            columns: TrackList {
+                sizes: Vec::new(),
+                names: vec![Vec::new()],
+                repeat: Some(AutoRepeat {
+                    at: 0,
+                    fit: false,
+                    sizes: vec![px(90.0)],
+                    names: vec![Vec::new(); 2],
+                    after: Vec::new(),
+                }),
+            },
+            gap: [0.0, 10.0],
+            ..GridContainer::default()
+        };
+        let auto = FlowBox::default;
+        // 300 holds three of 90 with two gaps of 10; the fourth item wraps.
+        let got = laid(&[container(grid, 4), auto(), auto(), auto(), auto()]);
+        assert_eq!(got[3].0, 200.0);
+        assert_eq!((got[4].0, got[4].2), (0.0, 90.0));
+    }
+
+    #[test]
+    fn named_areas_place_items_by_name() {
+        let areas = grid_areas(&[
+            vec![Some("head".into()), Some("head".into())],
+            vec![Some("side".into()), Some("main".into())],
+        ]);
+        let grid = GridContainer {
+            columns: list(&[px(100.0), fr(1.0)]),
+            areas,
+            ..GridContainer::default()
+        };
+        let named = |name: &str| FlowBox {
+            height: Dim::Px(10.0),
+            grid_item: Some(Box::new(GridItem {
+                row: [
+                    GridLine {
+                        name: Some(name.into()),
+                        ..GridLine::default()
+                    },
+                    GridLine {
+                        name: Some(name.into()),
+                        ..GridLine::default()
+                    },
+                ],
+                column: [
+                    GridLine {
+                        name: Some(name.into()),
+                        ..GridLine::default()
+                    },
+                    GridLine {
+                        name: Some(name.into()),
+                        ..GridLine::default()
+                    },
+                ],
+                justify: None,
+            })),
+            ..FlowBox::default()
+        };
+        let got = laid(&[
+            container(grid, 3),
+            named("main"),
+            named("side"),
+            named("head"),
+        ]);
+        assert_eq!(got[3], (0.0, 0.0, 300.0, 10.0));
+        assert_eq!(got[2], (0.0, 10.0, 100.0, 10.0));
+        assert_eq!(got[1], (100.0, 10.0, 200.0, 10.0));
+    }
+
+    #[test]
+    fn auto_columns_size_to_their_content_and_alignment_places_items() {
+        let grid = GridContainer {
+            columns: list(&[TrackSize::AUTO, px(100.0)]),
+            rows: list(&[px(50.0)]),
+            justify_content: FlexSpace::Start,
+            justify_items: FlexAlign::Center,
+            align_items: FlexAlign::End,
+            ..GridContainer::default()
+        };
+        let sized = |width: f32| FlowBox {
+            width: Dim::Px(width),
+            height: Dim::Px(10.0),
+            ..FlowBox::default()
+        };
+        let got = laid(&[container(grid, 2), sized(30.0), sized(40.0)]);
+        assert_eq!(got[1], (0.0, 40.0, 30.0, 10.0));
+        assert_eq!(got[2], (60.0, 40.0, 40.0, 10.0));
+    }
+
+    #[test]
+    fn a_flexible_column_is_never_narrower_than_its_content() {
+        let grid = GridContainer {
+            columns: list(&[fr(1.0), fr(1.0)]),
+            ..GridContainer::default()
+        };
+        let wide = FlowBox {
+            width: Dim::Px(250.0),
+            height: Dim::Px(10.0),
+            ..FlowBox::default()
+        };
+        // Many auto items flow into as many rows as they need.
+        let mut boxes = vec![container(grid, 40), wide];
+        boxes.extend((0..39).map(|_| item(1.0)));
+        let got = laid(&boxes);
+        assert_eq!(got[2].0, 250.0);
+        assert_eq!(got[2].2, 50.0);
+        assert_eq!(got[40].1, 10.0 + 18.0);
+    }
+
+    #[test]
+    fn a_shrinking_grid_measures_its_tracks() {
+        let grid = GridContainer {
+            columns: list(&[px(40.0), px(60.0)]),
+            gap: [0.0, 5.0],
+            ..GridContainer::default()
+        };
+        let root = FlowBox {
+            children: vec![1],
+            ..FlowBox::default()
+        };
+        let mut shrunk = container(grid, 0);
+        shrunk.children = vec![2];
+        shrunk.float = Some(FloatSide::Left);
+        let got = laid(&[root, shrunk, item(10.0)]);
+        assert_eq!(got[1].2, 105.0);
+    }
+}

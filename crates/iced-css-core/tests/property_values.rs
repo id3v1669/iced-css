@@ -159,7 +159,7 @@ fn complete_keyword_property_grammars_are_scoped_to_their_own_literals() {
         assert_eq!(actual.as_str(), value);
     }
     for input in [
-        "display:grid",
+        "display:contents",
         "display:run-in",
         "white-space:block",
         "display:'block'",
@@ -1571,4 +1571,188 @@ fn flex_shorthands_expand_as_css_flexbox_gives_them() {
         assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
     }
     assert!(PropertyId::lookup("flex").is_some_and(|flex| flex.descriptor().shorthand));
+}
+
+#[test]
+fn grid_properties_parse_css_grid_track_lists_lines_and_shorthands() {
+    use iced_css_core::values::registry::PropertyId;
+    let valid = |input: &str| matches!(parse(input).unwrap(), PropertyResult::Parsed(_));
+    for good in [
+        "grid-template-columns:none",
+        "grid-template-columns:100px 1fr 2fr",
+        "grid-template-columns:[a] 10% [b c] minmax(10px, 1fr) [d]",
+        "grid-template-columns:repeat(3, 1fr)",
+        "grid-template-columns:repeat(2, [x] 10px auto)",
+        "grid-template-columns:repeat(auto-fill, minmax(100px, 1fr))",
+        "grid-template-columns:20px repeat(auto-fit, 50px) 20px",
+        "grid-template-rows:fit-content(40px) min-content max-content",
+        "grid-template-rows:calc(10px + 5%) 1fr",
+        "grid-auto-rows:10px auto",
+        "grid-auto-flow:column dense",
+        "grid-auto-flow:dense",
+        "grid-template-areas:'a a b' \"c . b\"",
+        "grid-row-start:2",
+        "grid-row-start:-1",
+        "grid-row-start:span 2",
+        "grid-row-start:2 header",
+        "grid-row-start:span header 2",
+        "grid-column-end:header",
+        "justify-items:center",
+        "justify-self:end",
+        "justify-content:stretch",
+    ] {
+        assert!(valid(good), "{good}");
+    }
+    for bad in [
+        "grid-template-columns:-10px",
+        "grid-template-columns:minmax(1fr, 10px)",
+        "grid-template-columns:repeat(0, 1fr)",
+        "grid-template-columns:repeat(auto-fill, 1fr)",
+        "grid-template-columns:repeat(auto-fill, 10px) repeat(auto-fit, 10px)",
+        "grid-template-columns:repeat(auto-fill, 10px) auto",
+        "grid-template-columns:repeat(2, repeat(2, 10px))",
+        "grid-template-columns:[a",
+        "grid-template-columns:[span] 10px",
+        "grid-template-columns:10",
+        "grid-auto-rows:[a] 10px",
+        "grid-auto-flow:row column",
+        "grid-template-areas:'a b' 'a'",
+        "grid-template-areas:'a b a'",
+        "grid-template-areas:'a #'",
+        "grid-row-start:0",
+        "grid-row-start:span -1",
+        "grid-row-start:span",
+        "grid-row-start:2 span x",
+        "grid-row-start:auto 2",
+    ] {
+        assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
+    }
+    let lines = |input: &str| -> Vec<(String, GridLineValue)> {
+        let PropertyResult::Parsed(ParsedProperty {
+            value: SpecifiedValue::Expanded(leaves),
+            ..
+        }) = parse(input).unwrap()
+        else {
+            panic!("{input}")
+        };
+        leaves
+            .into_iter()
+            .map(|leaf| {
+                let SpecifiedValue::Grid(GridValue::Line(line)) = leaf.value else {
+                    panic!("{input}")
+                };
+                (leaf.property.descriptor().name.to_owned(), line)
+            })
+            .collect()
+    };
+    let named = |name: &str| GridLineValue {
+        name: Some(name.into()),
+        ..GridLineValue::default()
+    };
+    let number = |number: i32| GridLineValue {
+        number,
+        ..GridLineValue::default()
+    };
+    assert_eq!(
+        lines("grid-row:1 / span 2"),
+        [
+            ("grid-row-start".into(), number(1)),
+            (
+                "grid-row-end".into(),
+                GridLineValue {
+                    span: true,
+                    number: 2,
+                    name: None
+                }
+            ),
+        ]
+    );
+    assert_eq!(
+        lines("grid-column:side"),
+        [
+            ("grid-column-start".into(), named("side")),
+            ("grid-column-end".into(), named("side")),
+        ]
+    );
+    assert_eq!(
+        lines("grid-column:3"),
+        [
+            ("grid-column-start".into(), number(3)),
+            ("grid-column-end".into(), GridLineValue::default()),
+        ]
+    );
+    // `grid-area` copies a lone name into every part left out.
+    assert_eq!(
+        lines("grid-area:main")
+            .into_iter()
+            .map(|(name, line)| (name, line.name))
+            .collect::<Vec<_>>(),
+        [
+            ("grid-row-start".into(), Some("main".into())),
+            ("grid-column-start".into(), Some("main".into())),
+            ("grid-row-end".into(), Some("main".into())),
+            ("grid-column-end".into(), Some("main".into())),
+        ]
+    );
+    assert_eq!(
+        lines("grid-area:1 / 2 / 3")
+            .into_iter()
+            .map(|(_, line)| line.number)
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 0]
+    );
+    assert_eq!(
+        parse("grid-area:1/2/3/4/5").unwrap(),
+        PropertyResult::Invalid
+    );
+    // The template shorthands set every longhand they name.
+    let shape = |input: &str| -> Vec<&'static str> {
+        let PropertyResult::Parsed(ParsedProperty {
+            value: SpecifiedValue::Expanded(leaves),
+            ..
+        }) = parse(input).unwrap()
+        else {
+            panic!("{input}")
+        };
+        leaves
+            .iter()
+            .map(|leaf| match &leaf.value {
+                SpecifiedValue::Grid(GridValue::None) => "none",
+                SpecifiedValue::Grid(GridValue::Tracks(_)) => "tracks",
+                SpecifiedValue::Grid(GridValue::Areas(_)) => "areas",
+                SpecifiedValue::Grid(GridValue::Flow { column: true, .. }) => "column",
+                SpecifiedValue::Grid(GridValue::Flow { .. }) => "row",
+                _ => "other",
+            })
+            .collect()
+    };
+    assert_eq!(shape("grid-template:none"), ["none", "none", "none"]);
+    assert_eq!(
+        shape("grid-template:100px 1fr / 50px"),
+        ["tracks", "tracks", "none"]
+    );
+    assert_eq!(
+        shape("grid-template:[top] 'a b' 40px [mid] 'c d' / 1fr 2fr"),
+        ["tracks", "tracks", "areas"]
+    );
+    assert_eq!(
+        shape("grid:auto-flow dense 40px / 1fr 1fr"),
+        ["none", "tracks", "none", "tracks", "tracks", "row"]
+    );
+    assert_eq!(
+        shape("grid:100px / auto-flow"),
+        ["tracks", "none", "none", "tracks", "tracks", "column"]
+    );
+    assert_eq!(
+        shape("grid:'a' / 10px"),
+        ["tracks", "tracks", "areas", "tracks", "tracks", "row"]
+    );
+    for bad in [
+        "grid-template:100px",
+        "grid-template:'a b' / repeat(2, 10px)",
+        "grid:auto-flow / auto-flow",
+    ] {
+        assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
+    }
+    assert!(PropertyId::lookup("grid").is_some_and(|grid| grid.descriptor().shorthand));
 }

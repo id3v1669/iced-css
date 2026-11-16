@@ -34,6 +34,8 @@ mod cursor;
 mod font_family;
 #[path = "font_shorthand.rs"]
 mod font_shorthand;
+#[path = "grid.rs"]
+mod grid;
 #[path = "list_shorthand.rs"]
 mod list_shorthand;
 #[path = "owned.rs"]
@@ -44,6 +46,9 @@ mod shadow;
 mod shorthand;
 pub use content::ContentItem;
 pub use cursor::Cursor;
+pub use grid::{
+    GRID_LIMIT, GridBreadth, GridLineValue, GridRepeat, GridTrackEntry, GridTrackSize, GridValue,
+};
 pub use shadow::ShadowValue;
 
 pub(super) fn cursor_keyword_allowed(keyword: Keyword) -> bool {
@@ -102,6 +107,8 @@ pub enum SpecifiedValue {
     LengthPair(LengthTarget, LengthTarget),
     /// `box-shadow`: its shadows, first on top; empty is `none`.
     Shadows(Vec<ShadowValue>),
+    /// A grid property (CSS Grid Layout 1).
+    Grid(GridValue),
     /// A custom property declaration (`--name: value`): its name, with its dashes, and
     /// its value's text. Filed under [`PropertyId::custom`].
     Custom {
@@ -234,6 +241,27 @@ fn border_styles(name: &str) -> Option<&'static [&'static str]> {
         _ => None,
     }
 }
+/// The grid properties, whose grammars live in `grid.rs`.
+fn grid_property(name: &str) -> bool {
+    matches!(
+        name,
+        "grid-template-columns"
+            | "grid-template-rows"
+            | "grid-template-areas"
+            | "grid-auto-columns"
+            | "grid-auto-rows"
+            | "grid-auto-flow"
+            | "grid-row-start"
+            | "grid-row-end"
+            | "grid-column-start"
+            | "grid-column-end"
+            | "grid-row"
+            | "grid-column"
+            | "grid-area"
+            | "grid-template"
+            | "grid"
+    )
+}
 fn color_property(name: &str) -> bool {
     matches!(
         name,
@@ -305,6 +333,7 @@ pub(super) fn inner(
             name,
             "opacity" | "flex-grow" | "flex-shrink" | "flex-flow" | "flex" | "gap"
         )
+        && !grid_property(name)
     {
         return Err(PropertyError::Unimplemented(property));
     }
@@ -313,6 +342,19 @@ pub(super) fn inner(
     }
     if matches!(name, "flex-flow" | "flex" | "gap") {
         return flex_shorthand(property, input, important, limits, work);
+    }
+    if grid_property(name) {
+        if property.descriptor().shorthand {
+            return grid::shorthand(property, input, important, limits, work);
+        }
+        return Ok(match grid::parse(property, input, limits, work)? {
+            Some(value) => PropertyResult::Parsed(ParsedProperty {
+                property,
+                value,
+                important,
+            }),
+            None => PropertyResult::Invalid,
+        });
     }
     if matches!(name, "opacity" | "flex-grow" | "flex-shrink") {
         // One number, or `inherit`. CSS Color 3: an opacity of any size (it is clipped when

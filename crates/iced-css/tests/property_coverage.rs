@@ -391,6 +391,66 @@ const CASES: &[(&str, &str, &str)] = &[
         "#b { display:flex; }",
         "#k { align-self:center; }",
     ),
+    (
+        "grid-template-columns",
+        "#b { display:grid; }",
+        "#b { grid-template-columns:100px 100px; }",
+    ),
+    (
+        "grid-template-rows",
+        "#b { display:grid; }",
+        "#b { grid-template-rows:50px; }",
+    ),
+    (
+        "grid-template-areas",
+        "#b { display:grid; } #k { grid-area:x; }",
+        "#b { grid-template-areas:'a x'; }",
+    ),
+    (
+        "grid-auto-columns",
+        "#b { display:grid; grid-auto-flow:column; }",
+        "#b { grid-auto-columns:50px; }",
+    ),
+    (
+        "grid-auto-rows",
+        "#b { display:grid; }",
+        "#b { grid-auto-rows:50px; }",
+    ),
+    (
+        "grid-auto-flow",
+        "#b { display:grid; }",
+        "#b { grid-auto-flow:column; }",
+    ),
+    (
+        "grid-row-start",
+        "#b { display:grid; }",
+        "#k { grid-row-start:3; }",
+    ),
+    (
+        "grid-row-end",
+        "#b { display:grid; }",
+        "#k { grid-row-end:5; }",
+    ),
+    (
+        "grid-column-start",
+        "#b { display:grid; }",
+        "#k { grid-column-start:2; }",
+    ),
+    (
+        "grid-column-end",
+        "#b { display:grid; }",
+        "#k { grid-column-end:3; }",
+    ),
+    (
+        "justify-items",
+        "#b { display:grid; grid-template-columns:200px; } #k { width:10px; }",
+        "#b { justify-items:center; }",
+    ),
+    (
+        "justify-self",
+        "#b { display:grid; grid-template-columns:200px; } #k { width:10px; }",
+        "#k { justify-self:end; }",
+    ),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

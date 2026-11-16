@@ -30,6 +30,9 @@ pub(super) const KEYWORDS: &[(&str, &[&str])] = &[
             // CSS Flexible Box Layout 1, added by hand to the generated CSS 2.2 list.
             "flex",
             "inline-flex",
+            // CSS Grid Layout 1, likewise.
+            "grid",
+            "inline-grid",
         ],
     ),
     ("empty-cells", &["show", "hide"]),

@@ -122,6 +122,21 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   is none; an item's automatic minimum width is its narrowest content unless it clips, and
   a `min-width: 0` does not turn that off; `inherit` on a flex property reads as its
   initial value; none of them animates.
+- **Grid:** `display: grid` and `inline-grid` (CSS Grid Layout 1) with
+  `grid-template-columns` and `grid-template-rows` (lengths, percentages, `fr`, `auto`,
+  `min-content`, `max-content`, `minmax()`, `fit-content()`, `repeat()` with a count,
+  `auto-fill` or `auto-fit`, and named lines), `grid-template-areas`, `grid-auto-columns`,
+  `grid-auto-rows`, `grid-auto-flow` (with `dense`), line placement by number, name and
+  span through `grid-row-start`, `grid-row-end`, `grid-column-start`, `grid-column-end`,
+  `grid-row`, `grid-column` and `grid-area`, the `grid-template` and `grid` shorthands,
+  `justify-items`, `justify-self`, and the alignment and gap properties Flexbox uses.
+  Children are blockified into items, ordered by `order`. Left out: subgrids, baseline
+  alignment (it aligns at the start), and placing absolutely positioned children by grid
+  lines (they take the content box's start corner). Space an item spanning several
+  tracks needs is shared equally among them; an item's percentage height computes to
+  `auto`; a percentage gap is none; `left` and `right` read as start and end whatever the
+  direction; `justify-self` does nothing outside a grid; `inherit` on a grid property
+  reads as its initial value; none of them animates. At most 1000 tracks per axis.
 - **Positioning:** relative, absolute and fixed, with `z-index` stacking, on boxes; an inline
   element ignores `position: relative`: its offsets and `z-index` do nothing, and it is no
   containing block for absolute descendants, which take the nearest positioned box instead.

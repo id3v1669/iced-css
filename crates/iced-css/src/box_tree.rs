@@ -1305,6 +1305,8 @@ impl BoxTree {
             em_lengths,
             marker_images,
             outside_items,
+            grids,
+            grid_items,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes, 16.0)
             .map_err(failed)?;
         let weights: Vec<u16> = styles.iter().map(|style| style.weight).collect();
@@ -1454,7 +1456,10 @@ impl BoxTree {
             if !prepared.anonymous[arena] {
                 value.flex = paints[owner].flex;
                 value.flex_item = paints[owner].flex_item;
-                if value.flex.is_some() {
+                // CSS Grid 1, likewise.
+                value.grid = grids[owner].clone();
+                value.grid_item = grid_items[owner].clone();
+                if value.flex.is_some() || value.grid.is_some() {
                     value.establishes_bfc = true;
                 }
             }

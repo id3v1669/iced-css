@@ -70,6 +70,9 @@ pub struct DisplayResolution {
     /// `display: flex` or `inline-flex` (CSS Flexbox 1): `display` holds its outer role,
     /// block or inline-block, and its children are flex items.
     pub flex: bool,
+    /// `display: grid` or `inline-grid` (CSS Grid 1), likewise: its children are grid
+    /// items.
+    pub grid: bool,
 }
 impl Display {
     fn transformed(self) -> Self {
@@ -103,6 +106,7 @@ pub fn resolve_display(
             float,
             flow: Flow::Suppressed,
             flex: false,
+            grid: false,
         };
     }
     let (display, float, flow) = if matches!(position, Position::Absolute | Position::Fixed) {
@@ -130,5 +134,6 @@ pub fn resolve_display(
         float,
         flow,
         flex: false,
+        grid: false,
     }
 }

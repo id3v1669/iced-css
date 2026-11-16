@@ -581,8 +581,9 @@ fn supports_groups_apply_when_their_condition_holds() {
         ("(width: var(--x))", true),
         ("(width: red)", false),
         ("(no-such-property: 1)", false),
-        ("(display: grid)", false),
-        ("not (display: grid)", true),
+        ("(display: contents)", false),
+        ("(display: grid)", true),
+        ("not (display: contents)", true),
         ("not (width: 10px)", false),
         ("(width: 10px) and (height: 10px)", true),
         ("(width: 10px) and (width: red)", false),
@@ -689,6 +690,91 @@ fn display_flex_lays_children_out_as_flex_items() {
     let geometry = tree.layout(600.0, Some(400.0)).unwrap();
     let container = geometry[1].as_ref().unwrap().border;
     assert_eq!(container.right - container.left, 300.0);
+}
+
+#[test]
+fn display_grid_places_children_in_tracks() {
+    let root = || {
+        node(
+            "page",
+            vec![node(
+                "g",
+                vec![
+                    node("a", vec![]),
+                    node("b", vec![]),
+                    node("c", vec![]),
+                    node("d", vec![]),
+                ],
+            )],
+        )
+    };
+    // Border boxes of a to d as (left, top, width, height), and the container's height.
+    let laid = |css: &str| {
+        let tree = BoxTree::new(root(), css).unwrap();
+        let geometry = tree.layout(600.0, Some(400.0)).unwrap();
+        let area = |at: usize| {
+            let border = geometry[at].as_ref().unwrap().border;
+            (
+                border.left,
+                border.top,
+                border.right - border.left,
+                border.bottom - border.top,
+            )
+        };
+        ([area(2), area(3), area(4), area(5)], area(1).3)
+    };
+    let heights = "#a { height:20px; } #b { height:40px; } #c { height:10px; } #d { height:10px; }";
+    // Two columns, a fixed one and the rest; items fill row by row.
+    let (items, height) = laid(&format!(
+        "#g {{ display:grid; grid-template-columns:100px 1fr; }} {heights}"
+    ));
+    assert_eq!(items.map(|item| item.0), [0.0, 100.0, 0.0, 100.0]);
+    assert_eq!(items.map(|item| item.1), [0.0, 0.0, 40.0, 40.0]);
+    assert_eq!(items.map(|item| item.2), [100.0, 500.0, 100.0, 500.0]);
+    assert_eq!(height, 50.0);
+    // `repeat()`, `gap`, and an item stretched to its row.
+    let (items, height) = laid(&format!(
+        "#g {{ display:grid; grid-template-columns:repeat(3, 1fr); gap:20px 30px; }} {heights} #a {{ height:auto; }}"
+    ));
+    assert_eq!(items.map(|item| item.0), [0.0, 210.0, 420.0, 0.0]);
+    assert_eq!(items[0].3, 40.0);
+    assert_eq!(items[3].1, 60.0);
+    assert_eq!(height, 70.0);
+    // Line placement, with the shorthands.
+    let (items, _) = laid(&format!(
+        "#g {{ display:grid; grid-template-columns:repeat(3, 100px); grid-template-rows:30px 30px; }} {heights} #a {{ grid-column:2 / span 2; grid-row:2; }}"
+    ));
+    assert_eq!((items[0].0, items[0].1, items[0].2), (100.0, 30.0, 200.0));
+    assert_eq!(items.map(|item| item.1)[1..], [0.0, 0.0, 0.0]);
+    // Named areas.
+    let (items, _) = laid(&format!(
+        "#g {{ display:grid; grid-template-areas:\"head head\" \"side main\"; grid-template-columns:150px 1fr; }} {heights}
+         #a {{ grid-area:main; }} #b {{ grid-area:head; }} #c {{ grid-area:side; }}"
+    ));
+    assert_eq!((items[1].0, items[1].1, items[1].2), (0.0, 0.0, 600.0));
+    assert_eq!((items[2].0, items[2].1), (0.0, 40.0));
+    assert_eq!((items[0].0, items[0].1, items[0].2), (150.0, 40.0, 450.0));
+    // `minmax()`, `justify-items` and `align-items`.
+    let (items, _) = laid(&format!(
+        "#g {{ display:grid; grid-template-columns:minmax(50px, 200px) 1fr; grid-auto-rows:60px; justify-items:center; align-items:end; }} {heights} #a, #b, #c, #d {{ width:40px; }}"
+    ));
+    assert_eq!((items[0].0, items[0].1), (80.0, 40.0));
+    assert_eq!(items[1].0, 200.0 + 180.0);
+    // A column flow, and `grid` naming the flow.
+    let (items, _) = laid(&format!(
+        "#g {{ display:grid; grid:repeat(2, 50px) / auto-flow 120px; }} {heights}"
+    ));
+    assert_eq!(items.map(|item| item.0), [0.0, 0.0, 120.0, 120.0]);
+    assert_eq!(items.map(|item| item.1), [0.0, 50.0, 0.0, 50.0]);
+    // `inline-grid` shrinks to its tracks.
+    let tree = BoxTree::new(
+        root(),
+        &format!("#g {{ display:inline-grid; grid-template-columns:70px 80px; }} {heights}"),
+    )
+    .unwrap();
+    let geometry = tree.layout(600.0, Some(400.0)).unwrap();
+    let container = geometry[1].as_ref().unwrap().border;
+    assert_eq!(container.right - container.left, 150.0);
 }
 
 #[test]

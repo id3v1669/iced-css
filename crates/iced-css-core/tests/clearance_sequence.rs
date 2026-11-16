@@ -59,6 +59,7 @@ fn display() -> DisplayResolution {
         float: Float::None,
         flow: Flow::Normal,
         flex: false,
+        grid: false,
     }
 }
 

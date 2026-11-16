@@ -29,9 +29,10 @@ use iced_css_core::{
         absolute_height::{AbsoluteHeightError, AbsoluteHeightInput, absolute_height},
         block::{AutoLength, Direction},
         block_flow::{
-            Dim, FlexAlign, FlexContainer, FlexItem, FlexSpace, FlexWrap, FlowBox, FlowContent,
-            FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
-            content_boxes, layout_block_flow_baselines, preferred_content_widths,
+            AutoRepeat, Breadth, Dim, FlexAlign, FlexContainer, FlexItem, FlexSpace, FlexWrap,
+            FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
+            GridContainer, GridItem, GridLine, RowAlign, TableRole, TrackList, TrackSize,
+            content_boxes, grid_areas, layout_block_flow_baselines, preferred_content_widths,
         },
         clearance::ClearSide,
         display::{Display, Float, Position},
@@ -49,7 +50,10 @@ use iced_css_core::{
         },
         font_size::{FontSizeError, FontSizeTable},
         font_weight::{FontWeight, compute_font_weight},
-        property::{ContentItem, FontFamily, SpecifiedValue},
+        property::{
+            ContentItem, FontFamily, GRID_LIMIT, GridBreadth, GridRepeat, GridTrackEntry,
+            GridTrackSize, GridValue, SpecifiedValue,
+        },
         registry::PropertyId,
         text_align::{ComputedTextAlign, compute_text_align},
     },
@@ -1821,6 +1825,10 @@ pub struct TreePaint {
     /// Length longhands given in `em` or `ex`, or inherited from a parent's that were, per
     /// projected index: their pixels follow the font size.
     pub em_lengths: Vec<Vec<PropertyId>>,
+    /// `display: grid` or `inline-grid`: how the row's children are laid out as grid items.
+    pub grids: Vec<Option<Box<GridContainer>>>,
+    /// Where the row goes as a grid item; `None` is placed automatically.
+    pub grid_items: Vec<Option<Box<GridItem>>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -2219,6 +2227,8 @@ pub fn evaluate_tree_paint<'r>(
     // Per row: color, background, then the four border colors, for `inherit`.
     let mut colors: Vec<[ComputedColor<'r>; 6]> = Vec::with_capacity(projection.len());
     let mut paints: Vec<BoxPaint> = Vec::with_capacity(projection.len());
+    let mut grids: Vec<Option<Box<GridContainer>>> = vec![None; projection.len()];
+    let mut grid_items: Vec<Option<Box<GridItem>>> = vec![None; projection.len()];
     let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
     let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
     let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
@@ -2985,7 +2995,7 @@ pub fn evaluate_tree_paint<'r>(
             })
         };
         let space = |keyword: Option<&str>| match keyword {
-            Some("flex-end" | "end") => FlexSpace::End,
+            Some("flex-end" | "end" | "right") => FlexSpace::End,
             Some("center") => FlexSpace::Center,
             Some("space-between") => FlexSpace::SpaceBetween,
             Some("space-around") => FlexSpace::SpaceAround,
@@ -2995,8 +3005,10 @@ pub fn evaluate_tree_paint<'r>(
         };
         // `baseline` aligns at the start.
         let align = |keyword: Option<&str>| match keyword {
-            Some("flex-start" | "start" | "baseline") => Some(FlexAlign::Start),
-            Some("flex-end" | "end") => Some(FlexAlign::End),
+            Some("flex-start" | "start" | "self-start" | "left" | "baseline") => {
+                Some(FlexAlign::Start)
+            }
+            Some("flex-end" | "end" | "self-end" | "right") => Some(FlexAlign::End),
             Some("center") => Some(FlexAlign::Center),
             Some("stretch" | "normal") => Some(FlexAlign::Stretch),
             _ => None,
@@ -3040,6 +3052,183 @@ pub fn evaluate_tree_paint<'r>(
                 _ => 0,
             },
         };
+        // CSS Grid 1. None of these inherits; `inherit` on one reads as its initial value.
+        let grid_of = |name: &'static str| {
+            Ok::<_, E>(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Grid(value)) => Some(value),
+                _ => None,
+            })
+        };
+        let breadth = |breadth: &GridBreadth| match breadth {
+            GridBreadth::Length(target) => Breadth::Fixed(match own_length(target) {
+                Dim::Mix(pixels, percent) => Dim::Clamped(pixels, percent),
+                other => other,
+            }),
+            GridBreadth::Flex(number) => Breadth::Flex(
+                number
+                    .scaled_finite_f32(1.0, limits.numeric)
+                    .map_or(0.0, |converted| converted.value.max(0.0)),
+            ),
+            GridBreadth::Auto => Breadth::Auto,
+            GridBreadth::MinContent => Breadth::MinContent,
+            GridBreadth::MaxContent => Breadth::MaxContent,
+        };
+        let track = |size: &GridTrackSize| match size {
+            GridTrackSize::Breadth(one) => TrackSize::breadth(breadth(one)),
+            GridTrackSize::MinMax(min, max) => TrackSize {
+                min: breadth(min),
+                max: breadth(max),
+                fit: None,
+            },
+            GridTrackSize::FitContent(limit) => TrackSize {
+                min: Breadth::Auto,
+                max: Breadth::MaxContent,
+                fit: Some(own_length(limit)),
+            },
+        };
+        // Integer repetitions are written out; an automatic one is kept to count at layout.
+        let track_list = |entries: &[GridTrackEntry]| {
+            let mut list = TrackList {
+                sizes: Vec::new(),
+                names: vec![Vec::new()],
+                repeat: None,
+            };
+            let limit = GRID_LIMIT as usize;
+            for entry in entries {
+                match entry {
+                    GridTrackEntry::Names(names) => {
+                        let at = list.sizes.len();
+                        match list.repeat.as_mut().filter(|repeat| repeat.at == at) {
+                            Some(repeat) => repeat.after.extend(names.iter().cloned()),
+                            None => {
+                                if let Some(line) = list.names.last_mut() {
+                                    line.extend(names.iter().cloned());
+                                }
+                            }
+                        }
+                    }
+                    GridTrackEntry::Size(size) if list.sizes.len() < limit => {
+                        list.sizes.push(track(size));
+                        list.names.push(Vec::new());
+                    }
+                    GridTrackEntry::Size(_) => {}
+                    GridTrackEntry::Repeat(GridRepeat::Count(count), inner) => {
+                        for _ in 0..*count {
+                            for entry in inner {
+                                match entry {
+                                    GridTrackEntry::Names(names) => {
+                                        if let Some(line) = list.names.last_mut() {
+                                            line.extend(names.iter().cloned());
+                                        }
+                                    }
+                                    GridTrackEntry::Size(size) if list.sizes.len() < limit => {
+                                        list.sizes.push(track(size));
+                                        list.names.push(Vec::new());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    GridTrackEntry::Repeat(count, inner) => {
+                        let mut repeat = AutoRepeat {
+                            at: list.sizes.len(),
+                            fit: *count == GridRepeat::AutoFit,
+                            sizes: Vec::new(),
+                            names: vec![Vec::new()],
+                            after: Vec::new(),
+                        };
+                        for entry in inner {
+                            match entry {
+                                GridTrackEntry::Names(names) => {
+                                    if let Some(line) = repeat.names.last_mut() {
+                                        line.extend(names.iter().cloned());
+                                    }
+                                }
+                                GridTrackEntry::Size(size) => {
+                                    repeat.sizes.push(track(size));
+                                    repeat.names.push(Vec::new());
+                                }
+                                GridTrackEntry::Repeat(..) => {}
+                            }
+                        }
+                        list.repeat = Some(repeat);
+                    }
+                }
+            }
+            list
+        };
+        let auto_tracks = |name: &'static str| {
+            Ok::<_, E>(match grid_of(name)? {
+                Some(GridValue::Tracks(entries)) => {
+                    let sizes: Vec<TrackSize> = entries
+                        .iter()
+                        .filter_map(|entry| match entry {
+                            GridTrackEntry::Size(size) => Some(track(size)),
+                            _ => None,
+                        })
+                        .collect();
+                    if sizes.is_empty() {
+                        vec![TrackSize::AUTO]
+                    } else {
+                        sizes
+                    }
+                }
+                _ => vec![TrackSize::AUTO],
+            })
+        };
+        if matches!(keyword_of_own("display")?, Some("grid" | "inline-grid")) {
+            let template = |name: &'static str| {
+                Ok::<_, E>(match grid_of(name)? {
+                    Some(GridValue::Tracks(entries)) => track_list(entries),
+                    _ => TrackList::default(),
+                })
+            };
+            let (column_flow, dense) = match grid_of("grid-auto-flow")? {
+                Some(GridValue::Flow { column, dense }) => (*column, *dense),
+                _ => (false, false),
+            };
+            let content = |keyword: Option<&str>| match keyword {
+                None | Some("normal" | "stretch") => FlexSpace::Stretch,
+                other => space(other),
+            };
+            grids[index] = Some(Box::new(GridContainer {
+                columns: template("grid-template-columns")?,
+                rows: template("grid-template-rows")?,
+                areas: match grid_of("grid-template-areas")? {
+                    Some(GridValue::Areas(rows)) => grid_areas(rows),
+                    _ => Vec::new(),
+                },
+                auto_columns: auto_tracks("grid-auto-columns")?,
+                auto_rows: auto_tracks("grid-auto-rows")?,
+                column_flow,
+                dense,
+                justify_content: content(keyword_of_own("justify-content")?),
+                align_content: content(keyword_of_own("align-content")?),
+                justify_items: align(keyword_of_own("justify-items")?)
+                    .unwrap_or(FlexAlign::Stretch),
+                align_items: align(keyword_of_own("align-items")?).unwrap_or(FlexAlign::Stretch),
+                gap: [gap("row-gap")?, gap("column-gap")?],
+            }));
+        }
+        let line = |name: &'static str| {
+            Ok::<_, E>(match grid_of(name)? {
+                Some(GridValue::Line(line)) => GridLine {
+                    span: line.span,
+                    number: line.number,
+                    name: line.name.clone(),
+                },
+                _ => GridLine::default(),
+            })
+        };
+        let item = GridItem {
+            row: [line("grid-row-start")?, line("grid-row-end")?],
+            column: [line("grid-column-start")?, line("grid-column-end")?],
+            justify: align(keyword_of_own("justify-self")?),
+        };
+        if item != GridItem::default() {
+            grid_items[index] = Some(Box::new(item));
+        }
         // CSS Backgrounds 3: the first outer shadow; iced draws one, without a spread.
         // Not inherited; `inherit` takes the parent's.
         paints[index].shadow = match defaulted("box-shadow")? {
@@ -3627,5 +3816,7 @@ pub fn evaluate_tree_paint<'r>(
         em_lengths,
         marker_images,
         outside_items,
+        grids,
+        grid_items,
     })
 }

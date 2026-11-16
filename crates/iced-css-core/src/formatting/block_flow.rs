@@ -22,6 +22,12 @@ use std::num::NonZeroUsize;
 #[path = "flex_layout.rs"]
 mod flex_layout;
 pub use flex_layout::{FlexAlign, FlexContainer, FlexItem, FlexSpace, FlexWrap};
+#[path = "grid_layout.rs"]
+mod grid_layout;
+pub use grid_layout::{
+    AutoRepeat, Breadth, GridArea, GridContainer, GridItem, GridLine, TrackList, TrackSize,
+    grid_areas,
+};
 
 /// A specified length before its containing block is known.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -151,6 +157,12 @@ pub struct FlowBox {
     pub flex: Option<FlexContainer>,
     /// What this box is as a flex item, when its parent is a flex container.
     pub flex_item: FlexItem,
+    /// `display: grid` or `inline-grid`: its children are grid items. It establishes a
+    /// formatting context, so `establishes_bfc` is set with it.
+    pub grid: Option<Box<GridContainer>>,
+    /// What this box is as a grid item, when its parent is a grid container; `None` is
+    /// placed automatically.
+    pub grid_item: Option<Box<GridItem>>,
     /// `box-sizing: border-box`: `width`, `height` and their minimums and maximums are
     /// of the border box. [`content_boxes`] turns them into content sizes before layout.
     pub border_box: bool,
@@ -194,6 +206,8 @@ impl Default for FlowBox {
             establishes_bfc: false,
             flex: None,
             flex_item: FlexItem::default(),
+            grid: None,
+            grid_item: None,
             border_box: false,
             width: Dim::Auto,
             min_width: Dim::Auto,
@@ -876,6 +890,9 @@ impl Solver<'_> {
         }
         if let Some(flex) = value.flex {
             return self.measure_flex(node, flex);
+        }
+        if let Some(grid) = value.grid.as_deref() {
+            return self.measure_grid(node, grid);
         }
         if let Some(TableRole::Table { spacing }) = value.table {
             let (rows, captions) = self.table_parts(node);
@@ -1965,6 +1982,8 @@ impl Solver<'_> {
             flow.y = self.layout_table(node, spacing, inner, content_top)?;
         } else if let Some(flex) = value.flex {
             flow.y = self.layout_flex(node, flex, inner, content_top)?;
+        } else if let Some(grid) = self.boxes[node].grid.as_deref() {
+            flow.y = self.layout_grid(node, grid, inner, content_top)?;
         } else {
             if let Some(height) = self.leaf_height(node, width.0) {
                 flow.y += height;
