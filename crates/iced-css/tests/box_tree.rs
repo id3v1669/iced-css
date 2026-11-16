@@ -912,6 +912,50 @@ fn keyframe_animations_run_their_timeline() {
 }
 
 #[test]
+fn viewport_units_measure_the_viewport_the_tree_is_styled_for() {
+    use iced_css::box_tree::MediaEnvironment;
+    let size = |css: &str, viewport: Option<(f32, f32)>| {
+        let mut tree = BoxTree::new(node("page", vec![node("a", vec![])]), css).unwrap();
+        if viewport.is_some() {
+            tree = tree
+                .with_media(MediaEnvironment {
+                    viewport,
+                    dark: None,
+                })
+                .unwrap();
+        }
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        (border.right - border.left, border.bottom - border.top)
+    };
+    let viewport = Some((800.0, 600.0));
+    assert_eq!(
+        size("#a { width:50vw; height:10vh; }", viewport),
+        (400.0, 60.0)
+    );
+    assert_eq!(
+        size("#a { width:10vmax; height:10vmin; }", viewport),
+        (80.0, 60.0)
+    );
+    assert_eq!(
+        size("#a { width:calc(50vw - 100px); height:1px; }", viewport),
+        (300.0, 1.0)
+    );
+    assert_eq!(
+        size(
+            "#page { --w:25vw; } #a { width:var(--w); height:1px; }",
+            viewport
+        ),
+        (200.0, 1.0)
+    );
+    // With no viewport given they are no length: the declaration before stands.
+    assert_eq!(
+        size("#a { width:100px; width:50vw; height:1px; }", None),
+        (100.0, 1.0)
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

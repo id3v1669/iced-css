@@ -106,7 +106,10 @@ cargo test --workspace --features iced-css/image,iced-css/svg
 - **Block layout:** nested boxes, margin collapsing, floats, clearance, formatting contexts,
   `min-`/`max-` sizes, percentages, `em` and `ex`, and from CSS Values 3 `rem` (the root's
   font size) and `ch` (taken as half the font size; no font is measured for it). A `rem`
-  length does not move with an animation of the root's `font-size`.
+  length does not move with an animation of the root's `font-size`. `vw`, `vh`, `vmin` and
+  `vmax` measure the viewport given to `BoxTree::with_media`, as pixels when the sheets are
+  parsed, in `calc()` and `var()` too; with no viewport given they are no length, so the
+  declaration is dropped. They do not follow the widget's own size.
   `calc()` sums lengths and percentages wherever a length is read, in shorthands too; a
   negative result clips to nothing where a negative length is invalid. Its numbers are
   32-bit floats, and it is not read for `line-height` numbers, `z-index` or colors.

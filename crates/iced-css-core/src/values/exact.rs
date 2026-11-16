@@ -234,11 +234,21 @@ impl ExactLength {
         let negative = value.is_negative();
         let mut numerator = value.coefficient;
         numerator.multiply_small(multiplier, budget)?;
+        // The divisor's factors of 2, 5, 3 and 127; it has no others.
+        let mut rest = divisor;
+        let mut factors = [0usize; 4];
+        for (power, prime) in factors.iter_mut().zip([2, 5, 3, 127]) {
+            while rest > 1 && rest % prime == 0 {
+                rest /= prime;
+                *power += 1;
+            }
+        }
+        debug_assert_eq!(rest, 1, "a divisor of 2, 5, 3 and 127 only");
         let mut denominator = [
-            value.scale,
-            value.scale,
-            usize::from(divisor == 3),
-            usize::from(divisor == 127),
+            value.scale + factors[0],
+            value.scale + factors[1],
+            factors[2],
+            factors[3],
         ];
         for (power, prime) in denominator.iter_mut().zip([2, 5, 3, 127]) {
             while *power > 0 && numerator.remainder(prime, budget)? == 0 {
@@ -434,6 +444,28 @@ impl LengthTarget {
                 ));
             }
         }
+        // CSS Values 3: `vw`, `vh`, `vmin` and `vmax` are pixels of the viewport they are
+        // parsed for; with none, they are no length.
+        for unit in ["vmin", "vmax", "vw", "vh"] {
+            if let Some(number) = input
+                .len()
+                .checked_sub(unit.len())
+                .and_then(|at| input.get(at..).filter(|end| end.eq_ignore_ascii_case(unit)))
+                .and_then(|_| input.get(..input.len() - unit.len()))
+            {
+                let Some(pixels) = crate::syntax::viewport_unit(unit) else {
+                    return Err(NumericError::UnsupportedUnit);
+                };
+                // Hundredths of a pixel per unit, exactly.
+                let multiplier = (pixels * 10_000.0).round().clamp(0.0, f64::from(u32::MAX)) as u32;
+                return Ok(Self::Absolute(ExactLength::from_decimal(
+                    Decimal::parse_with(number, limits, &mut budget)?,
+                    multiplier,
+                    10_000,
+                    &mut budget,
+                )?));
+            }
+        }
         let zero = Decimal::parse_with(input, limits, &mut budget)?;
         if !zero.is_zero() {
             return Err(NumericError::UnsupportedUnit);
@@ -617,6 +649,12 @@ impl LengthTarget {
             (4, 3)
         } else if unit.eq_ignore_ascii_case("pc") {
             (16, 1)
+        } else if let Some(pixels) = crate::syntax::viewport_unit(unit) {
+            // CSS Values 3: hundredths of a pixel per viewport unit, exactly.
+            (
+                (pixels * 10_000.0).round().clamp(0.0, f64::from(u32::MAX)) as u32,
+                10_000,
+            )
         } else {
             return Err(NumericError::UnsupportedUnit);
         };

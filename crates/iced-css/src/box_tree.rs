@@ -1380,6 +1380,7 @@ impl BoxTree {
         .map_err(failed)?;
         // CSS Custom Properties: each element's custom properties, and what its values
         // holding `var()` parse to with them, before the passes that read the winners.
+        let source_media = source.media;
         let variables = if bundle.uses_variables() {
             let source = snapshot.selector_source(selectors()).map_err(failed)?;
             let count = snapshot.construction().nodes().len();
@@ -1391,8 +1392,11 @@ impl BoxTree {
                 .min(nz(isize::MAX as usize));
             // Every parent follows its children in the source's order.
             Some(
-                resolve_variables(&bundle, &source, (0..count).rev(), per_target, colors())
-                    .map_err(failed)?,
+                // Values substituted here parse at the same viewport as the sheets.
+                with_media_environment(source_media, || {
+                    resolve_variables(&bundle, &source, (0..count).rev(), per_target, colors())
+                })
+                .map_err(failed)?,
             )
         } else {
             None

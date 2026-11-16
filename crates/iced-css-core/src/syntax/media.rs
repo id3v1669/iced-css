@@ -51,6 +51,26 @@ pub fn with_media_environment<T>(environment: MediaEnvironment, parse: impl FnOn
     parse()
 }
 
+/// The viewport of the [`with_media_environment`] call this thread is in: what
+/// `vw`, `vh`, `vmin` and `vmax` measure (CSS Values 3).
+pub(crate) fn current_viewport() -> Option<(f32, f32)> {
+    ENVIRONMENT.with(std::cell::Cell::get).viewport
+}
+
+/// One viewport unit's pixels at that viewport, or `None` for no viewport or no such unit.
+pub(crate) fn viewport_unit(unit: &str) -> Option<f64> {
+    let (width, height) = current_viewport()?;
+    let (width, height) = (f64::from(width), f64::from(height));
+    let percent = match unit.to_ascii_lowercase().as_str() {
+        "vw" => width,
+        "vh" => height,
+        "vmin" => width.min(height),
+        "vmax" => width.max(height),
+        _ => return None,
+    };
+    Some(percent / 100.0)
+}
+
 /// Validate a complete media-list prelude and match the screen canvas: CSS2.2 media types,
 /// and Media Queries Level 3 queries over the environment of [`with_media_environment`].
 /// Consumes the entire list before accepting a match. Unknown identifiers do not

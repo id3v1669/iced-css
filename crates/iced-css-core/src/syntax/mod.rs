@@ -25,6 +25,7 @@ pub use strings::decode_uri;
 
 pub(crate) use strings::decode_uri_budget;
 mod media;
+pub(crate) use media::viewport_unit;
 pub use media::{
     MediaEnvironment, MediaError, MediaListContext, media_matches_screen, with_media_environment,
 };

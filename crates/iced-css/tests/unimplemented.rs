@@ -70,9 +70,7 @@ css_todo_test!(
     text_decoration_transform,
     "text-decoration / text-transform"
 );
-css_todo_test!(text_wrapping, "white-space / text-overflow / overflow-wrap");
 
-css_todo_test!(units_relative, "em / rem / vw / vh / vmin / vmax");
 css_todo_test!(percent_of_window, "% on a root widget");
 css_todo_test!(
     percent_height_against_auto_parent,

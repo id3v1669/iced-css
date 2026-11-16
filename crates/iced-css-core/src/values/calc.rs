@@ -81,7 +81,8 @@ impl<'a> Parser<'a, '_> {
                     "ex" => (3, 1.0),
                     "rem" => (4, 1.0),
                     "ch" => (5, 1.0),
-                    _ => return None,
+                    // CSS Values 3: the viewport units, at the viewport they are parsed for.
+                    other => (0, crate::syntax::viewport_unit(other)?),
                 };
                 terms[slot] = number * scale;
                 Some(Term::Length(terms))
