@@ -21,6 +21,8 @@ impl SelectorSource for Tree {
             hovered: false,
             active: false,
             focused: false,
+            empty: false,
+            position: None,
         })
     }
     fn parent(&self, node: usize) -> Option<usize> {
@@ -28,6 +30,9 @@ impl SelectorSource for Tree {
     }
     fn previous_element(&self, node: usize) -> Option<usize> {
         self.0.get(node)?.previous
+    }
+    fn next_element(&self, node: usize) -> Option<usize> {
+        self.0.iter().position(|other| other.previous == Some(node))
     }
 }
 fn node(name: &'static str, class: &str, parent: Option<usize>, previous: Option<usize>) -> Node {
@@ -234,5 +239,114 @@ fn ancestor_metadata_lookup_uses_the_visited_nodes_attribute_count() {
     assert_eq!(
         matching_specificity(&selectors("[zz] > *"), &tree, 1, None, limits()),
         Ok(None)
+    );
+}
+
+// Selectors Level 3.
+/// A `row` holding `text.a`, `button.b`, `text.c`, `text.d` in that order, at 1..=4.
+fn level3_tree() -> Tree {
+    Tree(vec![
+        node("row", "", None, None),
+        node("text", "a", Some(0), None),
+        node("button", "b", Some(0), Some(1)),
+        node("text", "c", Some(0), Some(2)),
+        node("text", "d", Some(0), Some(3)),
+    ])
+}
+fn matching(tree: &Tree, input: &str) -> Vec<usize> {
+    let selector = &selectors(input)[0];
+    (0..tree.0.len())
+        .filter(|node| matches_selector(selector, tree, *node, None, limits()).unwrap())
+        .collect()
+}
+#[test]
+fn structural_pseudo_classes_count_siblings_from_either_end() {
+    let tree = level3_tree();
+    assert_eq!(matching(&tree, ":nth-child(2)"), [2]);
+    assert_eq!(matching(&tree, ":nth-child(odd)"), [1, 3]);
+    assert_eq!(matching(&tree, ":nth-child(even)"), [2, 4]);
+    assert_eq!(matching(&tree, ":nth-child(2n+1)"), [1, 3]);
+    assert_eq!(matching(&tree, ":nth-child(-n+2)"), [1, 2]);
+    assert_eq!(matching(&tree, ":nth-child(n+3)"), [3, 4]);
+    assert_eq!(matching(&tree, ":nth-child(n)"), [1, 2, 3, 4]);
+    assert_eq!(matching(&tree, ":nth-child(0)"), [] as [usize; 0]);
+    assert_eq!(matching(&tree, ":nth-last-child(1)"), [4]);
+    assert_eq!(matching(&tree, ":nth-last-child(-n+2)"), [3, 4]);
+    assert_eq!(matching(&tree, ":last-child"), [4]);
+    assert_eq!(matching(&tree, ":first-child"), [1]);
+    // The root is no one's child.
+    assert_eq!(matching(&tree, ":only-child"), [] as [usize; 0]);
+    assert_eq!(matching(&tree, ":root"), [0]);
+}
+#[test]
+fn of_type_forms_count_only_siblings_of_the_same_type() {
+    let tree = level3_tree();
+    assert_eq!(matching(&tree, "text:nth-of-type(2)"), [3]);
+    assert_eq!(matching(&tree, ":nth-of-type(1)"), [1, 2]);
+    assert_eq!(matching(&tree, ":first-of-type"), [1, 2]);
+    assert_eq!(matching(&tree, ":last-of-type"), [2, 4]);
+    assert_eq!(matching(&tree, ":nth-last-of-type(2)"), [3]);
+    assert_eq!(matching(&tree, ":only-of-type"), [2]);
+    let lone = Tree(vec![
+        node("row", "", None, None),
+        node("text", "", Some(0), None),
+    ]);
+    assert_eq!(matching(&lone, ":only-child"), [1]);
+}
+#[test]
+fn negation_takes_one_simple_selector() {
+    let tree = level3_tree();
+    assert_eq!(matching(&tree, "row > :not(text)"), [2]);
+    assert_eq!(matching(&tree, "text:not(.a)"), [3, 4]);
+    assert_eq!(
+        matching(&tree, ":not(:first-child):not(:last-child)"),
+        [0, 2, 3]
+    );
+    assert_eq!(matching(&tree, "text:not(:nth-child(odd))"), [4]);
+    assert_eq!(matching(&tree, ":not(*)"), [] as [usize; 0]);
+}
+#[test]
+fn the_general_sibling_combinator_reaches_any_earlier_sibling() {
+    let tree = level3_tree();
+    assert_eq!(matching(&tree, ".a ~ text"), [3, 4]);
+    assert_eq!(matching(&tree, "button ~ .d"), [4]);
+    assert_eq!(matching(&tree, ".c ~ .a"), [] as [usize; 0]);
+    assert_eq!(matching(&tree, ".a ~ button ~ .d"), [4]);
+    assert_eq!(matching(&tree, ".a ~ .c + .d"), [4]);
+    assert_eq!(matching(&tree, "row > .a ~ .d"), [4]);
+}
+#[test]
+fn substring_attribute_matches_need_a_non_empty_value() {
+    let mut tree = level3_tree();
+    tree.0[1]
+        .metadata
+        .set_attribute("href", "https://example.org/a.png");
+    assert_eq!(matching(&tree, "[href^=https]"), [1]);
+    assert_eq!(matching(&tree, "[href$='.png']"), [1]);
+    assert_eq!(matching(&tree, "[href*='example']"), [1]);
+    assert_eq!(matching(&tree, "[href^=http]:not([href$='.jpg'])"), [1]);
+    for empty in ["[href^='']", "[href$='']", "[href*='']"] {
+        assert_eq!(matching(&tree, empty), [] as [usize; 0], "{empty}");
+    }
+}
+#[test]
+fn counting_siblings_is_charged_to_the_matching_budget() {
+    let mut nodes = vec![node("row", "", None, None)];
+    for at in 0..200 {
+        nodes.push(node("text", "", Some(0), (at > 0).then_some(at)));
+    }
+    let tree = Tree(nodes);
+    let small = MatchLimits {
+        work: NonZeroUsize::new(100).unwrap(),
+        retained_bytes: NonZeroUsize::new(65536).unwrap(),
+    };
+    let selector = &selectors(":nth-child(100)")[0];
+    assert_eq!(
+        matches_selector(selector, &tree, 100, None, small),
+        Err(MatchError::Work)
+    );
+    assert_eq!(
+        matches_selector(selector, &tree, 100, None, limits()),
+        Ok(true)
     );
 }

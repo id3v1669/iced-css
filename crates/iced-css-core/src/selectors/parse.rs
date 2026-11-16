@@ -12,6 +12,8 @@ pub enum Combinator {
     Descendant,
     Child,
     Adjacent,
+    /// Selectors Level 3 `~`: any earlier sibling.
+    Sibling,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PseudoElement {
@@ -209,6 +211,22 @@ impl<'a> Parser<'a> {
             TokenKind::Includes => AttributeOperator::Includes,
             TokenKind::DashMatch => AttributeOperator::DashMatch,
             TokenKind::Delim if look.token.raw == "=" => AttributeOperator::Equal,
+            // Selectors Level 3 substring matches: two delimiters with nothing between.
+            TokenKind::Delim if matches!(look.token.raw, "^" | "$" | "*") => {
+                let equals = self.take()?;
+                if equals.space || equals.token.kind != TokenKind::Delim || equals.token.raw != "="
+                {
+                    return Err(SyntaxError {
+                        offset: equals.start,
+                        fault: SyntaxFault::InvalidSelector,
+                    });
+                }
+                match look.token.raw {
+                    "^" => AttributeOperator::Prefix,
+                    "$" => AttributeOperator::Suffix,
+                    _ => AttributeOperator::Substring,
+                }
+            }
             _ => {
                 return Err(SyntaxError {
                     offset: look.start,
@@ -233,6 +251,77 @@ impl<'a> Parser<'a> {
             operator,
             value,
         })
+    }
+    /// `an+b` up to the closing parenthesis, which it consumes (Selectors Level 3, 6.6.5.2).
+    fn nth(&mut self) -> Result<(i32, i32), SyntaxError> {
+        let invalid = |parser: &Self| parser.invalid();
+        // The tokens' text, a space kept only where one was written.
+        let mut text = String::new();
+        loop {
+            let look = self.take()?;
+            match look.token.kind {
+                TokenKind::CloseParen => break,
+                TokenKind::Ident | TokenKind::Number | TokenKind::Dimension => {}
+                TokenKind::Delim if matches!(look.token.raw, "+" | "-") => {}
+                _ => {
+                    return Err(SyntaxError {
+                        offset: look.start,
+                        fault: SyntaxFault::InvalidSelector,
+                    });
+                }
+            }
+            if look.token.raw.len() > 32 || text.len() > 64 {
+                return Err(invalid(self));
+            }
+            self.work = self
+                .work
+                .checked_sub(look.token.raw.len())
+                .ok_or_else(|| self.resource(SyntaxResource::Work))?;
+            if look.space && !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(look.token.raw);
+        }
+        parse_nth(&text.to_ascii_lowercase()).ok_or_else(|| invalid(self))
+    }
+    /// The one simple selector inside `:not(`, and its closing parenthesis.
+    fn negated(&mut self) -> Result<SimpleSelector, SyntaxError> {
+        let look = self.peek()?.ok_or_else(|| self.invalid())?;
+        let inner = match look.token.kind {
+            TokenKind::Ident => SimpleSelector::Type(self.identifier()?),
+            TokenKind::Delim if look.token.raw == "*" => {
+                self.take()?;
+                SimpleSelector::Universal
+            }
+            TokenKind::Hash => {
+                self.take()?;
+                SimpleSelector::Id(self.name(&look.token.raw[1..], look.start + 1, true, false)?)
+            }
+            TokenKind::Delim if look.token.raw == "." => {
+                self.take()?;
+                if self.peek()?.is_some_and(|look| look.space) {
+                    return Err(self.invalid());
+                }
+                SimpleSelector::Class(self.identifier()?)
+            }
+            TokenKind::OpenBracket => {
+                self.take()?;
+                self.attribute()?
+            }
+            TokenKind::Colon => {
+                self.take()?;
+                // No pseudo-element and no negation inside a negation.
+                let mut element = None;
+                match self.pseudo(&mut element)? {
+                    Some(SimpleSelector::Not(_)) | None => return Err(self.invalid()),
+                    Some(inner) if element.is_none() => inner,
+                    Some(_) => return Err(self.invalid()),
+                }
+            }
+            _ => return Err(self.invalid()),
+        };
+        self.expect(TokenKind::CloseParen)?;
+        Ok(inner)
     }
     fn pseudo(
         &mut self,
@@ -265,14 +354,30 @@ impl<'a> Parser<'a> {
                 true,
                 false,
             )?;
-            let lang = name.eq_ignore_ascii_case("lang");
+            let function = name.to_ascii_lowercase();
             self.release_name(name);
-            if !lang {
+            // A functional pseudo-class has one colon.
+            if double {
                 return Err(self.invalid());
             }
-            let argument = self.identifier()?;
-            self.expect(TokenKind::CloseParen)?;
-            return Ok(Some(SimpleSelector::Lang(argument)));
+            return Ok(Some(match function.as_str() {
+                "lang" => {
+                    let argument = self.identifier()?;
+                    self.expect(TokenKind::CloseParen)?;
+                    SimpleSelector::Lang(argument)
+                }
+                "not" => SimpleSelector::Not(Box::new(self.negated()?)),
+                "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" => {
+                    let (a, b) = self.nth()?;
+                    SimpleSelector::Nth {
+                        a,
+                        b,
+                        last: function.contains("last"),
+                        of_type: function.ends_with("of-type"),
+                    }
+                }
+                _ => return Err(self.invalid()),
+            }));
         }
         if look.token.kind != TokenKind::Ident {
             return Err(self.invalid());
@@ -293,7 +398,24 @@ impl<'a> Parser<'a> {
         } else if name.eq_ignore_ascii_case("focus") {
             Some(SimpleSelector::Focus)
         } else {
-            None
+            let nth = |last, of_type| {
+                Some(SimpleSelector::Nth {
+                    a: 0,
+                    b: 1,
+                    last,
+                    of_type,
+                })
+            };
+            match name.to_ascii_lowercase().as_str() {
+                "root" => Some(SimpleSelector::Root),
+                "empty" => Some(SimpleSelector::Empty),
+                "last-child" => nth(true, false),
+                "first-of-type" => nth(false, true),
+                "last-of-type" => nth(true, true),
+                "only-child" => Some(SimpleSelector::Only { of_type: false }),
+                "only-of-type" => Some(SimpleSelector::Only { of_type: true }),
+                _ => None,
+            }
         };
         if pseudo.is_none() {
             *target = if name.eq_ignore_ascii_case("before") {
@@ -382,7 +504,11 @@ impl<'a> Parser<'a> {
         test: SimpleSelector,
         specificity: &mut Specificity,
     ) -> Result<(), SyntaxError> {
-        let delta = match test {
+        // A negation counts as its argument does (Selectors Level 3, 9).
+        let delta = match match &test {
+            SimpleSelector::Not(inner) => inner,
+            other => other,
+        } {
             SimpleSelector::Universal => Specificity::ZERO,
             SimpleSelector::Type(_) => Specificity::selector(0, 0, 1),
             SimpleSelector::Id(_) => Specificity::selector(1, 0, 0),
@@ -412,19 +538,20 @@ impl<'a> Parser<'a> {
             if selector.pseudo.is_some() {
                 return Err(self.invalid());
             }
-            let combinator =
-                if look.token.kind == TokenKind::Delim && matches!(look.token.raw, ">" | "+") {
-                    self.take()?;
-                    if look.token.raw == ">" {
-                        Combinator::Child
-                    } else {
-                        Combinator::Adjacent
-                    }
-                } else if look.space {
-                    Combinator::Descendant
-                } else {
-                    return Err(self.invalid());
-                };
+            let combinator = if look.token.kind == TokenKind::Delim
+                && matches!(look.token.raw, ">" | "+" | "~")
+            {
+                self.take()?;
+                match look.token.raw {
+                    ">" => Combinator::Child,
+                    "+" => Combinator::Adjacent,
+                    _ => Combinator::Sibling,
+                }
+            } else if look.space {
+                Combinator::Descendant
+            } else {
+                return Err(self.invalid());
+            };
             self.push(&mut selector.combinators, combinator)?;
         }
         if selector.pseudo.is_some() {
@@ -436,7 +563,48 @@ impl<'a> Parser<'a> {
         Ok(selector)
     }
 }
-/// Parse a complete CSS2.2 selector group. Any invalid member rejects the group.
+/// `an+b` in lower case with single spaces where any were written: `odd`, `even`, an
+/// integer, or `[sign][digits]n` with an optional signed offset whose sign may stand apart.
+fn parse_nth(text: &str) -> Option<(i32, i32)> {
+    match text {
+        "odd" => return Some((2, 1)),
+        "even" => return Some((2, 0)),
+        _ => {}
+    }
+    let integer = |digits: &str| -> Option<i32> {
+        (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| digits.parse().ok())
+            .flatten()
+    };
+    let signed = |text: &str| -> Option<i32> {
+        match text.strip_prefix('-') {
+            Some(digits) => integer(digits).map(|value| -value),
+            None => integer(text.strip_prefix('+').unwrap_or(text)),
+        }
+    };
+    let Some((step, offset)) = text.split_once('n') else {
+        return signed(text).map(|b| (0, b));
+    };
+    let a = match step {
+        "" | "+" => 1,
+        "-" => -1,
+        _ => signed(step)?,
+    };
+    // After `n`: nothing, or a sign and digits with spaces allowed around the sign only.
+    let offset = offset.trim_start_matches(' ');
+    if offset.is_empty() {
+        return Some((a, 0));
+    }
+    let negative = match offset.as_bytes()[0] {
+        b'+' => false,
+        b'-' => true,
+        _ => return None,
+    };
+    let digits = offset[1..].trim_start_matches(' ');
+    let b = integer(digits)?;
+    Some((a, if negative { -b } else { b }))
+}
+/// Parse a complete selector group: CSS 2.2 selectors and those of Selectors Level 3. Any invalid member rejects the group.
 /// Work, retained semantic-string/AST capacities and AST entry count are bounded.
 /// Fixed state, temporary decoder repair buffers and allocator overhead are not
 /// retained AST storage. No partial list is returned after an error.

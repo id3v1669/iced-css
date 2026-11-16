@@ -153,6 +153,66 @@ fn out_of_range_percentages_clip() {
 }
 
 #[test]
+fn selectors_level3_style_boxes_by_place_negation_and_siblings() {
+    let root = || {
+        node(
+            "page",
+            vec![
+                node("a", vec![]),
+                text("b", "text"),
+                node("c", vec![]),
+                node("d", vec![]),
+            ],
+        )
+    };
+    let colors = |css: &str| -> Vec<Option<[f32; 3]>> {
+        let tree = BoxTree::new(root(), css).unwrap();
+        (1..=4).map(|at| tree.paints()[at].background).collect()
+    };
+    let red = Some([1.0, 0.0, 0.0]);
+    assert_eq!(
+        colors("#page > :nth-child(odd) { background:#ff0000; }"),
+        [red, None, red, None]
+    );
+    assert_eq!(
+        colors("#page > :nth-last-child(-n+2) { background:#ff0000; }"),
+        [None, None, red, red]
+    );
+    assert_eq!(
+        colors("#page > :last-child, #page > :first-child { background:#ff0000; }"),
+        [red, None, None, red]
+    );
+    assert_eq!(
+        colors("#page > :not(#b):not(:last-child) { background:#ff0000; }"),
+        [red, None, red, None]
+    );
+    assert_eq!(
+        colors("#b ~ * { background:#ff0000; }"),
+        [None, None, red, red]
+    );
+    // A box with text of its own is not empty; the page with children is neither.
+    assert_eq!(
+        colors(":empty { background:#ff0000; }"),
+        [red, None, red, red]
+    );
+    assert_eq!(
+        colors("[id^=c], [id$=d], [id*=a] { background:#ff0000; }"),
+        [red, None, red, red]
+    );
+    // `:root` is the page; its children are untouched.
+    let tree = BoxTree::new(root(), ":root { background:#ff0000; }").unwrap();
+    assert_eq!(tree.paints()[0].background, red);
+    assert_eq!(tree.paints()[1].background, None);
+    // A negation counts as its argument: one id beats the class-level `:nth-child`.
+    assert_eq!(
+        colors(
+            "#page > :not(#zz) { background:#ff0000; } #page > :nth-child(1) { background:#00ff00; }"
+        )[0],
+        red
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

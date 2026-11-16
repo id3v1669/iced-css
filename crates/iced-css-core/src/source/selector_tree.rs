@@ -54,6 +54,7 @@ pub struct ElementIndex(usize);
 struct Indexed<'a> {
     parent: Option<ElementIndex>,
     previous: Option<ElementIndex>,
+    next: Option<ElementIndex>,
     local_language: Option<Option<&'a str>>,
     language: Option<&'a str>,
     css_id: Option<&'a str>,
@@ -235,6 +236,9 @@ impl<'a> SelectorTree<'a> {
                 }
                 linked[child.0] = true;
                 indexed[child.0].previous = previous;
+                if let Some(previous) = previous {
+                    indexed[previous.0].next = Some(child);
+                }
                 previous = Some(child);
             }
         }
@@ -295,6 +299,9 @@ impl SelectorSource for SelectorTree<'_> {
             hovered: indexed.hovered,
             active: indexed.active,
             focused: element.focused,
+            // This view holds elements only: an element's own text is not known to it.
+            empty: element.node.children.is_empty(),
+            position: None,
         })
     }
     fn parent(&self, node: ElementIndex) -> Option<ElementIndex> {
@@ -302,5 +309,8 @@ impl SelectorSource for SelectorTree<'_> {
     }
     fn previous_element(&self, node: ElementIndex) -> Option<ElementIndex> {
         self.indexed.get(node.0)?.previous
+    }
+    fn next_element(&self, node: ElementIndex) -> Option<ElementIndex> {
+        self.indexed.get(node.0)?.next
     }
 }

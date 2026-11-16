@@ -35,7 +35,7 @@ fn css22_selector_chain_preserves_relations_values_and_specificity() {
     );
 }
 #[test]
-fn grouping_is_atomic_and_newer_selector_forms_are_not_admitted() {
+fn grouping_is_atomic_and_forms_past_level3_are_not_admitted() {
     assert_eq!(parse_selector_list("text, .x", limits()).unwrap().len(), 2);
     for input in [
         "",
@@ -48,9 +48,10 @@ fn grouping_is_atomic_and_newer_selector_forms_are_not_admitted() {
         "text:: before",
         "text:::before",
         "text::lang(en)",
-        ":not(.x)",
-        "text~.x",
-        "[a^=x]",
+        ":not(.x, .y)",
+        ":is(.x)",
+        ":nth-child(2 of .x)",
+        "text||.x",
         "[a=x i]",
         ".x:before:hover",
         ".x:before > text",
@@ -218,4 +219,127 @@ fn actual_retained_ast_capacities_obey_all_small_budgets() {
         parse_selector_list("*", budget).unwrap_err().fault,
         SyntaxFault::Resource(SyntaxResource::Bytes)
     ));
+}
+
+// Selectors Level 3.
+fn one(input: &str) -> Selector {
+    let mut list = parse_selector_list(input, limits()).unwrap();
+    assert_eq!(list.len(), 1, "{input}");
+    list.remove(0)
+}
+fn nth(input: &str) -> (i32, i32) {
+    match one(&format!(":nth-child({input})")).compounds[0].tests[0] {
+        SimpleSelector::Nth { a, b, .. } => (a, b),
+        ref other => panic!("{input}: {other:?}"),
+    }
+}
+#[test]
+fn an_plus_b_takes_the_level3_forms() {
+    for (input, expected) in [
+        ("odd", (2, 1)),
+        ("EVEN", (2, 0)),
+        ("3", (0, 3)),
+        ("-3", (0, -3)),
+        ("+3", (0, 3)),
+        ("n", (1, 0)),
+        ("+n", (1, 0)),
+        ("-n", (-1, 0)),
+        ("2n", (2, 0)),
+        ("2N+1", (2, 1)),
+        ("2n-1", (2, -1)),
+        ("2n + 1", (2, 1)),
+        ("2n - 1", (2, -1)),
+        (" 2n+1 ", (2, 1)),
+        ("-n+3", (-1, 3)),
+        ("-2n + 3", (-2, 3)),
+        ("n-2", (1, -2)),
+        ("0n+5", (0, 5)),
+    ] {
+        assert_eq!(nth(input), expected, "{input}");
+    }
+    for input in [
+        "", "2 n", "n 1", "+ 2n", "2n +", "2n + -1", "n+", "foo", "2n+1.5", "1.5", "2n1", "n n",
+        "--n", "2e1",
+    ] {
+        assert!(
+            parse_selector_list(&format!(":nth-child({input})"), limits()).is_err(),
+            "{input}"
+        );
+    }
+}
+#[test]
+fn level3_pseudo_classes_and_their_specificity() {
+    let value = one("text:nth-last-of-type(2n):not(.x):root:empty:only-of-type");
+    assert_eq!(
+        value.compounds[0].tests,
+        vec![
+            SimpleSelector::Type("text".into()),
+            SimpleSelector::Nth {
+                a: 2,
+                b: 0,
+                last: true,
+                of_type: true
+            },
+            SimpleSelector::Not(Box::new(SimpleSelector::Class("x".into()))),
+            SimpleSelector::Root,
+            SimpleSelector::Empty,
+            SimpleSelector::Only { of_type: true },
+        ]
+    );
+    // One type and five class-level tests.
+    assert_eq!(value.specificity.components(), [0, 0, 5, 1]);
+    // A negation counts as its argument: an id, a type, nothing for `*`.
+    assert_eq!(one(":not(#a)").specificity.components(), [0, 1, 0, 0]);
+    assert_eq!(one(":not(text)").specificity.components(), [0, 0, 0, 1]);
+    assert_eq!(one(":not(*)").specificity.components(), [0, 0, 0, 0]);
+    assert_eq!(one(":not([a^=b])").specificity.components(), [0, 0, 1, 0]);
+}
+#[test]
+fn negation_admits_no_nesting_pseudo_element_or_compound() {
+    for input in [
+        ":not()",
+        ":not(:not(a))",
+        ":not(:before)",
+        ":not(::after)",
+        ":not(a.b)",
+        ":not(a b)",
+        ":not(a, b)",
+        ":not(a",
+        "::not(a)",
+        "::nth-child(1)",
+    ] {
+        assert!(parse_selector_list(input, limits()).is_err(), "{input}");
+    }
+}
+#[test]
+fn level3_combinator_and_attribute_operators() {
+    let value = one("a ~ b[x^=y][x$='z'][x*=w]");
+    assert_eq!(value.combinators, vec![Combinator::Sibling]);
+    let operators: Vec<_> = value.compounds[1]
+        .tests
+        .iter()
+        .filter_map(|test| match test {
+            SimpleSelector::Attribute { operator, .. } => Some(*operator),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        operators,
+        [
+            AttributeOperator::Prefix,
+            AttributeOperator::Suffix,
+            AttributeOperator::Substring
+        ]
+    );
+    // `~=` is still the includes match, and the two delimiters admit nothing between.
+    assert!(matches!(
+        one("[x~=y]").compounds[0].tests[0],
+        SimpleSelector::Attribute {
+            operator: AttributeOperator::Includes,
+            ..
+        }
+    ));
+    for input in ["[x^ =y]", "[x^y]", "[x*]", "a ~", "~ a"] {
+        assert!(parse_selector_list(input, limits()).is_err(), "{input}");
+    }
 }

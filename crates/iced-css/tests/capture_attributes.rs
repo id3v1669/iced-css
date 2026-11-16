@@ -49,6 +49,8 @@ fn captured_builders_feed_the_actual_class_and_id_matcher() {
         hovered: false,
         active: false,
         focused: false,
+        empty: false,
+        position: None,
     };
     for (selector, expected) in [
         (SimpleSelector::Class("selected".into()), true),

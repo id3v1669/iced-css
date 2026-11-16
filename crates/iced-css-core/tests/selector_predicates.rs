@@ -11,6 +11,8 @@ fn facts(metadata: &Metadata) -> ElementFacts<'_> {
         hovered: false,
         active: false,
         focused: false,
+        empty: false,
+        position: None,
     }
 }
 fn matches(selector: SimpleSelector, element: ElementFacts<'_>) -> bool {
@@ -110,6 +112,8 @@ fn link_and_interaction_predicates_use_explicit_facts() {
         hovered: true,
         active: true,
         focused: true,
+        empty: false,
+        position: None,
         ..element
     };
     assert!(matches(SimpleSelector::Visited, visited));

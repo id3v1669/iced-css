@@ -1,4 +1,6 @@
-use super::{Combinator, ElementFacts, MatchBudget, PseudoElement, Selector, matches_simple};
+use super::{
+    Combinator, ElementFacts, MatchBudget, PseudoElement, Selector, SiblingPosition, matches_simple,
+};
 use crate::cascade::Specificity;
 use std::num::NonZeroUsize;
 /// A read-only view of validated source-element relationships, not native layout.
@@ -8,6 +10,8 @@ pub trait SelectorSource {
     fn facts(&self, node: Self::Node) -> Option<ElementFacts<'_>>;
     fn parent(&self, node: Self::Node) -> Option<Self::Node>;
     fn previous_element(&self, node: Self::Node) -> Option<Self::Node>;
+    /// The sibling element after it: what `previous_element` of that one returns it for.
+    fn next_element(&self, node: Self::Node) -> Option<Self::Node>;
 }
 #[derive(Debug, Clone, Copy)]
 pub struct MatchLimits {
@@ -39,7 +43,15 @@ impl std::error::Error for MatchError {}
 struct Frame<N> {
     index: usize,
     node: N,
-    ancestors: bool,
+    walk: Walk,
+}
+/// Whether a frame tries its node, or first passes the search on to the next candidate a
+/// descendant or general sibling combinator allows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Walk {
+    Here,
+    Ancestors,
+    Siblings,
 }
 struct Engine<'a, S: SelectorSource> {
     source: &'a S,
@@ -57,6 +69,45 @@ impl<S: SelectorSource> Engine<'_, S> {
     fn previous(&mut self, node: S::Node) -> Result<Option<S::Node>, MatchError> {
         self.charge(1)?;
         Ok(self.source.previous_element(node))
+    }
+    /// Counts the sibling elements on both sides, all of them and those of `type_name`.
+    /// One step is charged per sibling.
+    fn position(&mut self, node: S::Node, type_name: &str) -> Result<SiblingPosition, MatchError> {
+        let mut position = SiblingPosition {
+            index: 1,
+            from_end: 1,
+            type_index: 1,
+            type_from_end: 1,
+        };
+        for forward in [false, true] {
+            let mut cursor = node;
+            loop {
+                self.charge(1)?;
+                let next = if forward {
+                    self.source.next_element(cursor)
+                } else {
+                    self.source.previous_element(cursor)
+                };
+                let Some(sibling) = next else {
+                    break;
+                };
+                let same = self
+                    .source
+                    .facts(sibling)
+                    .ok_or(MatchError::InvalidSource)?
+                    .type_name
+                    == type_name;
+                let (all, typed) = if forward {
+                    (&mut position.from_end, &mut position.type_from_end)
+                } else {
+                    (&mut position.index, &mut position.type_index)
+                };
+                *all += 1;
+                *typed += usize::from(same);
+                cursor = sibling;
+            }
+        }
+        Ok(position)
     }
     fn push(
         &mut self,
@@ -109,7 +160,7 @@ impl<S: SelectorSource> Engine<'_, S> {
             Frame {
                 index: selector.compounds.len() - 1,
                 node: subject,
-                ancestors: false,
+                walk: Walk::Here,
             },
         )?;
         // The lowest compound whose ancestor walk has begun. Reaching a compound passes every
@@ -119,20 +170,19 @@ impl<S: SelectorSource> Engine<'_, S> {
         let mut walked = selector.compounds.len();
         while let Some(frame) = stack.pop() {
             self.charge(1)?;
-            if frame.ancestors {
-                if let Some(parent) = self.parent(frame.node)? {
-                    self.push(
-                        &mut stack,
-                        Frame {
-                            node: parent,
-                            ..frame
-                        },
-                    )?;
+            if frame.walk != Walk::Here {
+                let further = if frame.walk == Walk::Ancestors {
+                    self.parent(frame.node)?
+                } else {
+                    self.previous(frame.node)?
+                };
+                if let Some(node) = further {
+                    self.push(&mut stack, Frame { node, ..frame })?;
                 }
                 self.push(
                     &mut stack,
                     Frame {
-                        ancestors: false,
+                        walk: Walk::Here,
                         ..frame
                     },
                 )?;
@@ -147,6 +197,13 @@ impl<S: SelectorSource> Engine<'_, S> {
                 .ok_or(MatchError::InvalidSource)?;
             facts.has_parent = parent.is_some();
             facts.has_previous_element = previous.is_some();
+            if selector.compounds[frame.index]
+                .tests
+                .iter()
+                .any(|test| test.needs_position())
+            {
+                facts.position = Some(self.position(frame.node, facts.type_name)?);
+            }
             let mut matched = true;
             for test in &selector.compounds[frame.index].tests {
                 if !matches_simple(test, facts, &mut self.budget).map_err(|_| MatchError::Work)? {
@@ -169,7 +226,7 @@ impl<S: SelectorSource> Engine<'_, S> {
             }
             let next = match relation {
                 Combinator::Child | Combinator::Descendant => parent,
-                Combinator::Adjacent => previous,
+                Combinator::Adjacent | Combinator::Sibling => previous,
             };
             if let Some(node) = next {
                 self.push(
@@ -177,7 +234,11 @@ impl<S: SelectorSource> Engine<'_, S> {
                     Frame {
                         index: frame.index - 1,
                         node,
-                        ancestors: relation == Combinator::Descendant,
+                        walk: match relation {
+                            Combinator::Descendant => Walk::Ancestors,
+                            Combinator::Sibling => Walk::Siblings,
+                            Combinator::Child | Combinator::Adjacent => Walk::Here,
+                        },
                     },
                 )?;
             }

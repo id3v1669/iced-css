@@ -63,6 +63,12 @@ cargo test --workspace --features iced-css/image,iced-css/svg
 
 - **Selectors and cascade:** type, class, id, attribute and combinator selectors, including
   `:hover`, `:active` and `:focus`, which restyle the tree live.
+  From Selectors Level 3: `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`,
+  `:nth-last-of-type()`, `:last-child`, `:first-of-type`, `:last-of-type`, `:only-child`,
+  `:only-of-type`, `:root`, `:empty`, `:not()` with one simple selector, the `~` combinator
+  and the `^=`, `$=` and `*=` attribute matches. A structural pseudo-class counts the
+  element's siblings each time it is tried, so on a box with thousands of siblings it is
+  slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
 - **Block layout:** nested boxes, margin collapsing, floats, clearance, formatting contexts,
   `min-`/`max-` sizes, percentages, `em` and `ex`.
 - **Positioning:** relative, absolute and fixed, with `z-index` stacking, on boxes; an inline

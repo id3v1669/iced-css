@@ -45,6 +45,7 @@ impl std::error::Error for ConstructionSourceError {}
 #[derive(Clone, Copy, Default)]
 struct Indexed<'a> {
     previous: Option<usize>,
+    next: Option<usize>,
     last_child: Option<usize>,
     language: Option<&'a str>,
     explicit_language: bool,
@@ -151,6 +152,9 @@ impl<'a> ConstructionSource<'a> {
                 .and_then(|parent| indexed[parent].last_child.replace(position));
             // Preserve last_child recorded by already visited postorder children.
             indexed[position].previous = previous;
+            if let Some(previous) = previous {
+                indexed[previous].next = Some(position);
+            }
             indexed[position].language = local_language.filter(|value| !value.is_empty());
             indexed[position].explicit_language = local_language.is_some();
             indexed[position].css_id = css_id;
@@ -206,10 +210,15 @@ impl SelectorSource for ConstructionSource<'_> {
             hovered: indexed.state.hovered,
             active: indexed.state.active,
             focused: indexed.state.focused,
+            empty: indexed.last_child.is_none() && node.text().is_none_or(str::is_empty),
+            position: None,
         })
     }
     fn parent(&self, position: usize) -> Option<usize> {
         self.construction.nodes().get(position)?.parent()
+    }
+    fn next_element(&self, position: usize) -> Option<usize> {
+        self.indexed.get(position)?.next
     }
     fn previous_element(&self, position: usize) -> Option<usize> {
         self.indexed.get(position)?.previous

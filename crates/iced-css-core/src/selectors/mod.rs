@@ -6,6 +6,12 @@ pub enum AttributeOperator {
     Equal,
     Includes,
     DashMatch,
+    /// Selectors Level 3: `^=`, the value begins with it.
+    Prefix,
+    /// Selectors Level 3: `$=`, the value ends with it.
+    Suffix,
+    /// Selectors Level 3: `*=`, the value contains it.
+    Substring,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimpleSelector {
@@ -25,6 +31,45 @@ pub enum SimpleSelector {
     Active,
     Focus,
     Lang(String),
+    /// Selectors Level 3 `:root`.
+    Root,
+    /// Selectors Level 3 `:empty`.
+    Empty,
+    /// Selectors Level 3 `:nth-child(an+b)` and its family: counted from the end for the
+    /// `last` forms, among siblings of the same type for the `of-type` forms. `:last-child`,
+    /// `:first-of-type` and `:last-of-type` are the `0n+1` cases.
+    Nth {
+        a: i32,
+        b: i32,
+        last: bool,
+        of_type: bool,
+    },
+    /// Selectors Level 3 `:only-child` and `:only-of-type`.
+    Only {
+        of_type: bool,
+    },
+    /// Selectors Level 3 `:not()`, holding one simple selector that is not itself a
+    /// negation or a pseudo-element.
+    Not(Box<SimpleSelector>),
+}
+impl SimpleSelector {
+    /// Whether testing it needs the element's place among its siblings.
+    pub(crate) fn needs_position(&self) -> bool {
+        match self {
+            Self::Nth { .. } | Self::Only { .. } => true,
+            Self::Not(inner) => inner.needs_position(),
+            _ => false,
+        }
+    }
+}
+/// An element's place among its sibling elements, each counted from 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SiblingPosition {
+    pub index: usize,
+    pub from_end: usize,
+    /// Among the siblings of its own type.
+    pub type_index: usize,
+    pub type_from_end: usize,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkState {
@@ -43,6 +88,11 @@ pub struct ElementFacts<'a> {
     pub hovered: bool,
     pub active: bool,
     pub focused: bool,
+    /// No child elements and no text of its own.
+    pub empty: bool,
+    /// Filled in by the matcher when a structural pseudo-class asks for it; `None` matches
+    /// none of them.
+    pub position: Option<SiblingPosition>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatchLimit;
@@ -171,6 +221,16 @@ pub fn matches_simple(
                                     && actual.split(whitespace).any(|word| word == value)
                             }
                             AttributeOperator::DashMatch => hyphen_match(actual, value, false),
+                            // An empty value matches nothing (Selectors Level 3, 6.3.2).
+                            AttributeOperator::Prefix => {
+                                !value.is_empty() && actual.starts_with(value.as_str())
+                            }
+                            AttributeOperator::Suffix => {
+                                !value.is_empty() && actual.ends_with(value.as_str())
+                            }
+                            AttributeOperator::Substring => {
+                                !value.is_empty() && actual.contains(value.as_str())
+                            }
                             AttributeOperator::Present => unreachable!("presence handled above"),
                         }
                     }
@@ -193,7 +253,50 @@ pub fn matches_simple(
                 None => false,
             }
         }
+        SimpleSelector::Root => !element.has_parent,
+        SimpleSelector::Empty => element.empty,
+        // Selectors Level 3 counts children of a parent: the root is no one's child.
+        SimpleSelector::Nth {
+            a,
+            b,
+            last,
+            of_type,
+        } => {
+            element.has_parent
+                && element.position.is_some_and(|position| {
+                    let index = match (last, of_type) {
+                        (false, false) => position.index,
+                        (true, false) => position.from_end,
+                        (false, true) => position.type_index,
+                        (true, true) => position.type_from_end,
+                    };
+                    nth_matches(*a, *b, index)
+                })
+        }
+        SimpleSelector::Only { of_type } => {
+            element.has_parent
+                && element.position.is_some_and(|position| {
+                    if *of_type {
+                        position.type_index == 1 && position.type_from_end == 1
+                    } else {
+                        position.index == 1 && position.from_end == 1
+                    }
+                })
+        }
+        SimpleSelector::Not(inner) => !matches_simple(inner, element, budget)?,
     })
+}
+/// Whether `index` (from 1) is `a*n + b` for some `n >= 0`.
+fn nth_matches(a: i32, b: i32, index: usize) -> bool {
+    let Ok(index) = i64::try_from(index) else {
+        return false;
+    };
+    let (a, offset) = (i64::from(a), index - i64::from(b));
+    if a == 0 {
+        offset == 0
+    } else {
+        offset % a == 0 && offset / a >= 0
+    }
 }
 mod parse;
 pub use parse::{

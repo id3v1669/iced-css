@@ -28,14 +28,7 @@ css_todo_test!(selector_siblings, "+ and ~ combinators");
 css_todo_test!(selector_grouping, ".a, .b grouping");
 css_todo_test!(selector_compound, "button.primary compound");
 css_todo_test!(selector_attribute, "[attr=val]");
-css_todo_test!(
-    selector_not_is_where_has,
-    ":not() / :is() / :where() / :has()"
-);
-css_todo_test!(
-    selector_structural,
-    ":first-child / :last-child / :nth-child / :only-child / :empty"
-);
+css_todo_test!(selector_is_where_has, ":is() / :where() / :has()");
 css_todo_test!(specificity_and_important, "ordering, !important");
 css_todo_test!(inheritance, "inheritance");
 css_todo_test!(cascade_keywords, "inherit / initial / unset / revert");
