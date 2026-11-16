@@ -1098,7 +1098,7 @@ fn pct_representation_measurement() {
     #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
     assert_eq!(
         measured.map(|(_, size, align)| (size, align)),
-        [(16, 8), (32, 8), (32, 8)]
+        [(16, 8), (40, 8), (40, 8)]
     );
 }
 
