@@ -4,12 +4,13 @@ use super::{
     parse_page_rule_prefix, parse_style_rule_prefix, shift,
 };
 use crate::syntax::{
-    ImportError, ImportPrelude, MediaError, MediaListContext, RuleError, Statement,
-    StatementContext, StatementKind, Statements, SyntaxError, SyntaxFault,
-    decode_identifier_budget,
+    DeclarationItem, DeclarationLimits, Declarations, ImportError, ImportPrelude, MediaError,
+    MediaListContext, RuleError, Statement, StatementContext, StatementKind, Statements,
+    SyntaxError, SyntaxFault, decode_identifier_budget,
     import_placement::{ImportPlacement, PlacementDecision, StatementDisposition},
     media_matches_screen, parse_import_prelude,
 };
+use crate::values::property::{PropertyResult, parse_property};
 use std::{num::NonZeroUsize, ops::Range};
 
 #[derive(Debug, Clone, Copy)]
@@ -132,6 +133,10 @@ pub fn parse_stylesheet(
                         .map(SheetEntryKind::Import)
                 } else if name.text.eq_ignore_ascii_case("media") {
                     owner.media(&statement)?.map(SheetEntryKind::Media)
+                } else if name.text.eq_ignore_ascii_case("supports") {
+                    // CSS Conditional 3: a group of rules, as `@media` is, that applies
+                    // when its condition holds.
+                    owner.supports(&statement)?.map(SheetEntryKind::Media)
                 } else if name.text.eq_ignore_ascii_case("page") {
                     owner.page(&statement)?.map(SheetEntryKind::Page)
                 } else {
@@ -303,6 +308,31 @@ impl Owner {
                 return Ok(None);
             }
         };
+        self.group(statement, body, matches).map(Some)
+    }
+    fn supports(
+        &mut self,
+        statement: &Statement<'_>,
+    ) -> Result<Option<ParsedMediaRule>, RuleAssemblyError> {
+        let Some(body) = statement.body else {
+            self.reject(statement.span.clone(), SheetRejectionReason::InvalidMedia)?;
+            return Ok(None);
+        };
+        let mut work = self.limits.rules.values.syntax.work.get();
+        let Some(matches) = supports_condition(statement.prelude, self.limits.rules, &mut work, 0)
+        else {
+            self.reject(statement.span.clone(), SheetRejectionReason::InvalidMedia)?;
+            return Ok(None);
+        };
+        self.group(statement, body, matches).map(Some)
+    }
+    /// The style rules of a conditional group: parsed whether or not it applies.
+    fn group(
+        &mut self,
+        statement: &Statement<'_>,
+        body: &str,
+        matches: bool,
+    ) -> Result<ParsedMediaRule, RuleAssemblyError> {
         let base = statement.body_span.as_ref().expect("body span").start;
         let mut rules = Vec::new();
         for child in Statements::new(body, StatementContext::Block, self.limits.rules.recovery) {
@@ -316,10 +346,117 @@ impl Owner {
                 rules.push(rule);
             }
         }
-        Ok(Some(ParsedMediaRule {
+        Ok(ParsedMediaRule {
             applies_to_screen: matches,
             rules,
-        }))
+        })
+    }
+}
+
+/// One operand of a `@supports` condition at the top level of its text.
+enum SupportsPart<'a> {
+    /// The text inside one pair of parentheses.
+    Group(&'a str),
+    /// A function: something this does not know, and so does not support.
+    Unknown,
+    Word(String),
+}
+
+/// Whether a `@supports` condition holds (CSS Conditional 3, section 6): a declaration in
+/// parentheses is supported when this parser accepts it; `not`, `and` and `or` combine
+/// them, without mixing `and` with `or` at one level. `None` is a malformed condition.
+fn supports_condition(
+    text: &str,
+    limits: RuleAssemblyLimits,
+    work: &mut usize,
+    depth: usize,
+) -> Option<bool> {
+    use crate::syntax::{TokenKind, scan_token_budget};
+    if depth > 32 {
+        return None;
+    }
+    let mut parts = Vec::new();
+    let mut offset = 0;
+    while offset < text.len() {
+        let token = scan_token_budget(&text[offset..], work).ok()??;
+        let start = offset;
+        offset += token.raw.len();
+        match token.kind {
+            TokenKind::Space | TokenKind::Comment => {}
+            TokenKind::Ident => parts.push(SupportsPart::Word(token.raw.to_ascii_lowercase())),
+            TokenKind::OpenParen | TokenKind::Function => {
+                // Through the matching closing parenthesis.
+                let mut nesting = 1usize;
+                let inner = offset;
+                while nesting > 0 {
+                    let token = scan_token_budget(text.get(offset..)?, work).ok()??;
+                    offset += token.raw.len();
+                    match token.kind {
+                        TokenKind::OpenParen | TokenKind::Function => nesting += 1,
+                        TokenKind::CloseParen => nesting -= 1,
+                        _ => {}
+                    }
+                }
+                parts.push(if text[start..].starts_with('(') {
+                    SupportsPart::Group(&text[inner..offset - 1])
+                } else {
+                    SupportsPart::Unknown
+                });
+            }
+            _ => return None,
+        }
+    }
+    let operand = |part: &SupportsPart<'_>, work: &mut usize| match part {
+        SupportsPart::Unknown => Some(false),
+        SupportsPart::Word(_) => None,
+        SupportsPart::Group(inner) => {
+            let trimmed = inner.trim_start();
+            // A nested condition starts with a parenthesis or `not`; anything else is a
+            // declaration.
+            if trimmed.starts_with('(') || trimmed.to_ascii_lowercase().starts_with("not ") {
+                return supports_condition(inner, limits, work, depth + 1);
+            }
+            let declaration = Declarations::new(
+                inner,
+                DeclarationLimits {
+                    recovery: limits.recovery,
+                    name_bytes: limits.name_bytes,
+                },
+            )
+            .next()?
+            .ok()?;
+            let DeclarationItem::Declaration(declaration) = declaration else {
+                return None;
+            };
+            Some(matches!(
+                parse_property(&declaration, limits.values),
+                Ok(PropertyResult::Parsed(_))
+            ))
+        }
+    };
+    match parts.as_slice() {
+        [SupportsPart::Word(not), part] if not == "not" => operand(part, work).map(|held| !held),
+        [first, rest @ ..] if rest.len() % 2 == 0 => {
+            let mut held = operand(first, work)?;
+            let mut joiner: Option<&str> = None;
+            for pair in rest.chunks(2) {
+                let SupportsPart::Word(word) = &pair[0] else {
+                    return None;
+                };
+                if !matches!(word.as_str(), "and" | "or") || joiner.is_some_and(|j| j != word) {
+                    return None;
+                }
+                joiner = Some(word);
+                let next = operand(&pair[1], work)?;
+                held = if word == "and" {
+                    held && next
+                } else {
+                    held || next
+                };
+            }
+            Some(held)
+        }
+        _ => None,
     }
 }
 fn rebase_syntax(mut error: SyntaxError, base: usize) -> SyntaxError {

@@ -76,6 +76,9 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   gives with `BoxTree::with_media` (a viewport size and whether the scheme is dark), not
   the widget's own size: give it again when the window is resized. With no viewport no
   size feature matches. Other features match nothing.
+- **`@supports`:** a group of rules that applies when its condition holds (CSS
+  Conditional 3): a declaration is supported when this library parses it, with `not`,
+  `and` and `or`. `selector()` and other functions are not supported conditions.
 - **Custom properties:** `--name` declarations cascade and inherit, and `var(--name)` or
   `var(--name, fallback)` is replaced wherever a value is read, in shorthands and `calc()`
   too (CSS Custom Properties Level 1). A value that does not parse once replaced leaves

@@ -563,6 +563,49 @@ fn media_queries_follow_the_environment_given() {
 }
 
 #[test]
+fn supports_groups_apply_when_their_condition_holds() {
+    let root = || node("page", vec![node("k", vec![])]);
+    let width = |condition: &str| {
+        let css =
+            format!("#k {{ width:100px; }} @supports {condition} {{ #k {{ width:200px; }} }}");
+        let tree = BoxTree::new(root(), &css).unwrap();
+        let geometry = tree.layout(800.0, Some(600.0)).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        border.right - border.left
+    };
+    for (condition, held) in [
+        ("(width: 10px)", true),
+        ("(box-sizing: border-box)", true),
+        ("(width: calc(1px + 2%))", true),
+        ("(--anything: goes here)", true),
+        ("(width: var(--x))", true),
+        ("(width: red)", false),
+        ("(no-such-property: 1)", false),
+        ("(display: grid)", false),
+        ("not (display: grid)", true),
+        ("not (width: 10px)", false),
+        ("(width: 10px) and (height: 10px)", true),
+        ("(width: 10px) and (width: red)", false),
+        ("(width: red) or (height: 10px)", true),
+        ("(width: red) or (height: red)", false),
+        ("((width: 10px) and (height: 1px)) or (width: red)", true),
+        ("(not (width: red)) and (height: 1px)", true),
+        ("selector(a > b)", false),
+        // Malformed conditions drop the whole group.
+        ("(width: 10px) and (height: 10px) or (color: red)", false),
+        ("width: 10px", false),
+        ("(width: 10px) (height: 1px)", false),
+        ("", false),
+    ] {
+        assert_eq!(
+            width(condition),
+            if held { 200.0 } else { 100.0 },
+            "{condition}"
+        );
+    }
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",
