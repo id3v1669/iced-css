@@ -57,6 +57,7 @@ fn display() -> DisplayResolution {
         position: Position::Static,
         float: Float::None,
         flow: Flow::Normal,
+        flex: false,
     }
 }
 fn facts(nodes: &[SourceNode], k: usize) -> (OuterFacts<'_>, ParentFacts<'_>, Vec<ChildFacts<'_>>) {

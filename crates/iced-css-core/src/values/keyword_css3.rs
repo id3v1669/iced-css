@@ -1,2 +1,65 @@
 // Keyword grammars of the properties in registry_css3.rs. Maintained by hand.
-pub(super) const KEYWORDS: &[(&str, &[&str])] = &[("box-sizing", &["content-box", "border-box"])];
+pub(super) const KEYWORDS: &[(&str, &[&str])] = &[
+    ("box-sizing", &["content-box", "border-box"]),
+    (
+        "flex-direction",
+        &["row", "row-reverse", "column", "column-reverse"],
+    ),
+    ("flex-wrap", &["nowrap", "wrap", "wrap-reverse"]),
+    (
+        "justify-content",
+        &[
+            "normal",
+            "flex-start",
+            "flex-end",
+            "center",
+            "space-between",
+            "space-around",
+            "space-evenly",
+            "start",
+            "end",
+        ],
+    ),
+    (
+        "align-items",
+        &[
+            "normal",
+            "stretch",
+            "flex-start",
+            "flex-end",
+            "center",
+            "baseline",
+            "start",
+            "end",
+        ],
+    ),
+    (
+        "align-self",
+        &[
+            "auto",
+            "normal",
+            "stretch",
+            "flex-start",
+            "flex-end",
+            "center",
+            "baseline",
+            "start",
+            "end",
+        ],
+    ),
+    (
+        "align-content",
+        &[
+            "normal",
+            "stretch",
+            "flex-start",
+            "flex-end",
+            "center",
+            "space-between",
+            "space-around",
+            "space-evenly",
+            "start",
+            "end",
+        ],
+    ),
+];

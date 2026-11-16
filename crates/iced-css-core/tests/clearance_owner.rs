@@ -38,6 +38,7 @@ fn display() -> DisplayResolution {
         position: Position::Static,
         float: Float::None,
         flow: Flow::Normal,
+        flex: false,
     }
 }
 fn input(s: &[SourceNode]) -> ClearanceOwnerInput<'_> {

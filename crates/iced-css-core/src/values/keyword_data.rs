@@ -27,6 +27,9 @@ pub(super) const KEYWORDS: &[(&str, &[&str])] = &[
             "table-cell",
             "table-caption",
             "none",
+            // CSS Flexible Box Layout 1, added by hand to the generated CSS 2.2 list.
+            "flex",
+            "inline-flex",
         ],
     ),
     ("empty-cells", &["show", "hide"]),

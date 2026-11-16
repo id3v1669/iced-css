@@ -73,6 +73,10 @@ pub(super) fn grammar(name: &str) -> Option<Grammar> {
             value.percentage = false;
             value.pair = true;
         }
+        // CSS Flexbox 1: `content` sizes as `auto` does here.
+        "flex-basis" => value.keywords = &["auto", "content"],
+        // CSS Box Alignment 3: `normal` is no gap.
+        "row-gap" | "column-gap" => value.keywords = &["normal"],
         // CSS Backgrounds 3: a corner's horizontal radius, then its vertical one.
         "border-top-left-radius"
         | "border-top-right-radius"

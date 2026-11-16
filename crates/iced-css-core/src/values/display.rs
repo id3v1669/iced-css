@@ -48,13 +48,35 @@ pub fn compute_display_style(
     winners: &PropertyWinners<'_>,
     parent: Option<&DisplayResolution>,
 ) -> Result<DisplayResolution, ComputedDisplayError> {
+    // CSS Flexbox 1: a flex container is a block outside, or an inline-block, with its
+    // children laid out as flex items (`flex` says so).
+    fn display_of(value: &SpecifiedValue) -> Result<Display, DisplayError> {
+        match value {
+            SpecifiedValue::Keyword(keyword) if keyword.as_str() == "flex" => Ok(Display::Block),
+            SpecifiedValue::Keyword(keyword) if keyword.as_str() == "inline-flex" => {
+                Ok(Display::InlineBlock)
+            }
+            other => Display::from_resolved(other),
+        }
+    }
     let display = selected(
         "display",
         winners,
         parent.map(|p| p.display),
         Display::from_keyword,
-        Display::from_resolved,
+        display_of,
     )?;
+    let display_property = PropertyId::lookup("display").expect("registered");
+    let flex = match winners
+        .defaulted(display_property, parent.is_some())
+        .map_err(ComputedDisplayError::Defaulting)?
+    {
+        DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+            matches!(keyword.as_str(), "flex" | "inline-flex")
+        }
+        DefaultedValueRef::ParentComputed => parent.is_some_and(|parent| parent.flex),
+        _ => false,
+    };
     let position = selected(
         "position",
         winners,
@@ -69,5 +91,11 @@ pub fn compute_display_style(
         Float::from_keyword,
         Float::from_resolved,
     )?;
-    Ok(resolve_display(display, position, float, parent.is_none()))
+    // 4: a flex item is blockified, as the root is, and does not float.
+    let item = parent.is_some_and(|parent| parent.flex);
+    let float = if item { Float::None } else { float };
+    let mut resolved = resolve_display(display, position, float, parent.is_none() || item);
+    // An absolutely positioned or suppressed box is still a flex container inside.
+    resolved.flex = flex && resolved.display != Display::None;
+    Ok(resolved)
 }

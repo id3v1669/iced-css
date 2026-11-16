@@ -42,16 +42,6 @@ css_todo_test!(display_inline_flow, "display: inline / inline-block");
 css_todo_test!(visibility, "visibility");
 css_todo_test!(overflow, "overflow");
 
-css_todo_test!(flex_direction, "flex-direction");
-css_todo_test!(flex_justify_content, "justify-content");
-css_todo_test!(flex_align, "align-items / align-self / align-content");
-css_todo_test!(flex_gap, "gap / row-gap / column-gap");
-css_todo_test!(
-    flex_grow_shrink_basis,
-    "flex-grow / flex-shrink / flex-basis / flex"
-);
-css_todo_test!(flex_wrap_and_order, "flex-wrap / order");
-
 css_todo_test!(grid_templates, "grid-template-columns/rows");
 css_todo_test!(grid_placement, "grid-column / grid-row / grid-area");
 css_todo_test!(grid_gaps, "grid gaps");

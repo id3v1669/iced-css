@@ -1449,6 +1449,15 @@ impl BoxTree {
             value.fixed_table = paints[owner].fixed_table && !prepared.anonymous[arena];
             // An anonymous box has no sizes of its own to read as its border box's.
             value.border_box = paints[owner].border_box && !prepared.anonymous[arena];
+            // CSS Flexbox 1: the element's own box is the container, and the item of its
+            // parent; an anonymous box around its text is a plain item.
+            if !prepared.anonymous[arena] {
+                value.flex = paints[owner].flex;
+                value.flex_item = paints[owner].flex_item;
+                if value.flex.is_some() {
+                    value.establishes_bfc = true;
+                }
+            }
             if value.inline_row.is_some() {
                 // 16.2: a line's alignment comes from its block container.
                 value.inline_row = Some(match styles[container_of[arena]].align {

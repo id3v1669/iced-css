@@ -29,9 +29,9 @@ use iced_css_core::{
         absolute_height::{AbsoluteHeightError, AbsoluteHeightInput, absolute_height},
         block::{AutoLength, Direction},
         block_flow::{
-            Dim, FlowBox, FlowContent, FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport,
-            RowAlign, TableRole, content_boxes, layout_block_flow_baselines,
-            preferred_content_widths,
+            Dim, FlexAlign, FlexContainer, FlexItem, FlexSpace, FlexWrap, FlowBox, FlowContent,
+            FlowError, FlowGeometry, FlowLimits, FlowRect, FlowViewport, RowAlign, TableRole,
+            content_boxes, layout_block_flow_baselines, preferred_content_widths,
         },
         clearance::ClearSide,
         display::{Display, Float, Position},
@@ -1716,6 +1716,10 @@ pub struct BoxPaint {
     pub fixed_table: bool,
     /// `box-sizing: border-box`.
     pub border_box: bool,
+    /// `display: flex` or `inline-flex`: how its children are laid out as flex items.
+    pub flex: Option<FlexContainer>,
+    /// What the box is as a flex item, should its parent be a flex container.
+    pub flex_item: FlexItem,
     /// `box-shadow`: the first outer shadow of the list; `None` draws none.
     pub shadow: Option<BoxShadow>,
     /// `opacity` below 1, multiplied through the box's ancestors; `None` is opaque.
@@ -2637,6 +2641,8 @@ pub fn evaluate_tree_paint<'r>(
                 .and_then(|parent: usize| paints[parent].opacity)
                 .unwrap_or(1.0);
         paints.push(BoxPaint {
+            flex: None,
+            flex_item: FlexItem::default(),
             opacity: (through < 1.0).then_some(through),
             own_opacity: (own_opacity < 1.0).then_some(own_opacity),
             shadow: None,
@@ -2948,6 +2954,92 @@ pub fn evaluate_tree_paint<'r>(
             };
         }
         box_lengths.push(lengths);
+        // CSS Flexbox 1 and Box Alignment 3. None of these inherits; `inherit` on one
+        // reads as its initial value.
+        let keyword_of_own = |name: &'static str| {
+            Ok::<_, E>(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                    Some(keyword.as_str())
+                }
+                _ => None,
+            })
+        };
+        let factor = |name: &'static str, initial: f32| {
+            Ok::<_, E>(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Number(number)) => number
+                    .scaled_finite_f32(1.0, limits.numeric)
+                    .map_or(initial, |converted| converted.value.max(0.0)),
+                _ => initial,
+            })
+        };
+        let gap = |name: &'static str| {
+            Ok::<_, E>(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => {
+                    match own_length(target) {
+                        Dim::Px(pixels) => pixels.max(0.0),
+                        // A percentage gap has no basis here.
+                        _ => 0.0,
+                    }
+                }
+                _ => 0.0,
+            })
+        };
+        let space = |keyword: Option<&str>| match keyword {
+            Some("flex-end" | "end") => FlexSpace::End,
+            Some("center") => FlexSpace::Center,
+            Some("space-between") => FlexSpace::SpaceBetween,
+            Some("space-around") => FlexSpace::SpaceAround,
+            Some("space-evenly") => FlexSpace::SpaceEvenly,
+            Some("stretch") => FlexSpace::Stretch,
+            _ => FlexSpace::Start,
+        };
+        // `baseline` aligns at the start.
+        let align = |keyword: Option<&str>| match keyword {
+            Some("flex-start" | "start" | "baseline") => Some(FlexAlign::Start),
+            Some("flex-end" | "end") => Some(FlexAlign::End),
+            Some("center") => Some(FlexAlign::Center),
+            Some("stretch" | "normal") => Some(FlexAlign::Stretch),
+            _ => None,
+        };
+        if matches!(keyword_of_own("display")?, Some("flex" | "inline-flex")) {
+            let direction = keyword_of_own("flex-direction")?.unwrap_or("row");
+            paints[index].flex = Some(FlexContainer {
+                column: direction.starts_with("column"),
+                reverse: direction.ends_with("-reverse"),
+                wrap: match keyword_of_own("flex-wrap")? {
+                    Some("wrap") => FlexWrap::Wrap,
+                    Some("wrap-reverse") => FlexWrap::WrapReverse,
+                    _ => FlexWrap::NoWrap,
+                },
+                justify: space(keyword_of_own("justify-content")?),
+                align_items: align(keyword_of_own("align-items")?).unwrap_or(FlexAlign::Stretch),
+                align_content: match keyword_of_own("align-content")? {
+                    None | Some("normal" | "stretch") => FlexSpace::Stretch,
+                    other => space(other),
+                },
+                gap: [gap("row-gap")?, gap("column-gap")?],
+            });
+        }
+        paints[index].flex_item = FlexItem {
+            grow: factor("flex-grow", 0.0)?,
+            shrink: factor("flex-shrink", 1.0)?,
+            basis: match defaulted("flex-basis")? {
+                DefaultedValueRef::Compute(SpecifiedValue::Length(target)) => {
+                    match own_length(target) {
+                        Dim::Mix(pixels, percent) => Dim::Clamped(pixels, percent),
+                        other => other,
+                    }
+                }
+                _ => Dim::Auto,
+            },
+            align: align(keyword_of_own("align-self")?),
+            order: match defaulted("order")? {
+                DefaultedValueRef::Compute(SpecifiedValue::Integer(order)) => {
+                    order.saturating_i32()
+                }
+                _ => 0,
+            },
+        };
         // CSS Backgrounds 3: the first outer shadow; iced draws one, without a spread.
         // Not inherited; `inherit` takes the parent's.
         paints[index].shadow = match defaulted("box-shadow")? {

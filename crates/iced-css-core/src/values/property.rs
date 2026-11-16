@@ -279,7 +279,7 @@ pub(super) fn inner(
     let length_grammar = length_property::grammar(name);
     let counter_property = matches!(name, "counter-reset" | "counter-increment");
     let image_property = matches!(name, "background-image" | "list-style-image");
-    let integer_property = matches!(name, "z-index" | "orphans" | "widows");
+    let integer_property = matches!(name, "z-index" | "orphans" | "widows" | "order");
     if !color_property(name)
         && keywords.is_none()
         && length_grammar.is_none()
@@ -301,15 +301,22 @@ pub(super) fn inner(
         && name != "text-decoration"
         && name != "border-radius"
         && name != "box-shadow"
-        && name != "opacity"
+        && !matches!(
+            name,
+            "opacity" | "flex-grow" | "flex-shrink" | "flex-flow" | "flex" | "gap"
+        )
     {
         return Err(PropertyError::Unimplemented(property));
     }
     if recovery_only {
         return Ok(PropertyResult::Invalid);
     }
-    if name == "opacity" {
-        // CSS Color 3: one number, of any size (it is clipped when computed), or `inherit`.
+    if matches!(name, "flex-flow" | "flex" | "gap") {
+        return flex_shorthand(property, input, important, limits, work);
+    }
+    if matches!(name, "opacity" | "flex-grow" | "flex-shrink") {
+        // One number, or `inherit`. CSS Color 3: an opacity of any size (it is clipped when
+        // computed). CSS Flexbox 1: a factor that is not negative.
         let mut offset = 0;
         let Some((_, token)) = significant(input, &mut offset, work)? else {
             return Ok(PropertyResult::Invalid);
@@ -322,6 +329,9 @@ pub(super) fn inner(
                 SpecifiedValue::Inherit
             }
             TokenKind::Number => match super::Decimal::parse(token.raw, limits.numeric) {
+                Ok(number) if name != "opacity" && number.is_negative() => {
+                    return Ok(PropertyResult::Invalid);
+                }
                 Ok(number) => SpecifiedValue::Number(number),
                 Err(NumericError::InvalidNumber | NumericError::UnsupportedUnit) => {
                     return Ok(PropertyResult::Invalid);
@@ -651,7 +661,8 @@ pub(super) fn inner(
                 Err(NumericError::InvalidNumber) => return Ok(PropertyResult::Invalid),
                 Err(error) => return Err(PropertyError::Numeric(error)),
             };
-            if name != "z-index" && (integer.is_negative() || integer.is_zero()) {
+            if !matches!(name, "z-index" | "order") && (integer.is_negative() || integer.is_zero())
+            {
                 return Ok(PropertyResult::Invalid);
             }
             SpecifiedValue::Integer(integer)
@@ -788,4 +799,151 @@ pub fn parse_value(
     }
     let mut work = limits.syntax.work.get();
     inner(property, value, important, false, limits, &mut work)
+}
+
+/// The `flex-flow`, `flex` and `gap` shorthands (CSS Flexbox 1, CSS Box Alignment 3): each
+/// part is parsed as its longhand, and a part left out is that longhand's initial value,
+/// or what the shorthand gives it.
+fn flex_shorthand(
+    property: PropertyId,
+    input: &str,
+    important: bool,
+    limits: ColorLimits,
+    work: &mut usize,
+) -> Result<PropertyResult, PropertyError> {
+    let name = property.descriptor().name;
+    let targets = property.longhands();
+    let whole = |values: Vec<SpecifiedValue>| {
+        PropertyResult::Parsed(ParsedProperty {
+            property,
+            value: SpecifiedValue::Expanded(
+                targets
+                    .iter()
+                    .zip(values)
+                    .map(|(longhand, value)| ParsedProperty {
+                        property: *longhand,
+                        value,
+                        important,
+                    })
+                    .collect(),
+            ),
+            important,
+        })
+    };
+    let mut tokens: Vec<&str> = Vec::new();
+    let mut offset = 0;
+    while let Some((_, token)) = significant(input, &mut offset, work)? {
+        if token.invalid_escape || tokens.len() == 3 {
+            return Ok(PropertyResult::Invalid);
+        }
+        tokens.push(token.raw);
+    }
+    let keyword = |text: &str| tokens.len() == 1 && tokens[0].eq_ignore_ascii_case(text);
+    if keyword("inherit") {
+        return Ok(whole(vec![SpecifiedValue::Inherit; targets.len()]));
+    }
+    // One part as one of the longhands, by its own grammar.
+    let part = |longhand: PropertyId, text: &str, work: &mut usize| {
+        Ok::<_, PropertyError>(
+            match inner(longhand, text, important, false, limits, work)? {
+                PropertyResult::Parsed(parsed) if parsed.value != SpecifiedValue::Inherit => {
+                    Some(parsed.value)
+                }
+                _ => None,
+            },
+        )
+    };
+    let number = |text: &str| {
+        super::Decimal::parse(text, limits.numeric)
+            .map(SpecifiedValue::Number)
+            .expect("a small literal")
+    };
+    match name {
+        "flex-flow" => {
+            let mut values = [None, None];
+            for token in &tokens {
+                let slot = if let Some(value) = part(targets[0], token, work)? {
+                    (0, value)
+                } else if let Some(value) = part(targets[1], token, work)? {
+                    (1, value)
+                } else {
+                    return Ok(PropertyResult::Invalid);
+                };
+                if values[slot.0].replace(slot.1).is_some() {
+                    return Ok(PropertyResult::Invalid);
+                }
+            }
+            if tokens.is_empty() {
+                return Ok(PropertyResult::Invalid);
+            }
+            Ok(whole(
+                values
+                    .into_iter()
+                    .map(|value| value.unwrap_or(SpecifiedValue::Initial))
+                    .collect(),
+            ))
+        }
+        "gap" => {
+            let (Some(first), true) = (tokens.first(), tokens.len() <= 2) else {
+                return Ok(PropertyResult::Invalid);
+            };
+            let Some(row) = part(targets[0], first, work)? else {
+                return Ok(PropertyResult::Invalid);
+            };
+            let column = match tokens.get(1) {
+                Some(second) => part(targets[1], second, work)?,
+                None => Some(row.clone()),
+            };
+            Ok(column.map_or(PropertyResult::Invalid, |column| whole(vec![row, column])))
+        }
+        _ => {
+            // `flex`: `none` is rigid, `auto` flexes from its size; a number alone grows
+            // from nothing.
+            if keyword("none") {
+                let basis = part(targets[2], "auto", work)?.expect("auto");
+                return Ok(whole(vec![number("0"), number("0"), basis]));
+            }
+            if keyword("auto") {
+                let basis = part(targets[2], "auto", work)?.expect("auto");
+                return Ok(whole(vec![number("1"), number("1"), basis]));
+            }
+            let (mut grow, mut shrink, mut basis) = (None, None, None);
+            for (at, token) in tokens.iter().enumerate() {
+                let numeric = token
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'+' | b'-'));
+                // A unitless zero after both factors is the basis.
+                let both = grow.is_some() && shrink.is_some();
+                if numeric && !both {
+                    let Some(value) = part(targets[0], token, work)? else {
+                        return Ok(PropertyResult::Invalid);
+                    };
+                    // The factors come together, the growth first.
+                    if grow.is_none() {
+                        grow = Some(value);
+                    } else if basis.is_none() || at == 2 {
+                        shrink = Some(value);
+                    } else {
+                        return Ok(PropertyResult::Invalid);
+                    }
+                } else if basis.is_none() {
+                    match part(targets[2], token, work)? {
+                        Some(value) => basis = Some(value),
+                        None => return Ok(PropertyResult::Invalid),
+                    }
+                } else {
+                    return Ok(PropertyResult::Invalid);
+                }
+            }
+            if tokens.is_empty() {
+                return Ok(PropertyResult::Invalid);
+            }
+            let zero = part(targets[2], "0", work)?.expect("zero");
+            Ok(whole(vec![
+                grow.unwrap_or_else(|| number("1")),
+                shrink.unwrap_or_else(|| number("1")),
+                basis.unwrap_or(zero),
+            ]))
+        }
+    }
 }

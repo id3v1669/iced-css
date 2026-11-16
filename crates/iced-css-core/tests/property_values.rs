@@ -159,7 +159,7 @@ fn complete_keyword_property_grammars_are_scoped_to_their_own_literals() {
         assert_eq!(actual.as_str(), value);
     }
     for input in [
-        "display:flex",
+        "display:grid",
         "display:run-in",
         "white-space:block",
         "display:'block'",
@@ -1426,4 +1426,149 @@ fn custom_properties_and_var_parse_at_use_not_in_the_sheet() {
     )));
     // An unknown property stays unknown.
     assert_eq!(parse("nope: var(--x)").unwrap(), PropertyResult::Unknown);
+}
+
+#[test]
+fn flex_shorthands_expand_as_css_flexbox_gives_them() {
+    use iced_css_core::values::registry::PropertyId;
+    let leaves = |input: &str| -> Option<Vec<(String, String)>> {
+        match parse(input).unwrap() {
+            PropertyResult::Parsed(ParsedProperty {
+                value: SpecifiedValue::Expanded(leaves),
+                ..
+            }) => Some(
+                leaves
+                    .into_iter()
+                    .map(|leaf| {
+                        let shown = match leaf.value {
+                            SpecifiedValue::Keyword(keyword) => keyword.as_str().to_owned(),
+                            SpecifiedValue::Number(number) => format!("{number:?}"),
+                            SpecifiedValue::Length(LengthTarget::Auto) => "auto".to_owned(),
+                            SpecifiedValue::Length(_) => "length".to_owned(),
+                            SpecifiedValue::Initial => "initial".to_owned(),
+                            SpecifiedValue::Inherit => "inherit".to_owned(),
+                            other => format!("{other:?}"),
+                        };
+                        (leaf.property.descriptor().name.to_owned(), shown)
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        }
+    };
+    let number = |text: &str| {
+        format!(
+            "{:?}",
+            iced_css_core::values::Decimal::parse(text, limits().numeric).unwrap()
+        )
+    };
+    let flex = |input: &str| {
+        leaves(&format!("flex:{input}")).map(|leaves| {
+            assert_eq!(
+                leaves
+                    .iter()
+                    .map(|leaf| leaf.0.as_str())
+                    .collect::<Vec<_>>(),
+                ["flex-grow", "flex-shrink", "flex-basis"]
+            );
+            [
+                leaves[0].1.clone(),
+                leaves[1].1.clone(),
+                leaves[2].1.clone(),
+            ]
+        })
+    };
+    assert_eq!(
+        flex("none"),
+        Some([number("0"), number("0"), "auto".into()])
+    );
+    assert_eq!(
+        flex("auto"),
+        Some([number("1"), number("1"), "auto".into()])
+    );
+    assert_eq!(flex("2"), Some([number("2"), number("1"), "length".into()]));
+    assert_eq!(
+        flex("2 3"),
+        Some([number("2"), number("3"), "length".into()])
+    );
+    assert_eq!(
+        flex("2 3 10px"),
+        Some([number("2"), number("3"), "length".into()])
+    );
+    assert_eq!(
+        flex("1 1 0"),
+        Some([number("1"), number("1"), "length".into()])
+    );
+    assert_eq!(
+        flex("10px"),
+        Some([number("1"), number("1"), "length".into()])
+    );
+    assert_eq!(
+        flex("1 30%"),
+        Some([number("1"), number("1"), "length".into()])
+    );
+    assert_eq!(
+        flex("1 auto"),
+        Some([number("1"), number("1"), "auto".into()])
+    );
+    assert_eq!(
+        flex("inherit").map(|parts| parts[0].clone()),
+        Some("inherit".into())
+    );
+    for bad in ["-1", "1 2 3 4", "10px 20px", "red", "1 -2"] {
+        assert_eq!(flex(bad), None, "{bad}");
+    }
+    assert_eq!(
+        leaves("flex-flow:wrap column"),
+        Some(vec![
+            ("flex-direction".into(), "column".into()),
+            ("flex-wrap".into(), "wrap".into())
+        ])
+    );
+    assert_eq!(
+        leaves("flex-flow:row-reverse"),
+        Some(vec![
+            ("flex-direction".into(), "row-reverse".into()),
+            ("flex-wrap".into(), "initial".into())
+        ])
+    );
+    assert_eq!(leaves("flex-flow:row column"), None);
+    assert_eq!(
+        leaves("gap:5px"),
+        Some(vec![
+            ("row-gap".into(), "length".into()),
+            ("column-gap".into(), "length".into())
+        ])
+    );
+    assert_eq!(
+        leaves("gap:normal 5px"),
+        Some(vec![
+            ("row-gap".into(), "normal".into()),
+            ("column-gap".into(), "length".into())
+        ])
+    );
+    assert_eq!(leaves("gap:-1px"), None);
+    // The longhands on their own.
+    for good in [
+        "flex-grow:0",
+        "flex-shrink:2.5",
+        "order:-3",
+        "order:0",
+        "flex-basis:content",
+        "display:inline-flex",
+    ] {
+        assert!(
+            matches!(parse(good).unwrap(), PropertyResult::Parsed(_)),
+            "{good}"
+        );
+    }
+    for bad in [
+        "flex-grow:-1",
+        "order:1.5",
+        "flex-basis:-1px",
+        "align-items:left",
+    ] {
+        assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
+    }
+    assert!(PropertyId::lookup("flex").is_some_and(|flex| flex.descriptor().shorthand));
 }

@@ -2516,3 +2516,358 @@ fn border_box_sizes_lose_their_own_padding_and_border() {
         std::borrow::Cow::Borrowed(_)
     ));
 }
+
+// CSS Flexible Box Layout Level 1.
+mod flex {
+    use super::*;
+
+    fn container(flex: FlexContainer, children: usize) -> FlowBox {
+        FlowBox {
+            children: (1..=children).collect(),
+            establishes_bfc: true,
+            flex: Some(flex),
+            ..FlowBox::default()
+        }
+    }
+    fn item(width: f32, height: f32) -> FlowBox {
+        FlowBox {
+            width: Dim::Px(width),
+            height: Dim::Px(height),
+            ..FlowBox::default()
+        }
+    }
+    fn flexing(base: FlowBox, grow: f32, shrink: f32, basis: Dim) -> FlowBox {
+        FlowBox {
+            flex_item: FlexItem {
+                grow,
+                shrink,
+                basis,
+                ..FlexItem::default()
+            },
+            ..base
+        }
+    }
+    /// Border boxes as (left, top, width, height), of a 300 by 200 viewport's layout.
+    fn laid(boxes: &[FlowBox]) -> Vec<(f32, f32, f32, f32)> {
+        let viewport = FlowViewport {
+            left: 0.0,
+            top: 0.0,
+            width: 300.0,
+            height: Some(200.0),
+        };
+        layout_block_flow(boxes, viewport, limits())
+            .unwrap()
+            .iter()
+            .map(|geometry| {
+                let area = geometry.border;
+                (
+                    area.left,
+                    area.top,
+                    area.right - area.left,
+                    area.bottom - area.top,
+                )
+            })
+            .collect()
+    }
+    fn row() -> FlexContainer {
+        FlexContainer::default()
+    }
+
+    #[test]
+    fn a_row_places_items_side_by_side_and_is_as_tall_as_the_tallest() {
+        let got = laid(&[container(row(), 2), item(50.0, 20.0), item(80.0, 40.0)]);
+        assert_eq!(got[1], (0.0, 0.0, 50.0, 20.0));
+        assert_eq!(got[2], (50.0, 0.0, 80.0, 40.0));
+        assert_eq!(got[0], (0.0, 0.0, 300.0, 40.0));
+    }
+
+    #[test]
+    fn an_auto_height_stretches_to_the_line_and_other_alignments_place_within_it() {
+        let auto = FlowBox {
+            height: Dim::Auto,
+            ..item(50.0, 0.0)
+        };
+        let got = laid(&[container(row(), 2), auto.clone(), item(80.0, 40.0)]);
+        assert_eq!(got[1], (0.0, 0.0, 50.0, 40.0));
+        for (align, top) in [
+            (FlexAlign::Start, 0.0),
+            (FlexAlign::Center, 10.0),
+            (FlexAlign::End, 20.0),
+        ] {
+            let aligned = FlexContainer {
+                align_items: align,
+                ..row()
+            };
+            let got = laid(&[container(aligned, 2), item(50.0, 20.0), item(80.0, 40.0)]);
+            assert_eq!(got[1].1, top, "{align:?}");
+            // An auto height is its content's when it is not stretched: none here.
+            let got = laid(&[container(aligned, 2), auto.clone(), item(80.0, 40.0)]);
+            assert_eq!(got[1].3, 0.0, "{align:?}");
+        }
+        // `align-self` overrides the container for one item.
+        let own = FlowBox {
+            flex_item: FlexItem {
+                align: Some(FlexAlign::End),
+                ..FlexItem::default()
+            },
+            ..item(50.0, 20.0)
+        };
+        let got = laid(&[container(row(), 2), own, item(80.0, 40.0)]);
+        assert_eq!(got[1].1, 20.0);
+        // A container with a height: its one line is that tall.
+        let tall = FlowBox {
+            height: Dim::Px(100.0),
+            ..container(row(), 1)
+        };
+        let got = laid(&[tall, auto]);
+        assert_eq!(got[1].3, 100.0);
+    }
+
+    #[test]
+    fn free_space_grows_items_by_their_factors() {
+        let grow = |factor: f32| flexing(item(50.0, 10.0), factor, 1.0, Dim::Auto);
+        let got = laid(&[container(row(), 2), grow(1.0), item(100.0, 10.0)]);
+        assert_eq!(got[1].2, 200.0);
+        assert_eq!(got[2].0, 200.0);
+        // 200 free, shared one to two on top of each one's 50.
+        let got = laid(&[container(row(), 2), grow(1.0), grow(2.0)]);
+        assert!((got[1].2 - (50.0 + 200.0 / 3.0)).abs() < 0.01, "{got:?}");
+        assert!((got[2].2 - (50.0 + 400.0 / 3.0)).abs() < 0.01, "{got:?}");
+        // `flex-basis` replaces the width as the size to grow from; 0 shares everything.
+        let zero = |factor: f32| flexing(item(50.0, 10.0), factor, 1.0, Dim::Px(0.0));
+        let got = laid(&[container(row(), 2), zero(1.0), zero(3.0)]);
+        assert_eq!((got[1].2, got[2].2), (75.0, 225.0));
+        // A maximum stops one, and the rest take what it leaves.
+        let capped = FlowBox {
+            max_width: Dim::Px(80.0),
+            ..grow(1.0)
+        };
+        let got = laid(&[container(row(), 2), capped, grow(1.0)]);
+        assert_eq!((got[1].2, got[2].2), (80.0, 220.0));
+        // Factors under one take only that share.
+        let got = laid(&[container(row(), 1), grow(0.5)]);
+        assert_eq!(got[1].2, 175.0);
+    }
+
+    #[test]
+    fn overflow_shrinks_items_in_proportion_to_their_size_and_factor() {
+        let got = laid(&[container(row(), 2), item(200.0, 10.0), item(200.0, 10.0)]);
+        assert_eq!((got[1].2, got[2].2), (150.0, 150.0));
+        // 300 over 300: 100 too many, taken one to three by size.
+        let got = laid(&[container(row(), 2), item(100.0, 10.0), item(300.0, 10.0)]);
+        assert_eq!((got[1].2, got[2].2), (75.0, 225.0));
+        // `flex-shrink: 0` keeps its size, and the other gives it all.
+        let rigid = flexing(item(200.0, 10.0), 0.0, 0.0, Dim::Auto);
+        let got = laid(&[container(row(), 2), rigid, item(200.0, 10.0)]);
+        assert_eq!((got[1].2, got[2].2), (200.0, 100.0));
+        // A minimum stops one.
+        let floored = FlowBox {
+            min_width: Dim::Px(180.0),
+            ..item(200.0, 10.0)
+        };
+        let got = laid(&[container(row(), 2), floored, item(200.0, 10.0)]);
+        assert_eq!((got[1].2, got[2].2), (180.0, 120.0));
+    }
+
+    #[test]
+    fn wrapping_breaks_lines_and_stacks_them() {
+        let wrap = FlexContainer {
+            wrap: FlexWrap::Wrap,
+            ..row()
+        };
+        let boxes = [
+            container(wrap, 3),
+            item(120.0, 20.0),
+            item(120.0, 30.0),
+            item(120.0, 10.0),
+        ];
+        let got = laid(&boxes);
+        assert_eq!(got[1], (0.0, 0.0, 120.0, 20.0));
+        assert_eq!(got[2], (120.0, 0.0, 120.0, 30.0));
+        assert_eq!(got[3], (0.0, 30.0, 120.0, 10.0));
+        assert_eq!(got[0].3, 40.0);
+        // Gaps: between items, and between lines.
+        let gapped = FlexContainer {
+            gap: [5.0, 70.0],
+            ..wrap
+        };
+        let got = laid(&[
+            container(gapped, 3),
+            boxes[1].clone(),
+            boxes[2].clone(),
+            boxes[3].clone(),
+        ]);
+        // 120 + 70 + 120 is over 300: one item a line.
+        assert_eq!((got[2].0, got[2].1), (0.0, 25.0));
+        assert_eq!(got[3].1, 60.0);
+        assert_eq!(got[0].3, 70.0);
+        // `wrap-reverse` stacks from the far edge.
+        let reversed = FlexContainer {
+            wrap: FlexWrap::WrapReverse,
+            ..row()
+        };
+        let got = laid(&[
+            container(reversed, 3),
+            boxes[1].clone(),
+            boxes[2].clone(),
+            boxes[3].clone(),
+        ]);
+        assert_eq!(got[3].1, 0.0);
+        assert_eq!(got[1].1, 10.0 + 30.0 - 20.0);
+    }
+
+    #[test]
+    fn justify_content_shares_free_space_along_the_line() {
+        let offsets = |justify: FlexSpace| {
+            let flex = FlexContainer { justify, ..row() };
+            let got = laid(&[container(flex, 2), item(50.0, 10.0), item(50.0, 10.0)]);
+            (got[1].0, got[2].0)
+        };
+        assert_eq!(offsets(FlexSpace::Start), (0.0, 50.0));
+        assert_eq!(offsets(FlexSpace::End), (200.0, 250.0));
+        assert_eq!(offsets(FlexSpace::Center), (100.0, 150.0));
+        assert_eq!(offsets(FlexSpace::SpaceBetween), (0.0, 250.0));
+        assert_eq!(offsets(FlexSpace::SpaceAround), (50.0, 200.0));
+        let (first, second) = offsets(FlexSpace::SpaceEvenly);
+        assert!((first - 200.0 / 3.0).abs() < 0.01 && (second - (400.0 / 3.0 + 50.0)).abs() < 0.01);
+        // An auto margin takes the free space first.
+        let pushed = FlowBox {
+            margin: [Dim::Px(0.0), Dim::Px(0.0), Dim::Px(0.0), Dim::Auto],
+            ..item(50.0, 10.0)
+        };
+        let got = laid(&[container(row(), 2), item(50.0, 10.0), pushed]);
+        assert_eq!(got[2].0, 250.0);
+    }
+
+    #[test]
+    fn order_and_reverse_change_where_items_go() {
+        let ordered = FlowBox {
+            flex_item: FlexItem {
+                order: -1,
+                ..FlexItem::default()
+            },
+            ..item(80.0, 10.0)
+        };
+        let got = laid(&[container(row(), 2), item(50.0, 10.0), ordered]);
+        assert_eq!((got[2].0, got[1].0), (0.0, 80.0));
+        let reverse = FlexContainer {
+            reverse: true,
+            ..row()
+        };
+        let got = laid(&[container(reverse, 2), item(50.0, 10.0), item(80.0, 10.0)]);
+        assert_eq!((got[1].0, got[2].0), (250.0, 170.0));
+        // A right-to-left row starts from the right, and its reverse from the left.
+        let rtl = |flex: FlexContainer| FlowBox {
+            direction: Direction::Rtl,
+            ..container(flex, 2)
+        };
+        let got = laid(&[rtl(row()), item(50.0, 10.0), item(80.0, 10.0)]);
+        assert_eq!((got[1].0, got[2].0), (250.0, 170.0));
+        let got = laid(&[rtl(reverse), item(50.0, 10.0), item(80.0, 10.0)]);
+        assert_eq!((got[1].0, got[2].0), (0.0, 50.0));
+    }
+
+    #[test]
+    fn a_column_stacks_items_and_stretches_them_across() {
+        let column = FlexContainer {
+            column: true,
+            ..row()
+        };
+        let wide = FlowBox {
+            width: Dim::Auto,
+            ..item(0.0, 20.0)
+        };
+        let got = laid(&[container(column, 2), wide.clone(), item(80.0, 40.0)]);
+        assert_eq!(got[1], (0.0, 0.0, 300.0, 20.0));
+        assert_eq!(got[2], (0.0, 20.0, 80.0, 40.0));
+        assert_eq!(got[0].3, 60.0);
+        // Not stretched, an auto width is its content's: none here.
+        let centered = FlexContainer {
+            align_items: FlexAlign::Center,
+            ..column
+        };
+        let got = laid(&[container(centered, 2), wide.clone(), item(80.0, 40.0)]);
+        assert_eq!((got[1].2, got[2].0), (0.0, 110.0));
+        // With a height, free space grows and overflow shrinks along the column.
+        let tall = |flex: FlexContainer, children: usize| FlowBox {
+            height: Dim::Px(100.0),
+            ..container(flex, children)
+        };
+        let growing = flexing(item(50.0, 20.0), 1.0, 1.0, Dim::Auto);
+        let got = laid(&[tall(column, 2), growing, item(50.0, 30.0)]);
+        assert_eq!((got[1].3, got[2].1), (70.0, 70.0));
+        let got = laid(&[tall(column, 2), item(50.0, 80.0), item(50.0, 80.0)]);
+        assert_eq!((got[1].3, got[2].1, got[2].3), (50.0, 50.0, 50.0));
+        // `justify-content` and gaps run down; `column-reverse` starts at the bottom.
+        let spaced = FlexContainer {
+            justify: FlexSpace::SpaceBetween,
+            ..column
+        };
+        let got = laid(&[tall(spaced, 2), item(50.0, 20.0), item(50.0, 30.0)]);
+        assert_eq!((got[1].1, got[2].1), (0.0, 70.0));
+        let upward = FlexContainer {
+            reverse: true,
+            gap: [10.0, 0.0],
+            ..column
+        };
+        let got = laid(&[tall(upward, 2), item(50.0, 20.0), item(50.0, 30.0)]);
+        assert_eq!((got[1].1, got[2].1), (80.0, 40.0));
+    }
+
+    #[test]
+    fn margins_padding_and_borders_take_their_room() {
+        let framed = FlowBox {
+            margin: [Dim::Px(4.0), Dim::Px(6.0), Dim::Px(8.0), Dim::Px(10.0)],
+            padding: [Dim::Px(1.0); 4],
+            border: [2.0; 4],
+            ..item(50.0, 20.0)
+        };
+        let got = laid(&[container(row(), 2), framed, item(30.0, 10.0)]);
+        // Border box: 50 + 2 + 4 wide, 20 + 2 + 4 tall, after its left and top margins.
+        assert_eq!(got[1], (10.0, 4.0, 56.0, 26.0));
+        assert_eq!(got[2].0, 10.0 + 56.0 + 6.0);
+        assert_eq!(got[0].3, 4.0 + 26.0 + 8.0);
+        // The container's own padding and border move its content box.
+        let padded = FlowBox {
+            padding: [Dim::Px(5.0); 4],
+            border: [1.0; 4],
+            ..container(row(), 1)
+        };
+        let got = laid(&[padded, item(30.0, 10.0)]);
+        assert_eq!(got[1], (6.0, 6.0, 30.0, 10.0));
+        assert_eq!(got[0], (0.0, 0.0, 300.0, 22.0));
+    }
+
+    #[test]
+    fn nested_content_flows_inside_an_item_at_its_flexed_width() {
+        // A growing item holds a block child, which fills the item's used width.
+        let boxes = [
+            container(row(), 2),
+            FlowBox {
+                children: vec![3],
+                ..flexing(FlowBox::default(), 1.0, 1.0, Dim::Px(0.0))
+            },
+            item(100.0, 10.0),
+            FlowBox {
+                height: Dim::Px(30.0),
+                ..FlowBox::default()
+            },
+        ];
+        let got = laid(&boxes);
+        assert_eq!(got[1], (0.0, 0.0, 200.0, 30.0));
+        assert_eq!(got[3], (0.0, 0.0, 200.0, 30.0));
+        assert_eq!(got[2].0, 200.0);
+        // An absolutely positioned child takes no part: its static position is the corner.
+        let boxes = [
+            container(row(), 2),
+            FlowBox {
+                out_of_flow: true,
+                ..FlowBox::default()
+            },
+            item(100.0, 10.0),
+        ];
+        let got = laid(&boxes);
+        assert_eq!(got[2].0, 0.0);
+        assert_eq!((got[1].0, got[1].1), (0.0, 0.0));
+    }
+}

@@ -19,6 +19,10 @@ use super::{
 };
 use std::num::NonZeroUsize;
 
+#[path = "flex_layout.rs"]
+mod flex_layout;
+pub use flex_layout::{FlexAlign, FlexContainer, FlexItem, FlexSpace, FlexWrap};
+
 /// A specified length before its containing block is known.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Dim {
@@ -142,6 +146,11 @@ pub struct FlowBox {
     pub out_of_flow: bool,
     /// `overflow` other than visible, or any other 9.4.1 establishing condition.
     pub establishes_bfc: bool,
+    /// `display: flex` or `inline-flex`: its children are flex items. It establishes a
+    /// formatting context, so `establishes_bfc` is set with it.
+    pub flex: Option<FlexContainer>,
+    /// What this box is as a flex item, when its parent is a flex container.
+    pub flex_item: FlexItem,
     /// `box-sizing: border-box`: `width`, `height` and their minimums and maximums are
     /// of the border box. [`content_boxes`] turns them into content sizes before layout.
     pub border_box: bool,
@@ -183,6 +192,8 @@ impl Default for FlowBox {
             row_no_wrap: false,
             out_of_flow: false,
             establishes_bfc: false,
+            flex: None,
+            flex_item: FlexItem::default(),
             border_box: false,
             width: Dim::Auto,
             min_width: Dim::Auto,
@@ -862,6 +873,9 @@ impl Solver<'_> {
                 minimum = preferred;
             }
             return (minimum, preferred.max(minimum));
+        }
+        if let Some(flex) = value.flex {
+            return self.measure_flex(node, flex);
         }
         if let Some(TableRole::Table { spacing }) = value.table {
             let (rows, captions) = self.table_parts(node);
@@ -1949,6 +1963,8 @@ impl Solver<'_> {
         let mut flow = Flow::new(content_top);
         if let Some(TableRole::Table { spacing }) = value.table {
             flow.y = self.layout_table(node, spacing, inner, content_top)?;
+        } else if let Some(flex) = value.flex {
+            flow.y = self.layout_flex(node, flex, inner, content_top)?;
         } else {
             if let Some(height) = self.leaf_height(node, width.0) {
                 flow.y += height;

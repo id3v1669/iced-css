@@ -774,6 +774,7 @@ mod tests {
             position: Position::Static,
             float: Float::None,
             flow: Flow::Normal,
+            flex: false,
         }
     }
 
@@ -1317,7 +1318,7 @@ mod tests {
                     size_of::<ChildFacts<'_>>(),
                     std::mem::align_of::<ChildFacts<'_>>()
                 ),
-                (88, 8)
+                (96, 8)
             );
         }
     }
@@ -1879,7 +1880,7 @@ mod tests {
                     size_of::<ChildFacts<'_>>(),
                     std::mem::align_of::<ChildFacts<'_>>()
                 ),
-                (88, 8)
+                (96, 8)
             );
             assert_eq!(
                 (

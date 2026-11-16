@@ -114,6 +114,14 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   makes `width`, `height` and their minimums and maximums sizes of the border box; a
   percentage padding above or below is not taken out of a height, and a `:before` or
   `:after` box does not read it.
+- **Flexbox:** `display: flex` and `inline-flex` (CSS Flexible Box Layout 1) with
+  `flex-direction`, `flex-wrap`, `flex-flow`, `flex-grow`, `flex-shrink`, `flex-basis`,
+  `flex`, `order`, `justify-content`, `align-items`, `align-self`, `align-content`, and
+  `gap`, `row-gap` and `column-gap`. Children are blockified into items and text between
+  them is an item of its own. `baseline` alignment aligns at the start; a percentage gap
+  is none; an item's automatic minimum width is its narrowest content unless it clips, and
+  a `min-width: 0` does not turn that off; `inherit` on a flex property reads as its
+  initial value; none of them animates.
 - **Positioning:** relative, absolute and fixed, with `z-index` stacking, on boxes; an inline
   element ignores `position: relative`: its offsets and `z-index` do nothing, and it is no
   containing block for absolute descendants, which take the nearest positioned box instead.

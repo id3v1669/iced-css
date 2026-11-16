@@ -343,6 +343,54 @@ const CASES: &[(&str, &str, &str)] = &[
     ),
     ("box-shadow", "", "#k { box-shadow:1px 2px 3px #000000; }"),
     ("opacity", "", "#k { opacity:0.5; }"),
+    (
+        "flex-direction",
+        "#b { display:flex; }",
+        "#b { flex-direction:column; }",
+    ),
+    (
+        "flex-wrap",
+        "#b { display:flex; }",
+        "#b { flex-wrap:wrap; }",
+    ),
+    (
+        "justify-content",
+        "#b { display:flex; }",
+        "#b { justify-content:center; }",
+    ),
+    (
+        "align-items",
+        "#b { display:flex; }",
+        "#b { align-items:center; }",
+    ),
+    (
+        "align-content",
+        "#b { display:flex; }",
+        "#b { align-content:center; }",
+    ),
+    ("row-gap", "#b { display:flex; }", "#b { row-gap:5px; }"),
+    (
+        "column-gap",
+        "#b { display:flex; }",
+        "#b { column-gap:5px; }",
+    ),
+    ("flex-grow", "#b { display:flex; }", "#k { flex-grow:1; }"),
+    (
+        "flex-shrink",
+        "#b { display:flex; }",
+        "#k { flex-shrink:3; }",
+    ),
+    (
+        "flex-basis",
+        "#b { display:flex; }",
+        "#k { flex-basis:70px; }",
+    ),
+    ("order", "#b { display:flex; }", "#k { order:-1; }"),
+    (
+        "align-self",
+        "#b { display:flex; }",
+        "#k { align-self:center; }",
+    ),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

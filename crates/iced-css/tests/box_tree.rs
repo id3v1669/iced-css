@@ -606,6 +606,92 @@ fn supports_groups_apply_when_their_condition_holds() {
 }
 
 #[test]
+fn display_flex_lays_children_out_as_flex_items() {
+    let root = || {
+        node(
+            "page",
+            vec![node(
+                "f",
+                vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+            )],
+        )
+    };
+    // Border boxes of a, b, c as (left, top, width, height), and the container's height.
+    let laid = |css: &str| {
+        let tree = BoxTree::new(root(), css).unwrap();
+        let geometry = tree.layout(600.0, Some(400.0)).unwrap();
+        let area = |at: usize| {
+            let border = geometry[at].as_ref().unwrap().border;
+            (
+                border.left,
+                border.top,
+                border.right - border.left,
+                border.bottom - border.top,
+            )
+        };
+        ([area(2), area(3), area(4)], area(1).3)
+    };
+    let sizes = "#a { width:100px; height:20px; } #b { width:150px; height:40px; } #c { width:50px; height:30px; }";
+    // Block flow first: one under another.
+    let (items, height) = laid(sizes);
+    assert_eq!(items[1].1, 20.0);
+    assert_eq!(height, 90.0);
+    // A row: side by side, the container as tall as the tallest.
+    let (items, height) = laid(&format!("#f {{ display:flex; }} {sizes}"));
+    assert_eq!(items.map(|item| item.0), [0.0, 100.0, 250.0]);
+    assert_eq!(items.map(|item| item.1), [0.0; 3]);
+    assert_eq!(height, 40.0);
+    // `flex: 1` takes the free space; `gap` goes between.
+    let (items, _) = laid(&format!(
+        "#f {{ display:flex; gap:10px; }} {sizes} #b {{ flex:1; }}"
+    ));
+    assert_eq!(items[1].2, 600.0 - 100.0 - 50.0 - 20.0);
+    assert_eq!(items[2].0, 550.0);
+    // Wrapping, and a column.
+    let (items, height) = laid(&format!(
+        "#f {{ display:flex; flex-wrap:wrap; width:260px; }} {sizes}"
+    ));
+    assert_eq!((items[1].0, items[1].1), (100.0, 0.0));
+    assert_eq!((items[2].0, items[2].1), (0.0, 40.0));
+    assert_eq!(height, 70.0);
+    let (items, height) = laid(&format!(
+        "#f {{ display:flex; flex-direction:column; }} {sizes}"
+    ));
+    assert_eq!(items.map(|item| item.1), [0.0, 20.0, 60.0]);
+    assert_eq!(height, 90.0);
+    // Alignment and distribution.
+    let (items, _) = laid(&format!(
+        "#f {{ display:flex; justify-content:space-between; align-items:center; }} {sizes}"
+    ));
+    assert_eq!(items.map(|item| item.0), [0.0, 250.0, 550.0]);
+    assert_eq!(items.map(|item| item.1), [10.0, 0.0, 5.0]);
+    let (items, _) = laid(&format!(
+        "#f {{ display:flex; flex-flow:row-reverse nowrap; }} {sizes} #c {{ order:-1; align-self:flex-end; }}"
+    ));
+    assert_eq!(items.map(|item| item.0), [450.0, 300.0, 550.0]);
+    assert_eq!(items[2].1, 10.0);
+    // An item with no height stretches to the line; items shrink to fit.
+    let (items, _) = laid(&format!(
+        "#f {{ display:flex; }} {sizes} #a {{ height:auto; }}"
+    ));
+    assert_eq!(items[0].3, 40.0);
+    let (items, _) = laid(
+        "#f { display:flex; width:300px; } #a, #b, #c { width:200px; height:10px; } #c { flex-shrink:0; }",
+    );
+    assert_eq!(items.map(|item| item.2), [50.0, 50.0, 200.0]);
+    // An inline-level child is an item like any other.
+    let (items, _) = laid(&format!(
+        "#f {{ display:flex; }} {sizes} #b {{ display:inline; }}"
+    ));
+    assert_eq!((items[1].0, items[1].2), (100.0, 150.0));
+    // `inline-flex` shrinks to its items.
+    let tree = BoxTree::new(root(), &format!("#f {{ display:inline-flex; }} {sizes}")).unwrap();
+    let geometry = tree.layout(600.0, Some(400.0)).unwrap();
+    let container = geometry[1].as_ref().unwrap().border;
+    assert_eq!(container.right - container.left, 300.0);
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

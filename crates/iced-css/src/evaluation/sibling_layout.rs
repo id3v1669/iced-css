@@ -3180,6 +3180,7 @@ mod tests {
                 position: Position::Static,
                 float: Float::None,
                 flow: Flow::Normal,
+                flex: false,
             },
             context: ChildContext::OrdinaryNonBfc,
             content: OwnerContent::NoOwnContentNonReplaced,
