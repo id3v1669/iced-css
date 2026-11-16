@@ -1,7 +1,9 @@
 //! Guards over Cargo's resolved graph, not a complete license or API-use audit.
 use serde_json::Value;
 use std::path::Path;
-const ANIMATE: &str = "/home/user/tmpmy/luminate/animate";
+/// The one approved non-registry source: luminate at a pinned revision.
+const ANIMATE: &str =
+    "git+https://github.com/sonata-ltd/luminate?rev=77a4ae2c7f2cd15bf8a4820ad3ae536bf72a6d15";
 fn array<'a>(value: &'a Value, key: &str) -> Result<&'a [Value], String> {
     value
         .get(key)
@@ -15,7 +17,7 @@ fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| format!("missing metadata string: {key}"))
 }
-/// Enforce the current selected local/registry sources and dependency boundaries.
+/// Enforce the current selected git/registry sources and dependency boundaries.
 /// Re-exported API usage, source-replacement config, codec/backend facilities and
 /// target-specific runtime behavior still require their separate qualification.
 pub fn validate_metadata(metadata: &Value) -> Result<(), String> {
@@ -30,10 +32,12 @@ pub fn validate_metadata(metadata: &Value) -> Result<(), String> {
         .iter()
         .find(|p| p["name"] == "iced_animate")
         .ok_or("missing resolved animation package")?;
-    if string(animate, "manifest_path")? != Path::new(ANIMATE).join("Cargo.toml").to_string_lossy()
-        || !animate["source"].is_null()
+    if animate["source"]
+        .as_str()
+        .and_then(|source| source.strip_prefix(ANIMATE))
+        .is_none_or(|rest| !rest.starts_with('#'))
     {
-        return Err("animation must resolve to the selected local package".into());
+        return Err("animation must resolve to the selected pinned git revision".into());
     }
     let declarations: Vec<_> = array(runtime, "dependencies")?
         .iter()
@@ -46,10 +50,11 @@ pub fn validate_metadata(metadata: &Value) -> Result<(), String> {
     if declaration.get("optional") != Some(&Value::Bool(false))
         || declaration.get("kind") != Some(&Value::Null)
         || declaration.get("target") != Some(&Value::Null)
-        || declaration["path"] != ANIMATE
+        || declaration["source"] != ANIMATE
+        || !declaration["path"].is_null()
     {
         return Err(
-            "animation must be a nonoptional, unconditional normal dependency at the selected path"
+            "animation must be a nonoptional, unconditional normal dependency on the selected revision"
                 .into(),
         );
     }
@@ -89,11 +94,12 @@ pub fn validate_metadata(metadata: &Value) -> Result<(), String> {
                 )
                 && Path::new(string(package, "manifest_path")?)
                     == root.join("crates").join(name).join("Cargo.toml");
-            if !owned && package["id"] != animate["id"] {
+            if !owned {
                 return Err(format!("unapproved path dependency: {name}"));
             }
         } else if string(package, "source")?
             != "registry+https://github.com/rust-lang/crates.io-index"
+            && package["id"] != animate["id"]
         {
             return Err(format!("unqualified dependency source: {name}"));
         }

@@ -80,7 +80,10 @@ pub fn evaluate(
     for source in &sources {
         let path = contained_path(root, Path::new(&source.path))?;
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-        let actual = format!("{:x}", Sha256::digest(bytes));
+        let actual = Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         if actual != source.sha256 {
             return Err(format!("source hash mismatch: {}", source.id));
         }
@@ -195,9 +198,10 @@ pub fn evaluate(
     })
 }
 
-/// Validate the project's docs-relative source manifest, including actual bytes.
+/// Validate the source manifest against the retained copies tracked under
+/// `fixtures/retained`, including actual bytes.
 /// Success means the evidence is structurally valid, not that coverage is complete.
 pub fn validate(requirements: &Value, cases: &Value, sources: &Value) -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/retained");
     evaluate(requirements, cases, sources, &root).map(|_| ())
 }

@@ -94,10 +94,47 @@ pub fn read_file_blocking(
     if !std::fs::metadata(path)?.is_file() {
         return Err(ReadBodyError::Io(not_regular()));
     }
-    let mut file = File::open(path)?;
+    // The path can be replaced between the check above and the open. A nonblocking
+    // open returns at once on a writer-less FIFO, and the check below rejects it; on a
+    // regular file the flag changes nothing.
+    let mut file = open_nonblocking(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(ReadBodyError::Io(not_regular()));
     }
     read_body_blocking(&mut file, Some(metadata.len()), limits)
+}
+
+/// Opens for reading without blocking: on Unix with the platform's `O_NONBLOCK`,
+/// so a FIFO with no writer returns at once instead of holding the worker.
+fn open_nonblocking(path: &Path) -> io::Result<File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    options.open(path)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::FileTypeExt;
+
+    // The path check in `read_file_blocking` can be raced; this is the open behind it.
+    #[test]
+    fn a_fifo_with_no_writer_opens_at_once_and_is_seen_as_one() {
+        let path = std::env::temp_dir().join(format!("iced-css-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `name` is a valid NUL-terminated path for the duration of the call.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let opened = open_nonblocking(&path);
+        let _ = std::fs::remove_file(&path);
+        let file = opened.unwrap();
+        assert!(file.metadata().unwrap().file_type().is_fifo());
+    }
 }

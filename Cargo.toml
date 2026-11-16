@@ -27,4 +27,4 @@ iced_test = "0.14.0"
 iced-css = { version = "0.1.0", path = "crates/iced-css" }
 iced-css-core = { version = "0.1.0", path = "crates/iced-css-core" }
 iced-css-macro = { version = "0.1.0", path = "crates/iced-css-macro" }
-cssparser = "0.37"
+cssparser = "0.38"

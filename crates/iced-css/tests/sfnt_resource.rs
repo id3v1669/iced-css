@@ -894,7 +894,7 @@ fn all_consumed_metric_duplicates_preserve_nested_reader_error() {
 fn retained_fira_exact_bytes_join_metrics_without_rendering_claim() {
     let input = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/tmp/implementation-sfnt-resource-test-preparation/inputs/FiraSans-Regular.ttf"
+        "/tests/fixtures/sfnt_resource/FiraSans-Regular.ttf"
     ))
     .as_slice();
     // Byte SHA-256 is checked by the sealed external input verification, not by a new Rust dependency.

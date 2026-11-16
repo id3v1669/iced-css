@@ -219,6 +219,7 @@ pub(super) struct Followers {
 #[derive(Debug, Clone)]
 pub(super) struct Presented {
     id: String,
+    property: PropertyId,
     field: Field,
     target: Value,
     now: Value,
@@ -1285,7 +1286,11 @@ impl BoxTree {
                 }
                 continue;
             }
-            if self.read(projected, presented.field) != Some(presented.target) {
+            // Section 13: an important value holds without a temporary override, in an
+            // interaction variant as in the committed tree.
+            if self.read(projected, presented.field) != Some(presented.target)
+                || self.important[projected].contains(&presented.property)
+            {
                 continue;
             }
             if matches!(presented.field, Field::Background | Field::BorderColor(_))
@@ -2550,6 +2555,12 @@ impl BoxTreeAnimations {
                 dropped.push(property);
                 continue;
             };
+            // Section 13: an important target holds without a temporary override, a
+            // running one toward the same value included.
+            if !generated && to.important[after].contains(&property) {
+                dropped.push(property);
+                continue;
+            }
             if committed == target {
                 continue;
             }
@@ -2589,10 +2600,7 @@ impl BoxTreeAnimations {
                 (Field::FontSize, Value::Length(Dim::Px(a)), Value::Length(Dim::Px(b)))
                     if a <= 0.0 || b <= 0.0
             );
-            if zero_size
-                || mix(committed, target, 0.0).is_none()
-                || (!generated && to.important[after].contains(&property))
-            {
+            if zero_size || mix(committed, target, 0.0).is_none() {
                 dropped.push(property);
                 continue;
             }
@@ -2725,10 +2733,11 @@ impl BoxTreeAnimations {
             .partition(|track| {
                 self.progress(track).is_some()
                     && track.capture == tree.source.capture
-                    && tree
-                        .target_of(&track.id)
-                        .and_then(|(element, key)| tree.read_any(element, key, track.field))
-                        == Some(track.target)
+                    && tree.target_of(&track.id).is_some_and(|(element, key)| {
+                        // Section 13: a value that became important holds at once.
+                        !(key.is_none() && tree.important[element].contains(&track.property))
+                            && tree.read_any(element, key, track.field) == Some(track.target)
+                    })
             });
         self.tracks = running;
         let work = NonZeroUsize::new(100_000).expect("positive");
@@ -2769,6 +2778,7 @@ impl BoxTreeAnimations {
                 let now = mix(track.start, track.target, self.progress(track)?)?;
                 Some(Presented {
                     id: track.id.clone(),
+                    property: track.property,
                     field: track.field,
                     target: track.target,
                     now,

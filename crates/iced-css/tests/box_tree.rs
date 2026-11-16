@@ -2090,6 +2090,47 @@ mod interactive {
     }
 
     #[test]
+    fn an_important_interaction_value_holds_over_a_presented_one() {
+        let root = || node("page", vec![node("slot", vec![])]);
+        let sheet = |width: u32| {
+            format!(
+                "#slot {{ width:{width}px; height:10px; }} #slot:hover {{ width:200px !important; }}"
+            )
+        };
+        let from = BoxTree::new(root(), &sheet(100)).unwrap();
+        let to = from.restyled(&[&sheet(200)]).unwrap();
+        let mut animations = iced_css::box_tree::BoxTreeAnimations::new();
+        let start = std::time::Instant::now();
+        animations
+            .request(
+                &from,
+                &to,
+                "slot",
+                &["width"],
+                iced_css::animation::clock::AnimationTiming::new(
+                    std::time::Duration::from_secs(1),
+                    std::time::Duration::ZERO,
+                ),
+                start,
+            )
+            .unwrap();
+        animations.advance(start + std::time::Duration::from_millis(500), &to);
+        let view: View<'_> = animations
+            .presented(&to)
+            .interactive()
+            .widget("slot", space(10.0))
+            .into();
+        let mut rig = Rig::new(view);
+        assert_eq!(rig.slot().width, 150.0);
+        let on = Point::new(5.0, 5.0);
+        rig.send(mouse::Event::CursorMoved { position: on }, on);
+        assert_eq!(rig.slot().width, 200.0, "the same value, now important");
+        let off = Point::new(5.0, 150.0);
+        rig.send(mouse::Event::CursorMoved { position: off }, off);
+        assert_eq!(rig.slot().width, 150.0);
+    }
+
+    #[test]
     fn a_hosted_widget_draws_within_its_clipping_box() {
         struct Probe(std::rc::Rc<std::cell::Cell<Option<Rectangle>>>);
         impl iced::advanced::Widget<u8, Theme, ()> for Probe {
@@ -3811,6 +3852,42 @@ mod animation {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_target_that_becomes_important_ends_its_running_animation() {
+        let from = tree("#box { width:100px; }");
+        let to = from.restyled(&["#box { width:200px; }"]).unwrap();
+        let important = from
+            .restyled(&["#box { width:200px !important; }"])
+            .unwrap();
+        let width = |shown: &BoxTree| {
+            let geometry = shown.layout(800.0, Some(600.0)).unwrap();
+            let border = geometry[1].as_ref().unwrap().border;
+            border.right - border.left
+        };
+        let start = Instant::now();
+        let half = start + Duration::from_millis(500);
+        // A restyle the animations only see through `advance`.
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "box", &["width"], second(), start)
+            .unwrap();
+        animations.advance(half, &important);
+        assert!(!animations.is_animating());
+        assert_eq!(width(&animations.presented(&important)), 200.0);
+        // The same target requested again, now important.
+        let mut animations = BoxTreeAnimations::new();
+        animations
+            .request(&from, &to, "box", &["width"], second(), start)
+            .unwrap();
+        let count = animations
+            .request(&to, &important, "box", &["width"], second(), start)
+            .unwrap();
+        assert_eq!(count, 0);
+        animations.advance(half, &important);
+        assert!(!animations.is_animating());
+        assert_eq!(width(&animations.presented(&important)), 200.0);
     }
 
     #[test]

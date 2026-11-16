@@ -54,6 +54,21 @@ impl MotionSync {
             self.tick(motion, at);
         }
     }
+    /// The time `synchronize` would replay toward `accepted`; zero while idle.
+    pub fn backlog(&self, accepted: Instant) -> Duration {
+        match self.synced {
+            Some(at) if self.moving => accepted.saturating_duration_since(at),
+            _ => Duration::ZERO,
+        }
+    }
+    /// One tick straight to `accepted`, whatever the gap. For an owner that then
+    /// restarts its tracks there from its own timing instead of replaying the gap:
+    /// the dependency spends at most its cap on tracks about to be replaced.
+    pub fn jump(&mut self, motion: &Motion, accepted: Instant) {
+        if self.synced.is_some_and(|at| at < accepted) {
+            self.tick(motion, accepted);
+        }
+    }
     /// Call once after starts are installed at `accepted`. While idle the
     /// dependency would spend nothing on its next tick, so issue that zero-spend
     /// tick now. If a spending tick already landed exactly on `accepted`, the

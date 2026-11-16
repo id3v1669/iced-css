@@ -45,22 +45,11 @@ if let Ok(sheet) = std::fs::read_to_string("page.css") {
 
 ## Building
 
-The workspace does not build from a bare clone yet. Animation time comes from
-[luminate](https://github.com/sonata-ltd/luminate)'s `animate` crate (`iced_animate`), which
-`crates/iced-css/Cargo.toml` takes as a path dependency on a local checkout at
-`/home/user/tmpmy/luminate/animate`, and every cargo command in the workspace reads that
-manifest. Before building, clone luminate and check out the revision the workspace is
-developed against:
-
-```sh
-git clone https://github.com/sonata-ltd/luminate /home/user/tmpmy/luminate
-git -C /home/user/tmpmy/luminate checkout f17ce093ebe6fd54f540d66915683f78e0942a0e
-```
-
-To keep the checkout elsewhere, change the `iced_animate` path in
-`crates/iced-css/Cargo.toml` and the `ANIMATE` constant in
-`crates/iced-css-conformance/src/dependency.rs`, which checks the dependency against the
-same path.
+Animation time comes from [luminate](https://github.com/sonata-ltd/luminate)'s `animate`
+crate (`iced_animate`), which `crates/iced-css/Cargo.toml` takes as a git dependency pinned
+to a revision; cargo fetches it on the first build. To move to another revision, change
+`rev` there and in the `ANIMATE` constant in `crates/iced-css-conformance/src/dependency.rs`,
+which checks the resolved dependency against the same revision.
 
 A plain `cargo test` leaves out the tests of the optional `image` and `svg` features: image
 painting and list-style images in `crates/iced-css/tests/box_tree_render.rs`, and the

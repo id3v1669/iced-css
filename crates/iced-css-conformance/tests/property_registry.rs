@@ -17,7 +17,7 @@ fn targets(name: &str) -> BTreeSet<&'static str> {
 // the Rust generator, against the pre-existing retained chapter-table extraction.
 #[test]
 fn admitted_inventory_matches_retained_definition_fields() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/tmp/css22");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/retained/tmp/css22");
     let retained: Vec<Value> =
         serde_json::from_slice(&std::fs::read(root.join("property-definitions.json")).unwrap())
             .unwrap();
@@ -274,7 +274,7 @@ fn animation_dispatch_preserves_selected_exceptions_and_scope() {
 // complete approved table, independently of the Python generator's table reader.
 #[test]
 fn all_screen_dispatch_and_owner_assignments_match_retained_architecture() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/arch");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/retained/arch");
     for (file, animation) in [
         ("architecture-67-animation-registry.md", true),
         ("property-responsibilities.md", false),

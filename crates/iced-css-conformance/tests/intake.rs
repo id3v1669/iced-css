@@ -12,11 +12,7 @@ fn retained_intake_has_verified_bytes_but_cannot_claim_implementation() {
     let sources = load("sources.json");
     let requirements = load("requirements.json");
     let cases = load("cases.json");
-    let root = fixtures
-        .join("../../..")
-        .join("docs")
-        .canonicalize()
-        .unwrap();
+    let root = fixtures.join("retained");
     let report = coverage::evaluate(&requirements, &cases, &sources, &root).unwrap();
     assert!(!report.complete);
     assert!(report.closed.is_empty());
@@ -45,7 +41,10 @@ fn fixture_json(name: &str) -> Value {
 }
 fn sha256(text: &str) -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(text.as_bytes()))
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
 }
 
 #[test]

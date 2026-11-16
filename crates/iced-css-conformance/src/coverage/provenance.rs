@@ -21,7 +21,12 @@ pub(super) struct OracleEvidence {
 fn verify_artifact(root: &Path, path: &str, expected: &str, label: &str) -> Result<(), String> {
     let path = contained_path(root, Path::new(path)).map_err(|e| format!("{label}: {e}"))?;
     let bytes = std::fs::read(path).map_err(|e| format!("{label}: {e}"))?;
-    if format!("{:x}", Sha256::digest(bytes)) != expected {
+    if Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        != expected
+    {
         return Err(format!("{label}: artifact hash mismatch"));
     }
     Ok(())

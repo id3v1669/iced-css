@@ -35,7 +35,7 @@ fn animation(data: &mut Value) -> &mut Value {
         .unwrap()
 }
 #[test]
-fn actual_resolved_graph_has_required_unconditional_local_animation() {
+fn actual_resolved_graph_has_required_unconditional_pinned_animation() {
     validate_metadata(&metadata()).unwrap();
 }
 #[test]
@@ -51,9 +51,22 @@ fn optional_target_specific_and_dev_only_animation_are_rejected() {
     }
 }
 #[test]
-fn wrong_animation_source_cannot_replace_required_local_package() {
+fn wrong_animation_source_cannot_replace_required_pinned_revision() {
+    let mut data = metadata();
+    animation(&mut data)["source"] = "git+https://github.com/sonata-ltd/luminate?rev=0".into();
+    assert!(validate_metadata(&data).is_err());
     let mut data = metadata();
     animation(&mut data)["path"] = "/some/other/animate".into();
+    assert!(validate_metadata(&data).is_err());
+    // The resolved package itself, not only the declaration.
+    let mut data = metadata();
+    let package = data["packages"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|p| p["name"] == "iced_animate")
+        .unwrap();
+    package["source"] = Value::Null;
     assert!(validate_metadata(&data).is_err());
 }
 #[test]

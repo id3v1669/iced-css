@@ -169,7 +169,9 @@ fn expand(args: &Args, function: &mut ItemFn) -> syn::Result<()> {
         // the stylesheet an input of the build, so editing it alone rebuilds the function.
         function.block.stmts.insert(
             0,
-            syn::parse_quote!(const _: &[u8] = ::core::include_bytes!(#path);),
+            syn::parse_quote!(
+                const _: &[u8] = ::core::include_bytes!(#path);
+            ),
         );
     }
 
@@ -520,10 +522,8 @@ mod tests {
 
     #[test]
     fn path_stylesheet_is_a_tracked_build_input() {
-        let path = std::env::temp_dir().join(format!(
-            "iced-css-macro-tracked-{}.css",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("iced-css-macro-tracked-{}.css", std::process::id()));
         std::fs::write(&path, ".btn { width: 50px; }").unwrap();
         let literal = path.to_str().unwrap();
         let out = expand_str(quote!(#literal, policy = Compile), view());

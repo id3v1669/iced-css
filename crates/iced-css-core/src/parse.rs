@@ -1,4 +1,4 @@
-use cssparser::{Delimiter, Parser, ParserInput, Token};
+use cssparser::{Delimiter, Parser, SourceLocation, Token};
 
 use crate::resolve::{Length, MarginValue, Margins, Paddings};
 
@@ -62,47 +62,75 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-type Error<'i> = cssparser::ParseError<'i, String>;
+/// A message and where it was raised: cssparser's own errors carry neither a
+/// location nor the offending token.
+type Error = cssparser::ParseError<(String, SourceLocation)>;
 
-fn error<'i, T>(parser: &Parser<'i, '_>, message: impl Into<String>) -> Result<T, Error<'i>> {
-    Err(parser.new_custom_error(message.into()))
+fn error<T>(parser: &Parser<'_>, message: impl Into<String>) -> Result<T, Error> {
+    Err(Error::custom((
+        message.into(),
+        parser.current_source_location(),
+    )))
+}
+
+/// Runs one of cssparser's own reads and places its error: an unexpected token
+/// where the read began, the end of input where it stopped.
+fn basic<'i, T>(
+    parser: &mut Parser<'i>,
+    read: impl FnOnce(&mut Parser<'i>) -> Result<T, cssparser::BasicParseError>,
+) -> Result<T, Error> {
+    let start = parser.state();
+    read(parser).map_err(|error| match error.kind {
+        cssparser::BasicParseErrorKind::UnexpectedToken => Error::custom((
+            format!(
+                "unexpected token: {}",
+                parser.slice_from(start.position()).trim()
+            ),
+            start.source_location(),
+        )),
+        kind => Error::custom((kind.to_string(), parser.current_source_location())),
+    })
 }
 
 pub fn parse(css: &str) -> Result<Stylesheet, ParseError> {
-    let mut input = ParserInput::new(css);
-    let mut parser = Parser::new(&mut input);
+    let mut parser = Parser::new(css);
 
     parse_rules(&mut parser).map_err(|e| {
-        let location = e.location;
+        let (message, location) = match e.kind {
+            cssparser::ParseErrorKind::Custom(located) => located,
+            // Raised inside cssparser, with no place of its own: where parsing stopped.
+            cssparser::ParseErrorKind::Basic(basic) => {
+                (basic.to_string(), parser.current_source_location())
+            }
+        };
         ParseError {
-            message: match e.kind {
-                cssparser::ParseErrorKind::Custom(message) => message,
-                cssparser::ParseErrorKind::Basic(basic) => format!("{basic:?}"),
-            },
+            message,
             line: location.line,
             column: location.column,
         }
     })
 }
 
-fn parse_rules<'i>(parser: &mut Parser<'i, '_>) -> Result<Stylesheet, Error<'i>> {
+fn parse_rules<'i>(parser: &mut Parser<'i>) -> Result<Stylesheet, Error> {
     let mut rules = Vec::new();
 
     loop {
         if parser.is_exhausted() {
             return Ok(Stylesheet { rules });
         }
-        match parser.next()?.clone() {
+        match basic(parser, |p| p.next().cloned())? {
             Token::Delim('.') => {}
             other => return error(parser, format!("unsupported selector start: {other:?}")),
         }
         // A class selector is the '.' immediately followed by its name: no
         // whitespace or comment in between.
-        let class = match parser.next_including_whitespace_and_comments()?.clone() {
+        let class = match basic(parser, |p| {
+            p.next_including_whitespace_and_comments().cloned()
+        })? {
             Token::Ident(class) => class,
             other => return error(parser, format!("expected class name after '.': {other:?}")),
         };
-        parser.expect_curly_bracket_block().map_err(Error::from)?;
+        basic(parser, |p| p.expect_curly_bracket_block())?;
         let declarations = parser.parse_nested_block(parse_declarations)?;
 
         rules.push(Rule {
@@ -112,7 +140,7 @@ fn parse_rules<'i>(parser: &mut Parser<'i, '_>) -> Result<Stylesheet, Error<'i>>
     }
 }
 
-fn parse_declarations<'i>(parser: &mut Parser<'i, '_>) -> Result<Vec<Property>, Error<'i>> {
+fn parse_declarations<'i>(parser: &mut Parser<'i>) -> Result<Vec<Property>, Error> {
     let mut declarations = Vec::new();
 
     while !parser.is_exhausted() {
@@ -121,11 +149,8 @@ fn parse_declarations<'i>(parser: &mut Parser<'i, '_>) -> Result<Vec<Property>, 
             continue;
         }
         // Names are case-insensitive.
-        let name = parser
-            .expect_ident_cloned()
-            .map_err(Error::from)?
-            .to_ascii_lowercase();
-        parser.expect_colon().map_err(Error::from)?;
+        let name = basic(parser, |p| p.expect_ident_cloned())?.to_ascii_lowercase();
+        basic(parser, |p| p.expect_colon())?;
 
         let declaration =
             parser.parse_until_after(Delimiter::Semicolon, |value| parse_value(&name, value))?;
@@ -136,13 +161,13 @@ fn parse_declarations<'i>(parser: &mut Parser<'i, '_>) -> Result<Vec<Property>, 
     Ok(declarations)
 }
 
-fn parse_value<'i>(name: &str, parser: &mut Parser<'i, '_>) -> Result<Property, Error<'i>> {
+fn parse_value<'i>(name: &str, parser: &mut Parser<'i>) -> Result<Property, Error> {
     let property = match name {
         "width" => Property::Width(parse_length(parser)?),
         "height" => Property::Height(parse_length(parser)?),
-        "min-width" => Property::MinWidth(parse_length(parser)?),
+        "min-width" => Property::MinWidth(parse_min_length(parser)?),
         "max-width" => Property::MaxWidth(parse_max_length(parser)?),
-        "min-height" => Property::MinHeight(parse_length(parser)?),
+        "min-height" => Property::MinHeight(parse_min_length(parser)?),
         "max-height" => Property::MaxHeight(parse_max_length(parser)?),
         "margin" => Property::Margin(parse_margin_shorthand(parser)?),
         "margin-top" => Property::MarginTop(parse_margin_value(parser)?),
@@ -165,7 +190,7 @@ fn parse_value<'i>(name: &str, parser: &mut Parser<'i, '_>) -> Result<Property, 
     };
 
     if !matches!(property, Property::Unsupported(_)) {
-        parser.expect_exhausted().map_err(Error::from)?;
+        basic(parser, |p| p.expect_exhausted())?;
     }
 
     Ok(property)
@@ -174,9 +199,19 @@ fn parse_value<'i>(name: &str, parser: &mut Parser<'i, '_>) -> Result<Property, 
 /// Consumes the rest of a value, rejecting the tokens that are parse
 /// errors in css-syntax: bad strings and URLs and unmatched closers,
 /// including inside nested blocks.
-fn check_value_tokens<'i>(parser: &mut Parser<'i, '_>) -> Result<(), Error<'i>> {
+fn check_value_tokens<'i>(parser: &mut Parser<'i>) -> Result<(), Error> {
+    check_value_tokens_at(parser, 0)
+}
+
+/// Blocks nested deeper than this are refused instead of recursing further.
+const MAX_VALUE_NESTING: usize = 64;
+
+fn check_value_tokens_at<'i>(parser: &mut Parser<'i>, depth: usize) -> Result<(), Error> {
+    if depth > MAX_VALUE_NESTING {
+        return error(parser, "value nested too deeply");
+    }
     while !parser.is_exhausted() {
-        match parser.next()?.clone() {
+        match basic(parser, |p| p.next().cloned())? {
             token @ (Token::BadString(_)
             | Token::BadUrl(_)
             | Token::CloseParenthesis
@@ -187,23 +222,80 @@ fn check_value_tokens<'i>(parser: &mut Parser<'i, '_>) -> Result<(), Error<'i>> 
             Token::Function(_)
             | Token::ParenthesisBlock
             | Token::SquareBracketBlock
-            | Token::CurlyBracketBlock => parser.parse_nested_block(check_value_tokens)?,
+            | Token::CurlyBracketBlock => {
+                parser.parse_nested_block(|nested| check_value_tokens_at(nested, depth + 1))?
+            }
             _ => {}
         }
     }
     Ok(())
 }
 
-fn parse_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
-    match parse_signed_length(parser)? {
+fn parse_length<'i>(parser: &mut Parser<'i>) -> Result<Length, Error> {
+    let (length, written) = parse_written_length(parser)?;
+    match length {
         Length::Px(v) if v < 0.0 => error(parser, "negative length"),
         Length::Percent(f) if f < 0.0 => error(parser, "negative percentage"),
+        // A tiny negative underflows to -0.0: the sign is the written one.
+        Length::Px(_) | Length::Percent(_) if written.negative && !written.zero => {
+            error(parser, "negative length")
+        }
         length => Ok(length),
     }
 }
 
-fn parse_signed_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
-    match parser.next()?.clone() {
+/// A numeric token as written, before any conversion to f32.
+#[derive(Clone, Copy)]
+struct Written {
+    negative: bool,
+    /// Every mantissa digit is `0`.
+    zero: bool,
+}
+
+impl Written {
+    /// From the token's own text: its sign and mantissa, not its exponent or unit.
+    fn of(token: &str) -> Self {
+        let digits = token.trim_start_matches(['+', '-']);
+        let mantissa = digits
+            .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .next()
+            .unwrap_or("");
+        Self {
+            negative: token.starts_with('-'),
+            zero: !mantissa.chars().any(|c| matches!(c, '1'..='9')),
+        }
+    }
+}
+
+/// The next token that is not whitespace or a comment, with its own source text.
+fn next_with_text<'i>(parser: &mut Parser<'i>) -> Result<(Token<'i>, &'i str), Error> {
+    loop {
+        let start = parser.position();
+        let token = basic(parser, |p| {
+            p.next_including_whitespace_and_comments().cloned()
+        })?;
+        if !matches!(token, Token::WhiteSpace(_) | Token::Comment(_)) {
+            return Ok((token, parser.slice_from(start)));
+        }
+    }
+}
+
+/// `min-width` and `min-height`: a non-negative length or percentage, not `auto`.
+fn parse_min_length<'i>(parser: &mut Parser<'i>) -> Result<Length, Error> {
+    match parse_length(parser)? {
+        Length::Auto => error(parser, "min-width/min-height do not take `auto`"),
+        length => Ok(length),
+    }
+}
+
+fn parse_signed_length<'i>(parser: &mut Parser<'i>) -> Result<Length, Error> {
+    parse_written_length(parser).map(|(length, _)| length)
+}
+
+fn parse_written_length<'i>(parser: &mut Parser<'i>) -> Result<(Length, Written), Error> {
+    let (token, text) = next_with_text(parser)?;
+    let written = Written::of(text);
+    let length = match token {
         // cssparser overflows out-of-range numbers to infinity.
         Token::Dimension { value, .. }
         | Token::Percentage {
@@ -214,14 +306,16 @@ fn parse_signed_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<
         }
         Token::Dimension { unit, .. } => error(parser, format!("unsupported length unit: {unit}")),
         Token::Percentage { unit_value, .. } => Ok(Length::Percent(unit_value)),
-        Token::Number { value: 0.0, .. } => Ok(Length::Px(0.0)),
+        // A tiny non-zero number underflows to 0.0 in f32; only a written zero is unitless.
+        Token::Number { value: 0.0, .. } if written.zero => Ok(Length::Px(0.0)),
         Token::Number { .. } => error(parser, "non-zero lengths require a unit"),
         Token::Ident(ident) if ident.eq_ignore_ascii_case("auto") => Ok(Length::Auto),
         other => error(parser, format!("expected a length, got {other:?}")),
-    }
+    }?;
+    Ok((length, written))
 }
 
-fn parse_max_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>> {
+fn parse_max_length<'i>(parser: &mut Parser<'i>) -> Result<Length, Error> {
     if parser
         .try_parse(|p| p.expect_ident_matching("none"))
         .is_ok()
@@ -234,7 +328,7 @@ fn parse_max_length<'i>(parser: &mut Parser<'i, '_>) -> Result<Length, Error<'i>
     }
 }
 
-fn parse_margin_value<'i>(parser: &mut Parser<'i, '_>) -> Result<MarginValue, Error<'i>> {
+fn parse_margin_value<'i>(parser: &mut Parser<'i>) -> Result<MarginValue, Error> {
     match parse_signed_length(parser)? {
         Length::Px(value) => Ok(MarginValue::Px(value)),
         Length::Auto => Ok(MarginValue::Auto),
@@ -242,7 +336,7 @@ fn parse_margin_value<'i>(parser: &mut Parser<'i, '_>) -> Result<MarginValue, Er
     }
 }
 
-fn parse_padding_value<'i>(parser: &mut Parser<'i, '_>) -> Result<f32, Error<'i>> {
+fn parse_padding_value<'i>(parser: &mut Parser<'i>) -> Result<f32, Error> {
     match parse_length(parser)? {
         Length::Px(value) => Ok(value),
         Length::Auto => error(parser, "padding does not accept `auto`"),
@@ -250,7 +344,7 @@ fn parse_padding_value<'i>(parser: &mut Parser<'i, '_>) -> Result<f32, Error<'i>
     }
 }
 
-fn parse_padding_shorthand<'i>(parser: &mut Parser<'i, '_>) -> Result<Paddings, Error<'i>> {
+fn parse_padding_shorthand<'i>(parser: &mut Parser<'i>) -> Result<Paddings, Error> {
     let mut values = Vec::new();
     while !parser.is_exhausted() {
         if values.len() == 4 {
@@ -289,7 +383,7 @@ fn parse_padding_shorthand<'i>(parser: &mut Parser<'i, '_>) -> Result<Paddings, 
     })
 }
 
-fn parse_margin_shorthand<'i>(parser: &mut Parser<'i, '_>) -> Result<Margins, Error<'i>> {
+fn parse_margin_shorthand<'i>(parser: &mut Parser<'i>) -> Result<Margins, Error> {
     let mut values = Vec::new();
     while !parser.is_exhausted() {
         if values.len() == 4 {
@@ -501,6 +595,43 @@ mod tests {
             parse(".a { margin-left: -5px; }").unwrap().rules[0].declarations,
             vec![Property::MarginLeft(MarginValue::Px(-5.0))]
         );
+    }
+
+    #[test]
+    fn numbers_that_underflow_f32_keep_their_written_sign_and_zero() {
+        assert!(parse(".a { width: 1e-100; }").is_err());
+        assert!(parse(".a { width: -1e-100px; }").is_err());
+        assert!(parse(".a { padding: -1e-100px; }").is_err());
+        assert!(parse(".a { min-height: -1e-100%; }").is_err());
+        assert!(parse(".a { width: 0; height: -0px; padding: 0.0; }").is_ok());
+        // negative margins stay valid, however small
+        assert!(parse(".a { margin-left: -1e-100px; }").is_ok()); // Only the number's own text counts: not a comment before it, nor its unit.
+        assert!(parse(".a { padding: 0 /*1*/ 0; }").is_ok());
+        assert!(parse(".a { width: /**/ -1e-100px; }").is_err());
+        assert!(parse(".a { padding: 0 /*example*/ 1e-100; }").is_err());
+        assert_eq!(
+            parse(".a { width: -0p\\78; }").unwrap().rules[0].declarations,
+            vec![Property::Width(Length::Px(-0.0))]
+        );
+        assert!(parse(".a { width: 0e5; height: 1e-100px; }").is_ok());
+    }
+
+    #[test]
+    fn min_sizes_do_not_take_auto() {
+        assert!(parse(".a { min-width: auto; }").is_err());
+        assert!(parse(".a { min-height: auto; }").is_err());
+        assert!(parse(".a { min-width: 0; min-height: 10%; }").is_ok());
+    }
+
+    #[test]
+    fn deeply_nested_unsupported_values_are_an_error_not_a_stack_overflow() {
+        let css = format!(
+            ".x {{ mystery: {}0{}; }}",
+            "f(".repeat(20_000),
+            ")".repeat(20_000)
+        );
+        assert!(parse(&css).is_err());
+        assert!(parse(".x { mystery: f(g(h(1))); }").is_ok());
     }
 
     #[test]

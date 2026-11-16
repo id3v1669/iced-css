@@ -1019,7 +1019,9 @@ impl BoxTree {
                         && one.texts == other.texts
                         && one.markers == other.markers
                         && one.backgrounds == other.backgrounds
-                        && one.marker_images == other.marker_images)
+                        && one.marker_images == other.marker_images
+                        // What `!important` wins decides which presented values lie over it.
+                        && one.important == other.important)
             }
             (None, None) => true,
             _ => false,
@@ -1081,7 +1083,9 @@ impl BoxTree {
             };
             found.insert(id, slot);
         }
-        ids.iter().map(|id| found.get(id.as_str()).copied()).collect()
+        ids.iter()
+            .map(|id| found.get(id.as_str()).copied())
+            .collect()
     }
 
     fn styled(source: &Arc<Source>, key: InteractionKey) -> Result<Self, BoxTreeError> {
@@ -5527,7 +5531,8 @@ fn narrowest_width<Renderer: text::Renderer<Font = iced::Font>>(
             continue;
         }
         // A no-break space joins its neighbours, so only breaking white space ends a word.
-        let breaks = |c: char| c.is_whitespace() && !matches!(c, '\u{a0}' | '\u{2007}' | '\u{202f}');
+        let breaks =
+            |c: char| c.is_whitespace() && !matches!(c, '\u{a0}' | '\u{2007}' | '\u{202f}');
         for chunk in run.text.split_inclusive(breaks) {
             let body = chunk.trim_end_matches(breaks);
             if !body.is_empty() {

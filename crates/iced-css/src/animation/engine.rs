@@ -68,6 +68,8 @@ struct Binding {
     progress: Anim<f32>,
     timing: TimingWindow,
 }
+/// The longest gap replayed tick by tick: 64 steps. Longer gaps re-anchor.
+const MAX_REPLAY: Duration = Duration::from_secs(4);
 // Every owned start uses Linear. A different easing kind avoids retarget's
 // unchanged-curve early return. Targeting the current raw value then settles
 // immediately; no interpolated CSS presentation or new address is introduced.
@@ -151,10 +153,53 @@ impl ProgressEngine {
     }
     /// Advance all tracks at one nondecreasing host timestamp. This never starts
     /// a track. The host coordinates outgoing dependency sampling after advance.
+    ///
+    /// A gap longer than [`MAX_REPLAY`] is not replayed step by step, which would
+    /// cost one dependency tick per 62.5 ms of it (a long delay, a suspended
+    /// application). The dependency is ticked once and every owned track restarts
+    /// there from its own timing window: the rest of its delay, or the rest of its
+    /// linear run from the progress wall-clock time gives it.
     pub fn advance(&mut self, now: Instant) -> Instant {
         let accepted = self.clock.accept(now);
-        self.sync.synchronize(&self.motion, accepted);
+        if self.sync.backlog(accepted) > MAX_REPLAY {
+            self.sync.jump(&self.motion, accepted);
+            self.reanchor(accepted);
+        } else {
+            self.sync.synchronize(&self.motion, accepted);
+        }
         accepted
+    }
+    fn reanchor(&mut self, now: Instant) {
+        for binding in &mut self.bindings {
+            let window = binding.timing;
+            match window.phase_at(now) {
+                TimingPhase::Delayed => {
+                    let run = window.ends_at().duration_since(window.starts_at());
+                    let wait = window.starts_at().duration_since(now);
+                    let curve = Curve::ease(Easing::Linear, run).delayed(wait);
+                    binding.progress = self.motion.play(binding.key, curve, 0.0_f32, 1.0);
+                }
+                TimingPhase::Active { elapsed, duration } => {
+                    // In the dependency's own terms: it runs no ease shorter than
+                    // `f32::EPSILON` seconds, and `linear_progress` scales its raw
+                    // sample back by that floor. Restart on the floored run, so the
+                    // same correction still gives wall-clock progress.
+                    let floor = duration.as_secs_f32().max(f32::EPSILON);
+                    let done = elapsed.as_secs_f32() / floor;
+                    let rest = if duration.as_secs_f32() < f32::EPSILON {
+                        Duration::from_secs_f32(floor).saturating_sub(elapsed)
+                    } else {
+                        duration - elapsed
+                    };
+                    let curve = Curve::ease(Easing::Linear, rest);
+                    binding.progress =
+                        self.motion
+                            .play(binding.key, curve, done.clamp(0.0, 1.0), 1.0);
+                }
+                // Sampling a complete window reads no track: let it settle.
+                TimingPhase::Complete => quiesce(&self.motion, binding),
+            }
+        }
     }
     /// Ticks handed to the dependency so far; a bounded-work diagnostic.
     pub fn synchronization_ticks(&self) -> u64 {
@@ -594,6 +639,64 @@ mod tests {
         assert!(!engine.is_animating());
         engine.advance(now + Duration::from_secs(3600));
         assert_eq!(engine.synchronization_ticks(), 19, "idle again: no tick");
+    }
+    #[test]
+    fn a_long_gap_re_anchors_tracks_instead_of_replaying_every_step() {
+        let color = PropertyId::lookup("color").unwrap();
+        let day = Duration::from_secs(86_400);
+        let run = Duration::from_secs(10);
+        // Through a one-day delay and half of the run in one advance.
+        let mut engine = engine();
+        let source = engine.register_source().unwrap();
+        let now = Instant::now();
+        engine
+            .start_progress(
+                &source,
+                &selection("color"),
+                AnimationTiming::new(run, day),
+                now,
+            )
+            .unwrap();
+        engine.advance(now + day / 2);
+        assert_eq!(engine.sample(&source, color).unwrap(), Some(0.0));
+        engine.advance(now + day + run / 2);
+        assert!(engine.synchronization_ticks() < 10, "bounded catch-up");
+        let sample = engine.sample(&source, color).unwrap().unwrap();
+        assert!((sample - 0.5).abs() <= 1e-5, "{sample}");
+        // The re-anchored track keeps wall-clock time on ordinary frames.
+        engine.advance(now + day + run / 2 + Duration::from_secs(1));
+        let sample = engine.sample(&source, color).unwrap().unwrap();
+        assert!((sample - 0.6).abs() <= 1e-5, "{sample}");
+        // The delay runs out between frames: its start is where it should be.
+        engine.advance(now + day + run * 3 / 4);
+        let sample = engine.sample(&source, color).unwrap().unwrap();
+        assert!((sample - 0.75).abs() <= 1e-5, "{sample}");
+        // Past the end in one jump: complete, and nothing left to tick.
+        engine.advance(now + day * 8);
+        assert_eq!(engine.sample(&source, color).unwrap(), None);
+        assert!(!engine.is_animating());
+        let ticks = engine.synchronization_ticks();
+        engine.advance(now + day * 9);
+        engine.advance(now + day * 10);
+        assert!(
+            engine.synchronization_ticks() <= ticks + 2,
+            "settles to idle"
+        );
+    }
+    #[test]
+    fn a_long_gap_into_a_run_below_the_ease_floor_keeps_wall_clock_progress() {
+        let color = PropertyId::lookup("color").unwrap();
+        let mut engine = engine();
+        let source = engine.register_source().unwrap();
+        let now = Instant::now();
+        let delay = Duration::from_secs(10);
+        let timing = AnimationTiming::new(Duration::from_nanos(10), delay);
+        engine
+            .start_progress(&source, &selection("color"), timing, now)
+            .unwrap();
+        engine.advance(now + delay + Duration::from_nanos(5));
+        let sample = engine.sample(&source, color).unwrap().unwrap();
+        assert!((sample - 0.5).abs() <= 1e-5, "{sample}");
     }
     #[test]
     fn start_at_the_settling_instant_uses_a_one_nanosecond_restart() {

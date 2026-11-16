@@ -1,0 +1,1626 @@
+[
+  {
+    "name": "property-name",
+    "source": "about.html#propdef-property-name",
+    "fields": {
+      "Name": "property-name",
+      "Value": "legal values & syntax",
+      "Initial": "initial value",
+      "Applies to": "elements this property applies to",
+      "Inherited": "whether the property is inherited",
+      "Percentages": "how percentage values are interpreted",
+      "Media": "which media groups the property applies to",
+      "Computed value": "how to compute the computed value"
+    }
+  },
+  {
+    "name": "volume",
+    "source": "aural.html#propdef-volume",
+    "fields": {
+      "Name": "volume",
+      "Value": "<number> | <percentage> | silent | x-soft | soft | medium | loud | x-loud | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "refer to inherited value",
+      "Media": "aural",
+      "Computed value": "number"
+    }
+  },
+  {
+    "name": "speak",
+    "source": "aural.html#propdef-speak",
+    "fields": {
+      "Name": "speak",
+      "Value": "normal | none | spell-out | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "pause-before",
+    "source": "aural.html#propdef-pause-before",
+    "fields": {
+      "Name": "pause-before",
+      "Value": "<time> | <percentage> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "see prose",
+      "Media": "aural",
+      "Computed value": "time"
+    }
+  },
+  {
+    "name": "pause-after",
+    "source": "aural.html#propdef-pause-after",
+    "fields": {
+      "Name": "pause-after",
+      "Value": "<time> | <percentage> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "see prose",
+      "Media": "aural",
+      "Computed value": "time;;"
+    }
+  },
+  {
+    "name": "pause",
+    "source": "aural.html#propdef-pause",
+    "fields": {
+      "Name": "pause",
+      "Value": "[ [<time> | <percentage>]{1,2} ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "see descriptions of 'pause-before' and 'pause-after'",
+      "Media": "aural",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "cue-before",
+    "source": "aural.html#propdef-cue-before",
+    "fields": {
+      "Name": "cue-before",
+      "Value": "<uri> | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "absolute URI or 'none'"
+    }
+  },
+  {
+    "name": "cue-after",
+    "source": "aural.html#propdef-cue-after",
+    "fields": {
+      "Name": "cue-after",
+      "Value": "<uri> | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "absolute URI or 'none'"
+    }
+  },
+  {
+    "name": "cue",
+    "source": "aural.html#propdef-cue",
+    "fields": {
+      "Name": "cue",
+      "Value": "[ <'cue-before'> || <'cue-after'> ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "play-during",
+    "source": "aural.html#propdef-play-during",
+    "fields": {
+      "Name": "play-during",
+      "Value": "<uri> [ mix || repeat ]? | auto | none | inherit",
+      "Initial": "auto",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "absolute URI, rest as specified"
+    }
+  },
+  {
+    "name": "azimuth",
+    "source": "aural.html#propdef-azimuth",
+    "fields": {
+      "Name": "azimuth",
+      "Value": "<angle> | [[ left-side | far-left | left | center-left | center | center-right | right | far-right | right-side ] || behind ] | leftwards | rightwards | inherit",
+      "Initial": "center",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "normalized angle"
+    }
+  },
+  {
+    "name": "elevation",
+    "source": "aural.html#propdef-elevation",
+    "fields": {
+      "Name": "elevation",
+      "Value": "<angle> | below | level | above | higher | lower | inherit",
+      "Initial": "level",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "normalized angle"
+    }
+  },
+  {
+    "name": "speech-rate",
+    "source": "aural.html#propdef-speech-rate",
+    "fields": {
+      "Name": "speech-rate",
+      "Value": "<number> | x-slow | slow | medium | fast | x-fast | faster | slower | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "number"
+    }
+  },
+  {
+    "name": "voice-family",
+    "source": "aural.html#propdef-voice-family",
+    "fields": {
+      "Name": "voice-family",
+      "Value": "[[<specific-voice> | <generic-voice> ],]* [<specific-voice> | <generic-voice> ] | inherit",
+      "Initial": "depends on user agent",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "pitch",
+    "source": "aural.html#propdef-pitch",
+    "fields": {
+      "Name": "pitch",
+      "Value": "<frequency> | x-low | low | medium | high | x-high | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "frequency"
+    }
+  },
+  {
+    "name": "pitch-range",
+    "source": "aural.html#propdef-pitch-range",
+    "fields": {
+      "Name": "pitch-range",
+      "Value": "<number> | inherit",
+      "Initial": "50",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "stress",
+    "source": "aural.html#propdef-stress",
+    "fields": {
+      "Name": "stress",
+      "Value": "<number> | inherit",
+      "Initial": "50",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "richness",
+    "source": "aural.html#propdef-richness",
+    "fields": {
+      "Name": "richness",
+      "Value": "<number> | inherit",
+      "Initial": "50",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "speak-punctuation",
+    "source": "aural.html#propdef-speak-punctuation",
+    "fields": {
+      "Name": "speak-punctuation",
+      "Value": "code | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "speak-numeral",
+    "source": "aural.html#propdef-speak-numeral",
+    "fields": {
+      "Name": "speak-numeral",
+      "Value": "digits | continuous | inherit",
+      "Initial": "continuous",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "speak-header",
+    "source": "aural.html#propdef-speak-header",
+    "fields": {
+      "Name": "speak-header",
+      "Value": "once | always | inherit",
+      "Initial": "once",
+      "Applies to": "elements that have table header information",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "aural",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "margin-top",
+    "source": "box.html#propdef-margin-top",
+    "fields": {
+      "Name": "margin-top, margin-bottom",
+      "Value": "<margin-width> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements except elements with table display types other than table-caption, table and inline-table",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "margin-bottom",
+    "source": "box.html#propdef-margin-bottom",
+    "fields": {
+      "Name": "margin-top, margin-bottom",
+      "Value": "<margin-width> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements except elements with table display types other than table-caption, table and inline-table",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "margin-right",
+    "source": "box.html#propdef-margin-right",
+    "fields": {
+      "Name": "margin-right, margin-left",
+      "Value": "<margin-width> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements except elements with table display types other than table-caption, table and inline-table",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "margin-left",
+    "source": "box.html#propdef-margin-left",
+    "fields": {
+      "Name": "margin-right, margin-left",
+      "Value": "<margin-width> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements except elements with table display types other than table-caption, table and inline-table",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "margin",
+    "source": "box.html#propdef-margin",
+    "fields": {
+      "Name": "margin",
+      "Value": "<margin-width>{1,4} | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements except elements with table display types other than table-caption, table and inline-table",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "padding-top",
+    "source": "box.html#propdef-padding-top",
+    "fields": {
+      "Name": "padding-top, padding-right, padding-bottom, padding-left",
+      "Value": "<padding-width> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements except table-row-group, table-header-group, table-footer-group, table-row, table-column-group and table-column",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "padding-right",
+    "source": "box.html#propdef-padding-right",
+    "fields": {
+      "Name": "padding-top, padding-right, padding-bottom, padding-left",
+      "Value": "<padding-width> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements except table-row-group, table-header-group, table-footer-group, table-row, table-column-group and table-column",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "padding-bottom",
+    "source": "box.html#propdef-padding-bottom",
+    "fields": {
+      "Name": "padding-top, padding-right, padding-bottom, padding-left",
+      "Value": "<padding-width> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements except table-row-group, table-header-group, table-footer-group, table-row, table-column-group and table-column",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "padding-left",
+    "source": "box.html#propdef-padding-left",
+    "fields": {
+      "Name": "padding-top, padding-right, padding-bottom, padding-left",
+      "Value": "<padding-width> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements except table-row-group, table-header-group, table-footer-group, table-row, table-column-group and table-column",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "padding",
+    "source": "box.html#propdef-padding",
+    "fields": {
+      "Name": "padding",
+      "Value": "<padding-width>{1,4} | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements except table-row-group, table-header-group, table-footer-group, table-row, table-column-group and table-column",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "border-top-width",
+    "source": "box.html#propdef-border-top-width",
+    "fields": {
+      "Name": "border-top-width, border-right-width, border-bottom-width, border-left-width",
+      "Value": "<border-width> | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "absolute length; '0' if the border style is 'none' or 'hidden'"
+    }
+  },
+  {
+    "name": "border-right-width",
+    "source": "box.html#propdef-border-right-width",
+    "fields": {
+      "Name": "border-top-width, border-right-width, border-bottom-width, border-left-width",
+      "Value": "<border-width> | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "absolute length; '0' if the border style is 'none' or 'hidden'"
+    }
+  },
+  {
+    "name": "border-bottom-width",
+    "source": "box.html#propdef-border-bottom-width",
+    "fields": {
+      "Name": "border-top-width, border-right-width, border-bottom-width, border-left-width",
+      "Value": "<border-width> | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "absolute length; '0' if the border style is 'none' or 'hidden'"
+    }
+  },
+  {
+    "name": "border-left-width",
+    "source": "box.html#propdef-border-left-width",
+    "fields": {
+      "Name": "border-top-width, border-right-width, border-bottom-width, border-left-width",
+      "Value": "<border-width> | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "absolute length; '0' if the border style is 'none' or 'hidden'"
+    }
+  },
+  {
+    "name": "border-width",
+    "source": "box.html#propdef-border-width",
+    "fields": {
+      "Name": "border-width",
+      "Value": "<border-width>{1,4} | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "border-top-color",
+    "source": "box.html#propdef-border-top-color",
+    "fields": {
+      "Name": "border-top-color, border-right-color, border-bottom-color, border-left-color",
+      "Value": "<color> | transparent | inherit",
+      "Initial": "the value of the 'color' property",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "when taken from the 'color' property, the computed value of 'color'; otherwise, as specified"
+    }
+  },
+  {
+    "name": "border-right-color",
+    "source": "box.html#propdef-border-right-color",
+    "fields": {
+      "Name": "border-top-color, border-right-color, border-bottom-color, border-left-color",
+      "Value": "<color> | transparent | inherit",
+      "Initial": "the value of the 'color' property",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "when taken from the 'color' property, the computed value of 'color'; otherwise, as specified"
+    }
+  },
+  {
+    "name": "border-bottom-color",
+    "source": "box.html#propdef-border-bottom-color",
+    "fields": {
+      "Name": "border-top-color, border-right-color, border-bottom-color, border-left-color",
+      "Value": "<color> | transparent | inherit",
+      "Initial": "the value of the 'color' property",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "when taken from the 'color' property, the computed value of 'color'; otherwise, as specified"
+    }
+  },
+  {
+    "name": "border-left-color",
+    "source": "box.html#propdef-border-left-color",
+    "fields": {
+      "Name": "border-top-color, border-right-color, border-bottom-color, border-left-color",
+      "Value": "<color> | transparent | inherit",
+      "Initial": "the value of the 'color' property",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "when taken from the 'color' property, the computed value of 'color'; otherwise, as specified"
+    }
+  },
+  {
+    "name": "border-color",
+    "source": "box.html#propdef-border-color",
+    "fields": {
+      "Name": "border-color",
+      "Value": "[ <color> | transparent ]{1,4} | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "border-top-style",
+    "source": "box.html#propdef-border-top-style",
+    "fields": {
+      "Name": "border-top-style, border-right-style, border-bottom-style, border-left-style",
+      "Value": "<border-style> | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "border-right-style",
+    "source": "box.html#propdef-border-right-style",
+    "fields": {
+      "Name": "border-top-style, border-right-style, border-bottom-style, border-left-style",
+      "Value": "<border-style> | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "border-bottom-style",
+    "source": "box.html#propdef-border-bottom-style",
+    "fields": {
+      "Name": "border-top-style, border-right-style, border-bottom-style, border-left-style",
+      "Value": "<border-style> | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "border-left-style",
+    "source": "box.html#propdef-border-left-style",
+    "fields": {
+      "Name": "border-top-style, border-right-style, border-bottom-style, border-left-style",
+      "Value": "<border-style> | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "border-style",
+    "source": "box.html#propdef-border-style",
+    "fields": {
+      "Name": "border-style",
+      "Value": "<border-style>{1,4} | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "border-top",
+    "source": "box.html#propdef-border-top",
+    "fields": {
+      "Name": "border-top, border-right, border-bottom, border-left",
+      "Value": "[ <border-width> || <border-style> || <'border-top-color'> ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "border-right",
+    "source": "box.html#propdef-border-right",
+    "fields": {
+      "Name": "border-top, border-right, border-bottom, border-left",
+      "Value": "[ <border-width> || <border-style> || <'border-top-color'> ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "border-bottom",
+    "source": "box.html#propdef-border-bottom",
+    "fields": {
+      "Name": "border-top, border-right, border-bottom, border-left",
+      "Value": "[ <border-width> || <border-style> || <'border-top-color'> ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "border-left",
+    "source": "box.html#propdef-border-left",
+    "fields": {
+      "Name": "border-top, border-right, border-bottom, border-left",
+      "Value": "[ <border-width> || <border-style> || <'border-top-color'> ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "border",
+    "source": "box.html#propdef-border",
+    "fields": {
+      "Name": "border",
+      "Value": "[ <border-width> || <border-style> || <'border-top-color'> ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "color",
+    "source": "colors.html#propdef-color",
+    "fields": {
+      "Name": "color",
+      "Value": "<color> | inherit",
+      "Initial": "depends on user agent",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "background-color",
+    "source": "colors.html#propdef-background-color",
+    "fields": {
+      "Name": "background-color",
+      "Value": "<color> | transparent | inherit",
+      "Initial": "transparent",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "background-image",
+    "source": "colors.html#propdef-background-image",
+    "fields": {
+      "Name": "background-image",
+      "Value": "<uri> | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "absolute URI or none"
+    }
+  },
+  {
+    "name": "background-repeat",
+    "source": "colors.html#propdef-background-repeat",
+    "fields": {
+      "Name": "background-repeat",
+      "Value": "repeat | repeat-x | repeat-y | no-repeat | inherit",
+      "Initial": "repeat",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "background-attachment",
+    "source": "colors.html#propdef-background-attachment",
+    "fields": {
+      "Name": "background-attachment",
+      "Value": "scroll | fixed | inherit",
+      "Initial": "scroll",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "background-position",
+    "source": "colors.html#propdef-background-position",
+    "fields": {
+      "Name": "background-position",
+      "Value": "[ [ <percentage> | <length> | left | center | right ] [ <percentage> | <length> | top | center | bottom ]? ] | [ [ left | center | right ] || [ top | center | bottom ] ] | inherit",
+      "Initial": "0% 0%",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "refer to the size of the box itself",
+      "Media": "visual",
+      "Computed value": "for <length> the absolute value, otherwise a percentage"
+    }
+  },
+  {
+    "name": "background",
+    "source": "colors.html#propdef-background",
+    "fields": {
+      "Name": "background",
+      "Value": "[<'background-color'> || <'background-image'> || <'background-repeat'> || <'background-attachment'> || <'background-position'>] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "allowed on 'background-position'",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "font-family",
+    "source": "fonts.html#propdef-font-family",
+    "fields": {
+      "Name": "font-family",
+      "Value": "[[ <family-name> | <generic-family> ] [, [ <family-name>| <generic-family>] ]* ] | inherit",
+      "Initial": "depends on user agent",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "font-style",
+    "source": "fonts.html#propdef-font-style",
+    "fields": {
+      "Name": "font-style",
+      "Value": "normal | italic | oblique | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "font-variant",
+    "source": "fonts.html#propdef-font-variant",
+    "fields": {
+      "Name": "font-variant",
+      "Value": "normal | small-caps | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "font-weight",
+    "source": "fonts.html#propdef-font-weight",
+    "fields": {
+      "Name": "font-weight",
+      "Value": "normal | bold | bolder | lighter | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900 | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see text"
+    }
+  },
+  {
+    "name": "font-size",
+    "source": "fonts.html#propdef-font-size",
+    "fields": {
+      "Name": "font-size",
+      "Value": "<absolute-size> | <relative-size> | <length> | <percentage> | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "refer to inherited font size",
+      "Media": "visual",
+      "Computed value": "absolute length"
+    }
+  },
+  {
+    "name": "font",
+    "source": "fonts.html#propdef-font",
+    "fields": {
+      "Name": "font",
+      "Value": "[ [ <'font-style'> || <'font-variant'> || <'font-weight'> ]? <'font-size'> [ / <'line-height'> ]? <'font-family'> ] | caption | icon | menu | message-box | small-caption | status-bar | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "see individual properties",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "content",
+    "source": "generate.html#propdef-content",
+    "fields": {
+      "Name": "content",
+      "Value": "normal | none | [ <string> | <uri> | <counter> | attr(<identifier>) | open-quote | close-quote | no-open-quote | no-close-quote ]+ | inherit",
+      "Initial": "normal",
+      "Applies to": ":before and :after pseudo-elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "all",
+      "Computed value": "On elements, always computes to 'normal'. On :before and :after, if 'normal' is specified, computes to 'none'. Otherwise, for URI values, the absolute URI; for attr() values, the resulting string; for other keywords, as specified."
+    }
+  },
+  {
+    "name": "quotes",
+    "source": "generate.html#propdef-quotes",
+    "fields": {
+      "Name": "quotes",
+      "Value": "[<string> <string>]+ | none | inherit",
+      "Initial": "depends on user agent",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "counter-reset",
+    "source": "generate.html#propdef-counter-reset",
+    "fields": {
+      "Name": "counter-reset",
+      "Value": "[ <identifier> <integer>? ]+ | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "all",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "counter-increment",
+    "source": "generate.html#propdef-counter-increment",
+    "fields": {
+      "Name": "counter-increment",
+      "Value": "[ <identifier> <integer>? ]+ | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "all",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "list-style-type",
+    "source": "generate.html#propdef-list-style-type",
+    "fields": {
+      "Name": "list-style-type",
+      "Value": "disc | circle | square | decimal | decimal-leading-zero | lower-roman | upper-roman | lower-greek | lower-latin | upper-latin | armenian | georgian | lower-alpha | upper-alpha | none | inherit",
+      "Initial": "disc",
+      "Applies to": "elements with 'display: list-item'",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "list-style-image",
+    "source": "generate.html#propdef-list-style-image",
+    "fields": {
+      "Name": "list-style-image",
+      "Value": "<uri> | none | inherit",
+      "Initial": "none",
+      "Applies to": "elements with 'display: list-item'",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "absolute URI or 'none'"
+    }
+  },
+  {
+    "name": "list-style-position",
+    "source": "generate.html#propdef-list-style-position",
+    "fields": {
+      "Name": "list-style-position",
+      "Value": "inside | outside | inherit",
+      "Initial": "outside",
+      "Applies to": "elements with 'display: list-item'",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "list-style",
+    "source": "generate.html#propdef-list-style",
+    "fields": {
+      "Name": "list-style",
+      "Value": "[ <'list-style-type'> || <'list-style-position'> || <'list-style-image'> ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "elements with 'display: list-item'",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "page-break-before",
+    "source": "page.html#propdef-page-break-before",
+    "fields": {
+      "Name": "page-break-before",
+      "Value": "auto | always | avoid | left | right | inherit",
+      "Initial": "auto",
+      "Applies to": "block-level elements (but see text)",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual, paged",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "page-break-after",
+    "source": "page.html#propdef-page-break-after",
+    "fields": {
+      "Name": "page-break-after",
+      "Value": "auto | always | avoid | left | right | inherit",
+      "Initial": "auto",
+      "Applies to": "block-level elements (but see text)",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual, paged",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "page-break-inside",
+    "source": "page.html#propdef-page-break-inside",
+    "fields": {
+      "Name": "page-break-inside",
+      "Value": "avoid | auto | inherit",
+      "Initial": "auto",
+      "Applies to": "block-level elements (but see text)",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual, paged",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "orphans",
+    "source": "page.html#propdef-orphans",
+    "fields": {
+      "Name": "orphans",
+      "Value": "<integer> | inherit",
+      "Initial": "2",
+      "Applies to": "block container elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual, paged",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "widows",
+    "source": "page.html#propdef-widows",
+    "fields": {
+      "Name": "widows",
+      "Value": "<integer> | inherit",
+      "Initial": "2",
+      "Applies to": "block container elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual, paged",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "caption-side",
+    "source": "tables.html#propdef-caption-side",
+    "fields": {
+      "Name": "caption-side",
+      "Value": "top | bottom | inherit",
+      "Initial": "top",
+      "Applies to": "'table-caption' elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "table-layout",
+    "source": "tables.html#propdef-table-layout",
+    "fields": {
+      "Name": "table-layout",
+      "Value": "auto | fixed | inherit",
+      "Initial": "auto",
+      "Applies to": "'table' and 'inline-table' elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "border-collapse",
+    "source": "tables.html#propdef-border-collapse",
+    "fields": {
+      "Name": "border-collapse",
+      "Value": "collapse | separate | inherit",
+      "Initial": "separate",
+      "Applies to": "'table' and 'inline-table' elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "border-spacing",
+    "source": "tables.html#propdef-border-spacing",
+    "fields": {
+      "Name": "border-spacing",
+      "Value": "<length> <length>? | inherit",
+      "Initial": "0",
+      "Applies to": "'table' and 'inline-table' elements*",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "two absolute lengths"
+    }
+  },
+  {
+    "name": "empty-cells",
+    "source": "tables.html#propdef-empty-cells",
+    "fields": {
+      "Name": "empty-cells",
+      "Value": "show | hide | inherit",
+      "Initial": "show",
+      "Applies to": "'table-cell' elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "text-indent",
+    "source": "text.html#propdef-text-indent",
+    "fields": {
+      "Name": "text-indent",
+      "Value": "<length> | <percentage> | inherit",
+      "Initial": "0",
+      "Applies to": "block containers",
+      "Inherited": "yes",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "text-align",
+    "source": "text.html#propdef-text-align",
+    "fields": {
+      "Name": "text-align",
+      "Value": "left | right | center | justify | inherit",
+      "Initial": "a nameless value that acts as 'left' if 'direction' is 'ltr', 'right' if 'direction' is 'rtl'",
+      "Applies to": "block containers",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "the initial value or as specified"
+    }
+  },
+  {
+    "name": "text-decoration",
+    "source": "text.html#propdef-text-decoration",
+    "fields": {
+      "Name": "text-decoration",
+      "Value": "none | [ underline || overline || line-through || blink ] | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no (see prose)",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "letter-spacing",
+    "source": "text.html#propdef-letter-spacing",
+    "fields": {
+      "Name": "letter-spacing",
+      "Value": "normal | <length> | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "'normal' or absolute length"
+    }
+  },
+  {
+    "name": "word-spacing",
+    "source": "text.html#propdef-word-spacing",
+    "fields": {
+      "Name": "word-spacing",
+      "Value": "normal | <length> | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "for 'normal' the value '0'; otherwise the absolute length"
+    }
+  },
+  {
+    "name": "text-transform",
+    "source": "text.html#propdef-text-transform",
+    "fields": {
+      "Name": "text-transform",
+      "Value": "capitalize | uppercase | lowercase | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "white-space",
+    "source": "text.html#propdef-white-space",
+    "fields": {
+      "Name": "white-space",
+      "Value": "normal | pre | nowrap | pre-wrap | pre-line | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "cursor",
+    "source": "ui.html#propdef-cursor",
+    "fields": {
+      "Name": "cursor",
+      "Value": "[ [<uri> ,]* [ auto | crosshair | default | pointer | move | e-resize | ne-resize | nw-resize | n-resize | se-resize | sw-resize | s-resize | w-resize | text | wait | help | progress ] ] | inherit",
+      "Initial": "auto",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual, interactive",
+      "Computed value": "as specified, except with any relative URLs converted to absolute"
+    }
+  },
+  {
+    "name": "outline",
+    "source": "ui.html#propdef-outline",
+    "fields": {
+      "Name": "outline",
+      "Value": "[ <'outline-color'> || <'outline-style'> || <'outline-width'> ] | inherit",
+      "Initial": "see individual properties",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual, interactive",
+      "Computed value": "see individual properties"
+    }
+  },
+  {
+    "name": "outline-width",
+    "source": "ui.html#propdef-outline-width",
+    "fields": {
+      "Name": "outline-width",
+      "Value": "<border-width> | inherit",
+      "Initial": "medium",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual, interactive",
+      "Computed value": "absolute length; '0' if the outline style is 'none'"
+    }
+  },
+  {
+    "name": "outline-style",
+    "source": "ui.html#propdef-outline-style",
+    "fields": {
+      "Name": "outline-style",
+      "Value": "<border-style> | inherit",
+      "Initial": "none",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual, interactive",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "outline-color",
+    "source": "ui.html#propdef-outline-color",
+    "fields": {
+      "Name": "outline-color",
+      "Value": "<color> | invert | inherit",
+      "Initial": "invert",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual, interactive",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "width",
+    "source": "visudet.html#propdef-width",
+    "fields": {
+      "Name": "width",
+      "Value": "<length> | <percentage> | auto | inherit",
+      "Initial": "auto",
+      "Applies to": "all elements but non-replaced inline elements, table rows, and row groups",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage or 'auto' as specified or the absolute length"
+    }
+  },
+  {
+    "name": "min-width",
+    "source": "visudet.html#propdef-min-width",
+    "fields": {
+      "Name": "min-width",
+      "Value": "<length> | <percentage> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements but non-replaced inline elements, table rows, and row groups",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "max-width",
+    "source": "visudet.html#propdef-max-width",
+    "fields": {
+      "Name": "max-width",
+      "Value": "<length> | <percentage> | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements but non-replaced inline elements, table rows, and row groups",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length or 'none'"
+    }
+  },
+  {
+    "name": "height",
+    "source": "visudet.html#propdef-height",
+    "fields": {
+      "Name": "height",
+      "Value": "<length> | <percentage> | auto | inherit",
+      "Initial": "auto",
+      "Applies to": "all elements but non-replaced inline elements, table columns, and column groups",
+      "Inherited": "no",
+      "Percentages": "see prose",
+      "Media": "visual",
+      "Computed value": "the percentage or 'auto' (as specified) or the absolute length"
+    }
+  },
+  {
+    "name": "min-height",
+    "source": "visudet.html#propdef-min-height",
+    "fields": {
+      "Name": "min-height",
+      "Value": "<length> | <percentage> | inherit",
+      "Initial": "0",
+      "Applies to": "all elements but non-replaced inline elements, table columns, and column groups",
+      "Inherited": "no",
+      "Percentages": "see prose",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length"
+    }
+  },
+  {
+    "name": "max-height",
+    "source": "visudet.html#propdef-max-height",
+    "fields": {
+      "Name": "max-height",
+      "Value": "<length> | <percentage> | none | inherit",
+      "Initial": "none",
+      "Applies to": "all elements but non-replaced inline elements, table columns, and column groups",
+      "Inherited": "no",
+      "Percentages": "see prose",
+      "Media": "visual",
+      "Computed value": "the percentage as specified or the absolute length or 'none'"
+    }
+  },
+  {
+    "name": "line-height",
+    "source": "visudet.html#propdef-line-height",
+    "fields": {
+      "Name": "line-height",
+      "Value": "normal | <number> | <length> | <percentage> | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "refer to the font size of the element itself",
+      "Media": "visual",
+      "Computed value": "for <length> and <percentage> the absolute value; otherwise as specified"
+    }
+  },
+  {
+    "name": "vertical-align",
+    "source": "visudet.html#propdef-vertical-align",
+    "fields": {
+      "Name": "vertical-align",
+      "Value": "baseline | sub | super | top | text-top | middle | bottom | text-bottom | <percentage> | <length> | inherit",
+      "Initial": "baseline",
+      "Applies to": "inline-level and 'table-cell' elements",
+      "Inherited": "no",
+      "Percentages": "refer to the 'line-height' of the element itself",
+      "Media": "visual",
+      "Computed value": "for <percentage> and <length> the absolute length, otherwise as specified"
+    }
+  },
+  {
+    "name": "overflow",
+    "source": "visufx.html#propdef-overflow",
+    "fields": {
+      "Name": "overflow",
+      "Value": "visible | hidden | scroll | auto | inherit",
+      "Initial": "visible",
+      "Applies to": "block containers and boxes that establish a formatting context",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "clip",
+    "source": "visufx.html#propdef-clip",
+    "fields": {
+      "Name": "clip",
+      "Value": "<shape> | auto | inherit",
+      "Initial": "auto",
+      "Applies to": "absolutely positioned elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "'auto' if specified as 'auto', otherwise a rectangle with four values, each of which is 'auto' if specified as 'auto' and the computed length otherwise"
+    }
+  },
+  {
+    "name": "visibility",
+    "source": "visufx.html#propdef-visibility",
+    "fields": {
+      "Name": "visibility",
+      "Value": "visible | hidden | collapse | inherit",
+      "Initial": "visible",
+      "Applies to": "all elements",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "display",
+    "source": "visuren.html#propdef-display",
+    "fields": {
+      "Name": "display",
+      "Value": "inline | block | list-item | inline-block | table | inline-table | table-row-group | table-header-group | table-footer-group | table-row | table-column-group | table-column | table-cell | table-caption | none | inherit",
+      "Initial": "inline",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "all",
+      "Computed value": "see text"
+    }
+  },
+  {
+    "name": "position",
+    "source": "visuren.html#propdef-position",
+    "fields": {
+      "Name": "position",
+      "Value": "static | relative | absolute | fixed | inherit",
+      "Initial": "static",
+      "Applies to": "all elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "top",
+    "source": "visuren.html#propdef-top",
+    "fields": {
+      "Name": "top",
+      "Value": "<length> | <percentage> | auto | inherit",
+      "Initial": "auto",
+      "Applies to": "positioned elements",
+      "Inherited": "no",
+      "Percentages": "refer to height of containing block",
+      "Media": "visual",
+      "Computed value": "if specified as a length, the corresponding absolute length; if specified as a percentage, the specified value; otherwise, 'auto'."
+    }
+  },
+  {
+    "name": "right",
+    "source": "visuren.html#propdef-right",
+    "fields": {
+      "Name": "right",
+      "Value": "<length> | <percentage> | auto | inherit",
+      "Initial": "auto",
+      "Applies to": "positioned elements",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "if specified as a length, the corresponding absolute length; if specified as a percentage, the specified value; otherwise, 'auto'."
+    }
+  },
+  {
+    "name": "bottom",
+    "source": "visuren.html#propdef-bottom",
+    "fields": {
+      "Name": "bottom",
+      "Value": "<length> | <percentage> | auto | inherit",
+      "Initial": "auto",
+      "Applies to": "positioned elements",
+      "Inherited": "no",
+      "Percentages": "refer to height of containing block",
+      "Media": "visual",
+      "Computed value": "if specified as a length, the corresponding absolute length; if specified as a percentage, the specified value; otherwise, 'auto'."
+    }
+  },
+  {
+    "name": "left",
+    "source": "visuren.html#propdef-left",
+    "fields": {
+      "Name": "left",
+      "Value": "<length> | <percentage> | auto | inherit",
+      "Initial": "auto",
+      "Applies to": "positioned elements",
+      "Inherited": "no",
+      "Percentages": "refer to width of containing block",
+      "Media": "visual",
+      "Computed value": "if specified as a length, the corresponding absolute length; if specified as a percentage, the specified value; otherwise, 'auto'."
+    }
+  },
+  {
+    "name": "float",
+    "source": "visuren.html#propdef-float",
+    "fields": {
+      "Name": "float",
+      "Value": "left | right | none | inherit",
+      "Initial": "none",
+      "Applies to": "all, but see 9.7",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "clear",
+    "source": "visuren.html#propdef-clear",
+    "fields": {
+      "Name": "clear",
+      "Value": "none | left | right | both | inherit",
+      "Initial": "none",
+      "Applies to": "block-level elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "z-index",
+    "source": "visuren.html#propdef-z-index",
+    "fields": {
+      "Name": "z-index",
+      "Value": "auto | <integer> | inherit",
+      "Initial": "auto",
+      "Applies to": "positioned elements",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "direction",
+    "source": "visuren.html#propdef-direction",
+    "fields": {
+      "Name": "direction",
+      "Value": "ltr | rtl | inherit",
+      "Initial": "ltr",
+      "Applies to": "all elements, but see prose",
+      "Inherited": "yes",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  },
+  {
+    "name": "unicode-bidi",
+    "source": "visuren.html#propdef-unicode-bidi",
+    "fields": {
+      "Name": "unicode-bidi",
+      "Value": "normal | embed | bidi-override | inherit",
+      "Initial": "normal",
+      "Applies to": "all elements, but see prose",
+      "Inherited": "no",
+      "Percentages": "N/A",
+      "Media": "visual",
+      "Computed value": "as specified"
+    }
+  }
+]

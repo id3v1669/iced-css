@@ -1,0 +1,17 @@
+{
+  "kind": "requirement",
+  "source": "tmp/css22/spec/text.html#white-space-prop",
+  "records": [
+    "CSS22-001442",
+    "CSS22-001443",
+    "CSS22-001444"
+  ],
+  "derivation": "Replace each CRLF pair and each remaining CR by one LF; retain LF. This tests the default-only API. The fixture contains no optional forced-break characters.",
+  "input_utf8_hex": "0d410d0a420a0d0d0ae4b8adf09fa680",
+  "expected_utf8_hex": "0a410a420a0a0ae4b8adf09fa680",
+  "expected": {
+    "normalized": "\nA\nB\n\n\n\u4e2d\ud83e\udd80"
+  },
+  "generator_sha256": "ac2aee59d00b22cddafd06777d7f31b6fd431ad63924d0ebd925bef2da9e8e5b",
+  "limits": "One regression does not cover all clause interactions or generated-content integration. Semantic audit remains pending."
+}
