@@ -79,7 +79,10 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   descendant where none is written), and weighs as its most specific argument; it may sit
   inside `:is()` and `:not()` but not inside another `:has()`, and each test of it walks
   the descendants or later siblings (with their descendants, where its selector goes down)
-  it could name, matching each against the whole relative selector. A structural pseudo-class counts the
+  it could name, matching each against the whole relative selector. `:nth-child(an+b of S)`
+  and `:nth-last-child(an+b of S)` count only the siblings `S` (a complex selector list)
+  selects, and match only an element it selects; they weigh as a pseudo-class plus the most
+  specific of `S`, and each test matches `S` against every sibling on its side. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`.
 - **Cascade layers:** `@layer` (CSS Cascade 5) blocks and statements naming the order:

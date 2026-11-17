@@ -1393,6 +1393,42 @@ fn selector_lists_take_combinators_inside_them() {
 }
 
 #[test]
+fn nth_child_of_counts_only_the_siblings_its_list_selects() {
+    let widths = |css: &str| {
+        let ids = ["a", "b", "c", "d", "e"];
+        let tree = BoxTree::new(
+            node("page", ids.iter().map(|id| node(id, vec![])).collect()),
+            &format!(":where(#page > *) {{ width:100px; height:1px; }} {css}"),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        [1, 2, 3, 4, 5].map(|at| {
+            let border = geometry[at].as_ref().unwrap().border;
+            border.right - border.left
+        })
+    };
+    // Among b, c and e: the odd ones, b and e.
+    assert_eq!(
+        widths(":nth-child(odd of #b, #c, #e) { width:10px; }"),
+        [100.0, 10.0, 100.0, 100.0, 10.0]
+    );
+    // Counted from the end: the last two of them.
+    assert_eq!(
+        widths(":nth-last-child(-n+2 of :is(#b, #c, #e)) { width:20px; }"),
+        [100.0, 100.0, 20.0, 100.0, 20.0]
+    );
+    // One the list does not select never matches, whatever its place.
+    assert_eq!(
+        widths(":nth-child(n of #a ~ *) { width:30px; }"),
+        [100.0, 30.0, 30.0, 30.0, 30.0]
+    );
+    assert_eq!(
+        widths(":nth-child(1 of #a ~ *) { width:40px; }"),
+        [100.0, 40.0, 100.0, 100.0, 100.0]
+    );
+}
+
+#[test]
 fn transitions_and_animations_send_their_events() {
     use iced_css::box_tree::{AnimationEvent, BoxTreeAnimations};
     use std::time::{Duration, Instant};

@@ -75,6 +75,17 @@ pub enum SimpleSelector {
         negated: bool,
         specificity: crate::cascade::Specificity,
     },
+    /// Selectors Level 4 `:nth-child(an+b of S)` and `:nth-last-child(an+b of S)`: the
+    /// element matches one of `of`, and is the nth of its siblings that do, counted from
+    /// the end for `last`. The matcher tests it. `specificity` is a pseudo-class's and the
+    /// most specific of `of`.
+    NthOf {
+        a: i32,
+        b: i32,
+        last: bool,
+        of: Vec<crate::selectors::Selector>,
+        specificity: crate::cascade::Specificity,
+    },
     /// In a `:has()` argument, the element `:has()` is tested on. Never written: the
     /// parser puts it first in each relative selector, and the matcher tests it by identity.
     Anchor,
@@ -318,8 +329,8 @@ pub fn matches_simple(
         SimpleSelector::Not(inner) => !matches_simple(inner, element, budget)?,
         // Only the matcher can test it; alone, it holds nothing back.
         SimpleSelector::Has { .. } => true,
-        // Only the matcher knows the anchor.
-        SimpleSelector::Anchor => false,
+        // Only the matcher knows the anchor, and the siblings of a selector list.
+        SimpleSelector::Anchor | SimpleSelector::NthOf { .. } => false,
         SimpleSelector::Checked => element.metadata.attribute("checked").is_some(),
         SimpleSelector::Disabled => element.metadata.attribute("disabled").is_some(),
         SimpleSelector::Enabled => {
@@ -350,7 +361,7 @@ pub fn matches_simple(
 /// selector can name it: a selector's names hold no NUL.
 pub const CONTROL: &str = "\u{0}control";
 /// Whether `index` (from 1) is `a*n + b` for some `n >= 0`.
-fn nth_matches(a: i32, b: i32, index: usize) -> bool {
+pub(crate) fn nth_matches(a: i32, b: i32, index: usize) -> bool {
     let Ok(index) = i64::try_from(index) else {
         return false;
     };

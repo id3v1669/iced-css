@@ -154,19 +154,45 @@ impl<S: SelectorSource> Engine<'_, S> {
         match test {
             SimpleSelector::Has { relatives, .. } => self.has(node, relatives),
             SimpleSelector::Anchor => Ok(self.anchor == Some(node)),
+            SimpleSelector::NthOf { a, b, last, of, .. } => {
+                // Counted among a parent's children: the root is no one's child.
+                if self.parent(node)?.is_none() || !self.any_matches(of, node)? {
+                    return Ok(false);
+                }
+                let mut index = 1;
+                let mut cursor = node;
+                loop {
+                    self.charge(1)?;
+                    let next = if *last {
+                        self.source.next_element(cursor)
+                    } else {
+                        self.source.previous_element(cursor)
+                    };
+                    let Some(sibling) = next else {
+                        break;
+                    };
+                    if self.any_matches(of, sibling)? {
+                        index += 1;
+                    }
+                    cursor = sibling;
+                }
+                Ok(super::nth_matches(*a, *b, index))
+            }
             SimpleSelector::Not(inner) => Ok(!self.holds(node, facts, inner)?),
             SimpleSelector::Matches { list, negated, .. } => {
-                let mut any = false;
-                for selector in list {
-                    if self.matches(selector, node, None)? {
-                        any = true;
-                        break;
-                    }
-                }
-                Ok(any != *negated)
+                Ok(self.any_matches(list, node)? != *negated)
             }
             _ => matches_simple(test, facts, &mut self.budget).map_err(|_| MatchError::Work),
         }
+    }
+    /// Whether `node` is the subject of any of `list`.
+    fn any_matches(&mut self, list: &[Selector], node: S::Node) -> Result<bool, MatchError> {
+        for selector in list {
+            if self.matches(selector, node, None)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     /// Pushes `node`'s child elements, the first on top.
     fn children(&mut self, node: S::Node, into: &mut Vec<S::Node>) -> Result<(), MatchError> {

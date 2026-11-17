@@ -48,7 +48,7 @@ fn grouping_is_atomic_and_forms_past_level3_are_not_admitted() {
         "text:: before",
         "text:::before",
         "text::lang(en)",
-        ":nth-child(2 of .x)",
+        ":nth-child(2 of)",
         "text||.x",
         "[a=x i]",
         ".x:before:hover",
@@ -380,6 +380,34 @@ fn level4_is_where_and_not_take_lists_of_complex_selectors() {
         ":where(a,)",
         ":is(a",
         "::is(a)",
+    ] {
+        assert!(parse_selector_list(bad, limits()).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn level4_nth_child_takes_an_of_list() {
+    // A pseudo-class's weight and the most specific of the list.
+    assert_eq!(
+        one(":nth-child(2n+1 of #a, .b)").specificity.components(),
+        [0, 1, 1, 0]
+    );
+    for good in [
+        ":nth-child(odd of .a)",
+        ":nth-last-child(-n+3 of a > b)",
+        ":nth-child( 2n + 1  OF .a )",
+        ":nth-child(2 of :is(.a, .b))",
+    ] {
+        assert!(parse_selector_list(good, limits()).is_ok(), "{good}");
+    }
+    for bad in [
+        ":nth-child(of .a)",
+        ":nth-child(2n of)",
+        ":nth-child(2n of )",
+        ":nth-of-type(2n of .a)",
+        ":nth-last-of-type(1 of .a)",
+        ":nth-child(1 of ::before)",
+        ":nth-child(1 .a)",
     ] {
         assert!(parse_selector_list(bad, limits()).is_err(), "{bad}");
     }

@@ -253,14 +253,23 @@ impl<'a> Parser<'a> {
         })
     }
     /// `an+b` up to the closing parenthesis, which it consumes (Selectors Level 3, 6.6.5.2).
-    fn nth(&mut self) -> Result<(i32, i32), SyntaxError> {
+    /// `an+b` through the closing parenthesis, or (`of` allowed) through an `of` that
+    /// a selector list follows: whether one does.
+    fn nth(&mut self, of: bool) -> Result<(i32, i32, bool), SyntaxError> {
         let invalid = |parser: &Self| parser.invalid();
         // The tokens' text, a space kept only where one was written.
         let mut text = String::new();
+        let mut listed = false;
         loop {
             let look = self.take()?;
             match look.token.kind {
                 TokenKind::CloseParen => break,
+                TokenKind::Ident
+                    if of && look.space && look.token.raw.eq_ignore_ascii_case("of") =>
+                {
+                    listed = true;
+                    break;
+                }
                 TokenKind::Ident | TokenKind::Number | TokenKind::Dimension => {}
                 TokenKind::Delim if matches!(look.token.raw, "+" | "-") => {}
                 _ => {
@@ -282,7 +291,8 @@ impl<'a> Parser<'a> {
             }
             text.push_str(look.token.raw);
         }
-        parse_nth(&text.to_ascii_lowercase()).ok_or_else(|| invalid(self))
+        let (a, b) = parse_nth(&text.to_ascii_lowercase()).ok_or_else(|| invalid(self))?;
+        Ok((a, b, listed))
     }
     /// `:not(`'s argument: one simple selector, as Selectors Level 3 has it, or a list of
     /// compound selectors, as Level 4 does.
@@ -447,12 +457,33 @@ impl<'a> Parser<'a> {
                 "has" => self.relatives()?,
                 "where" => self.any_of(false, true)?,
                 "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" => {
-                    let (a, b) = self.nth()?;
-                    SimpleSelector::Nth {
-                        a,
-                        b,
-                        last: function.contains("last"),
-                        of_type: function.ends_with("of-type"),
+                    let of_type = function.ends_with("of-type");
+                    let last = function.contains("last");
+                    match self.nth(!of_type)? {
+                        (a, b, false) => SimpleSelector::Nth {
+                            a,
+                            b,
+                            last,
+                            of_type,
+                        },
+                        // Selectors Level 4: counted among the siblings `S` selects.
+                        (a, b, true) => {
+                            let SimpleSelector::Matches {
+                                list, specificity, ..
+                            } = self.any_of(false, false)?
+                            else {
+                                unreachable!("any_of gives a list")
+                            };
+                            SimpleSelector::NthOf {
+                                a,
+                                b,
+                                last,
+                                of: list,
+                                specificity: specificity
+                                    .checked_selector_sum(Specificity::selector(0, 1, 0))
+                                    .map_err(|_| self.resource(SyntaxResource::Entries))?,
+                            }
+                        }
                     }
                 }
                 _ => return Err(self.invalid()),
@@ -592,6 +623,7 @@ impl<'a> Parser<'a> {
             match test {
                 SimpleSelector::Not(inner) => weight(inner),
                 SimpleSelector::Matches { specificity, .. }
+                | SimpleSelector::NthOf { specificity, .. }
                 | SimpleSelector::Has { specificity, .. } => *specificity,
                 SimpleSelector::Universal => Specificity::ZERO,
                 SimpleSelector::Type(_) => Specificity::selector(0, 0, 1),
@@ -660,7 +692,9 @@ fn has_has(selector: &Selector) -> bool {
         match test {
             SimpleSelector::Has { .. } => true,
             SimpleSelector::Not(inner) => test_has(inner),
-            SimpleSelector::Matches { list, .. } => list.iter().any(has_has),
+            SimpleSelector::Matches { list, .. } | SimpleSelector::NthOf { of: list, .. } => {
+                list.iter().any(has_has)
+            }
             _ => false,
         }
     }
