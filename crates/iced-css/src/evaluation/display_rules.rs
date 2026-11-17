@@ -415,6 +415,8 @@ impl<'a> DisplayRuleBundle<'a> {
     ) where
         'a: 'w,
     {
+        // CSS Cascade 4: `revert` back to the user agent's declaration, before anything else.
+        winners.revert();
         let pending: Vec<PropertyId> = winners.pending().map(|(property, _)| property).collect();
         for property in pending {
             let value = self.variables.and_then(|variables| {

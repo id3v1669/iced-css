@@ -1203,6 +1203,33 @@ fn cascade_layers_weigh_before_specificity() {
 }
 
 #[test]
+fn revert_falls_back_to_the_user_agent_value() {
+    // The border box of `a` (a column, which the user agent makes a block).
+    let laid = |css: &str| {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![node("b", vec![])])]),
+            &format!(
+                "#a {{ height:10px; display:inline; width:50px; }} #b {{ height:10px; }} {css}"
+            ),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        geometry[1].map(|geometry| geometry.border)
+    };
+    let size = |border: Option<iced_css::box_tree::FlowRect>| {
+        border.map(|border| (border.right - border.left, border.bottom - border.top))
+    };
+    // `revert` on `display` gives the user agent's block back; `initial` is `inline`.
+    assert_eq!(size(laid("#a { display:revert; }")), Some((50.0, 10.0)));
+    assert_ne!(size(laid("#a { display:initial; }")), Some((50.0, 10.0)));
+    // Where the user agent says nothing, as `unset`: `width` back to `auto`.
+    assert_eq!(
+        size(laid("#a { display:block; width:revert; }")),
+        Some((400.0, 10.0))
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

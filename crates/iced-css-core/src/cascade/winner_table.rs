@@ -31,11 +31,14 @@ impl std::error::Error for TableError {}
 #[derive(Debug, Clone)]
 pub struct PropertyWinners<'a> {
     slots: [Option<Candidate<&'a ParsedProperty>>; PROPERTY_COUNT],
+    /// The best user agent declaration per longhand: what `revert` falls back to.
+    beneath: [Option<Candidate<&'a ParsedProperty>>; PROPERTY_COUNT],
 }
 impl Default for PropertyWinners<'_> {
     fn default() -> Self {
         Self {
             slots: std::array::from_fn(|_| None),
+            beneath: std::array::from_fn(|_| None),
         }
     }
 }
@@ -136,6 +139,18 @@ impl<'a> PropertyWinners<'a> {
             value,
         });
     }
+    /// CSS Cascade 4: a winning `revert` gives way to the user agent's declaration of that
+    /// longhand, or to none, so the property inherits or takes its initial value.
+    pub fn revert(&mut self) {
+        for (slot, beneath) in self.slots.iter_mut().zip(&self.beneath) {
+            if slot
+                .as_ref()
+                .is_some_and(|candidate| candidate.value.value == SpecifiedValue::Revert)
+            {
+                *slot = beneath.clone();
+            }
+        }
+    }
     /// The longhands whose winner still holds `var()`.
     pub fn pending(&self) -> impl Iterator<Item = (PropertyId, &'a ParsedProperty)> + '_ {
         self.slots.iter().filter_map(|slot| {
@@ -183,12 +198,21 @@ impl<'a> PropertyWinners<'a> {
             }
         }
         for leaf in leaves {
-            if replace[leaf.property.slot()] {
-                self.slots[leaf.property.slot()] = Some(Candidate {
-                    key,
-                    declaration: admission.declaration,
-                    value: leaf,
-                });
+            let candidate = Candidate {
+                key,
+                declaration: admission.declaration,
+                value: leaf,
+            };
+            let slot = leaf.property.slot();
+            if key.level == super::Level::UserAgent
+                && self.beneath[slot]
+                    .as_ref()
+                    .is_none_or(|current| key > current.key)
+            {
+                self.beneath[slot] = Some(candidate.clone());
+            }
+            if replace[slot] {
+                self.slots[slot] = Some(candidate);
             }
         }
         Ok(count)

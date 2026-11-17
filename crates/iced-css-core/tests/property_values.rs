@@ -2095,7 +2095,8 @@ fn initial_and_unset_are_whole_values_of_every_property() {
     // Only as the whole value.
     assert_eq!(value("margin:initial 1px"), None);
     assert_eq!(value("font-family:Arial, initial"), None);
-    assert_eq!(value("width:revert"), None);
+    assert_eq!(value("width:revert"), Some(SpecifiedValue::Revert));
+    assert_eq!(value("width:revert-layer"), None);
 }
 
 #[test]

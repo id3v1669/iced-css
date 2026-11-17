@@ -48,6 +48,15 @@ pub fn default_value_ref(
         match &winner.value {
             SpecifiedValue::Expanded(_) => Err(DefaultingError::UnexpandedShorthand),
             SpecifiedValue::Inherit if has_parent => Ok(DefaultedValueRef::ParentComputed),
+            // A `revert` no cascade resolved acts as `unset`.
+            SpecifiedValue::Revert
+                if has_parent
+                    && property.descriptor().inheritance
+                        == crate::values::registry::Inheritance::Yes =>
+            {
+                Ok(DefaultedValueRef::ParentComputed)
+            }
+            SpecifiedValue::Revert => Ok(DefaultedValueRef::Initial(property)),
             SpecifiedValue::Inherit | SpecifiedValue::Initial => {
                 Ok(DefaultedValueRef::Initial(property))
             }

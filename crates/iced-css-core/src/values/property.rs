@@ -124,6 +124,8 @@ pub enum SpecifiedValue {
     Transform(Vec<TransformFunction>),
     /// `aspect-ratio`: width to height, both positive (CSS Box Sizing 4).
     Ratio(super::Decimal, super::Decimal),
+    /// CSS Cascade 4 `revert`: as if no author declaration gave the property.
+    Revert,
     /// A transition property's list (CSS Transitions 1).
     Transition(TransitionValue),
     /// A custom property declaration (`--name: value`): its name, with its dashes, and
@@ -1041,12 +1043,15 @@ pub fn parse_value(
 fn wide_keyword(property: PropertyId, value: &str, important: bool) -> Option<ParsedProperty> {
     let word = value.trim();
     let unset = word.eq_ignore_ascii_case("unset");
-    if !unset && !word.eq_ignore_ascii_case("initial") {
+    let revert = word.eq_ignore_ascii_case("revert");
+    if !unset && !revert && !word.eq_ignore_ascii_case("initial") {
         return None;
     }
     let leaf = |property: PropertyId| ParsedProperty {
         property,
-        value: if unset && property.descriptor().inheritance == super::registry::Inheritance::Yes {
+        value: if revert {
+            SpecifiedValue::Revert
+        } else if unset && property.descriptor().inheritance == super::registry::Inheritance::Yes {
             SpecifiedValue::Inherit
         } else {
             SpecifiedValue::Initial

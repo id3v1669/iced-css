@@ -85,9 +85,10 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   before parsing. Limits: a nested list makes one rule per pair, so each weighs as its own
   pair does rather than as `:is()` of the parents; source positions in reports are those
   of the written-out sheet; other at-rules nested in a style rule are not read.
-- **`initial` and `unset`:** (CSS Cascade 4) on any property, shorthands included: `initial`
-  is the initial value, and `unset` inherits an inherited property and is `initial`
-  otherwise. `revert` is not known.
+- **`initial`, `unset` and `revert`:** (CSS Cascade 4) on any property, shorthands
+  included: `initial` is the initial value, `unset` inherits an inherited property and is
+  `initial` otherwise, and `revert` takes the user agent's declaration (a box's `display`),
+  or acts as `unset` where there is none. `revert-layer` is not known.
 - **Media queries:** `@media` and `@import` conditions from Media Queries Level 3:
   `width` and `height` with `min-` and `max-`, `orientation`, and `prefers-color-scheme`,
   with `not`, `only` and `and`. They are answered against the environment the application

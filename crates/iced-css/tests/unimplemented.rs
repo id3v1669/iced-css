@@ -34,7 +34,6 @@ css_todo_test!(
 );
 css_todo_test!(specificity_and_important, "ordering, !important");
 css_todo_test!(inheritance, "inheritance");
-css_todo_test!(cascade_keywords, "revert");
 
 css_todo_test!(margin_negative, "negative margins");
 css_todo_test!(margin_collapsing, "margin collapsing");
