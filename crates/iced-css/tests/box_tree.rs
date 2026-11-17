@@ -1230,6 +1230,62 @@ fn revert_falls_back_to_the_user_agent_value() {
 }
 
 #[test]
+fn ui_state_pseudo_classes_read_what_the_controls_were_built_with() {
+    let bound = NonZeroUsize::new(1000).unwrap();
+    let attributes = AttributeLimits {
+        entries: bound,
+        retained_bytes: bound,
+        work: bound,
+    };
+    let label = || adapters::text("go", capture_limits()).unwrap();
+    let controls = || -> Element {
+        let checked = adapters::checkbox(true, capture_limits())
+            .unwrap()
+            .on_toggle(|_| ())
+            .style_id("checked", attributes)
+            .unwrap()
+            .erase();
+        let unchecked = adapters::checkbox(false, capture_limits())
+            .unwrap()
+            .style_id("unchecked", attributes)
+            .unwrap()
+            .erase();
+        let enabled = adapters::button(label(), capture_limits())
+            .unwrap()
+            .on_press(())
+            .style_id("enabled", attributes)
+            .unwrap()
+            .erase();
+        let disabled = adapters::button(label(), capture_limits())
+            .unwrap()
+            .on_press_maybe(None)
+            .style_id("disabled", attributes)
+            .unwrap()
+            .erase();
+        node("page", vec![checked, unchecked, enabled, disabled])
+    };
+    let tree = BoxTree::new(
+        controls(),
+        "* { display:block; height:10px; width:100px; }
+         :checked { width:11px; }
+         :disabled { width:22px; }
+         :enabled { height:33px; }",
+    )
+    .unwrap();
+    let geometry = tree.layout(400.0, None).unwrap();
+    // By preorder place: the two checkboxes, then each button before its label.
+    let size = |at: usize| {
+        let border = geometry[at].as_ref().unwrap().border;
+        (border.right - border.left, border.bottom - border.top)
+    };
+    // Checked and enabled; unchecked with no message, so disabled.
+    assert_eq!(size(1), (11.0, 33.0));
+    assert_eq!(size(2), (22.0, 10.0));
+    assert_eq!(size(3), (100.0, 33.0));
+    assert_eq!(size(5), (22.0, 10.0));
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

@@ -85,7 +85,6 @@ css_todo_test!(calc_and_math_fns, "calc() / min() / max() / clamp()");
 
 css_todo_test!(pseudo_hover_active, ":hover / :active");
 css_todo_test!(pseudo_focus, ":focus / :focus-visible");
-css_todo_test!(pseudo_state, ":disabled / :enabled / :checked");
 css_todo_test!(pseudo_hover_structural, ":hover changing structure");
 css_todo_test!(pseudo_element_placeholder, "::placeholder");
 

@@ -17,7 +17,11 @@ where
     Theme: Catalog,
     Renderer: text::Renderer,
 {
-    let construction = Construction::toggler(limits)?;
+    let mut construction = Construction::toggler(limits)?;
+    // `:checked`, and `:disabled` until it is given a message to send.
+    construction.set_state(super::CONTROL, true);
+    construction.set_state("checked", checked);
+    construction.set_state("disabled", true);
     Ok(Captured {
         payload: Toggler::new(checked),
         construction,
@@ -43,11 +47,13 @@ where
     }
     #[must_use]
     pub fn on_toggle(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
+        self.construction.set_state("disabled", false);
         self.payload = self.payload.on_toggle(callback);
         self
     }
     #[must_use]
     pub fn on_toggle_maybe(mut self, callback: Option<impl Fn(bool) -> Message + 'a>) -> Self {
+        self.construction.set_state("disabled", callback.is_none());
         self.payload = self.payload.on_toggle_maybe(callback);
         self
     }

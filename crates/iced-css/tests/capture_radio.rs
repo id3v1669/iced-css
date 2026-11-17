@@ -82,8 +82,9 @@ fn radio_preserves_selection_factory_label_and_message_clone_order() {
             limits(),
         )
         .unwrap();
+        // One comparison of the adapter's own, for `:checked`, before iced's.
         let expected = if selected.is_some() {
-            vec!["equal", "factory", "label"]
+            vec!["equal", "equal", "factory", "label"]
         } else {
             vec!["factory", "label"]
         };
@@ -112,7 +113,12 @@ fn radio_preserves_selection_factory_label_and_message_clone_order() {
         assert_eq!(actual.0, native.0);
         assert_eq!(native.1[0].0, 1);
         assert!(native.2);
-        assert_eq!(*stock_events.borrow(), full);
+        // The stock widget makes the same calls but the adapter's own comparison.
+        let mut stock_full = full.clone();
+        if selected.is_some() {
+            stock_full.remove(0);
+        }
+        assert_eq!(*stock_events.borrow(), stock_full);
     }
 }
 #[test]

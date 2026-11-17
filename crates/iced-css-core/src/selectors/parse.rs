@@ -412,6 +412,9 @@ impl<'a> Parser<'a> {
             };
             match name.to_ascii_lowercase().as_str() {
                 "root" => Some(SimpleSelector::Root),
+                "checked" => Some(SimpleSelector::Checked),
+                "disabled" => Some(SimpleSelector::Disabled),
+                "enabled" => Some(SimpleSelector::Enabled),
                 "empty" => Some(SimpleSelector::Empty),
                 "last-child" => nth(true, false),
                 "first-of-type" => nth(false, true),

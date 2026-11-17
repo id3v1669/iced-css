@@ -67,7 +67,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   From Selectors Level 3: `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`,
   `:nth-last-of-type()`, `:last-child`, `:first-of-type`, `:last-of-type`, `:only-child`,
   `:only-of-type`, `:root`, `:empty`, `:not()`, the `~` combinator and the `^=`, `$=` and
-  `*=` attribute matches. From Selectors Level 4: `:is()` (also `:matches()`), `:where()`
+  `*=` attribute matches. From Selectors Level 4: `:checked` (a checkbox or toggler that is on,
+  a radio whose value is selected), `:disabled` (a checkbox, toggler or button given no
+  message to send) and `:enabled` (one that has one), read from what the captured widget
+  was built with: they show as the attributes `checked` and `disabled` too, and a restyle
+  needs a new tree, as for any change of the widgets; `:is()` (also `:matches()`), `:where()`
   (weighing nothing) and `:not()` over a list of compound selectors; their arguments may
   not hold combinators or pseudo-elements, an invalid argument makes the whole selector
   invalid (the lists are not forgiving), and `:has()` is not known. A structural pseudo-class counts the

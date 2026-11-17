@@ -211,3 +211,6 @@ mod svg;
 pub use evidence::{ImageHints, ImageSource, RgbaBufferStatus, RgbaDeclaration};
 #[cfg(feature = "svg")]
 pub use evidence::{SvgHints, SvgSource, SvgStyleSelection};
+
+/// The attribute that marks a captured control that can be disabled, for `:enabled`.
+pub(crate) use iced_css_core::selectors::CONTROL;

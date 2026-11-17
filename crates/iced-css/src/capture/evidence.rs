@@ -908,6 +908,25 @@ impl Construction {
         Ok(())
     }
 
+    /// Records a native state for the UI-state pseudo-classes (Selectors Level 4): the
+    /// attribute present while it holds. `CONTROL` marks a control that can be disabled.
+    pub(super) fn set_state(&mut self, name: &str, on: bool) {
+        let bound = NonZeroUsize::new(4096).expect("positive");
+        let limits = iced_css_core::source::AttributeLimits {
+            entries: bound,
+            retained_bytes: bound,
+            work: bound,
+        };
+        // A state is a short attribute: it fits whatever the element already holds.
+        let _ = self.edit_metadata(limits, |metadata, limits| {
+            if on {
+                metadata.try_set_attribute(name, "", limits)
+            } else {
+                Ok(metadata.remove_attribute(name))
+            }
+        });
+    }
+
     pub(super) fn edit_metadata(
         &mut self,
         mut limits: iced_css_core::source::AttributeLimits,

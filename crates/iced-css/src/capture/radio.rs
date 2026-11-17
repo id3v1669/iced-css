@@ -39,6 +39,7 @@ where
     V: Copy + Eq,
 {
     let mut evidence = None;
+    let checked = selected == Some(value);
     let payload = Radio::new(
         CaptureLabel {
             value: label,
@@ -49,7 +50,10 @@ where
         selected,
         factory,
     );
-    let construction = evidence.ok_or(CaptureError::Role)??;
+    let mut construction = evidence.ok_or(CaptureError::Role)??;
+    // `:checked` when its value is the one selected; a radio always sends its message.
+    construction.set_state(super::CONTROL, true);
+    construction.set_state("checked", checked);
     Ok(Captured {
         payload,
         construction,

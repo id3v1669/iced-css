@@ -51,6 +51,12 @@ pub enum SimpleSelector {
     /// Selectors Level 3 `:not()`, holding one simple selector that is not itself a
     /// negation or a pseudo-element.
     Not(Box<SimpleSelector>),
+    /// Selectors Level 4 `:checked`, `:disabled` and `:enabled`, from the state a captured
+    /// control records as attributes: `checked` and `disabled` present, and for `:enabled`
+    /// a control (the internal marker) without `disabled`.
+    Checked,
+    Disabled,
+    Enabled,
     /// Selectors Level 4 `:is()`, `:where()` and a `:not()` of more than one simple
     /// selector: whether the element matches any of the compound selectors (none, for
     /// `negated`). `specificity` is what it adds: its most specific argument's, or none for
@@ -294,6 +300,12 @@ pub fn matches_simple(
                 })
         }
         SimpleSelector::Not(inner) => !matches_simple(inner, element, budget)?,
+        SimpleSelector::Checked => element.metadata.attribute("checked").is_some(),
+        SimpleSelector::Disabled => element.metadata.attribute("disabled").is_some(),
+        SimpleSelector::Enabled => {
+            element.metadata.attribute(CONTROL).is_some()
+                && element.metadata.attribute("disabled").is_none()
+        }
         SimpleSelector::Matches { list, negated, .. } => {
             let mut any = false;
             for compound in list {
@@ -313,6 +325,9 @@ pub fn matches_simple(
         }
     })
 }
+/// The attribute a captured control that can be disabled carries, for `:enabled`. No
+/// selector can name it: a selector's names hold no NUL.
+pub const CONTROL: &str = "\u{0}control";
 /// Whether `index` (from 1) is `a*n + b` for some `n >= 0`.
 fn nth_matches(a: i32, b: i32, index: usize) -> bool {
     let Ok(index) = i64::try_from(index) else {

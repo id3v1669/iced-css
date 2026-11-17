@@ -119,7 +119,10 @@ where
         payload,
         construction,
     } = child;
-    let construction = construction.button(limits)?;
+    let mut construction = construction.button(limits)?;
+    // `:disabled` until it is given a message to send.
+    construction.set_state(super::CONTROL, true);
+    construction.set_state("disabled", true);
     Ok(Captured {
         payload: iced::widget::Button::new(payload),
         construction,
@@ -134,6 +137,7 @@ where
     /// Preserve iced's direct message storage and dispatch behavior.
     #[must_use]
     pub fn on_press(mut self, message: Message) -> Self {
+        self.construction.set_state("disabled", false);
         self.payload = self.payload.on_press(message);
         self
     }
@@ -141,6 +145,7 @@ where
     /// Store the producer without invoking it during capture.
     #[must_use]
     pub fn on_press_with(mut self, producer: impl Fn() -> Message + 'a) -> Self {
+        self.construction.set_state("disabled", false);
         self.payload = self.payload.on_press_with(producer);
         self
     }
@@ -148,6 +153,7 @@ where
     /// `None` disables the native Button without removing its source membership.
     #[must_use]
     pub fn on_press_maybe(mut self, message: Option<Message>) -> Self {
+        self.construction.set_state("disabled", message.is_none());
         self.payload = self.payload.on_press_maybe(message);
         self
     }

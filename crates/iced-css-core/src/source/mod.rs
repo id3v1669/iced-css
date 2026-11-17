@@ -17,6 +17,12 @@ impl Metadata {
             self.attributes.push((name.to_owned(), value.to_owned()));
         }
     }
+    /// Removes an attribute; whether there was one.
+    pub fn remove_attribute(&mut self, name: &str) -> bool {
+        let before = self.attributes.len();
+        self.attributes.retain(|(key, _)| key != name);
+        self.attributes.len() != before
+    }
     pub fn attribute(&self, name: &str) -> Option<&str> {
         self.attributes
             .iter()
