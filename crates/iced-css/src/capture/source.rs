@@ -223,6 +223,9 @@ impl SelectorSource for ConstructionSource<'_> {
     fn previous_element(&self, position: usize) -> Option<usize> {
         self.indexed.get(position)?.previous
     }
+    fn last_child(&self, position: usize) -> Option<usize> {
+        self.indexed.get(position)?.last_child
+    }
 }
 
 #[cfg(test)]

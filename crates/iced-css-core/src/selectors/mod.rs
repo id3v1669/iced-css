@@ -57,6 +57,14 @@ pub enum SimpleSelector {
     Checked,
     Disabled,
     Enabled,
+    /// Selectors Level 4 `:has()`: relative selectors, each a combinator (descendant
+    /// where none is written) and a compound selector. The matcher tests it, as it needs
+    /// the element's descendants and later siblings.
+    Has {
+        relatives: Vec<(Combinator, Vec<SimpleSelector>)>,
+        /// Its most specific argument's.
+        specificity: crate::cascade::Specificity,
+    },
     /// Selectors Level 4 `:is()`, `:where()` and a `:not()` of more than one simple
     /// selector: whether the element matches any of the compound selectors (none, for
     /// `negated`). `specificity` is what it adds: its most specific argument's, or none for
@@ -300,6 +308,8 @@ pub fn matches_simple(
                 })
         }
         SimpleSelector::Not(inner) => !matches_simple(inner, element, budget)?,
+        // Only the matcher can test it; alone, it holds nothing back.
+        SimpleSelector::Has { .. } => true,
         SimpleSelector::Checked => element.metadata.attribute("checked").is_some(),
         SimpleSelector::Disabled => element.metadata.attribute("disabled").is_some(),
         SimpleSelector::Enabled => {

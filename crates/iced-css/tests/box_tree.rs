@@ -1286,6 +1286,47 @@ fn ui_state_pseudo_classes_read_what_the_controls_were_built_with() {
 }
 
 #[test]
+fn has_matches_by_descendants_children_and_later_siblings() {
+    let widths = |css: &str| {
+        let tree = BoxTree::new(
+            node(
+                "page",
+                vec![
+                    node("a", vec![node("inner", vec![node("deep", vec![])])]),
+                    node("b", vec![]),
+                    node("c", vec![]),
+                ],
+            ),
+            &format!("#a, #b, #c {{ width:100px; height:1px; }} {css}"),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        // a, b and c by preorder place: a holds two more.
+        [1, 4, 5].map(|at| {
+            let border = geometry[at].as_ref().unwrap().border;
+            border.right - border.left
+        })
+    };
+    assert_eq!(widths(":has(#deep) { width:10px; }")[0], 10.0);
+    assert_eq!(widths(":has(> #deep) { width:10px; }")[0], 100.0);
+    assert_eq!(widths("#a:has(> #inner) { width:20px; }")[0], 20.0);
+    // The next sibling, and any later one.
+    assert_eq!(
+        widths("#page > :has(+ #c) { width:30px; }"),
+        [100.0, 30.0, 100.0]
+    );
+    assert_eq!(
+        widths("#page > :has(~ #c) { width:40px; }"),
+        [40.0, 40.0, 100.0]
+    );
+    // The subject's descendants decide for another compound in the selector.
+    assert_eq!(
+        widths("#page:has(#deep) #c { width:50px; }"),
+        [100.0, 100.0, 50.0]
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

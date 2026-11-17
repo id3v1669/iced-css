@@ -73,8 +73,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   was built with: they show as the attributes `checked` and `disabled` too, and a restyle
   needs a new tree, as for any change of the widgets; `:is()` (also `:matches()`), `:where()`
   (weighing nothing) and `:not()` over a list of compound selectors; their arguments may
-  not hold combinators or pseudo-elements, an invalid argument makes the whole selector
-  invalid (the lists are not forgiving), and `:has()` is not known. A structural pseudo-class counts the
+  not hold combinators or pseudo-elements, and an invalid argument makes the whole selector
+  invalid (the lists are not forgiving). `:has()` takes relative selectors, each a compound
+  after an optional `>`, `+` or `~` (a descendant where none is written), and weighs as its
+  most specific argument; it may not sit inside `:is()`, `:not()` or another `:has()`, and
+  each test of it walks the descendants or later siblings it asks for. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
 - **Cascade layers:** `@layer` (CSS Cascade 5) blocks and statements naming the order:

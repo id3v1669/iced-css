@@ -55,6 +55,8 @@ struct Indexed<'a> {
     parent: Option<ElementIndex>,
     previous: Option<ElementIndex>,
     next: Option<ElementIndex>,
+    /// Its last child element, for `:has()` to walk its children from.
+    last_child: Option<ElementIndex>,
     local_language: Option<Option<&'a str>>,
     language: Option<&'a str>,
     css_id: Option<&'a str>,
@@ -241,6 +243,7 @@ impl<'a> SelectorTree<'a> {
                 }
                 previous = Some(child);
             }
+            indexed[position].last_child = previous;
         }
         for (position, element) in elements.iter().enumerate() {
             // Every linked child sits in its parent's list, so a parented
@@ -312,5 +315,8 @@ impl SelectorSource for SelectorTree<'_> {
     }
     fn next_element(&self, node: ElementIndex) -> Option<ElementIndex> {
         self.indexed.get(node.0)?.next
+    }
+    fn last_child(&self, node: ElementIndex) -> Option<ElementIndex> {
+        self.indexed.get(node.0)?.last_child
     }
 }

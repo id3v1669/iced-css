@@ -294,6 +294,53 @@ impl<'a> Parser<'a> {
             other => Ok(other),
         }
     }
+    /// `:has(`'s relative selectors, comma-separated, through its closing parenthesis:
+    /// each an optional `>`, `+` or `~` and a compound selector with no pseudo-element and
+    /// no `:has()` of its own.
+    fn relatives(&mut self) -> Result<SimpleSelector, SyntaxError> {
+        let mut relatives = Vec::new();
+        let mut highest = Specificity::ZERO;
+        loop {
+            let combinator = match self.peek()? {
+                Some(look) if look.token.kind == TokenKind::Delim => match look.token.raw {
+                    ">" => Some(Combinator::Child),
+                    "+" => Some(Combinator::Adjacent),
+                    "~" => Some(Combinator::Sibling),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if combinator.is_some() {
+                self.take()?;
+            }
+            let mut target = None;
+            let mut weight = Specificity::ZERO;
+            let compound = self.compound(&mut target, &mut weight)?;
+            if target.is_some()
+                || compound
+                    .tests
+                    .iter()
+                    .any(|test| matches!(test, SimpleSelector::Has { .. }))
+            {
+                return Err(self.invalid());
+            }
+            highest = highest.max(weight);
+            self.push(
+                &mut relatives,
+                (combinator.unwrap_or(Combinator::Descendant), compound.tests),
+            )?;
+            let look = self.take()?;
+            match look.token.kind {
+                TokenKind::Delim if look.token.raw == "," => {}
+                TokenKind::CloseParen => break,
+                _ => return Err(self.invalid()),
+            }
+        }
+        Ok(SimpleSelector::Has {
+            relatives,
+            specificity: highest,
+        })
+    }
     /// The compound selectors of `:is(`, `:where(` or `:not(`, comma-separated, through
     /// its closing parenthesis. None may hold a pseudo-element, and none a combinator.
     fn any_of(&mut self, negated: bool, weightless: bool) -> Result<SimpleSelector, SyntaxError> {
@@ -304,6 +351,14 @@ impl<'a> Parser<'a> {
             let mut weight = Specificity::ZERO;
             let compound = self.compound(&mut target, &mut weight)?;
             if target.is_some() {
+                return Err(self.invalid());
+            }
+            // `:has()` is tested by the matcher, not inside another list.
+            if compound
+                .tests
+                .iter()
+                .any(|test| matches!(test, SimpleSelector::Has { .. }))
+            {
                 return Err(self.invalid());
             }
             highest = highest.max(weight);
@@ -370,6 +425,7 @@ impl<'a> Parser<'a> {
                 }
                 "not" => self.negation()?,
                 "is" | "matches" => self.any_of(false, false)?,
+                "has" => self.relatives()?,
                 "where" => self.any_of(false, true)?,
                 "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" => {
                     let (a, b) = self.nth()?;
@@ -516,7 +572,8 @@ impl<'a> Parser<'a> {
         fn weight(test: &SimpleSelector) -> Specificity {
             match test {
                 SimpleSelector::Not(inner) => weight(inner),
-                SimpleSelector::Matches { specificity, .. } => *specificity,
+                SimpleSelector::Matches { specificity, .. }
+                | SimpleSelector::Has { specificity, .. } => *specificity,
                 SimpleSelector::Universal => Specificity::ZERO,
                 SimpleSelector::Type(_) => Specificity::selector(0, 0, 1),
                 SimpleSelector::Id(_) => Specificity::selector(1, 0, 0),

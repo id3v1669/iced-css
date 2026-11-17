@@ -369,3 +369,27 @@ fn level4_is_where_and_not_take_lists_of_compounds() {
         assert!(parse_selector_list(bad, limits()).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn level4_has_takes_relative_compound_selectors() {
+    assert_eq!(one("a:has(#b, .c)").specificity.components(), [0, 1, 0, 1]);
+    for good in [
+        ":has(a)",
+        ":has(> a.b)",
+        ":has(+ a, ~ .b)",
+        "div :has( .x ) > p",
+    ] {
+        assert!(parse_selector_list(good, limits()).is_ok(), "{good}");
+    }
+    for bad in [
+        ":has()",
+        ":has(a b)",
+        ":has(:has(a))",
+        ":is(:has(a))",
+        ":not(:has(a))",
+        ":has(::before)",
+        ":has(>)",
+    ] {
+        assert!(parse_selector_list(bad, limits()).is_err(), "{bad}");
+    }
+}
