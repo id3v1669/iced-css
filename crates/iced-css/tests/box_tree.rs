@@ -1063,6 +1063,40 @@ fn initial_and_unset_reset_a_property_as_css_cascade_4_says() {
 }
 
 #[test]
+fn is_where_and_not_lists_match_and_weigh_as_selectors_4_says() {
+    let widths = |css: &str| {
+        let tree = BoxTree::new(
+            node(
+                "page",
+                vec![node("a", vec![]), node("b", vec![]), node("c", vec![])],
+            ),
+            &format!("#a, #b, #c {{ width:100px; height:1px; }} {css}"),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        [1, 2, 3].map(|at| {
+            let border = geometry[at].as_ref().unwrap().border;
+            border.right - border.left
+        })
+    };
+    assert_eq!(
+        widths("#page > :is(#a, #c) { width:50px; }"),
+        [50.0, 100.0, 50.0]
+    );
+    assert_eq!(widths(":not(#a, #b) { width:20px; }"), [100.0, 100.0, 20.0]);
+    // `:where()` weighs nothing, so the id rule wins even before it.
+    assert_eq!(
+        widths("#c { width:30px; } :where(#c) { width:10px; }")[2],
+        30.0
+    );
+    // `:is()` weighs as its argument: the later of two equal rules wins.
+    assert_eq!(
+        widths("#c { width:30px; } :is(#c) { width:10px; }")[2],
+        10.0
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

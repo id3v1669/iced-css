@@ -51,6 +51,15 @@ pub enum SimpleSelector {
     /// Selectors Level 3 `:not()`, holding one simple selector that is not itself a
     /// negation or a pseudo-element.
     Not(Box<SimpleSelector>),
+    /// Selectors Level 4 `:is()`, `:where()` and a `:not()` of more than one simple
+    /// selector: whether the element matches any of the compound selectors (none, for
+    /// `negated`). `specificity` is what it adds: its most specific argument's, or none for
+    /// `:where()`.
+    Matches {
+        list: Vec<Vec<SimpleSelector>>,
+        negated: bool,
+        specificity: crate::cascade::Specificity,
+    },
 }
 impl SimpleSelector {
     /// Whether testing it needs the element's place among its siblings.
@@ -58,6 +67,7 @@ impl SimpleSelector {
         match self {
             Self::Nth { .. } | Self::Only { .. } => true,
             Self::Not(inner) => inner.needs_position(),
+            Self::Matches { list, .. } => list.iter().flatten().any(Self::needs_position),
             _ => false,
         }
     }
@@ -284,6 +294,23 @@ pub fn matches_simple(
                 })
         }
         SimpleSelector::Not(inner) => !matches_simple(inner, element, budget)?,
+        SimpleSelector::Matches { list, negated, .. } => {
+            let mut any = false;
+            for compound in list {
+                let mut all = true;
+                for test in compound {
+                    if !matches_simple(test, element, budget)? {
+                        all = false;
+                        break;
+                    }
+                }
+                if all {
+                    any = true;
+                    break;
+                }
+            }
+            any != *negated
+        }
     })
 }
 /// Whether `index` (from 1) is `a*n + b` for some `n >= 0`.

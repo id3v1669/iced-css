@@ -48,8 +48,6 @@ fn grouping_is_atomic_and_forms_past_level3_are_not_admitted() {
         "text:: before",
         "text:::before",
         "text::lang(en)",
-        ":not(.x, .y)",
-        ":is(.x)",
         ":nth-child(2 of .x)",
         "text||.x",
         "[a=x i]",
@@ -295,15 +293,13 @@ fn level3_pseudo_classes_and_their_specificity() {
     assert_eq!(one(":not([a^=b])").specificity.components(), [0, 0, 1, 0]);
 }
 #[test]
-fn negation_admits_no_nesting_pseudo_element_or_compound() {
+fn negation_admits_no_pseudo_element_or_combinator() {
     for input in [
         ":not()",
-        ":not(:not(a))",
         ":not(:before)",
         ":not(::after)",
-        ":not(a.b)",
         ":not(a b)",
-        ":not(a, b)",
+        ":not(a > b)",
         ":not(a",
         "::not(a)",
         "::nth-child(1)",
@@ -341,5 +337,35 @@ fn level3_combinator_and_attribute_operators() {
     ));
     for input in ["[x^ =y]", "[x^y]", "[x*]", "a ~", "~ a"] {
         assert!(parse_selector_list(input, limits()).is_err(), "{input}");
+    }
+}
+
+#[test]
+fn level4_is_where_and_not_take_lists_of_compounds() {
+    // `:is()` and `:not()` count as their most specific argument; `:where()` as nothing.
+    assert_eq!(one(":is(#a, .b, c)").specificity.components(), [0, 1, 0, 0]);
+    assert_eq!(
+        one("p:where(#a, .b)").specificity.components(),
+        [0, 0, 0, 1]
+    );
+    assert_eq!(one(":not(.a.b, c)").specificity.components(), [0, 0, 2, 0]);
+    assert_eq!(one(":not(:not(a))").specificity.components(), [0, 0, 0, 1]);
+    for good in [
+        ":is(a)",
+        "div :is(.a, [b], :hover) > p",
+        ":where( .a , .b )",
+        ":matches(a)",
+    ] {
+        assert!(parse_selector_list(good, limits()).is_ok(), "{good}");
+    }
+    for bad in [
+        ":is()",
+        ":is(a b)",
+        ":is(::before)",
+        ":where(a,)",
+        ":is(a",
+        "::is(a)",
+    ] {
+        assert!(parse_selector_list(bad, limits()).is_err(), "{bad}");
     }
 }

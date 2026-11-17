@@ -66,8 +66,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   `:hover`, `:active` and `:focus`, which restyle the tree live.
   From Selectors Level 3: `:nth-child()`, `:nth-last-child()`, `:nth-of-type()`,
   `:nth-last-of-type()`, `:last-child`, `:first-of-type`, `:last-of-type`, `:only-child`,
-  `:only-of-type`, `:root`, `:empty`, `:not()` with one simple selector, the `~` combinator
-  and the `^=`, `$=` and `*=` attribute matches. A structural pseudo-class counts the
+  `:only-of-type`, `:root`, `:empty`, `:not()`, the `~` combinator and the `^=`, `$=` and
+  `*=` attribute matches. From Selectors Level 4: `:is()` (also `:matches()`), `:where()`
+  (weighing nothing) and `:not()` over a list of compound selectors; their arguments may
+  not hold combinators or pseudo-elements, an invalid argument makes the whole selector
+  invalid (the lists are not forgiving), and `:has()` is not known. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
 - **`initial` and `unset`:** (CSS Cascade 4) on any property, shorthands included: `initial`

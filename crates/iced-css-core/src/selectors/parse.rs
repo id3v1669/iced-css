@@ -284,44 +284,46 @@ impl<'a> Parser<'a> {
         }
         parse_nth(&text.to_ascii_lowercase()).ok_or_else(|| invalid(self))
     }
-    /// The one simple selector inside `:not(`, and its closing parenthesis.
-    fn negated(&mut self) -> Result<SimpleSelector, SyntaxError> {
-        let look = self.peek()?.ok_or_else(|| self.invalid())?;
-        let inner = match look.token.kind {
-            TokenKind::Ident => SimpleSelector::Type(self.identifier()?),
-            TokenKind::Delim if look.token.raw == "*" => {
-                self.take()?;
-                SimpleSelector::Universal
+    /// `:not(`'s argument: one simple selector, as Selectors Level 3 has it, or a list of
+    /// compound selectors, as Level 4 does.
+    fn negation(&mut self) -> Result<SimpleSelector, SyntaxError> {
+        match self.any_of(true, false)? {
+            SimpleSelector::Matches { list, .. } if list.len() == 1 && list[0].len() == 1 => Ok(
+                SimpleSelector::Not(Box::new(list.into_iter().flatten().next().expect("one"))),
+            ),
+            other => Ok(other),
+        }
+    }
+    /// The compound selectors of `:is(`, `:where(` or `:not(`, comma-separated, through
+    /// its closing parenthesis. None may hold a pseudo-element, and none a combinator.
+    fn any_of(&mut self, negated: bool, weightless: bool) -> Result<SimpleSelector, SyntaxError> {
+        let mut list = Vec::new();
+        let mut highest = Specificity::ZERO;
+        loop {
+            let mut target = None;
+            let mut weight = Specificity::ZERO;
+            let compound = self.compound(&mut target, &mut weight)?;
+            if target.is_some() {
+                return Err(self.invalid());
             }
-            TokenKind::Hash => {
-                self.take()?;
-                SimpleSelector::Id(self.name(&look.token.raw[1..], look.start + 1, true, false)?)
+            highest = highest.max(weight);
+            self.push(&mut list, compound.tests)?;
+            let look = self.take()?;
+            match look.token.kind {
+                TokenKind::Delim if look.token.raw == "," => {}
+                TokenKind::CloseParen => break,
+                _ => return Err(self.invalid()),
             }
-            TokenKind::Delim if look.token.raw == "." => {
-                self.take()?;
-                if self.peek()?.is_some_and(|look| look.space) {
-                    return Err(self.invalid());
-                }
-                SimpleSelector::Class(self.identifier()?)
-            }
-            TokenKind::OpenBracket => {
-                self.take()?;
-                self.attribute()?
-            }
-            TokenKind::Colon => {
-                self.take()?;
-                // No pseudo-element and no negation inside a negation.
-                let mut element = None;
-                match self.pseudo(&mut element)? {
-                    Some(SimpleSelector::Not(_)) | None => return Err(self.invalid()),
-                    Some(inner) if element.is_none() => inner,
-                    Some(_) => return Err(self.invalid()),
-                }
-            }
-            _ => return Err(self.invalid()),
-        };
-        self.expect(TokenKind::CloseParen)?;
-        Ok(inner)
+        }
+        Ok(SimpleSelector::Matches {
+            list,
+            negated,
+            specificity: if weightless {
+                Specificity::ZERO
+            } else {
+                highest
+            },
+        })
     }
     fn pseudo(
         &mut self,
@@ -366,7 +368,9 @@ impl<'a> Parser<'a> {
                     self.expect(TokenKind::CloseParen)?;
                     SimpleSelector::Lang(argument)
                 }
-                "not" => SimpleSelector::Not(Box::new(self.negated()?)),
+                "not" => self.negation()?,
+                "is" | "matches" => self.any_of(false, false)?,
+                "where" => self.any_of(false, true)?,
                 "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" => {
                     let (a, b) = self.nth()?;
                     SimpleSelector::Nth {
@@ -504,16 +508,19 @@ impl<'a> Parser<'a> {
         test: SimpleSelector,
         specificity: &mut Specificity,
     ) -> Result<(), SyntaxError> {
-        // A negation counts as its argument does (Selectors Level 3, 9).
-        let delta = match match &test {
-            SimpleSelector::Not(inner) => inner,
-            other => other,
-        } {
-            SimpleSelector::Universal => Specificity::ZERO,
-            SimpleSelector::Type(_) => Specificity::selector(0, 0, 1),
-            SimpleSelector::Id(_) => Specificity::selector(1, 0, 0),
-            _ => Specificity::selector(0, 1, 0),
-        };
+        // A negation counts as its argument does (Selectors Level 3, 9), and `:is()` and
+        // `:not()` of a list as their most specific argument (Level 4, 17).
+        fn weight(test: &SimpleSelector) -> Specificity {
+            match test {
+                SimpleSelector::Not(inner) => weight(inner),
+                SimpleSelector::Matches { specificity, .. } => *specificity,
+                SimpleSelector::Universal => Specificity::ZERO,
+                SimpleSelector::Type(_) => Specificity::selector(0, 0, 1),
+                SimpleSelector::Id(_) => Specificity::selector(1, 0, 0),
+                _ => Specificity::selector(0, 1, 0),
+            }
+        }
+        let delta = weight(&test);
         *specificity = specificity
             .checked_selector_sum(delta)
             .map_err(|_| self.resource(SyntaxResource::Entries))?;
