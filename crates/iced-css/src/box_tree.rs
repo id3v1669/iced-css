@@ -142,7 +142,7 @@ use std::{
 };
 
 mod animation;
-pub use animation::{BoxTreeAnimations, Transition};
+pub use animation::{AnimationEvent, BoxTreeAnimations, Transition};
 
 /// What building a box tree can refuse. Each cause keeps its own message.
 #[derive(Debug)]
@@ -3647,6 +3647,7 @@ impl BoxTree {
             tree: self,
             widgets: Vec::new(),
             presses: Vec::new(),
+            events: None,
         }
     }
 
@@ -3709,6 +3710,7 @@ pub struct BoxTreeView<'a, Message, Theme, Renderer> {
     tree: BoxTree,
     widgets: Vec<(String, Element<'a, Message, Theme, Renderer>)>,
     presses: Vec<(String, Message)>,
+    events: Option<Box<dyn Fn(AnimationEvent) -> Message + 'a>>,
 }
 
 impl<'a, Message, Theme, Renderer> BoxTreeView<'a, Message, Theme, Renderer> {
@@ -3736,6 +3738,15 @@ impl<'a, Message, Theme, Renderer> BoxTreeView<'a, Message, Theme, Renderer> {
     #[must_use]
     pub fn on_press(mut self, id: &str, message: Message) -> Self {
         self.presses.push((id.to_owned(), message));
+        self
+    }
+
+    /// Publishes `message(event)` for each event of the transitions and animations the
+    /// widget runs itself: those its hover, press and focus restyles start, and the
+    /// `@keyframes` animations its stylings name (CSS Transitions 1, CSS Animations 1).
+    #[must_use]
+    pub fn on_animation_event(mut self, message: impl Fn(AnimationEvent) -> Message + 'a) -> Self {
+        self.events = Some(Box::new(message));
         self
     }
 }
@@ -3778,6 +3789,7 @@ where
             slots: Vec::new(),
             slot_owners: Vec::new(),
             presses: view.presses,
+            events: view.events,
         })
     }
 }
@@ -3893,6 +3905,14 @@ impl Interaction {
     }
 
     /// Moves the widget's transitions on to `now`; whether they still run.
+    /// The events of the widget's own animations since it last took them.
+    fn take_events(&mut self) -> Vec<AnimationEvent> {
+        self.transitions
+            .as_ref()
+            .map(|held| held.lock().take_events())
+            .unwrap_or_default()
+    }
+
     fn advance_transitions(&mut self, base: &BoxTree, key: InteractionKey, now: Instant) -> bool {
         let Some(held) = &self.transitions else {
             return false;
@@ -5238,6 +5258,8 @@ struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::F
     /// The other way: the first element in each arena slot, by slot.
     slot_owners: Vec<Option<usize>>,
     presses: Vec<(String, Message)>,
+    /// What to publish for an event of the widget's own transitions and animations.
+    events: Option<Box<dyn Fn(AnimationEvent) -> Message + 'a>>,
     /// Shaped text and its top-left corner relative to the layout, by arena.
     paragraphs: BTreeMap<usize, (Renderer::Paragraph, Point)>,
     /// The text after the first paragraph's, by arena slot: past a shorter float or a
@@ -8267,6 +8289,13 @@ where
                 shell.request_redraw();
             }
         }
+        // What its own animations did since: those started in layout, and on the frame.
+        let happened = tree.state.downcast_mut::<Interaction>().take_events();
+        if let Some(message) = &self.events {
+            for event in happened {
+                shell.publish(message(event));
+            }
+        }
         let top = cursor
             .position_in(layout.bounds())
             .and_then(|point| self.hit(point));
@@ -9865,6 +9894,38 @@ mod tests {
         let linear = linear_gradient(&corner, 100.0, 100.0, 1.0).unwrap();
         assert!((linear.angle.0 - 3.0 * std::f32::consts::FRAC_PI_4).abs() < 1e-5);
         assert_eq!(offsets(linear)[1], (0.5, 0.5));
+    }
+
+    #[test]
+    fn the_widget_keeps_the_events_of_its_own_animations() {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![])]),
+            "@keyframes grow { from { width: 100px } to { width: 300px } }
+             #a { width:50px; height:10px; animation: grow 100ms linear; }",
+        )
+        .unwrap();
+        let start = Instant::now();
+        let at = |millis: u64| start + std::time::Duration::from_millis(millis);
+        let none = (None, None, None);
+        let mut state = Interaction::default();
+        let _ = state.styled_for(&tree, none, start);
+        assert!(state.advance_transitions(&tree, none, at(50)));
+        assert_eq!(
+            state.take_events(),
+            [AnimationEvent::AnimationStart {
+                element: Some("a".to_owned()),
+                name: "grow".to_owned()
+            }]
+        );
+        assert!(state.advance_transitions(&tree, none, at(150)));
+        assert_eq!(
+            state.take_events(),
+            [AnimationEvent::AnimationEnd {
+                element: Some("a".to_owned()),
+                name: "grow".to_owned()
+            }]
+        );
+        assert!(state.take_events().is_empty());
     }
 
     #[test]

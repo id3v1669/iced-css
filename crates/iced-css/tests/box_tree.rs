@@ -1327,6 +1327,125 @@ fn has_matches_by_descendants_children_and_later_siblings() {
 }
 
 #[test]
+fn transitions_and_animations_send_their_events() {
+    use iced_css::box_tree::{AnimationEvent, BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let root = || node("page", vec![node("a", vec![])]);
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let element = Some("a".to_owned());
+    let event =
+        |kind: fn(Option<String>, &'static str) -> AnimationEvent| kind(element.clone(), "width");
+    // A transition: created, its delay over, its end.
+    let sheet = |width: u32| {
+        format!("#a {{ height:1px; width:{width}px; transition: width 1s linear 200ms; }}")
+    };
+    let from = BoxTree::new(root(), &sheet(100)).unwrap();
+    let to = from.restyled(&[&sheet(200)]).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.transition(&from, &to, start).unwrap();
+    assert_eq!(
+        animations.take_events(),
+        [event(|element, property| AnimationEvent::TransitionRun {
+            element,
+            property
+        })]
+    );
+    animations.advance(at(100), &to);
+    assert!(animations.take_events().is_empty());
+    animations.advance(at(300), &to);
+    assert_eq!(
+        animations.take_events(),
+        [event(|element, property| AnimationEvent::TransitionStart {
+            element,
+            property
+        })]
+    );
+    animations.advance(at(1300), &to);
+    assert_eq!(
+        animations.take_events(),
+        [event(|element, property| AnimationEvent::TransitionEnd {
+            element,
+            property
+        })]
+    );
+    // Turned back halfway: the running one is cancelled, a new one runs.
+    let mut animations = BoxTreeAnimations::new();
+    animations.transition(&from, &to, start).unwrap();
+    animations.advance(at(500), &to);
+    animations.take_events();
+    let back = to.restyled(&[&sheet(100)]).unwrap();
+    animations.transition(&to, &back, at(500)).unwrap();
+    assert_eq!(
+        animations.take_events(),
+        [
+            event(|element, property| AnimationEvent::TransitionCancel { element, property }),
+            event(|element, property| AnimationEvent::TransitionRun { element, property }),
+        ]
+    );
+    // An animation of three iterations: its start, each next iteration, its end.
+    let keyframes = "@keyframes grow { from { width: 10px } to { width: 20px } }";
+    let named = |animation: &str| {
+        format!("{keyframes} #a {{ height:1px; width:50px; animation: {animation}; }}")
+    };
+    let name = || "grow".to_owned();
+    let tree = BoxTree::new(root(), &named("grow 100ms linear 3")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(50), &tree);
+    assert_eq!(
+        animations.take_events(),
+        [AnimationEvent::AnimationStart {
+            element: element.clone(),
+            name: name()
+        }]
+    );
+    animations.advance(at(150), &tree);
+    animations.advance(at(250), &tree);
+    animations.advance(at(350), &tree);
+    assert_eq!(
+        animations.take_events(),
+        [
+            AnimationEvent::AnimationIteration {
+                element: element.clone(),
+                name: name(),
+                iteration: 1
+            },
+            AnimationEvent::AnimationIteration {
+                element: element.clone(),
+                name: name(),
+                iteration: 2
+            },
+            AnimationEvent::AnimationEnd {
+                element: element.clone(),
+                name: name()
+            },
+        ]
+    );
+    assert!(!animations.is_animating());
+    // One frame across all of it sends them all, in order.
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(1000), &tree);
+    let crossed = animations.take_events();
+    assert_eq!(crossed.len(), 4, "{crossed:?}");
+    // Its name taken away before its end: cancelled.
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(50), &tree);
+    animations.take_events();
+    let none = tree.restyled(&[&named("none")]).unwrap();
+    animations.play(&none, at(60));
+    assert_eq!(
+        animations.take_events(),
+        [AnimationEvent::AnimationCancel {
+            element,
+            name: name()
+        }]
+    );
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

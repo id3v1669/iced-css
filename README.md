@@ -260,7 +260,7 @@ where you would call `request`, between trees restyled from one capture. The wid
 the transitions of its own restyles itself: hovering, pressing or focusing a box starts what
 the new styling asks for, drawn over the application's animations and moved on each frame.
 Limits: `:before` and `:after` do not transition; an easing that overshoots is cut off at the ends; `inherit` on a
-transition property reads as its initial value; no transition events.
+transition property reads as its initial value.
 
 CSS Animations 1: `@keyframes` (`from`, `to` and percentages, with a keyframe's own
 `animation-timing-function` easing the stretch after it) and `animation-name`,
@@ -274,9 +274,20 @@ declarations and under its important ones; a keyframe that leaves a property out
 element's own value at `from` and `to` and is skipped between. Limits: only the properties
 listed below move (others, as `display`, stay as styled); keyframe values holding `var()` are
 left out; `:before` and `:after` are not animated; with two animations of one property the
-later wins whole, without adding; no animation events. Animation time is the frame time
-given to `play` and `advance` (the widget's redraw times): luminate's two-ended progress
-does not model iterations, reversal and pausing.
+later wins whole, without adding. Their time is luminate's, as transitions' is: each
+iteration is a run of luminate progress, the next started where the last ended (a frame
+that crosses several carries the time past each end on), and a pause holds the place and
+resumes it as a new run.
+
+Events (CSS Transitions 1, CSS Animations 1): `BoxTreeAnimations::take_events()` gives what
+happened since the last call, oldest first, as `AnimationEvent`s: a transition run (created),
+started (its delay over), ended or cancelled (replaced, or its value changed otherwise), and an
+animation started, into its next iteration, ended or cancelled (its name no longer listed).
+Each names the element by its CSS id (`None` without one) and the property or `@keyframes`
+name. The widget publishes those of the animations it runs itself through
+`BoxTreeView::on_animation_event`. Limits: no elapsed time is given; `:before` and `:after`
+send none, as they do not animate; a pause during an animation's delay resumes without the
+rest of it.
 
 What animates:
 

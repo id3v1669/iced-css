@@ -5,7 +5,7 @@
 //! in gamma-encoded sRGB (Q070).
 use super::{BoxTree, BoxTreeError, failed};
 use crate::animation::{
-    clock::AnimationTiming,
+    clock::{AnimationTiming, TimingPhase},
     easing::CssEasing,
     engine::{ProgressEngine, ProgressLimits},
 };
@@ -2450,6 +2450,78 @@ struct Track {
     /// The capture it belongs to: another tree with this id is another element.
     capture: u64,
     easing: Ease,
+    /// Whether `transitionstart` was sent: its delay is over.
+    announced: bool,
+}
+
+/// What an animation or transition did, as CSS Transitions 1 and CSS Animations 1 name
+/// the events they send. `element` is the element's CSS id, `None` for one without.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnimationEvent {
+    /// A transition was created; its delay may still run.
+    TransitionRun {
+        element: Option<String>,
+        property: &'static str,
+    },
+    /// Its delay is over and it moves.
+    TransitionStart {
+        element: Option<String>,
+        property: &'static str,
+    },
+    /// It reached its end.
+    TransitionEnd {
+        element: Option<String>,
+        property: &'static str,
+    },
+    /// It was taken away before its end: replaced, or its value changed otherwise.
+    TransitionCancel {
+        element: Option<String>,
+        property: &'static str,
+    },
+    /// An animation's delay is over and it moves.
+    AnimationStart {
+        element: Option<String>,
+        name: String,
+    },
+    /// It began iteration `iteration` (counted from 0) after the one before.
+    AnimationIteration {
+        element: Option<String>,
+        name: String,
+        iteration: u32,
+    },
+    /// It ran its last iteration to the end.
+    AnimationEnd {
+        element: Option<String>,
+        name: String,
+    },
+    /// It stopped before its end: its name is no longer listed, or its element is gone.
+    AnimationCancel {
+        element: Option<String>,
+        name: String,
+    },
+}
+
+/// The element an internal address names, as an event gives it: its CSS id, or none.
+fn element_of(id: &str) -> Option<String> {
+    let base = ["::before", "::after"]
+        .iter()
+        .find_map(|suffix| id.strip_suffix(suffix))
+        .unwrap_or(id);
+    (!base.starts_with(UNNAMED)).then(|| base.to_owned())
+}
+
+/// The property a keyframe animation's runs are timed on, in a source of its own: one
+/// binding is its clock. Its value is never presented.
+fn clock_property() -> PropertyId {
+    PropertyId::lookup("width").expect("registered")
+}
+
+fn clock_selection() -> AnimationSelection {
+    AnimationSelection::new(
+        &[clock_property()],
+        NonZeroUsize::new(100_000).expect("positive"),
+    )
+    .expect("width animates")
 }
 
 /// Running explicit animations. It lives in the application state, beside the tree, and
@@ -2477,8 +2549,8 @@ pub struct BoxTreeAnimations {
     keyframed: Vec<Keyframed>,
     /// The styling their keyframe values were read from: source, interaction state.
     keyframes_of: Option<(usize, InteractionKey)>,
-    /// The time last given; keyframe animations are sampled at it.
-    clock: Option<Instant>,
+    /// Events not yet taken, oldest first.
+    events: Vec<AnimationEvent>,
 }
 
 type InteractionKey = (Option<usize>, Option<usize>, Option<usize>);
@@ -2500,9 +2572,9 @@ struct KeyTrack {
     stops: Vec<Stop>,
 }
 
-/// One running CSS animation (CSS Animations 1). The time comes from the frames given to
-/// `play` and `advance`: a keyframe timeline repeats, reverses and pauses, which a two-ended
-/// progress cannot model.
+/// One running CSS animation (CSS Animations 1). Its time comes from luminate: each
+/// iteration is a run of linear progress on a source of its own, the next started where
+/// the last ended, so its delay, length, repeats and pauses are luminate's to keep.
 #[derive(Debug, Clone)]
 struct Keyframed {
     capture: u64,
@@ -2510,70 +2582,89 @@ struct Keyframed {
     projected: usize,
     index: usize,
     animation: ElementAnimation,
-    started: Instant,
-    paused_at: Option<Instant>,
-    paused_for: Duration,
     tracks: Vec<KeyTrack>,
+    /// The engine source its runs are timed on.
+    source: SourceRef,
+    /// The iteration in progress, from 0.
+    run: u32,
+    /// The part of its iteration the run in progress covers, from 0 to 1.
+    span: (f32, f32),
+    state: KeyState,
+    /// Whether `animationstart` was sent.
+    announced: bool,
+    /// Time already past the end of the run in progress when it was started: a frame
+    /// that crossed several iterations carries it on to the next.
+    overrun: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum KeyState {
+    /// A run is timed: in its delay, or moving.
+    Running,
+    /// Held at this place in the iteration in progress.
+    Paused(f32),
+    /// Its last iteration ended.
+    Done,
 }
 
 impl Keyframed {
-    /// Milliseconds since its delay ended, at `now`.
-    fn local_time(&self, now: Instant) -> f32 {
-        let at = self.paused_at.unwrap_or(now).max(self.started);
-        let elapsed = at
-            .duration_since(self.started)
-            .saturating_sub(self.paused_for);
-        elapsed.as_secs_f32() * 1000.0 - self.animation.delay
+    /// How many iterations it runs, `None` for ever.
+    fn runs(&self) -> Option<u32> {
+        let count = self.animation.iterations;
+        count
+            .is_finite()
+            .then(|| count.ceil().clamp(0.0, f32::from(u16::MAX)) as u32)
     }
-
-    /// The active duration, in milliseconds.
-    fn active(&self) -> f32 {
-        let iterations = self.animation.iterations;
-        if iterations == 0.0 || self.animation.duration == 0.0 {
-            0.0
+    /// Where iteration `run` ends: its whole, or the share of it a fractional count gives
+    /// the last one.
+    fn run_end(&self, run: u32) -> f32 {
+        let count = self.animation.iterations;
+        if count.is_finite() && count.fract() > 0.0 && run + 1 == count.ceil() as u32 {
+            count.fract()
         } else {
-            self.animation.duration * iterations
+            1.0
         }
     }
-
-    /// Whether it still has frames to show at `now`.
-    fn running(&self, now: Instant) -> bool {
-        self.paused_at.is_none() && self.local_time(now) < self.active()
-    }
-
-    /// 4.x: where in its keyframes it is at `now`, from 0 to 1, or `None` where it shows
-    /// nothing (before its delay without a backwards fill, after it without a forwards one).
-    fn progress(&self, now: Instant) -> Option<f32> {
-        let animation = &self.animation;
-        let time = self.local_time(now);
-        let active = self.active();
-        let (iteration, within) = if time < 0.0 {
-            if !animation.fill_backwards {
-                return None;
-            }
-            (0.0, 0.0)
-        } else if time >= active {
-            if !animation.fill_forwards {
-                return None;
-            }
-            let iterations = animation.iterations;
-            if iterations.fract() == 0.0 && iterations > 0.0 {
-                (iterations - 1.0, 1.0)
-            } else {
-                (iterations.floor(), iterations.fract())
-            }
+    /// Where it ends: the end of its last iteration.
+    fn end_position(&self) -> (u32, f32) {
+        let count = self.animation.iterations;
+        if count <= 0.0 {
+            (0, 0.0)
+        } else if count.fract() == 0.0 {
+            (count as u32 - 1, 1.0)
         } else {
-            let at = time / animation.duration;
-            (at.floor(), at.fract())
-        };
-        let odd = iteration % 2.0 == 1.0;
-        let reversed = match animation.direction {
+            (count.floor() as u32, count.fract())
+        }
+    }
+    /// Where it shows, as (iteration, place in it), given the run's progress (`None`
+    /// while the run's delay runs); `None` where it shows nothing.
+    fn position(&self, sample: Option<f32>) -> Option<(u32, f32)> {
+        match self.state {
+            KeyState::Paused(at) => Some((self.run, at)),
+            KeyState::Done => self.animation.fill_forwards.then(|| self.end_position()),
+            KeyState::Running => match sample {
+                Some(progress) => Some((
+                    self.run,
+                    self.span.0 + progress * (self.span.1 - self.span.0),
+                )),
+                None => (self.animation.fill_backwards && self.run == 0 && !self.announced)
+                    .then_some((self.run, self.span.0)),
+            },
+        }
+    }
+    /// The place in its keyframes, from 0 to 1, that a position shows, after its direction.
+    fn directed(&self, (iteration, within): (u32, f32)) -> f32 {
+        let odd = iteration % 2 == 1;
+        let reversed = match self.animation.direction {
             AnimationDirection::Normal => false,
             AnimationDirection::Reverse => true,
             AnimationDirection::Alternate => odd,
             AnimationDirection::AlternateReverse => !odd,
         };
-        Some(if reversed { 1.0 - within } else { within })
+        if reversed { 1.0 - within } else { within }
+    }
+    fn element(&self) -> Option<String> {
+        element_of(&self.id)
     }
 }
 
@@ -2627,7 +2718,7 @@ impl BoxTreeAnimations {
             tracks: Vec::new(),
             keyframed: Vec::new(),
             keyframes_of: None,
-            clock: None,
+            events: Vec::new(),
         }
     }
 
@@ -2829,6 +2920,7 @@ impl BoxTreeAnimations {
                 },
                 capture,
                 easing,
+                announced: false,
             });
         }
         if started.is_empty() && !self.sources.contains_key(id) {
@@ -2862,11 +2954,25 @@ impl BoxTreeAnimations {
             let selection = AnimationSelection::new(&dropped, work).map_err(failed)?;
             self.engine.cancel(source, &selection).map_err(failed)?;
         }
+        // A running transition replaced, or given up for its end value, is cancelled.
+        let mut events = Vec::new();
         self.tracks.retain(|track| {
-            track.id != id
+            let kept = track.id != id
                 || !(dropped.contains(&track.property)
-                    || started.iter().any(|new| new.property == track.property))
+                    || started.iter().any(|new| new.property == track.property));
+            if !kept {
+                events.push(AnimationEvent::TransitionCancel {
+                    element: element_of(&track.id),
+                    property: track.property.descriptor().name,
+                });
+            }
+            kept
         });
+        events.extend(started.iter().map(|track| AnimationEvent::TransitionRun {
+            element: element_of(&track.id),
+            property: track.property.descriptor().name,
+        }));
+        self.events.append(&mut events);
         let count = started.len();
         self.tracks.append(&mut started);
         // Only dropped properties, and none left running: the source holds nothing.
@@ -2889,7 +2995,7 @@ impl BoxTreeAnimations {
     /// that cannot move between values (as `display`), are left out; `:before` and
     /// `:after` are not animated.
     pub fn play(&mut self, tree: &BoxTree, now: Instant) -> usize {
-        self.clock = Some(now);
+        self.engine.advance(now);
         let capture = tree.source.capture;
         let nodes = tree.source.construction.nodes();
         let mut listed: Vec<(String, usize, String)> = Vec::new();
@@ -2904,26 +3010,48 @@ impl BoxTreeAnimations {
                 .filter(|id| tree.element(id) == Some(projected))
                 .map_or_else(|| format!("{UNNAMED}{projected}"), str::to_owned);
             for (index, animation) in animations.iter().enumerate() {
+                // A name no `@keyframes` gives runs nothing and sends nothing.
+                if tree.keyframe_rule(&animation.name).is_none() {
+                    continue;
+                }
                 listed.push((id.clone(), index, animation.name.clone()));
-                match self.keyframed.iter_mut().find(|running| {
+                let found = self.keyframed.iter().position(|running| {
                     running.capture == capture
                         && running.id == id
                         && running.index == index
                         && running.animation.name == animation.name
-                }) {
-                    Some(running) => {
-                        match (running.paused_at, animation.paused) {
-                            (None, true) => running.paused_at = Some(now),
-                            (Some(at), false) => {
-                                running.paused_for += now.saturating_duration_since(at);
-                                running.paused_at = None;
+                });
+                match found {
+                    Some(at) => {
+                        let state = self.keyframed[at].state;
+                        self.keyframed[at].animation = animation.clone();
+                        self.keyframed[at].projected = projected;
+                        match (state, animation.paused) {
+                            // Paused: held where its run has it, its timing let go.
+                            (KeyState::Running, true) => {
+                                let place = self.keyframe_sample(&self.keyframed[at]).map_or(
+                                    self.keyframed[at].span.0,
+                                    |progress| {
+                                        let span = self.keyframed[at].span;
+                                        span.0 + progress * (span.1 - span.0)
+                                    },
+                                );
+                                let _ = self
+                                    .engine
+                                    .cancel(&self.keyframed[at].source, &clock_selection());
+                                self.keyframed[at].state = KeyState::Paused(place);
+                            }
+                            // Running again: on from where it was held.
+                            (KeyState::Paused(place), false) => {
+                                self.start_run(at, place, Duration::ZERO, Duration::ZERO, now);
                             }
                             _ => {}
                         }
-                        running.animation = animation.clone();
-                        running.projected = projected;
                     }
                     None => {
+                        let Ok(source) = self.engine.register_source() else {
+                            continue;
+                        };
                         started += 1;
                         self.keyframed.push(Keyframed {
                             capture,
@@ -2931,29 +3059,190 @@ impl BoxTreeAnimations {
                             projected,
                             index,
                             animation: animation.clone(),
-                            started: now,
-                            paused_at: animation.paused.then_some(now),
-                            paused_for: Duration::ZERO,
                             tracks: Vec::new(),
+                            source,
+                            run: 0,
+                            span: (0.0, 1.0),
+                            state: KeyState::Paused(0.0),
+                            announced: false,
+                            overrun: Duration::ZERO,
                         });
+                        let at = self.keyframed.len() - 1;
+                        self.begin(at, now);
                         // Its keyframes are read below, with the others.
                         self.keyframes_of = None;
                     }
                 }
             }
         }
-        self.keyframed.retain(|running| {
-            running.capture == capture
+        // One no longer named stops; before its end, that is a cancel.
+        let mut kept = Vec::with_capacity(self.keyframed.len());
+        for running in std::mem::take(&mut self.keyframed) {
+            let listed = running.capture == capture
                 && listed.iter().any(|(id, index, name)| {
                     *id == running.id && *index == running.index && *name == running.animation.name
-                })
-        });
+                });
+            if listed {
+                kept.push(running);
+                continue;
+            }
+            if running.state != KeyState::Done {
+                self.events.push(AnimationEvent::AnimationCancel {
+                    element: running.element(),
+                    name: running.animation.name.clone(),
+                });
+            }
+            let _ = self.engine.remove_source(&running.source);
+        }
+        self.keyframed = kept;
         let styling = (Arc::as_ptr(&tree.source) as usize, tree.key);
         if self.keyframes_of != Some(styling) {
             self.keyframes_of = Some(styling);
             self.read_keyframes(tree);
         }
         started
+    }
+
+    /// Sets a new keyframe animation going: its first run after its delay, or, for a
+    /// negative delay, the run that far in. A paused one waits at its start; one with no
+    /// length ends at once.
+    fn begin(&mut self, at: usize, now: Instant) {
+        let animation = self.keyframed[at].animation.clone();
+        if animation.paused {
+            return;
+        }
+        let length = animation.duration.max(0.0);
+        let element = self.keyframed[at].element();
+        if length == 0.0 || animation.iterations <= 0.0 {
+            self.keyframed[at].state = KeyState::Done;
+            self.keyframed[at].announced = true;
+            self.events.push(AnimationEvent::AnimationStart {
+                element: element.clone(),
+                name: animation.name.clone(),
+            });
+            self.events.push(AnimationEvent::AnimationEnd {
+                element,
+                name: animation.name,
+            });
+            return;
+        }
+        let millis = |value: f32| Duration::from_secs_f64(f64::from(value.max(0.0)) / 1000.0);
+        if animation.delay >= 0.0 {
+            self.start_run(at, 0.0, Duration::ZERO, millis(animation.delay), now);
+            return;
+        }
+        // A negative delay has used up that much of its time already.
+        let skipped = -animation.delay / length;
+        let run = skipped.floor();
+        if self.keyframed[at]
+            .runs()
+            .is_some_and(|runs| run >= runs as f32)
+        {
+            self.keyframed[at].state = KeyState::Done;
+            self.events.push(AnimationEvent::AnimationEnd {
+                element,
+                name: animation.name,
+            });
+            return;
+        }
+        self.keyframed[at].run = run as u32;
+        self.start_run(at, skipped.fract(), Duration::ZERO, Duration::ZERO, now);
+    }
+
+    /// Times the run in progress of keyframe animation `at` from `from` to its iteration's
+    /// end on luminate, `skip` of it already gone and after `delay`.
+    fn start_run(&mut self, at: usize, from: f32, skip: Duration, delay: Duration, now: Instant) {
+        let running = &mut self.keyframed[at];
+        let end = running.run_end(running.run);
+        let whole =
+            Duration::from_secs_f64(f64::from(running.animation.duration.max(0.0)) / 1000.0);
+        // What of `skip` lies past this run's end goes on to the next.
+        let needed = whole.mul_f32((end - from).max(0.0));
+        running.overrun = skip.saturating_sub(needed);
+        let from = (from + skip.as_secs_f32() / whole.as_secs_f32().max(f32::EPSILON)).min(end);
+        running.span = (from, end);
+        running.state = KeyState::Running;
+        let length = whole.mul_f32((end - from).max(0.0));
+        // A refused timing leaves it to end at the next frame.
+        let _ = self.engine.start_progress(
+            &running.source,
+            &clock_selection(),
+            AnimationTiming::new(length, delay),
+            now,
+        );
+    }
+
+    /// The linear progress of a keyframe animation's run now, from luminate: `None` while
+    /// its delay runs, 1 once the run is complete.
+    fn keyframe_sample(&self, running: &Keyframed) -> Option<f32> {
+        match self.engine.phase(&running.source, clock_property()) {
+            Ok(Some((TimingPhase::Active { .. }, _))) => self
+                .engine
+                .sample(&running.source, clock_property())
+                .ok()
+                .flatten(),
+            Ok(Some((TimingPhase::Complete, _)) | None) => Some(1.0),
+            _ => None,
+        }
+    }
+
+    /// Moves keyframe animation `at` on to the engine's time: it announces its start once
+    /// its delay is over, and a complete run starts the next iteration, the time past its
+    /// end carried in, or ends it.
+    fn step_keyframed(&mut self, at: usize, now: Instant) {
+        // Very short runs in a long frame: whole iterations at a time, a bounded number.
+        for _ in 0..1000 {
+            let running = &self.keyframed[at];
+            if running.state != KeyState::Running {
+                return;
+            }
+            let (element, name) = (running.element(), running.animation.name.clone());
+            let phase = self.engine.phase(&running.source, clock_property());
+            let ended = match phase {
+                Ok(Some((TimingPhase::Delayed, _))) | Err(_) => return,
+                // A run with no time left (all of it carried past) is complete now.
+                Ok(Some((TimingPhase::Active { elapsed, duration }, end))) => {
+                    (elapsed >= duration).then_some(end)
+                }
+                Ok(Some((TimingPhase::Complete, end))) => Some(end),
+                Ok(None) => Some(now),
+            };
+            if !self.keyframed[at].announced {
+                self.keyframed[at].announced = true;
+                self.events.push(AnimationEvent::AnimationStart {
+                    element: element.clone(),
+                    name: name.clone(),
+                });
+            }
+            let Some(end) = ended else {
+                return;
+            };
+            let next = self.keyframed[at].run + 1;
+            if self.keyframed[at].runs().is_none_or(|runs| next < runs) {
+                self.keyframed[at].run = next;
+                self.events.push(AnimationEvent::AnimationIteration {
+                    element,
+                    name,
+                    iteration: next,
+                });
+                let late = now.saturating_duration_since(end) + self.keyframed[at].overrun;
+                self.start_run(at, 0.0, late, Duration::ZERO, now);
+            } else {
+                self.keyframed[at].state = KeyState::Done;
+                let _ = self
+                    .engine
+                    .cancel(&self.keyframed[at].source, &clock_selection());
+                self.events
+                    .push(AnimationEvent::AnimationEnd { element, name });
+                return;
+            }
+        }
+    }
+
+    /// The events since the last call, oldest first: transitions run, started, ended or
+    /// cancelled, and animations started, into another iteration, ended or cancelled.
+    pub fn take_events(&mut self) -> Vec<AnimationEvent> {
+        std::mem::take(&mut self.events)
     }
 
     /// Reads every animation's keyframe values from `tree` styled with each keyframe laid
@@ -3173,8 +3462,21 @@ impl BoxTreeAnimations {
     /// Moves time on, and lets go of finished animations and of any `tree`, your current
     /// committed one, no longer heads for: an unrequested style change cancels them.
     pub fn advance(&mut self, now: Instant, tree: &BoxTree) {
-        self.clock = Some(now);
         self.engine.advance(now);
+        // CSS Transitions 1: a transition starts once its delay is over.
+        let mut events = Vec::new();
+        for track in &mut self.tracks {
+            let source = self.sources.get(&track.id);
+            let phase =
+                source.and_then(|source| self.engine.phase(source, track.property).ok().flatten());
+            if !track.announced && !matches!(phase, Some((TimingPhase::Delayed, _))) {
+                track.announced = true;
+                events.push(AnimationEvent::TransitionStart {
+                    element: element_of(&track.id),
+                    property: track.property.descriptor().name,
+                });
+            }
+        }
         let (running, done): (Vec<Track>, Vec<Track>) = std::mem::take(&mut self.tracks)
             .into_iter()
             .partition(|track| {
@@ -3186,7 +3488,21 @@ impl BoxTreeAnimations {
                             && tree.read_any(element, key, track.field) == Some(track.target)
                     })
             });
+        // One that ran to its end ends; one whose value moved on otherwise is cancelled.
+        for track in &done {
+            let complete = self.progress(track).is_none();
+            let (element, property) = (element_of(&track.id), track.property.descriptor().name);
+            events.push(if complete {
+                AnimationEvent::TransitionEnd { element, property }
+            } else {
+                AnimationEvent::TransitionCancel { element, property }
+            });
+        }
+        self.events.append(&mut events);
         self.tracks = running;
+        for at in 0..self.keyframed.len() {
+            self.step_keyframed(at, now);
+        }
         let work = NonZeroUsize::new(100_000).expect("positive");
         for track in done {
             if let (Some(source), Ok(selection)) = (
@@ -3211,21 +3527,19 @@ impl BoxTreeAnimations {
     #[must_use]
     pub fn is_animating(&self) -> bool {
         !self.tracks.is_empty()
-            || self.clock.is_some_and(|now| {
-                self.keyframed
-                    .iter()
-                    .any(|running| !running.tracks.is_empty() && running.running(now))
-            })
+            || self
+                .keyframed
+                .iter()
+                .any(|running| running.state == KeyState::Running)
     }
 
     /// Whether anything shows over a tree: a running track, or a keyframe animation with a
     /// value now (one that ended or paused may hold one).
     pub(crate) fn presents(&self) -> bool {
         !self.tracks.is_empty()
-            || self.clock.is_some_and(|now| {
-                self.keyframed
-                    .iter()
-                    .any(|running| !running.tracks.is_empty() && running.progress(now).is_some())
+            || self.keyframed.iter().any(|running| {
+                !running.tracks.is_empty()
+                    && running.position(self.keyframe_sample(running)).is_some()
             })
     }
 
@@ -3249,14 +3563,15 @@ impl BoxTreeAnimations {
         let mut presented = tree.clone();
         let mut list: Vec<Presented> = under.map(|under| (*under).clone()).unwrap_or_default();
         // Keyframe animations first: a transition of the same value lies over them.
-        if let Some(now) = self.clock {
+        {
             for running in &self.keyframed {
                 if running.capture != tree.source.capture {
                     continue;
                 }
-                let Some(progress) = running.progress(now) else {
+                let Some(position) = running.position(self.keyframe_sample(running)) else {
                     continue;
                 };
+                let progress = running.directed(position);
                 for track in &running.tracks {
                     let (Some(value), Some(target)) = (
                         track.value(progress, running.animation.easing),
