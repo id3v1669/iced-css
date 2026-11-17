@@ -107,6 +107,7 @@ pub fn parse_stylesheet(
         return Err(RuleAssemblyError::Bytes);
     }
     let mut owner = Owner {
+        layers: Vec::new(),
         limits,
         context: Some(context),
         records: Records {
@@ -157,6 +158,8 @@ pub fn parse_stylesheet(
                     owner.page(&statement)?.map(SheetEntryKind::Page)
                 } else if name.text.eq_ignore_ascii_case("keyframes") {
                     owner.keyframes(&statement)?.map(SheetEntryKind::Keyframes)
+                } else if name.text.eq_ignore_ascii_case("layer") {
+                    owner.layer(&statement)?.map(SheetEntryKind::Media)
                 } else {
                     owner.reject(
                         statement.span,
@@ -188,6 +191,8 @@ pub fn parse_stylesheet(
     })
 }
 struct Owner {
+    /// CSS Cascade 5: the layers named so far, in the order they were first named.
+    layers: Vec<String>,
     limits: StylesheetLimits,
     context: Option<RuleContext>,
     records: Records,
@@ -403,6 +408,68 @@ impl Owner {
             });
         }
         Ok(Some(ParsedKeyframes { name, frames }))
+    }
+    /// The rank of layer `name`, naming it now if it is new.
+    fn layer_rank(&mut self, name: &str) -> u32 {
+        let position = match self.layers.iter().position(|known| known == name) {
+            Some(position) => position,
+            None => {
+                self.layers.push(name.to_owned());
+                self.layers.len() - 1
+            }
+        };
+        u32::try_from(position).unwrap_or(u32::MAX)
+    }
+    /// CSS Cascade 5 `@layer`: a statement names layers in order; a block's rules are in
+    /// its layer (a block without a name in a layer of its own). Layers are ranked as
+    /// they are first named in this sheet.
+    fn layer(
+        &mut self,
+        statement: &Statement<'_>,
+    ) -> Result<Option<ParsedMediaRule>, RuleAssemblyError> {
+        let names: Vec<String> = statement
+            .prelude
+            .split(',')
+            .map(|name| name.trim().to_owned())
+            .collect();
+        // Each dotted part a custom identifier: not starting with a digit.
+        let valid = |name: &String| {
+            !name.is_empty()
+                && name.split('.').all(|part| {
+                    part.chars()
+                        .next()
+                        .is_some_and(|first| !first.is_ascii_digit())
+                        && part
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                })
+        };
+        let Some(body) = statement.body else {
+            if names.iter().all(valid) {
+                for name in &names {
+                    self.layer_rank(name);
+                }
+            } else {
+                self.reject(statement.span.clone(), SheetRejectionReason::InvalidRule)?;
+            }
+            return Ok(None);
+        };
+        let name = match names.as_slice() {
+            [only] if only.is_empty() => format!("\u{0}{}", self.layers.len()),
+            [only] if valid(only) => only.clone(),
+            _ => {
+                self.reject(statement.span.clone(), SheetRejectionReason::InvalidRule)?;
+                return Ok(None);
+            }
+        };
+        let rank = self.layer_rank(&name);
+        let mut group = self.group(statement, body, true)?;
+        for rule in &mut group.rules {
+            for selector in &mut rule.selectors {
+                selector.specificity = selector.specificity.in_layer(rank);
+            }
+        }
+        Ok(Some(group))
     }
     /// The style rules of a conditional group: parsed whether or not it applies.
     fn group(

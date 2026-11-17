@@ -154,7 +154,7 @@ impl<'a> PropertyWinners<'a> {
         let leaves = leaves(parsed)?;
         let key = CascadeKey {
             level: admission.origin.level(parsed.important),
-            specificity: admission.specificity,
+            specificity: admission.specificity.for_importance(parsed.important),
             order: admission.order,
         };
         let mut replace = [false; PROPERTY_COUNT];

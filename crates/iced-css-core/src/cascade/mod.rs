@@ -28,8 +28,16 @@ impl Origin {
         }
     }
 }
+/// A selector's specificity, and before it the cascade layer of its rule (CSS Cascade 5):
+/// the layer weighs first, as it decides between declarations of one origin and
+/// importance before specificity does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Specificity([usize; 4]);
+pub struct Specificity {
+    /// The layer's weight for a normal declaration: its rank among the layers, or the
+    /// greatest for no layer, which wins over every layer.
+    layer: u32,
+    counts: [usize; 4],
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpecificityError {
     Overflow,
@@ -47,25 +55,63 @@ impl std::fmt::Display for SpecificityError {
 }
 impl std::error::Error for SpecificityError {}
 impl Specificity {
-    pub const ZERO: Self = Self([0; 4]);
-    pub const STYLE_ATTRIBUTE: Self = Self([1, 0, 0, 0]);
+    const UNLAYERED: u32 = u32::MAX;
+    pub const ZERO: Self = Self {
+        layer: Self::UNLAYERED,
+        counts: [0; 4],
+    };
+    pub const STYLE_ATTRIBUTE: Self = Self {
+        layer: Self::UNLAYERED,
+        counts: [1, 0, 0, 0],
+    };
     pub fn selector(ids: usize, attributes: usize, types: usize) -> Self {
-        Self([0, ids, attributes, types])
+        Self {
+            layer: Self::UNLAYERED,
+            counts: [0, ids, attributes, types],
+        }
     }
     pub fn components(self) -> [usize; 4] {
-        self.0
+        self.counts
+    }
+    /// The same counts in cascade layer `rank`: layers declared later win.
+    #[must_use]
+    pub fn in_layer(self, rank: u32) -> Self {
+        Self {
+            layer: rank.min(Self::UNLAYERED - 1),
+            ..self
+        }
+    }
+    /// The layer rank it was given, if any.
+    pub fn layer(self) -> Option<u32> {
+        (self.layer != Self::UNLAYERED).then_some(self.layer)
+    }
+    /// As it weighs for a declaration of this importance: an important one's layers weigh
+    /// the other way round, the first winning and no layer losing (CSS Cascade 5, 6.4).
+    #[must_use]
+    pub fn for_importance(self, important: bool) -> Self {
+        if important {
+            Self {
+                layer: Self::UNLAYERED - self.layer,
+                ..self
+            }
+        } else {
+            self
+        }
     }
     pub fn checked_selector_sum(self, other: Self) -> Result<Self, SpecificityError> {
-        if self.0[0] != 0 || other.0[0] != 0 {
+        if self.counts[0] != 0 || other.counts[0] != 0 {
             return Err(SpecificityError::StyleAttribute);
         }
         let mut result = [0; 4];
         for (index, value) in result.iter_mut().enumerate().skip(1) {
-            *value = self.0[index]
-                .checked_add(other.0[index])
+            *value = self.counts[index]
+                .checked_add(other.counts[index])
                 .ok_or(SpecificityError::Overflow)?;
         }
-        Ok(Self(result))
+        Ok(Self {
+            layer: self.layer,
+            counts: result,
+        })
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

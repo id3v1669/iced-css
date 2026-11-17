@@ -1169,6 +1169,40 @@ fn nested_rules_style_as_their_written_out_forms() {
 }
 
 #[test]
+fn cascade_layers_weigh_before_specificity() {
+    let width = |css: &str| {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![])]),
+            &format!("#a {{ height:1px; }} {css}"),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        border.right - border.left
+    };
+    // A rule in no layer wins over any layered one, however specific.
+    assert_eq!(
+        width("@layer base { #page #a { width:50px; } } * { width:100px; }"),
+        100.0
+    );
+    // Of two layers the later named wins, whatever their specificity or order.
+    assert_eq!(
+        width("@layer a, b; @layer b { * { width:60px; } } @layer a { #page #a { width:70px; } }"),
+        60.0
+    );
+    // Important declarations weigh the other way: the first layer, then no layer.
+    assert_eq!(
+        width(
+            "@layer a { * { width:10px !important; } } @layer b { #a { width:20px !important; } }
+             #a { width:30px !important; }"
+        ),
+        10.0
+    );
+    // A statement that names no valid layer is dropped; the block is read as before.
+    assert_eq!(width("@layer 1x; @layer x { #a { width:40px; } }"), 40.0);
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

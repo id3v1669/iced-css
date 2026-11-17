@@ -73,6 +73,12 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   invalid (the lists are not forgiving), and `:has()` is not known. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
+- **Cascade layers:** `@layer` (CSS Cascade 5) blocks and statements naming the order:
+  a later layer wins over an earlier one, and rules in no layer over both, before
+  specificity is compared; `!important` declarations weigh the other way. Limits: layers
+  are ranked within each sheet as they are first named there (one name in two sheets is
+  two layers); dotted names are layers of their own in that order, not nested ones; a
+  block may not hold another at-rule.
 - **Nesting:** style rules nested in style rules (CSS Nesting 1), with `&` for the parent
   and a nested selector without one taken as the parent's descendant, and `@media` and
   `@supports` nested in a style rule. The widget writes them out as rules of their own

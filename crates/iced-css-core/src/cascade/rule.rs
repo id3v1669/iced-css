@@ -330,7 +330,7 @@ pub fn matched_declarations<'a, S: SelectorSource>(
                 &declaration.parsed,
                 super::CascadeKey {
                     level: origin.level(declaration.parsed.important),
-                    specificity,
+                    specificity: specificity.for_importance(declaration.parsed.important),
                     order: position.first_order,
                 },
             );
