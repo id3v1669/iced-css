@@ -122,6 +122,8 @@ pub enum SpecifiedValue {
     Gradient(LinearGradient),
     /// `transform`: its functions in order; empty is `none` (CSS Transforms 1).
     Transform(Vec<TransformFunction>),
+    /// `aspect-ratio`: width to height, both positive (CSS Box Sizing 4).
+    Ratio(super::Decimal, super::Decimal),
     /// A transition property's list (CSS Transitions 1).
     Transition(TransitionValue),
     /// A custom property declaration (`--name: value`): its name, with its dashes, and
@@ -362,6 +364,7 @@ pub(super) fn inner(
         && name != "background-position"
         && name != "transform-origin"
         && name != "transform"
+        && name != "aspect-ratio"
         && name != "quotes"
         && name != "text-decoration"
         && name != "border-radius"
@@ -381,6 +384,63 @@ pub(super) fn inner(
     }
     if matches!(name, "flex-flow" | "flex" | "gap") {
         return flex_shorthand(property, input, important, limits, work);
+    }
+    if name == "aspect-ratio" {
+        // CSS Box Sizing 4: `auto`, or a ratio (a number, or two with a `/` between);
+        // `auto` beside a ratio is that ratio here, where nothing is replaced.
+        let mut offset = 0;
+        let mut parts = Vec::new();
+        while let Some((_, token)) = significant(input, &mut offset, work)? {
+            if parts.len() == 4 {
+                return Ok(PropertyResult::Invalid);
+            }
+            parts.push(token);
+        }
+        let is_auto = |token: &Token<'_>| {
+            token.kind == TokenKind::Ident && token.raw.eq_ignore_ascii_case("auto")
+        };
+        if let [only] = parts.as_slice()
+            && only.kind == TokenKind::Ident
+        {
+            return Ok(PropertyResult::Parsed(ParsedProperty {
+                property,
+                value: if is_auto(only) {
+                    SpecifiedValue::Keyword(Keyword("auto"))
+                } else if only.raw.eq_ignore_ascii_case("inherit") {
+                    SpecifiedValue::Inherit
+                } else {
+                    return Ok(PropertyResult::Invalid);
+                },
+                important,
+            }));
+        }
+        let autos = parts.iter().filter(|token| is_auto(token)).count();
+        if autos > 1 || (autos == 1 && !(is_auto(&parts[0]) || is_auto(&parts[parts.len() - 1]))) {
+            return Ok(PropertyResult::Invalid);
+        }
+        let ratio: Vec<&Token<'_>> = parts.iter().filter(|token| !is_auto(token)).collect();
+        let number = |token: &Token<'_>| {
+            (token.kind == TokenKind::Number)
+                .then(|| super::Decimal::parse(token.raw, limits.numeric).ok())
+                .flatten()
+                .filter(|number| !number.is_negative())
+        };
+        let one = super::Decimal::parse("1", limits.numeric).expect("one");
+        let (Some(width), Some(height)) = (match ratio.as_slice() {
+            [width] => (number(width), Some(one)),
+            [width, slash, height] if slash.kind == TokenKind::Delim && slash.raw == "/" => {
+                (number(width), number(height))
+            }
+            _ => (None, None),
+        }) else {
+            return Ok(PropertyResult::Invalid);
+        };
+        // A ratio with a zero in it is degenerate: it does nothing, as `auto`.
+        return Ok(PropertyResult::Parsed(ParsedProperty {
+            property,
+            value: SpecifiedValue::Ratio(width, height),
+            important,
+        }));
     }
     if name == "transform" {
         let value = if input.trim().eq_ignore_ascii_case("inherit") {

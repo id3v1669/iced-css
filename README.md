@@ -129,6 +129,12 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   makes `width`, `height` and their minimums and maximums sizes of the border box; a
   percentage padding above or below is not taken out of a height, and a `:before` or
   `:after` box does not read it.
+- **Aspect ratio:** `aspect-ratio` (CSS Box Sizing 4) gives a box whose `height` is `auto`
+  the height its width over the ratio makes, of the box `box-sizing` names, never less than
+  its content and within `max-height`. Limits: it does not give a width from a height (an
+  `auto` width stays as flow or shrink-to-fit makes it), nor size flex, grid or table
+  boxes from each other's; `auto` beside a ratio is the ratio, as nothing here is
+  replaced.
 - **Flexbox:** `display: flex` and `inline-flex` (CSS Flexible Box Layout 1) with
   `flex-direction`, `flex-wrap`, `flex-flow`, `flex-grow`, `flex-shrink`, `flex-basis`,
   `flex`, `order`, `justify-content`, `align-items`, `align-self`, `align-content`, and

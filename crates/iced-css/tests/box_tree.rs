@@ -1097,6 +1097,40 @@ fn is_where_and_not_lists_match_and_weigh_as_selectors_4_says() {
 }
 
 #[test]
+fn aspect_ratio_gives_an_auto_height_from_the_width() {
+    let size = |css: &str| {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![node("inner", vec![])])]),
+            &format!("#a {{ width:200px; }} {css}"),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        (border.right - border.left, border.bottom - border.top)
+    };
+    assert_eq!(size("#a { aspect-ratio:16 / 9; }"), (200.0, 112.5));
+    assert_eq!(size("#a { aspect-ratio:2; }"), (200.0, 100.0));
+    // Of the border box, under `box-sizing: border-box`.
+    assert_eq!(
+        size("#a { aspect-ratio:2; padding:10px; box-sizing:border-box; }"),
+        (200.0, 100.0)
+    );
+    assert_eq!(size("#a { aspect-ratio:2; padding:10px; }"), (220.0, 120.0));
+    // A given height, and taller content, win; `max-height` caps it.
+    assert_eq!(size("#a { aspect-ratio:2; height:30px; }"), (200.0, 30.0));
+    assert_eq!(
+        size("#a { aspect-ratio:2; } #inner { height:150px; }"),
+        (200.0, 150.0)
+    );
+    assert_eq!(
+        size("#a { aspect-ratio:2; max-height:40px; }"),
+        (200.0, 40.0)
+    );
+    assert_eq!(size("#a { aspect-ratio:auto; }").1, 0.0);
+    assert_eq!(size("#a { aspect-ratio:0 / 1; }").1, 0.0);
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

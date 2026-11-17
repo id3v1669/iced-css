@@ -157,6 +157,12 @@ pub struct FlowBox {
     pub flex: Option<FlexContainer>,
     /// What this box is as a flex item, when its parent is a flex container.
     pub flex_item: FlexItem,
+    /// CSS Box Sizing 4 `aspect-ratio`, width over height: an `auto` height is the used
+    /// width over it, of the box `box-sizing` names, and no less than the content.
+    pub aspect: Option<f32>,
+    /// The ratio is of the border box: [`content_boxes`] sets it where it turns a
+    /// `border-box` box's sizes into content sizes, since a ratio cannot be turned so.
+    pub aspect_border_box: bool,
     /// `display: grid` or `inline-grid`: its children are grid items. It establishes a
     /// formatting context, so `establishes_bfc` is set with it.
     pub grid: Option<Box<GridContainer>>,
@@ -206,6 +212,8 @@ impl Default for FlowBox {
             establishes_bfc: false,
             flex: None,
             flex_item: FlexItem::default(),
+            aspect: None,
+            aspect_border_box: false,
             grid: None,
             grid_item: None,
             border_box: false,
@@ -758,6 +766,7 @@ pub fn content_boxes(boxes: &[FlowBox]) -> std::borrow::Cow<'_, [FlowBox]> {
     let mut converted = boxes.to_vec();
     for value in converted.iter_mut().filter(|value| value.border_box) {
         value.border_box = false;
+        value.aspect_border_box = value.aspect.is_some();
         let side = |at: usize| parts(value.padding[at]);
         let across = (
             side(3).0 + side(1).0 + value.border[3] + value.border[1],
@@ -859,6 +868,29 @@ impl Solver<'_> {
             return None;
         }
         (self.text_height)(node, width).or(value.content.map(|content| content.height))
+    }
+
+    /// The least height an `aspect-ratio` gives a box of content width `width` whose
+    /// `height` is `auto`: its ratio height, as the content box or (`border-box`) the
+    /// border box, within `maximum`.
+    fn aspect_minimum(
+        &self,
+        node: usize,
+        width: f32,
+        padding: [f32; 4],
+        maximum: Option<f32>,
+    ) -> Option<f32> {
+        let value = &self.boxes[node];
+        let ratio = value
+            .aspect
+            .filter(|ratio| ratio.is_finite() && *ratio > 0.0)?;
+        let content = if value.border_box || value.aspect_border_box {
+            let across = width + padding[1] + padding[3] + value.border[1] + value.border[3];
+            across / ratio - (padding[0] + padding[2] + value.border[0] + value.border[2])
+        } else {
+            width / ratio
+        };
+        Some(maximum.map_or(content, |limit| content.min(limit)).max(0.0))
     }
 
     fn paddings(&self, node: usize, basis: f32) -> [f32; 4] {
@@ -1647,8 +1679,13 @@ impl Solver<'_> {
         let border_left = cb.left + ml;
         let content_left = border_left + border[3] + padding[3];
         let height = value.height.vertical(cb.height);
-        let minimum = value.min_height.vertical(cb.height).unwrap_or(0.0);
+        let mut minimum = value.min_height.vertical(cb.height).unwrap_or(0.0);
         let maximum = value.max_height.vertical(cb.height);
+        if height.is_none()
+            && let Some(ratio) = self.aspect_minimum(node, width, padding, maximum)
+        {
+            minimum = minimum.max(ratio);
+        }
         let inner = Containing {
             left: content_left,
             width,
@@ -1968,8 +2005,13 @@ impl Solver<'_> {
         let content_left = border_left + border[3] + padding[3];
         let content_top = top + border[0] + padding[0];
         let height = value.height.vertical(cb.height);
-        let minimum = value.min_height.vertical(cb.height).unwrap_or(0.0);
+        let mut minimum = value.min_height.vertical(cb.height).unwrap_or(0.0);
         let maximum = value.max_height.vertical(cb.height);
+        if height.is_none()
+            && let Some(ratio) = self.aspect_minimum(node, width.0, padding, maximum)
+        {
+            minimum = minimum.max(ratio);
+        }
         let inner = Containing {
             left: content_left,
             width: width.0,

@@ -533,6 +533,11 @@ const CASES: &[(&str, &str, &str)] = &[
         "#b { overflow:hidden; }",
         "#b { text-overflow:ellipsis; }",
     ),
+    (
+        "aspect-ratio",
+        "#k { height:auto; width:100px; }",
+        "#k { aspect-ratio:2; }",
+    ),
     // Every custom property, filed under one identity.
     ("--*", "#k { height:var(--h, 10px); }", "#k { --h:50px; }"),
 ];

@@ -1064,6 +1064,23 @@ pub(super) static PROPERTIES: &[PropertyDescriptor] = &[
         shorthand: false,
         targets: &[PropertyId(BASE + 62)],
     },
+    // CSS Box Sizing 4.
+    PropertyDescriptor {
+        name: "aspect-ratio",
+        source: "css-sizing-4#aspect-ratio",
+        grammar: "auto || <ratio>",
+        initial: "auto",
+        applies_to: "all elements except inline boxes and internal ruby or table boxes",
+        percentages: "N/A",
+        media: "visual",
+        computed: "specified keyword or a pair of numbers",
+        owner: "Box sizing and containing blocks",
+        inheritance: Inheritance::No,
+        scope: Scope::Screen,
+        animation: Some(AnimationRule::Discrete),
+        shorthand: false,
+        targets: &[PropertyId(BASE + 63)],
+    },
 ];
 /// The name the registry files every custom property under.
 pub(super) const CUSTOM_PROPERTY: &str = "--*";

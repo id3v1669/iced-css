@@ -1650,6 +1650,8 @@ impl BoxTree {
             if !prepared.anonymous[arena] {
                 value.flex = paints[owner].flex;
                 value.flex_item = paints[owner].flex_item;
+                // CSS Box Sizing 4.
+                value.aspect = paints[owner].aspect;
                 // CSS Grid 1, likewise.
                 value.grid = grids[owner].clone();
                 value.grid_item = grid_items[owner].clone();

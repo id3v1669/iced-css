@@ -2097,3 +2097,28 @@ fn initial_and_unset_are_whole_values_of_every_property() {
     assert_eq!(value("font-family:Arial, initial"), None);
     assert_eq!(value("width:revert"), None);
 }
+
+#[test]
+fn aspect_ratio_takes_auto_and_a_ratio() {
+    let valid = |input: &str| matches!(parse(input).unwrap(), PropertyResult::Parsed(_));
+    for good in [
+        "aspect-ratio:auto",
+        "aspect-ratio:16 / 9",
+        "aspect-ratio:1.5",
+        "aspect-ratio:auto 4/3",
+        "aspect-ratio:4/3 auto",
+        "aspect-ratio:0",
+    ] {
+        assert!(valid(good), "{good}");
+    }
+    for bad in [
+        "aspect-ratio:-1",
+        "aspect-ratio:16 9",
+        "aspect-ratio:auto auto",
+        "aspect-ratio:4 / auto",
+        "aspect-ratio:1px",
+        "aspect-ratio:wide",
+    ] {
+        assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
+    }
+}

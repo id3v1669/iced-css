@@ -1822,6 +1822,8 @@ pub struct BoxPaint {
     pub fixed_table: bool,
     /// `box-sizing: border-box`.
     pub border_box: bool,
+    /// CSS Box Sizing 4 `aspect-ratio`, width over height; `None` is `auto`.
+    pub aspect: Option<f32>,
     /// CSS Positioned Layout 3 `position: sticky`: its `top`, `right`, `bottom` and
     /// `left`, `Auto` where it has none.
     pub sticky: Option<[Dim; 4]>,
@@ -2826,6 +2828,7 @@ pub fn evaluate_tree_paint<'r>(
                 .and_then(|parent: usize| paints[parent].opacity)
                 .unwrap_or(1.0);
         paints.push(BoxPaint {
+            aspect: None,
             sticky: None,
             background_origin: BoxArea::Padding,
             background_clip: BoxArea::Border,
@@ -3570,6 +3573,23 @@ pub fn evaluate_tree_paint<'r>(
                 });
             }
         }
+        // CSS Box Sizing 4: not inherited; `inherit` takes the parent's.
+        paints[index].aspect = match defaulted("aspect-ratio")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Ratio(width, height)) => {
+                let number = |value: &iced_css_core::values::Decimal| {
+                    value
+                        .scaled_finite_f32(1.0, limits.numeric)
+                        .map_or(0.0, |converted| converted.value)
+                };
+                let (width, height) = (number(width), number(height));
+                // A ratio with a zero in it is degenerate: as `auto`.
+                (width > 0.0 && height > 0.0).then(|| width / height)
+            }
+            DefaultedValueRef::ParentComputed => {
+                parent_index.and_then(|parent: usize| paints[parent].aspect)
+            }
+            _ => None,
+        };
         // CSS Positioned Layout 3: a sticky box's offsets.
         if matches!(keyword_of_own("position")?, Some("sticky")) {
             let mut offsets = [Dim::Auto; 4];
