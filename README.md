@@ -70,6 +70,9 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   and the `^=`, `$=` and `*=` attribute matches. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
+- **`initial` and `unset`:** (CSS Cascade 4) on any property, shorthands included: `initial`
+  is the initial value, and `unset` inherits an inherited property and is `initial`
+  otherwise. `revert` is not known.
 - **Media queries:** `@media` and `@import` conditions from Media Queries Level 3:
   `width` and `height` with `min-` and `max-`, `orientation`, and `prefers-color-scheme`,
   with `not`, `only` and `and`. They are answered against the environment the application

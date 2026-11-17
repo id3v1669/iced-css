@@ -64,7 +64,6 @@ fn width_accepts_only_its_complete_css22_nonnegative_length_grammar() {
         "width:1/**/px",
         "width:f(a;b)",
         "width:1px 2px",
-        "width:initial",
         "width:none",
     ] {
         assert_eq!(parse(input).unwrap(), PropertyResult::Invalid, "{input:?}");
@@ -483,7 +482,6 @@ fn counter_declarations_preserve_names_defaults_and_signed_values() {
         );
     }
     for input in [
-        "counter-reset:initial",
         "counter-reset:a none",
         "counter-increment:inherit 1",
         "counter-reset:a 1.0",
@@ -720,7 +718,6 @@ fn font_family_requires_a_prioritized_list_of_names_or_generics() {
         "Hawaii 5-0",
         "Times, inherit",
         "default",
-        "initial",
         "serif,",
         ",serif",
     ] {
@@ -1008,7 +1005,6 @@ fn border_and_outline_shorthands_require_unique_roles_and_reset_omissions() {
         "outline:hidden",
         "border:invert",
         "border:solid 1%",
-        "outline:initial",
     ] {
         assert_eq!(parse(input).unwrap(), PropertyResult::Invalid, "{input}");
     }
@@ -1781,7 +1777,6 @@ fn transition_properties_parse_lists_easings_and_the_shorthand() {
     }
     for bad in [
         "transition-property:none, width",
-        "transition-property:initial",
         "transition-property:width color",
         "transition-duration:-1s",
         "transition-duration:1",
@@ -1864,7 +1859,6 @@ fn animation_properties_parse_lists_and_the_shorthand() {
         assert!(valid(good), "{good}");
     }
     for bad in [
-        "animation-name:initial",
         "animation-name:a b",
         "animation-duration:-1s",
         "animation-iteration-count:-1",
@@ -2077,4 +2071,29 @@ fn line_breaking_and_text_overflow_keywords_parse() {
     ] {
         assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
     }
+}
+
+#[test]
+fn initial_and_unset_are_whole_values_of_every_property() {
+    let value = |input: &str| match parse(input).unwrap() {
+        PropertyResult::Parsed(parsed) => Some(parsed.value),
+        _ => None,
+    };
+    assert_eq!(value("width:initial"), Some(SpecifiedValue::Initial));
+    assert_eq!(value("width:UNSET"), Some(SpecifiedValue::Initial));
+    // `unset` on an inherited property inherits.
+    assert_eq!(value("color:unset"), Some(SpecifiedValue::Inherit));
+    let Some(SpecifiedValue::Expanded(leaves)) = value("margin:initial") else {
+        panic!()
+    };
+    assert_eq!(leaves.len(), 4);
+    assert!(
+        leaves
+            .iter()
+            .all(|leaf| leaf.value == SpecifiedValue::Initial)
+    );
+    // Only as the whole value.
+    assert_eq!(value("margin:initial 1px"), None);
+    assert_eq!(value("font-family:Arial, initial"), None);
+    assert_eq!(value("width:revert"), None);
 }

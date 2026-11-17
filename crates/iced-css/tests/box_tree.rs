@@ -1022,6 +1022,47 @@ fn a_sticky_box_lays_out_where_flow_puts_it() {
 }
 
 #[test]
+fn initial_and_unset_reset_a_property_as_css_cascade_4_says() {
+    let tree = |css: &str| {
+        BoxTree::new(
+            node("page", vec![node("a", vec![node("b", vec![])])]),
+            &format!("#a {{ width:100px; height:10px; margin:5px; }} #b {{ height:4px; }} {css}"),
+        )
+        .unwrap()
+    };
+    let border = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(400.0, None).unwrap();
+        geometry[at].as_ref().unwrap().border
+    };
+    // `initial` on a longhand: `width` back to `auto`, the box as wide as its parent.
+    let reset = tree("#a { width:initial; }");
+    let a = border(&reset, 1);
+    assert_eq!(a.right - a.left, 390.0);
+    // On a shorthand, every longhand: no margins.
+    let reset = tree("#a { margin:initial; }");
+    assert_eq!(border(&reset, 1).left, 0.0);
+    // `unset`: a property that is not inherited takes its initial value, as `initial`.
+    let reset = tree("#a { width:unset; }");
+    let a = border(&reset, 1);
+    assert_eq!(a.right - a.left, 390.0);
+    // One that is inherited takes the parent's: a `font-size` given in `em` there.
+    let sized = |css: &str| {
+        let tree = BoxTree::new(
+            node("page", vec![node("a", vec![node("b", vec![])])]),
+            &format!("#a {{ font-size:20px; }} #b {{ font-size:10px; height:2em; }} {css}"),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        let b = geometry[2].as_ref().unwrap().border;
+        b.bottom - b.top
+    };
+    assert_eq!(sized(""), 20.0);
+    assert_eq!(sized("#b { font-size:unset; }"), 40.0);
+    // `initial` on `font-size` is `medium`: 16 pixels here.
+    assert_eq!(sized("#b { font-size:initial; }"), 32.0);
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

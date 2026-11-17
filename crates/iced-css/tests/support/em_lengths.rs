@@ -669,16 +669,17 @@ fn eml_em16_work_and_numeric_allowance() {
 /// `font` shorthand yields `SpecifiedValue::Initial` only for an omitted longhand, and
 /// `font-size` cannot be omitted there.
 #[test]
-fn eml_em18_initial_is_not_a_css22_font_size() {
+fn eml_em18_initial_is_the_initial_font_size() {
+    // CSS Cascade 4: `initial` is `medium`, not the parent's size as an invalid value left.
     let fragment = "#p { font-size:20px; } #b1 { font-size:initial; height:1em; }";
     eml_row(
         fragment,
-        "#p { font-size:20px; } #b1 { font-size:initial; height:20px; }",
-        &[pct_lit("c0.used_height", 20.0)],
+        "#p { font-size:20px; } #b1 { font-size:initial; height:16px; }",
+        &[pct_lit("c0.used_height", 16.0)],
     );
     assert_eml_font(
         eml_facts(fragment).0[2].font_size,
-        eml_font(20.0, None, BoxFactOrigin::Inherited { original_parent: 3 }),
+        eml_font(16.0, None, BoxFactOrigin::Initial),
         fragment,
     );
 }

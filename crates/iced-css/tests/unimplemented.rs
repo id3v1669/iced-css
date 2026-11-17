@@ -31,7 +31,7 @@ css_todo_test!(selector_attribute, "[attr=val]");
 css_todo_test!(selector_is_where_has, ":is() / :where() / :has()");
 css_todo_test!(specificity_and_important, "ordering, !important");
 css_todo_test!(inheritance, "inheritance");
-css_todo_test!(cascade_keywords, "inherit / initial / unset / revert");
+css_todo_test!(cascade_keywords, "revert");
 
 css_todo_test!(aspect_ratio, "aspect-ratio");
 css_todo_test!(margin_negative, "negative margins");

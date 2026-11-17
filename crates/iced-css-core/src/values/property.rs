@@ -934,6 +934,11 @@ pub fn parse_property(
             pending(property, None)
         }));
     }
+    if !declaration.recovery_only
+        && let Some(parsed) = wide_keyword(property, declaration.value, declaration.important)
+    {
+        return Ok(PropertyResult::Parsed(parsed));
+    }
     let mut work = limits.syntax.work.get();
     inner(
         property,
@@ -963,8 +968,42 @@ pub fn parse_value(
     if super::custom::has_reference(value) || property == PropertyId::custom() {
         return Ok(PropertyResult::Invalid);
     }
+    if let Some(parsed) = wide_keyword(property, value, important) {
+        return Ok(PropertyResult::Parsed(parsed));
+    }
     let mut work = limits.syntax.work.get();
     inner(property, value, important, false, limits, &mut work)
+}
+
+/// CSS Cascade 4: `initial`, the property's initial value, and `unset`, `inherit` for an
+/// inherited property and `initial` otherwise, as a whole value; on a shorthand, each
+/// longhand's. `inherit` stays with each grammar, as CSS 2.2 has it.
+fn wide_keyword(property: PropertyId, value: &str, important: bool) -> Option<ParsedProperty> {
+    let word = value.trim();
+    let unset = word.eq_ignore_ascii_case("unset");
+    if !unset && !word.eq_ignore_ascii_case("initial") {
+        return None;
+    }
+    let leaf = |property: PropertyId| ParsedProperty {
+        property,
+        value: if unset && property.descriptor().inheritance == super::registry::Inheritance::Yes {
+            SpecifiedValue::Inherit
+        } else {
+            SpecifiedValue::Initial
+        },
+        important,
+    };
+    Some(if property.descriptor().shorthand {
+        ParsedProperty {
+            property,
+            value: SpecifiedValue::Expanded(
+                property.longhands().iter().copied().map(leaf).collect(),
+            ),
+            important,
+        }
+    } else {
+        leaf(property)
+    })
 }
 
 /// The `flex-flow`, `flex` and `gap` shorthands (CSS Flexbox 1, CSS Box Alignment 3): each
