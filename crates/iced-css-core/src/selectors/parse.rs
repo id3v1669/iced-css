@@ -288,15 +288,24 @@ impl<'a> Parser<'a> {
     /// compound selectors, as Level 4 does.
     fn negation(&mut self) -> Result<SimpleSelector, SyntaxError> {
         match self.any_of(true, false)? {
-            SimpleSelector::Matches { list, .. } if list.len() == 1 && list[0].len() == 1 => Ok(
-                SimpleSelector::Not(Box::new(list.into_iter().flatten().next().expect("one"))),
-            ),
+            SimpleSelector::Matches { list, .. }
+                if list.len() == 1
+                    && list[0].compounds.len() == 1
+                    && list[0].compounds[0].tests.len() == 1 =>
+            {
+                let mut list = list;
+                let only = list.pop().expect("one").compounds.pop().expect("one");
+                Ok(SimpleSelector::Not(Box::new(
+                    only.tests.into_iter().next().expect("one"),
+                )))
+            }
             other => Ok(other),
         }
     }
     /// `:has(`'s relative selectors, comma-separated, through its closing parenthesis:
-    /// each an optional `>`, `+` or `~` and a compound selector with no pseudo-element and
-    /// no `:has()` of its own.
+    /// each an optional `>`, `+` or `~` (a descendant where none is written) and a complex
+    /// selector with no pseudo-element and no `:has()` in it. Each is kept as a selector
+    /// whose first compound is the anchor, the element `:has()` is tested on.
     fn relatives(&mut self) -> Result<SimpleSelector, SyntaxError> {
         let mut relatives = Vec::new();
         let mut highest = Specificity::ZERO;
@@ -313,27 +322,40 @@ impl<'a> Parser<'a> {
             if combinator.is_some() {
                 self.take()?;
             }
-            let mut target = None;
-            let mut weight = Specificity::ZERO;
-            let compound = self.compound(&mut target, &mut weight)?;
-            if target.is_some()
-                || compound
-                    .tests
-                    .iter()
-                    .any(|test| matches!(test, SimpleSelector::Has { .. }))
-            {
+            let relative = self.complex(true)?;
+            if relative.pseudo.is_some() || has_has(&relative) {
                 return Err(self.invalid());
             }
-            highest = highest.max(weight);
+            highest = highest.max(relative.specificity);
+            let mut compounds = Vec::new();
+            self.push(
+                &mut compounds,
+                Compound {
+                    tests: vec![SimpleSelector::Anchor],
+                },
+            )?;
+            let mut combinators = Vec::new();
+            self.push(
+                &mut combinators,
+                combinator.unwrap_or(Combinator::Descendant),
+            )?;
+            for compound in relative.compounds {
+                self.push(&mut compounds, compound)?;
+            }
+            for combinator in relative.combinators {
+                self.push(&mut combinators, combinator)?;
+            }
             self.push(
                 &mut relatives,
-                (combinator.unwrap_or(Combinator::Descendant), compound.tests),
+                Selector {
+                    compounds,
+                    combinators,
+                    pseudo: None,
+                    specificity: relative.specificity,
+                },
             )?;
-            let look = self.take()?;
-            match look.token.kind {
-                TokenKind::Delim if look.token.raw == "," => {}
-                TokenKind::CloseParen => break,
-                _ => return Err(self.invalid()),
+            if self.list_ends()? {
+                break;
             }
         }
         Ok(SimpleSelector::Has {
@@ -341,33 +363,30 @@ impl<'a> Parser<'a> {
             specificity: highest,
         })
     }
-    /// The compound selectors of `:is(`, `:where(` or `:not(`, comma-separated, through
-    /// its closing parenthesis. None may hold a pseudo-element, and none a combinator.
+    /// After one argument of a selector-list pseudo-class: whether its `)` came, after a
+    /// `,` that leads to the next argument.
+    fn list_ends(&mut self) -> Result<bool, SyntaxError> {
+        let look = self.take()?;
+        match look.token.kind {
+            TokenKind::Delim if look.token.raw == "," => Ok(false),
+            TokenKind::CloseParen => Ok(true),
+            _ => Err(self.invalid()),
+        }
+    }
+    /// The complex selectors of `:is(`, `:where(` or `:not(`, comma-separated, through
+    /// its closing parenthesis. None may hold a pseudo-element.
     fn any_of(&mut self, negated: bool, weightless: bool) -> Result<SimpleSelector, SyntaxError> {
         let mut list = Vec::new();
         let mut highest = Specificity::ZERO;
         loop {
-            let mut target = None;
-            let mut weight = Specificity::ZERO;
-            let compound = self.compound(&mut target, &mut weight)?;
-            if target.is_some() {
+            let selector = self.complex(true)?;
+            if selector.pseudo.is_some() {
                 return Err(self.invalid());
             }
-            // `:has()` is tested by the matcher, not inside another list.
-            if compound
-                .tests
-                .iter()
-                .any(|test| matches!(test, SimpleSelector::Has { .. }))
-            {
-                return Err(self.invalid());
-            }
-            highest = highest.max(weight);
-            self.push(&mut list, compound.tests)?;
-            let look = self.take()?;
-            match look.token.kind {
-                TokenKind::Delim if look.token.raw == "," => {}
-                TokenKind::CloseParen => break,
-                _ => return Err(self.invalid()),
+            highest = highest.max(selector.specificity);
+            self.push(&mut list, selector)?;
+            if self.list_ends()? {
+                break;
             }
         }
         Ok(SimpleSelector::Matches {
@@ -586,7 +605,9 @@ impl<'a> Parser<'a> {
             .map_err(|_| self.resource(SyntaxResource::Entries))?;
         self.push(tests, test)
     }
-    fn selector(&mut self) -> Result<Selector, SyntaxError> {
+    /// A complex selector, up to a `,`, the end, or (`nested`, inside a pseudo-class's
+    /// parentheses) a `)`.
+    fn complex(&mut self, nested: bool) -> Result<Selector, SyntaxError> {
         let mut selector = Selector {
             compounds: Vec::new(),
             combinators: Vec::new(),
@@ -600,6 +621,9 @@ impl<'a> Parser<'a> {
                 break;
             };
             if look.token.kind == TokenKind::Delim && look.token.raw == "," {
+                break;
+            }
+            if nested && look.token.kind == TokenKind::CloseParen {
                 break;
             }
             if selector.pseudo.is_some() {
@@ -629,6 +653,22 @@ impl<'a> Parser<'a> {
         }
         Ok(selector)
     }
+}
+/// Whether a `:has()` lies anywhere in it, inside `:is()`, `:where()` and `:not()` too.
+fn has_has(selector: &Selector) -> bool {
+    fn test_has(test: &SimpleSelector) -> bool {
+        match test {
+            SimpleSelector::Has { .. } => true,
+            SimpleSelector::Not(inner) => test_has(inner),
+            SimpleSelector::Matches { list, .. } => list.iter().any(has_has),
+            _ => false,
+        }
+    }
+    selector
+        .compounds
+        .iter()
+        .flat_map(|compound| &compound.tests)
+        .any(test_has)
 }
 /// `an+b` in lower case with single spaces where any were written: `odd`, `even`, an
 /// integer, or `[sign][digits]n` with an optional signed offset whose sign may stand apart.
@@ -696,7 +736,7 @@ pub fn parse_selector_list(
     };
     let mut selectors = Vec::new();
     loop {
-        let selector = parser.selector()?;
+        let selector = parser.complex(false)?;
         parser.push(&mut selectors, selector)?;
         let Some(look) = parser.peek()? else {
             break;

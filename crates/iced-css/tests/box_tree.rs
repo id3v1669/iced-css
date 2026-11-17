@@ -1327,6 +1327,72 @@ fn has_matches_by_descendants_children_and_later_siblings() {
 }
 
 #[test]
+fn selector_lists_take_combinators_inside_them() {
+    let widths = |css: &str| {
+        let tree = BoxTree::new(
+            node(
+                "page",
+                vec![
+                    node("a", vec![node("inner", vec![node("deep", vec![])])]),
+                    node("b", vec![]),
+                    node("c", vec![]),
+                ],
+            ),
+            &format!(":where(#a, #b, #c, #inner) {{ width:100px; height:1px; }} {css}"),
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        // a, inner, b and c by preorder place.
+        [1, 2, 4, 5].map(|at| {
+            let border = geometry[at].as_ref().unwrap().border;
+            border.right - border.left
+        })
+    };
+    // `:is()` and `:where()` of complex selectors: the element is their subject.
+    assert_eq!(
+        widths(":is(#a > *, #b + *) { width:10px; }"),
+        [100.0, 10.0, 100.0, 10.0]
+    );
+    assert_eq!(
+        widths(":where(#page #a, #a ~ *) { width:20px; }"),
+        [20.0, 100.0, 20.0, 20.0]
+    );
+    // `:not()` of one: everything but what it names.
+    assert_eq!(
+        widths("#page > :not(#a ~ *) { width:30px; }"),
+        [30.0, 100.0, 100.0, 100.0]
+    );
+    // `:has()` relative selectors that go on past their first compound.
+    assert_eq!(
+        widths("#page > :has(> #inner > #deep) { width:40px; }"),
+        [40.0, 100.0, 100.0, 100.0]
+    );
+    assert_eq!(
+        widths("#page > :has(+ #b + #c) { width:50px; }"),
+        [50.0, 100.0, 100.0, 100.0]
+    );
+    // The anchor is the element itself: a relative that does not reach it holds nothing.
+    assert_eq!(
+        widths("#b:has(~ #c #deep), #inner:has(#a #deep) { width:60px; }"),
+        [100.0, 100.0, 100.0, 100.0]
+    );
+    assert_eq!(
+        widths("#inner:has(> #deep), #page > :has(~ * + #c) { width:70px; }"),
+        [70.0, 70.0, 100.0, 100.0]
+    );
+    // `:has()` inside `:is()` and `:not()`.
+    assert_eq!(
+        widths("#page > :not(:has(#deep)) { width:80px; }"),
+        [100.0, 100.0, 80.0, 80.0]
+    );
+    // Specificity: `:is()` counts as its most specific complex argument.
+    assert_eq!(
+        widths("#page :is(#a > #inner, *) { width:90px; } #page #inner { width:95px; }"),
+        [90.0, 90.0, 90.0, 90.0]
+    );
+}
+
+#[test]
 fn transitions_and_animations_send_their_events() {
     use iced_css::box_tree::{AnimationEvent, BoxTreeAnimations};
     use std::time::{Duration, Instant};

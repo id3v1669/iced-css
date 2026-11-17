@@ -72,14 +72,16 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   message to send) and `:enabled` (one that has one), read from what the captured widget
   was built with: they show as the attributes `checked` and `disabled` too, and a restyle
   needs a new tree, as for any change of the widgets; `:is()` (also `:matches()`), `:where()`
-  (weighing nothing) and `:not()` over a list of compound selectors; their arguments may
-  not hold combinators or pseudo-elements, and an invalid argument makes the whole selector
-  invalid (the lists are not forgiving). `:has()` takes relative selectors, each a compound
-  after an optional `>`, `+` or `~` (a descendant where none is written), and weighs as its
-  most specific argument; it may not sit inside `:is()`, `:not()` or another `:has()`, and
-  each test of it walks the descendants or later siblings it asks for. A structural pseudo-class counts the
+  (weighing nothing) and `:not()` over a list of complex selectors (combinators allowed,
+  the element as their subject); their arguments may not hold pseudo-elements, and an
+  invalid argument makes the whole selector invalid (the lists are not forgiving).
+  `:has()` takes relative complex selectors, each after an optional `>`, `+` or `~` (a
+  descendant where none is written), and weighs as its most specific argument; it may sit
+  inside `:is()` and `:not()` but not inside another `:has()`, and each test of it walks
+  the descendants or later siblings (with their descendants, where its selector goes down)
+  it could name, matching each against the whole relative selector. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
-  slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
+  slow. Not read: `:target`.
 - **Cascade layers:** `@layer` (CSS Cascade 5) blocks and statements naming the order:
   a later layer wins over an earlier one, and rules in no layer over both, before
   specificity is compared; `!important` declarations weigh the other way. Limits: layers

@@ -293,13 +293,15 @@ fn level3_pseudo_classes_and_their_specificity() {
     assert_eq!(one(":not([a^=b])").specificity.components(), [0, 0, 1, 0]);
 }
 #[test]
-fn negation_admits_no_pseudo_element_or_combinator() {
+fn negation_admits_no_pseudo_element() {
+    // Selectors Level 4 lets combinators in.
+    for input in [":not(a b)", ":not(a > b)"] {
+        assert!(parse_selector_list(input, limits()).is_ok(), "{input}");
+    }
     for input in [
         ":not()",
         ":not(:before)",
         ":not(::after)",
-        ":not(a b)",
-        ":not(a > b)",
         ":not(a",
         "::not(a)",
         "::nth-child(1)",
@@ -341,7 +343,7 @@ fn level3_combinator_and_attribute_operators() {
 }
 
 #[test]
-fn level4_is_where_and_not_take_lists_of_compounds() {
+fn level4_is_where_and_not_take_lists_of_complex_selectors() {
     // `:is()` and `:not()` count as their most specific argument; `:where()` as nothing.
     assert_eq!(one(":is(#a, .b, c)").specificity.components(), [0, 1, 0, 0]);
     assert_eq!(
@@ -350,8 +352,19 @@ fn level4_is_where_and_not_take_lists_of_compounds() {
     );
     assert_eq!(one(":not(.a.b, c)").specificity.components(), [0, 0, 2, 0]);
     assert_eq!(one(":not(:not(a))").specificity.components(), [0, 0, 0, 1]);
+    // A complex argument counts whole.
+    assert_eq!(
+        one(":is(#a > b c, .d)").specificity.components(),
+        [0, 1, 0, 2]
+    );
     for good in [
         ":is(a)",
+        ":is(a b)",
+        ":is(a > b ~ c, d + e)",
+        ":where( a  >  b )",
+        ":not(a b)",
+        ":is(:has(a))",
+        ":not(:has(a))",
         "div :is(.a, [b], :hover) > p",
         ":where( .a , .b )",
         ":matches(a)",
@@ -360,7 +373,9 @@ fn level4_is_where_and_not_take_lists_of_compounds() {
     }
     for bad in [
         ":is()",
-        ":is(a b)",
+        ":is(a >)",
+        ":is(> a)",
+        ":is(a ::before)",
         ":is(::before)",
         ":where(a,)",
         ":is(a",
@@ -371,22 +386,24 @@ fn level4_is_where_and_not_take_lists_of_compounds() {
 }
 
 #[test]
-fn level4_has_takes_relative_compound_selectors() {
+fn level4_has_takes_relative_complex_selectors() {
     assert_eq!(one("a:has(#b, .c)").specificity.components(), [0, 1, 0, 1]);
     for good in [
         ":has(a)",
         ":has(> a.b)",
         ":has(+ a, ~ .b)",
         "div :has( .x ) > p",
+        ":has(a b)",
+        ":has(> a + b ~ c d)",
+        ":has(:is(a b))",
     ] {
         assert!(parse_selector_list(good, limits()).is_ok(), "{good}");
     }
     for bad in [
         ":has()",
-        ":has(a b)",
         ":has(:has(a))",
-        ":is(:has(a))",
-        ":not(:has(a))",
+        ":has(:is(b :has(a)))",
+        ":has(a >)",
         ":has(::before)",
         ":has(>)",
     ] {

@@ -57,23 +57,27 @@ pub enum SimpleSelector {
     Checked,
     Disabled,
     Enabled,
-    /// Selectors Level 4 `:has()`: relative selectors, each a combinator (descendant
-    /// where none is written) and a compound selector. The matcher tests it, as it needs
-    /// the element's descendants and later siblings.
+    /// Selectors Level 4 `:has()`: relative selectors, each a selector whose first
+    /// compound is the anchor ([`SimpleSelector::Anchor`]), the element tested, joined by
+    /// the written combinator (descendant where none is written). The matcher tests it, as
+    /// it needs the element's descendants and later siblings.
     Has {
-        relatives: Vec<(Combinator, Vec<SimpleSelector>)>,
+        relatives: Vec<crate::selectors::Selector>,
         /// Its most specific argument's.
         specificity: crate::cascade::Specificity,
     },
     /// Selectors Level 4 `:is()`, `:where()` and a `:not()` of more than one simple
-    /// selector: whether the element matches any of the compound selectors (none, for
-    /// `negated`). `specificity` is what it adds: its most specific argument's, or none for
-    /// `:where()`.
+    /// selector: whether the element matches any of the complex selectors, as their
+    /// subject (none, for `negated`). `specificity` is what it adds: its most specific
+    /// argument's, or none for `:where()`.
     Matches {
-        list: Vec<Vec<SimpleSelector>>,
+        list: Vec<crate::selectors::Selector>,
         negated: bool,
         specificity: crate::cascade::Specificity,
     },
+    /// In a `:has()` argument, the element `:has()` is tested on. Never written: the
+    /// parser puts it first in each relative selector, and the matcher tests it by identity.
+    Anchor,
 }
 impl SimpleSelector {
     /// Whether testing it needs the element's place among its siblings.
@@ -81,7 +85,11 @@ impl SimpleSelector {
         match self {
             Self::Nth { .. } | Self::Only { .. } => true,
             Self::Not(inner) => inner.needs_position(),
-            Self::Matches { list, .. } => list.iter().flatten().any(Self::needs_position),
+            Self::Matches { list, .. } => list
+                .iter()
+                .filter(|selector| selector.compounds.len() == 1)
+                .flat_map(|selector| &selector.compounds[0].tests)
+                .any(Self::needs_position),
             _ => false,
         }
     }
@@ -310,17 +318,20 @@ pub fn matches_simple(
         SimpleSelector::Not(inner) => !matches_simple(inner, element, budget)?,
         // Only the matcher can test it; alone, it holds nothing back.
         SimpleSelector::Has { .. } => true,
+        // Only the matcher knows the anchor.
+        SimpleSelector::Anchor => false,
         SimpleSelector::Checked => element.metadata.attribute("checked").is_some(),
         SimpleSelector::Disabled => element.metadata.attribute("disabled").is_some(),
         SimpleSelector::Enabled => {
             element.metadata.attribute(CONTROL).is_some()
                 && element.metadata.attribute("disabled").is_none()
         }
+        // Alone, only an argument of one compound can be tested; the matcher tests all.
         SimpleSelector::Matches { list, negated, .. } => {
             let mut any = false;
-            for compound in list {
+            for selector in list.iter().filter(|selector| selector.compounds.len() == 1) {
                 let mut all = true;
-                for test in compound {
+                for test in &selector.compounds[0].tests {
                     if !matches_simple(test, element, budget)? {
                         all = false;
                         break;

@@ -63,6 +63,8 @@ struct Engine<'a, S: SelectorSource> {
     source: &'a S,
     budget: MatchBudget,
     bytes: usize,
+    /// The element a `:has()` being tested is on, which its arguments' anchor names.
+    anchor: Option<S::Node>,
 }
 impl<S: SelectorSource> Engine<'_, S> {
     fn charge(&mut self, amount: usize) -> Result<(), MatchError> {
@@ -141,72 +143,80 @@ impl<S: SelectorSource> Engine<'_, S> {
         stack.push(frame);
         Ok(())
     }
-    /// Whether one compound selector (with no `:has()` in it) holds for `node`.
-    fn compound_holds(
+    /// Whether one simple selector holds for `node`, whose facts are `facts`: those that
+    /// hold selectors of their own are tested here, as theirs may need the tree.
+    fn holds(
         &mut self,
         node: S::Node,
-        tests: &[SimpleSelector],
+        facts: ElementFacts<'_>,
+        test: &SimpleSelector,
     ) -> Result<bool, MatchError> {
-        let parent = self.parent(node)?;
-        let previous = self.previous(node)?;
-        self.charge(1)?;
-        let mut facts = self.source.facts(node).ok_or(MatchError::InvalidSource)?;
-        facts.has_parent = parent.is_some();
-        facts.has_previous_element = previous.is_some();
-        if tests.iter().any(SimpleSelector::needs_position) {
-            facts.position = Some(self.position(node, facts.type_name)?);
-        }
-        for test in tests {
-            if !matches_simple(test, facts, &mut self.budget).map_err(|_| MatchError::Work)? {
-                return Ok(false);
+        match test {
+            SimpleSelector::Has { relatives, .. } => self.has(node, relatives),
+            SimpleSelector::Anchor => Ok(self.anchor == Some(node)),
+            SimpleSelector::Not(inner) => Ok(!self.holds(node, facts, inner)?),
+            SimpleSelector::Matches { list, negated, .. } => {
+                let mut any = false;
+                for selector in list {
+                    if self.matches(selector, node, None)? {
+                        any = true;
+                        break;
+                    }
+                }
+                Ok(any != *negated)
             }
+            _ => matches_simple(test, facts, &mut self.budget).map_err(|_| MatchError::Work),
         }
-        Ok(true)
     }
-    /// Selectors Level 4 `:has()`: whether some element in the relation each relative
-    /// selector names to `node` matches it: a descendant, a child, the next sibling or a
-    /// later one.
-    fn has(
-        &mut self,
-        node: S::Node,
-        relatives: &[(Combinator, Vec<SimpleSelector>)],
-    ) -> Result<bool, MatchError> {
-        for (combinator, tests) in relatives {
+    /// Pushes `node`'s child elements, the first on top.
+    fn children(&mut self, node: S::Node, into: &mut Vec<S::Node>) -> Result<(), MatchError> {
+        let mut child = self.source.last_child(node);
+        while let Some(at) = child {
+            self.charge(1)?;
+            into.push(at);
+            child = self.source.previous_element(at);
+        }
+        Ok(())
+    }
+    /// Selectors Level 4 `:has()`: whether some element matches a relative selector with
+    /// `node` as its anchor. Those it could name are tried: `node`'s descendants, or its
+    /// later siblings, with theirs where a combinator after the first goes down.
+    fn has(&mut self, node: S::Node, relatives: &[Selector]) -> Result<bool, MatchError> {
+        let outer = self.anchor.replace(node);
+        let found = self.has_any(node, relatives);
+        self.anchor = outer;
+        found
+    }
+    fn has_any(&mut self, node: S::Node, relatives: &[Selector]) -> Result<bool, MatchError> {
+        for relative in relatives {
+            let Some(&lead) = relative.combinators.first() else {
+                return Err(MatchError::InvalidSelector);
+            };
+            let down = matches!(lead, Combinator::Descendant | Combinator::Child);
+            let deep = lead == Combinator::Descendant
+                || relative.combinators[1..].iter().any(|combinator| {
+                    matches!(combinator, Combinator::Descendant | Combinator::Child)
+                });
             let mut candidates: Vec<S::Node> = Vec::new();
-            match combinator {
-                Combinator::Descendant | Combinator::Child => {
-                    let mut child = self.source.last_child(node);
-                    while let Some(at) = child {
-                        self.charge(1)?;
-                        candidates.push(at);
-                        child = self.source.previous_element(at);
-                    }
+            if down {
+                self.children(node, &mut candidates)?;
+            } else {
+                let mut later = Vec::new();
+                let mut sibling = self.source.next_element(node);
+                while let Some(at) = sibling {
+                    self.charge(1)?;
+                    later.push(at);
+                    sibling = self.source.next_element(at);
                 }
-                Combinator::Adjacent | Combinator::Sibling => {
-                    let mut sibling = self.source.next_element(node);
-                    while let Some(at) = sibling {
-                        self.charge(1)?;
-                        candidates.push(at);
-                        if *combinator == Combinator::Adjacent {
-                            break;
-                        }
-                        sibling = self.source.next_element(at);
-                    }
-                }
+                candidates.extend(later.into_iter().rev());
             }
             while let Some(candidate) = candidates.pop() {
                 self.charge(1)?;
-                if self.compound_holds(candidate, tests)? {
+                if self.matches(relative, candidate, None)? {
                     return Ok(true);
                 }
-                // A descendant may be deeper: its own children follow.
-                if *combinator == Combinator::Descendant {
-                    let mut child = self.source.last_child(candidate);
-                    while let Some(at) = child {
-                        self.charge(1)?;
-                        candidates.push(at);
-                        child = self.source.previous_element(at);
-                    }
+                if deep {
+                    self.children(candidate, &mut candidates)?;
                 }
             }
         }
@@ -283,12 +293,7 @@ impl<S: SelectorSource> Engine<'_, S> {
             }
             let mut matched = true;
             for test in &selector.compounds[frame.index].tests {
-                let holds = if let SimpleSelector::Has { relatives, .. } = test {
-                    self.has(frame.node, relatives)?
-                } else {
-                    matches_simple(test, facts, &mut self.budget).map_err(|_| MatchError::Work)?
-                };
-                if !holds {
+                if !self.holds(frame.node, facts, test)? {
                     matched = false;
                     break;
                 }
@@ -336,6 +341,7 @@ fn engine<S: SelectorSource>(source: &S, limits: MatchLimits) -> Result<Engine<'
         source,
         budget: MatchBudget::new(limits.work),
         bytes: limits.retained_bytes.get(),
+        anchor: None,
     })
 }
 /// Match a parsed selector from its subject backwards. Descendant continuations
