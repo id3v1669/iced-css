@@ -1896,6 +1896,17 @@ pub enum BackgroundOffset {
     Percent(f32),
 }
 
+/// A background layer under the first (CSS Backgrounds 3).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtraLayer {
+    Image(BackgroundImage),
+    Gradient {
+        paint: std::sync::Arc<GradientPaint>,
+        origin: BoxArea,
+        clip: BoxArea,
+    },
+}
+
 /// One of a box's three areas: `background-origin` and `background-clip` (CSS
 /// Backgrounds 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1972,6 +1983,8 @@ pub struct TreePaint {
     pub gradients: Vec<Option<std::sync::Arc<GradientPaint>>>,
     /// Each row's `transform`, when it has one.
     pub transforms: Vec<Option<std::sync::Arc<ElementTransform>>>,
+    /// Each row's background layers under the first, second first.
+    pub layers: Vec<Vec<ExtraLayer>>,
 }
 
 /// 12.5.1: the marker text of list item `ordinal` (from 1), as inside-marker text.
@@ -2382,6 +2395,7 @@ pub fn evaluate_tree_paint<'r>(
     let mut gradients: Vec<Option<std::sync::Arc<GradientPaint>>> = vec![None; projection.len()];
     let mut transforms: Vec<Option<std::sync::Arc<ElementTransform>>> =
         vec![None; projection.len()];
+    let mut layers: Vec<Vec<ExtraLayer>> = vec![Vec::new(); projection.len()];
     let mut styles: Vec<TextStyle> = Vec::with_capacity(projection.len());
     let mut weights: Vec<FontWeight> = Vec::with_capacity(projection.len());
     let mut aligns: Vec<ComputedTextAlign> = Vec::with_capacity(projection.len());
@@ -2973,7 +2987,20 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => false,
         };
-        let uri = match defaulted("background-image")? {
+        // CSS Backgrounds 3: a background longhand's value for one layer, its list
+        // repeated to cover them all; `Initial` in a list is that layer's initial value.
+        let pick = |name: &'static str, layer: usize| {
+            Ok::<_, E>(match defaulted(name)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Layers(values)) => {
+                    match &values[layer % values.len()] {
+                        SpecifiedValue::Initial => DefaultedValueRef::Initial(id(name)?),
+                        value => DefaultedValueRef::Compute(value),
+                    }
+                }
+                other => other,
+            })
+        };
+        let uri = match pick("background-image", 0)? {
             DefaultedValueRef::Compute(SpecifiedValue::Uri(value)) => Some(value.clone()),
             DefaultedValueRef::ParentComputed => parent_index
                 .and_then(|parent| backgrounds[parent].as_ref())
@@ -2982,7 +3009,7 @@ pub fn evaluate_tree_paint<'r>(
         };
         // Inherit reads the parent's computed values, whether or not it has an image.
         let inherited_background = parent_index.map(|parent| background_parts[parent]);
-        let repeat = match defaulted("background-repeat")? {
+        let repeat = match pick("background-repeat", 0)? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => keyword.as_str(),
             DefaultedValueRef::ParentComputed => {
                 inherited_background.map_or("repeat", |parts: BackgroundParts| parts.0)
@@ -2998,14 +3025,14 @@ pub fn evaluate_tree_paint<'r>(
             // 14.2.1: negative offsets are permitted.
             other => BackgroundOffset::Px(signed(other)),
         };
-        let position = match defaulted("background-position")? {
+        let position = match pick("background-position", 0)? {
             DefaultedValueRef::Compute(SpecifiedValue::LengthPair(x, y)) => [offset(x), offset(y)],
             DefaultedValueRef::ParentComputed => {
                 inherited_background.map_or([BackgroundOffset::Percent(0.0); 2], |parts| parts.1)
             }
             _ => [BackgroundOffset::Percent(0.0); 2],
         };
-        let fixed = match defaulted("background-attachment")? {
+        let fixed = match pick("background-attachment", 0)? {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
                 keyword.as_str() == "fixed"
             }
@@ -3015,7 +3042,7 @@ pub fn evaluate_tree_paint<'r>(
         background_parts.push((repeat, position, fixed));
         // CSS Backgrounds 3: its size and boxes. `inherit` on the size reads as `auto`.
         let area = |name: &'static str, initial: BoxArea, parent: fn(&BoxPaint) -> BoxArea| {
-            Ok::<_, E>(match defaulted(name)? {
+            Ok::<_, E>(match pick(name, 0)? {
                 DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
                     match keyword.as_str() {
                         "border-box" => BoxArea::Border,
@@ -3037,7 +3064,7 @@ pub fn evaluate_tree_paint<'r>(
         })?;
         paints[index].background_origin = origin;
         paints[index].background_clip = clip;
-        let size = match defaulted("background-size")? {
+        let size_of = |value: DefaultedValueRef<'_>| match value {
             DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword))
                 if keyword.as_str() == "cover" =>
             {
@@ -3056,6 +3083,7 @@ pub fn evaluate_tree_paint<'r>(
             }
             _ => BackgroundSize::Sized(None, None),
         };
+        let size = size_of(pick("background-size", 0)?);
         backgrounds.push(uri.map(|uri| BackgroundImage {
             size,
             origin,
@@ -3637,48 +3665,105 @@ pub fn evaluate_tree_paint<'r>(
         };
         // CSS Images 3: a linear gradient as the background image. `inherit` takes the
         // parent's.
-        gradients[index] = match defaulted("background-image")? {
-            DefaultedValueRef::Compute(SpecifiedValue::Gradient(gradient)) => {
-                let number = |value: &iced_css_core::values::Decimal| {
-                    value
-                        .scaled_finite_f32(1.0, limits.numeric)
-                        .map_or(0.0, |converted| converted.value)
-                };
-                let aim = match &gradient.direction {
-                    GradientDirection::Angle(value, unit) => {
-                        let turns = match unit {
-                            AngleUnit::Deg => number(value) / 360.0,
-                            AngleUnit::Rad => number(value) / std::f32::consts::TAU,
-                            AngleUnit::Grad => number(value) / 400.0,
-                            AngleUnit::Turn => number(value),
-                        };
-                        GradientAim::Angle(turns * std::f32::consts::TAU)
-                    }
-                    GradientDirection::Toward(across, down) => GradientAim::Toward(*across, *down),
-                };
-                let mut stops = Vec::with_capacity(gradient.stops.len());
-                for stop in &gradient.stops {
-                    // No color of its own: the element's `color`.
-                    let (color, alpha) = match &stop.color {
-                        Some(color) => (
-                            rgb(color, limits.numeric).unwrap_or([0.0; 3]),
-                            opacity(color).unwrap_or(if rgb(color, limits.numeric).is_some() {
-                                1.0
-                            } else {
-                                0.0
-                            }),
-                        ),
-                        None => (paints[index].color.unwrap_or([0.0; 3]), 1.0),
+        let gradient_paint = |gradient: &iced_css_core::values::property::LinearGradient| {
+            let number = |value: &iced_css_core::values::Decimal| {
+                value
+                    .scaled_finite_f32(1.0, limits.numeric)
+                    .map_or(0.0, |converted| converted.value)
+            };
+            let aim = match &gradient.direction {
+                GradientDirection::Angle(value, unit) => {
+                    let turns = match unit {
+                        AngleUnit::Deg => number(value) / 360.0,
+                        AngleUnit::Rad => number(value) / std::f32::consts::TAU,
+                        AngleUnit::Grad => number(value) / 400.0,
+                        AngleUnit::Turn => number(value),
                     };
-                    stops.push((color, alpha, stop.position.as_ref().map(own_length)));
+                    GradientAim::Angle(turns * std::f32::consts::TAU)
                 }
-                Some(std::sync::Arc::new(GradientPaint { aim, stops }))
+                GradientDirection::Toward(across, down) => GradientAim::Toward(*across, *down),
+            };
+            let mut stops = Vec::with_capacity(gradient.stops.len());
+            for stop in &gradient.stops {
+                // No color of its own: the element's `color`.
+                let (color, alpha) = match &stop.color {
+                    Some(color) => (
+                        rgb(color, limits.numeric).unwrap_or([0.0; 3]),
+                        opacity(color).unwrap_or(if rgb(color, limits.numeric).is_some() {
+                            1.0
+                        } else {
+                            0.0
+                        }),
+                    ),
+                    None => (paints[index].color.unwrap_or([0.0; 3]), 1.0),
+                };
+                stops.push((color, alpha, stop.position.as_ref().map(own_length)));
+            }
+            std::sync::Arc::new(GradientPaint { aim, stops })
+        };
+        gradients[index] = match pick("background-image", 0)? {
+            DefaultedValueRef::Compute(SpecifiedValue::Gradient(gradient)) => {
+                Some(gradient_paint(gradient))
             }
             DefaultedValueRef::ParentComputed => {
                 parent_index.and_then(|parent: usize| gradients[parent].clone())
             }
             _ => None,
         };
+        // CSS Backgrounds 3: the layers under the first, from the second down.
+        let count = match defaulted("background-image")? {
+            DefaultedValueRef::Compute(SpecifiedValue::Layers(values)) => values.len(),
+            _ => 1,
+        };
+        for layer in 1..count {
+            let keyword = |name: &'static str| {
+                Ok::<_, E>(match pick(name, layer)? {
+                    DefaultedValueRef::Compute(SpecifiedValue::Keyword(keyword)) => {
+                        Some(keyword.as_str())
+                    }
+                    _ => None,
+                })
+            };
+            let area = |name: &'static str, initial: BoxArea| {
+                Ok::<_, E>(match keyword(name)? {
+                    Some("border-box") => BoxArea::Border,
+                    Some("content-box") => BoxArea::Content,
+                    Some("padding-box") => BoxArea::Padding,
+                    _ => initial,
+                })
+            };
+            let origin = area("background-origin", BoxArea::Padding)?;
+            let clip = area("background-clip", BoxArea::Border)?;
+            let extra = match pick("background-image", layer)? {
+                DefaultedValueRef::Compute(SpecifiedValue::Uri(uri)) => {
+                    let repeat = keyword("background-repeat")?.unwrap_or("repeat");
+                    ExtraLayer::Image(BackgroundImage {
+                        size: size_of(pick("background-size", layer)?),
+                        origin,
+                        clip,
+                        uri: uri.clone(),
+                        repeat_x: matches!(repeat, "repeat" | "repeat-x"),
+                        repeat_y: matches!(repeat, "repeat" | "repeat-y"),
+                        position: match pick("background-position", layer)? {
+                            DefaultedValueRef::Compute(SpecifiedValue::LengthPair(x, y)) => {
+                                [offset(x), offset(y)]
+                            }
+                            _ => [BackgroundOffset::Percent(0.0); 2],
+                        },
+                        fixed: keyword("background-attachment")? == Some("fixed"),
+                    })
+                }
+                DefaultedValueRef::Compute(SpecifiedValue::Gradient(gradient)) => {
+                    ExtraLayer::Gradient {
+                        paint: gradient_paint(gradient),
+                        origin,
+                        clip,
+                    }
+                }
+                _ => continue,
+            };
+            layers[index].push(extra);
+        }
         // CSS Backgrounds 3: the first outer shadow; iced draws one, without a spread.
         // Not inherited; `inherit` takes the parent's.
         paints[index].shadow = match defaulted("box-shadow")? {
@@ -4272,5 +4357,6 @@ pub fn evaluate_tree_paint<'r>(
         animations,
         gradients,
         transforms,
+        layers,
     })
 }

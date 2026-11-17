@@ -40,6 +40,58 @@ pub(super) fn parse(
     limits: ColorLimits,
     work: &mut usize,
 ) -> Result<Option<Vec<ParsedProperty>>, PropertyError> {
+    // CSS Backgrounds 3: layers, first on top; only the last may give a color.
+    let ends = super::shadow::commas(input, work)?;
+    if !ends.is_empty() {
+        let mut layers: Vec<Vec<ParsedProperty>> = Vec::new();
+        let mut from = 0;
+        let count = ends.len() + 1;
+        for end in ends.into_iter().chain([input.len()]) {
+            let Some(layer) = one_layer(&input[from..end], important, limits, work)? else {
+                return Ok(None);
+            };
+            let last = layers.len() + 1 == count;
+            let inherited = layer
+                .iter()
+                .any(|leaf| leaf.value == SpecifiedValue::Inherit);
+            if inherited || (!last && layer[0].value != SpecifiedValue::Initial) {
+                return Ok(None);
+            }
+            layers.push(layer);
+            from = end + 1;
+        }
+        let last = layers.last().expect("two or more").clone();
+        return Ok(Some(
+            last.into_iter()
+                .enumerate()
+                .map(|(role, leaf)| {
+                    if role == 0 {
+                        leaf
+                    } else {
+                        ParsedProperty {
+                            value: SpecifiedValue::Layers(
+                                layers
+                                    .iter()
+                                    .map(|layer| layer[role].value.clone())
+                                    .collect(),
+                            ),
+                            ..leaf
+                        }
+                    }
+                })
+                .collect(),
+        ));
+    }
+    one_layer(input, important, limits, work)
+}
+
+/// One layer of the shorthand, as CSS 2.2 has the whole of it.
+fn one_layer(
+    input: &str,
+    important: bool,
+    limits: ColorLimits,
+    work: &mut usize,
+) -> Result<Option<Vec<ParsedProperty>>, PropertyError> {
     let Some(components) = components::<6>(input, work)? else {
         return Ok(None);
     };

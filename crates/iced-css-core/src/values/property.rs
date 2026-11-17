@@ -126,6 +126,9 @@ pub enum SpecifiedValue {
     Ratio(super::Decimal, super::Decimal),
     /// CSS Cascade 4 `revert`: as if no author declaration gave the property.
     Revert,
+    /// CSS Backgrounds 3: a background longhand's values, one per layer, first on top;
+    /// `Initial` in it is that layer's initial value. Only for two or more.
+    Layers(Vec<SpecifiedValue>),
     /// A transition property's list (CSS Transitions 1).
     Transition(TransitionValue),
     /// A custom property declaration (`--name: value`): its name, with its dashes, and
@@ -260,6 +263,19 @@ fn border_styles(name: &str) -> Option<&'static [&'static str]> {
         _ => None,
     }
 }
+/// The background longhands that take one value per layer (CSS Backgrounds 3).
+fn layered_property(name: &str) -> bool {
+    matches!(
+        name,
+        "background-image"
+            | "background-repeat"
+            | "background-attachment"
+            | "background-position"
+            | "background-size"
+            | "background-origin"
+            | "background-clip"
+    )
+}
 /// The transition properties, whose grammars live in `transition.rs`.
 fn transition_property(name: &str) -> bool {
     matches!(
@@ -339,6 +355,36 @@ pub(super) fn inner(
     work: &mut usize,
 ) -> Result<PropertyResult, PropertyError> {
     let name = property.descriptor().name;
+    // CSS Backgrounds 3: a comma-separated list, one value per background layer, first on
+    // top. One value alone stays as CSS 2.2 has it.
+    if layered_property(name) && !recovery_only {
+        let ends = shadow::commas(input, work)?;
+        if !ends.is_empty() {
+            let mut values = Vec::new();
+            let mut from = 0;
+            for end in ends.into_iter().chain([input.len()]) {
+                match inner(property, &input[from..end], important, false, limits, work)? {
+                    PropertyResult::Parsed(parsed)
+                        if !matches!(
+                            parsed.value,
+                            SpecifiedValue::Inherit
+                                | SpecifiedValue::Initial
+                                | SpecifiedValue::Layers(_)
+                        ) =>
+                    {
+                        values.push(parsed.value);
+                    }
+                    _ => return Ok(PropertyResult::Invalid),
+                }
+                from = end + 1;
+            }
+            return Ok(PropertyResult::Parsed(ParsedProperty {
+                property,
+                value: SpecifiedValue::Layers(values),
+                important,
+            }));
+        }
+    }
     let keywords = keyword_grammars()
         .find(|(property, _)| *property == name)
         .map(|(_, values)| *values)

@@ -73,10 +73,10 @@ use crate::{
         source_display::{SourceDisplayLimits, evaluate_source_display},
         tree_layout::{
             BackgroundImage, BackgroundOffset, BackgroundSize, BoxArea, BoxPaint, ElementAnimation,
-            ElementTransform, ElementTransition, GeneratedFrame, GeneratedRun, GradientAim,
-            GradientPaint, InlineBoxSides, PreparedTree, RunSource, TextLineHeight, TextStyle,
-            TransformStep, TreeLayoutError, TreePaint, evaluate_tree_paint, prepare_captured_tree,
-            prepare_tree_source_projection,
+            ElementTransform, ElementTransition, ExtraLayer, GeneratedFrame, GeneratedRun,
+            GradientAim, GradientPaint, InlineBoxSides, PreparedTree, RunSource, TextLineHeight,
+            TextStyle, TransformStep, TreeLayoutError, TreePaint, evaluate_tree_paint,
+            prepare_captured_tree, prepare_tree_source_projection,
         },
     },
     host::{
@@ -720,6 +720,17 @@ struct Source {
     follows: OnceLock<bool>,
 }
 
+/// A background layer under the first, as the widget draws it (CSS Backgrounds 3).
+#[derive(Debug, Clone, PartialEq)]
+enum Layer {
+    Image((BackgroundImage, image::Handle)),
+    Gradient {
+        paint: Arc<GradientPaint>,
+        origin: BoxArea,
+        clip: BoxArea,
+    },
+}
+
 /// One keyframe rule of a `@keyframes`, as the animations read it.
 #[derive(Debug, Clone)]
 pub(crate) struct KeyframeSummary {
@@ -891,6 +902,7 @@ struct Style {
     key: InteractionKey,
     gradients: Vec<Option<Arc<GradientPaint>>>,
     transforms: Vec<Option<Arc<ElementTransform>>>,
+    layers: Vec<Vec<Layer>>,
 }
 
 /// An owned, width-independent styled tree. One `BoxTree` can lay out at any size.
@@ -929,6 +941,8 @@ pub struct BoxTree {
     gradients: Vec<Option<Arc<GradientPaint>>>,
     /// Transforms, by projected index (CSS Transforms 1).
     transforms: Vec<Option<Arc<ElementTransform>>>,
+    /// Background layers under the first, by projected index, second first.
+    layers: Vec<Vec<Layer>>,
 }
 
 /// Two trees are equal when they draw alike and restyle from the same sheets.
@@ -942,6 +956,7 @@ impl PartialEq for BoxTree {
             && self.marker_images == other.marker_images
             && self.gradients == other.gradients
             && self.transforms == other.transforms
+            && self.layers == other.layers
             && (Arc::ptr_eq(&self.source, &other.source)
                 || self.source.sheets == other.source.sheets)
     }
@@ -1162,6 +1177,7 @@ impl BoxTree {
                         && one.marker_images == other.marker_images
                         && one.gradients == other.gradients
                         && one.transforms == other.transforms
+                        && one.layers == other.layers
                         // What `!important` wins decides which presented values lie over it.
                         && one.important == other.important)
             }
@@ -1188,6 +1204,7 @@ impl BoxTree {
             key: self.key,
             gradients: self.gradients.clone(),
             transforms: self.transforms.clone(),
+            layers: self.layers.clone(),
         }
     }
 
@@ -1211,6 +1228,7 @@ impl BoxTree {
             key: style.key,
             gradients: style.gradients,
             transforms: style.transforms,
+            layers: style.layers,
         }
     }
 
@@ -1508,6 +1526,7 @@ impl BoxTree {
             animations,
             gradients,
             transforms,
+            layers,
         } = evaluate_tree_paint(&projection, &display, facts(), &sized.font_sizes, 16.0)
             .map_err(failed)?;
         let weights: Vec<u16> = styles.iter().map(|style| style.weight).collect();
@@ -2680,6 +2699,32 @@ impl BoxTree {
                 Some((projected, local_image(&source.base, &uri?)?))
             })
             .collect();
+        // The layers under the first: images where their files can load.
+        let layers: Vec<Vec<Layer>> = layers
+            .into_iter()
+            .enumerate()
+            .map(|(projected, list)| {
+                let owned = prepared.slot[projected].is_some_and(|slot| !prepared.anonymous[slot]);
+                list.into_iter()
+                    .filter(|_| owned)
+                    .filter_map(|layer| match layer {
+                        ExtraLayer::Image(image) => {
+                            let handle = local_image(&source.base, &image.uri)?;
+                            Some(Layer::Image((image, handle)))
+                        }
+                        ExtraLayer::Gradient {
+                            paint,
+                            origin,
+                            clip,
+                        } => Some(Layer::Gradient {
+                            paint,
+                            origin,
+                            clip,
+                        }),
+                    })
+                    .collect()
+            })
+            .collect();
         let background_images = backgrounds
             .into_iter()
             .enumerate()
@@ -2811,6 +2856,7 @@ impl BoxTree {
             key,
             gradients,
             transforms,
+            layers,
         })
     }
 
@@ -3707,6 +3753,7 @@ where
         Element::new(BoxTreeWidget {
             given: tree.clone(),
             base: tree.clone(),
+            loaded_layers: BTreeSet::new(),
             tree,
             key: (None, None, None),
             presenting: false,
@@ -5156,6 +5203,8 @@ fn apply_scrolling(
 struct BoxTreeWidget<'a, Message, Theme, Renderer: text::Renderer<Font = iced::Font>> {
     /// The tree the application gave.
     given: BoxTree,
+    /// Image layers under the first whose images loaded: projected index, layer.
+    loaded_layers: BTreeSet<(usize, usize)>,
     /// That tree as the widget draws it: restyled for its own size where the application
     /// gives no viewport and the sheets ask about one.
     base: BoxTree,
@@ -6376,7 +6425,13 @@ fn breaks_layer(tree: &BoxTree, step: PaintStep, next: PaintStep) -> bool {
         PaintStep::Text(_) | PaintStep::Marker(_) => {
             !matches!(next, PaintStep::Text(_) | PaintStep::Marker(_))
         }
-        PaintStep::Box(index) => tree.backgrounds.contains_key(&index),
+        PaintStep::Box(index) => {
+            tree.backgrounds.contains_key(&index)
+                || tree
+                    .layers
+                    .get(index)
+                    .is_some_and(|list| list.iter().any(|layer| matches!(layer, Layer::Image(_))))
+        }
         PaintStep::Outline(_)
         | PaintStep::CellBorder(_)
         | PaintStep::Column(_)
@@ -6885,6 +6940,20 @@ fn draw_box<Renderer: renderer::Renderer>(
         }
     }
     let gradient = tree.gradients.get(index).and_then(Option::as_deref);
+    let under: Vec<(&GradientPaint, BoxArea, BoxArea)> = tree
+        .layers
+        .get(index)
+        .into_iter()
+        .flatten()
+        .filter_map(|layer| match layer {
+            Layer::Gradient {
+                paint,
+                origin,
+                clip,
+            } => Some((paint.as_ref(), *origin, *clip)),
+            Layer::Image(_) => None,
+        })
+        .collect();
     paint_box(
         renderer,
         origin,
@@ -6893,6 +6962,7 @@ fn draw_box<Renderer: renderer::Renderer>(
         parts,
         &cuts,
         gradient,
+        &under,
     );
 }
 
@@ -6960,6 +7030,7 @@ fn paint_box<Renderer: renderer::Renderer>(
     parts: BoxParts,
     cuts: &[(usize, f32, f32)],
     gradient: Option<&GradientPaint>,
+    under: &[(&GradientPaint, BoxArea, BoxArea)],
 ) {
     // CSS Color 3 `opacity`, through the box's ancestors: on everything it draws here.
     let through = paint.opacity.unwrap_or(1.0);
@@ -7064,38 +7135,43 @@ fn paint_box<Renderer: renderer::Renderer>(
             ),
         );
     }
-    // CSS Images 3: a gradient over the padding box, above the background color.
-    // Sized to its `background-origin` box, and shown where that meets its clip box.
-    if let Some(gradient) = gradient.filter(|_| parts != BoxParts::Border) {
-        let placed = area_rect(geometry, paint.background_origin);
-        let shown = area_rect(geometry, paint.background_clip);
-        let area = FlowRect {
-            left: placed.left.max(shown.left),
-            right: placed.right.min(shown.right),
-            top: placed.top.max(shown.top),
-            bottom: placed.bottom.min(shown.bottom),
-        };
-        let bounds = moved_rectangle(area, origin);
-        if bounds.width > 0.0
-            && bounds.height > 0.0
-            && let Some(linear) = linear_gradient(
-                gradient,
-                placed.right - placed.left,
-                placed.bottom - placed.top,
-                through,
-            )
-        {
-            renderer.fill_quad(
-                Quad {
-                    bounds,
-                    border: iced::Border {
-                        radius: inner_radii(radius, border, area),
-                        ..iced::Border::default()
+    // CSS Images 3: gradients over the padding box, above the background color, the layers
+    // under the first before it (CSS Backgrounds 3). Each is sized to its
+    // `background-origin` box, and shown where that meets its clip box.
+    if parts != BoxParts::Border {
+        let main =
+            gradient.map(|gradient| (gradient, paint.background_origin, paint.background_clip));
+        for (gradient, placed_in, shown_in) in under.iter().rev().copied().chain(main) {
+            let placed = area_rect(geometry, placed_in);
+            let shown = area_rect(geometry, shown_in);
+            let area = FlowRect {
+                left: placed.left.max(shown.left),
+                right: placed.right.min(shown.right),
+                top: placed.top.max(shown.top),
+                bottom: placed.bottom.min(shown.bottom),
+            };
+            let bounds = moved_rectangle(area, origin);
+            if bounds.width > 0.0
+                && bounds.height > 0.0
+                && let Some(linear) = linear_gradient(
+                    gradient,
+                    placed.right - placed.left,
+                    placed.bottom - placed.top,
+                    through,
+                )
+            {
+                renderer.fill_quad(
+                    Quad {
+                        bounds,
+                        border: iced::Border {
+                            radius: inner_radii(radius, border, area),
+                            ..iced::Border::default()
+                        },
+                        ..Quad::default()
                     },
-                    ..Quad::default()
-                },
-                iced::Background::Gradient(iced::Gradient::Linear(linear)),
-            );
+                    iced::Background::Gradient(iced::Gradient::Linear(linear)),
+                );
+            }
         }
     }
     // A rounded box whose four sides are one solid border draws it as one curved ring.
@@ -7805,6 +7881,18 @@ where
                 if let Some(allocation) = renderer.load_background(handle) {
                     self.allocations.push(allocation);
                     self.loaded.insert(*projected);
+                }
+            }
+            // CSS Backgrounds 3: the image layers under the first.
+            self.loaded_layers.clear();
+            for (projected, list) in self.tree.layers.iter().enumerate() {
+                for (at, layer) in list.iter().enumerate() {
+                    if let Layer::Image((_, handle)) = layer
+                        && let Some(allocation) = renderer.load_background(handle)
+                    {
+                        self.allocations.push(allocation);
+                        self.loaded_layers.insert((projected, at));
+                    }
                 }
             }
             self.loaded_markers.clear();
@@ -8689,9 +8777,24 @@ where
                     let paint = |renderer: &mut Renderer| match *step {
                         PaintStep::Box(index) => {
                             let root = index == prepared.positions[0].0;
-                            let image = self
-                                .loaded_background(index)
-                                .filter(|_| self.tree.paints[index].visible);
+                            // Its loaded images, the bottom layer first (CSS Backgrounds 3).
+                            let images: Vec<&(BackgroundImage, image::Handle)> = self
+                                .tree
+                                .layers
+                                .get(index)
+                                .map_or(&[][..], Vec::as_slice)
+                                .iter()
+                                .enumerate()
+                                .rev()
+                                .filter(|(at, _)| self.loaded_layers.contains(&(index, *at)))
+                                .filter_map(|(_, layer)| match layer {
+                                    Layer::Image(image) => Some(image),
+                                    Layer::Gradient { .. } => None,
+                                })
+                                .chain(self.loaded_background(index))
+                                .filter(|_| self.tree.paints[index].visible)
+                                .collect();
+                            let image = (!images.is_empty()).then_some(());
                             match (root, image, self.geometry.get(index)) {
                                 // The canvas already has the root's background and image.
                                 (true, _, _) => draw_box(
@@ -8702,7 +8805,7 @@ where
                                     index,
                                     BoxParts::Border,
                                 ),
-                                (false, Some(background), Some(Some(geometry))) => {
+                                (false, Some(()), Some(Some(geometry))) => {
                                     draw_box(
                                         &self.tree,
                                         &self.geometry,
@@ -8711,25 +8814,32 @@ where
                                         index,
                                         BoxParts::Background,
                                     );
-                                    // 14.2.1: placed from the padding edge, painted out to the
-                                    // border edge, under the border. CSS Backgrounds 3: from
-                                    // its origin box, within its clip box.
-                                    let placed = moved_rectangle(
-                                        area_rect(geometry, background.0.origin),
-                                        origin,
-                                    );
-                                    let positioning = if background.0.fixed {
-                                        viewport_box
-                                    } else {
-                                        placed
-                                    };
-                                    let area = moved_rectangle(
-                                        area_rect(geometry, background.0.clip),
-                                        origin,
-                                    )
-                                    .intersection(&clip)
-                                    .unwrap_or(Rectangle::new(origin, Size::ZERO));
-                                    draw_background_image(renderer, background, positioning, area);
+                                    for background in &images {
+                                        // 14.2.1: placed from the padding edge, painted out to
+                                        // the border edge, under the border. CSS Backgrounds 3:
+                                        // from its origin box, within its clip box.
+                                        let placed = moved_rectangle(
+                                            area_rect(geometry, background.0.origin),
+                                            origin,
+                                        );
+                                        let positioning = if background.0.fixed {
+                                            viewport_box
+                                        } else {
+                                            placed
+                                        };
+                                        let area = moved_rectangle(
+                                            area_rect(geometry, background.0.clip),
+                                            origin,
+                                        )
+                                        .intersection(&clip)
+                                        .unwrap_or(Rectangle::new(origin, Size::ZERO));
+                                        draw_background_image(
+                                            renderer,
+                                            background,
+                                            positioning,
+                                            area,
+                                        );
+                                    }
                                     renderer.with_layer(clip, |renderer| {
                                         draw_box(
                                             &self.tree,
@@ -8763,6 +8873,7 @@ where
                                     BoxParts::All,
                                     &[],
                                     None,
+                                    &[],
                                 );
                             }
                         }

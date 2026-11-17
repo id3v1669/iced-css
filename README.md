@@ -214,8 +214,12 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   lengths, percentages or `auto`, an `auto` side keeping the image's proportions),
   `background-origin` (what the image or gradient is placed against) and `background-clip`
   (where the color and image show), each `border-box`, `padding-box` or `content-box`
-  (CSS Backgrounds 3). Limits: one background layer, not a list; the `background`
-  shorthand neither sets nor resets these three; a gradient takes its origin box's size
+  (CSS Backgrounds 3). Background layers: `background-image` and the other background
+  longhands take comma-separated lists, one value per layer, first on top, a shorter list
+  repeating; the `background` shorthand takes layers too, the color in the last. Limits:
+  gradient layers all draw under image layers whatever their order; the root's layers
+  under the first do not reach the canvas; the `background` shorthand neither sets nor
+  resets these three; a gradient takes its origin box's size
   and is not repeated; `inherit` on `background-size` reads as `auto`; `text` clipping is
   not known.
 - **Gradients:** `linear-gradient()` as a `background-image` (CSS Images 3), also in the

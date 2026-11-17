@@ -2123,3 +2123,47 @@ fn aspect_ratio_takes_auto_and_a_ratio() {
         assert_eq!(parse(bad).unwrap(), PropertyResult::Invalid, "{bad}");
     }
 }
+
+#[test]
+fn background_longhands_and_shorthand_take_a_list_of_layers() {
+    let value = |input: &str| match parse(input).unwrap() {
+        PropertyResult::Parsed(parsed) => Some(parsed.value),
+        _ => None,
+    };
+    let Some(SpecifiedValue::Layers(images)) =
+        value("background-image:url(a.png), linear-gradient(red, blue), none")
+    else {
+        panic!()
+    };
+    assert_eq!(images.len(), 3);
+    assert!(matches!(images[1], SpecifiedValue::Gradient(_)));
+    assert!(matches!(
+        value("background-position:left top, 10px 20px"),
+        Some(SpecifiedValue::Layers(_))
+    ));
+    // One value stays as it was.
+    assert!(matches!(
+        value("background-image:url(a.png)"),
+        Some(SpecifiedValue::Uri(_))
+    ));
+    for bad in [
+        "background-image:url(a), inherit",
+        "background-image:url(a),",
+        "background-repeat:repeat, sideways",
+    ] {
+        assert_eq!(value(bad), None, "{bad}");
+    }
+    let Some(SpecifiedValue::Expanded(leaves)) =
+        value("background:url(a.png) no-repeat, linear-gradient(red, blue) #ffffff")
+    else {
+        panic!()
+    };
+    // The color is the last layer's; the others are lists.
+    assert!(matches!(leaves[0].value, SpecifiedValue::Color(_)));
+    assert!(matches!(&leaves[1].value, SpecifiedValue::Layers(layers) if layers.len() == 2));
+    assert!(
+        matches!(&leaves[2].value, SpecifiedValue::Layers(layers) if layers[1] == SpecifiedValue::Initial)
+    );
+    // A color before the last layer is invalid.
+    assert_eq!(value("background:red url(a.png), url(b.png)"), None);
+}

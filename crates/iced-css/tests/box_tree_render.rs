@@ -6982,3 +6982,38 @@ fn media_queries_follow_the_widget_s_own_size_when_no_viewport_is_given() {
     // A viewport the application gives wins over the widget's size.
     assert_eq!(shown(400.0, Some((1000.0, 800.0))).0, [0, 0, 255]);
 }
+
+#[test]
+fn background_layers_draw_the_first_on_top() {
+    let root = node("page", vec![node("b", vec![])]);
+    let css = "#page { background-color:#ffffff; }
+        #b { width:100px; height:40px; padding:10px;
+             background-image:linear-gradient(#ff0000, #ff0000), linear-gradient(#0000ff, #0000ff);
+             background-clip:content-box, border-box; background-origin:content-box, border-box; }";
+    let view: Element<'_, u8> = BoxTree::new(root, css).unwrap().view();
+    let mut ui = simulator(view);
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "layers");
+    // At twice the scale: the red top layer fills the content box (20 to 220 across), the
+    // blue one under it the rest of the border box.
+    let red = pixels.bounds([255, 0, 0]).unwrap();
+    assert_eq!([red[0], red[2]], [20, 219]);
+    assert_eq!(pixels.at(4, 4), [0, 0, 255]);
+}
+
+#[cfg(feature = "image")]
+#[test]
+fn an_image_layer_lies_over_a_gradient_layer() {
+    let path = scratch().join("layered");
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("tile.png"), checker_png(32)).unwrap();
+    let root = node("page", vec![node("b", vec![])]);
+    let css = "#b { width:200px; height:100px;
+        background:url(tile.png) no-repeat, linear-gradient(#00ff00, #00ff00); }";
+    let view: Element<'_, u8> = BoxTree::with_base(root, css, &path).unwrap().view();
+    let mut ui = simulator(view);
+    let pixels = Pixels::of(&ui.snapshot(&Theme::Light).unwrap(), "layered");
+    // The tile's orange at its corner, the green layer beyond it.
+    assert_eq!(pixels.at(4, 4), [230, 74, 25]);
+    assert_eq!(pixels.at(300, 150), [0, 255, 0]);
+}

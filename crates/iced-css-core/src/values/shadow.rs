@@ -21,7 +21,7 @@ pub struct ShadowValue {
 }
 
 /// Where each top-level comma of `input` is.
-fn commas(input: &str, work: &mut usize) -> Result<Vec<usize>, PropertyError> {
+pub(super) fn commas(input: &str, work: &mut usize) -> Result<Vec<usize>, PropertyError> {
     let mut found = Vec::new();
     let mut depth = 0usize;
     let mut offset = 0;
