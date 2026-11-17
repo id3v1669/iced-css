@@ -239,6 +239,8 @@ fn parse(css: &str, order: u64) -> Result<OwnedStylesheetGraph, BoxTreeError> {
         first_order: 0,
         first_declaration: NonZeroU64::MIN,
     };
+    // CSS Nesting 1: nested rules written out as rules of their own first.
+    let css = iced_css_core::syntax::flatten_nesting(css);
     let candidate = parse_separate_unicode_stylesheet(
         css.as_bytes(),
         EncodingMetadata {
@@ -772,7 +774,12 @@ static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
 
 impl Source {
     fn reach_of(sheets: &[String]) -> [PseudoReach; 3] {
-        [":hover", ":active", ":focus"].map(|pseudo| PseudoReach::of(sheets, pseudo))
+        // Read as they are cascaded: nested rules written out, so `&:hover` names its parent.
+        let flat: Vec<String> = sheets
+            .iter()
+            .map(|sheet| iced_css_core::syntax::flatten_nesting(sheet).into_owned())
+            .collect();
+        [":hover", ":active", ":focus"].map(|pseudo| PseudoReach::of(&flat, pseudo))
     }
 
     /// Whether an interaction state could restyle `node`: some `:hover`, `:active` or

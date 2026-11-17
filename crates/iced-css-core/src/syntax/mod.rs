@@ -31,6 +31,8 @@ pub use media::{
 };
 mod import;
 pub use import::{ImportError, ImportPrelude, parse_import_prelude};
+mod nesting;
+pub use nesting::flatten_nesting;
 mod statements;
 pub use statements::{Statement, StatementContext, StatementKind, Statements};
 pub mod charset;

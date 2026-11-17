@@ -1131,6 +1131,44 @@ fn aspect_ratio_gives_an_auto_height_from_the_width() {
 }
 
 #[test]
+fn nested_rules_style_as_their_written_out_forms() {
+    let widths = |css: &str| {
+        let tree = BoxTree::new(
+            node(
+                "page",
+                vec![node("a", vec![node("b", vec![])]), node("c", vec![])],
+            ),
+            css,
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        [1, 2, 3].map(|at| {
+            let border = geometry[at].as_ref().unwrap().border;
+            border.right - border.left
+        })
+    };
+    assert_eq!(
+        widths(
+            "#page { height:1px; #a { width:100px; #b { width:50px; } & + #c { width:20px; } } }"
+        ),
+        [100.0, 50.0, 20.0]
+    );
+    // A group nested in a rule goes around it.
+    assert_eq!(
+        widths("#a { width:100px; @media (min-width: 1px) { width:60px; } }")[0],
+        100.0
+    );
+    let tree = BoxTree::new(
+        node("page", vec![node("a", vec![])]),
+        "#a { width:100px; @supports (width: 1px) { width:60px; } }",
+    )
+    .unwrap();
+    let geometry = tree.layout(400.0, None).unwrap();
+    let border = geometry[1].as_ref().unwrap().border;
+    assert_eq!(border.right - border.left, 60.0);
+}
+
+#[test]
 fn text_leaves_wrap_at_their_used_width_and_drive_box_heights() {
     let root = node(
         "page",

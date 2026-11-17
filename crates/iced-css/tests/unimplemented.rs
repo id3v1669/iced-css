@@ -102,7 +102,6 @@ css_todo_test!(at_import, "@import");
 css_todo_test!(at_font_face, "@font-face");
 css_todo_test!(at_supports, "@supports");
 css_todo_test!(at_layer, "@layer");
-css_todo_test!(css_nesting, "nesting with &");
 css_todo_test!(at_charset_namespace, "@charset / @namespace");
 
 css_todo_test!(unknown_property_warn_skip, "unknown property");

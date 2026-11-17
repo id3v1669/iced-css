@@ -73,6 +73,12 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   invalid (the lists are not forgiving), and `:has()` is not known. A structural pseudo-class counts the
   element's siblings each time it is tried, so on a box with thousands of siblings it is
   slow. Not read: `:target`, `:enabled`, `:disabled`, `:checked`.
+- **Nesting:** style rules nested in style rules (CSS Nesting 1), with `&` for the parent
+  and a nested selector without one taken as the parent's descendant, and `@media` and
+  `@supports` nested in a style rule. The widget writes them out as rules of their own
+  before parsing. Limits: a nested list makes one rule per pair, so each weighs as its own
+  pair does rather than as `:is()` of the parents; source positions in reports are those
+  of the written-out sheet; other at-rules nested in a style rule are not read.
 - **`initial` and `unset`:** (CSS Cascade 4) on any property, shorthands included: `initial`
   is the initial value, and `unset` inherits an inherited property and is `initial`
   otherwise. `revert` is not known.
