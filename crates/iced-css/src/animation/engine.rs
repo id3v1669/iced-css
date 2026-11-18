@@ -353,6 +353,26 @@ impl ProgressEngine {
             .map(Some)
             .map_err(EngineError::Progress)
     }
+    /// The engine's time: the last it advanced to.
+    #[must_use]
+    pub fn now(&self) -> Option<Instant> {
+        self.clock.last()
+    }
+
+    /// When a binding's timing window starts moving (its delay over) and ends.
+    pub fn window(
+        &self,
+        source: &SourceRef,
+        property: PropertyId,
+    ) -> Result<Option<(Instant, Instant)>, EngineError> {
+        let instance = self.instance(source)?;
+        Ok(self
+            .bindings
+            .iter()
+            .find(|b| b.instance == instance && b.property == property)
+            .map(|binding| (binding.timing.starts_at(), binding.timing.ends_at())))
+    }
+
     /// Where a binding's timing window is at the engine's time, and the instant it ends:
     /// for telling when a delay is over and a run complete. `None` without the binding.
     pub fn phase(

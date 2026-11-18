@@ -3894,6 +3894,11 @@ impl Interaction {
                     .iter()
                     .flatten()
                     .any(|transitions| !transitions.is_empty())
+                // Running ones the new styling no longer transitions are cancelled there.
+                || self
+                    .transitions
+                    .as_ref()
+                    .is_some_and(|held| held.lock().is_animating())
             {
                 let before = base.unpresented_variant(previous);
                 let held = self

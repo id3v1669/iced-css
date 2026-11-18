@@ -14,12 +14,72 @@ pub const MAX_SUBSTITUTED_BYTES: usize = 64 * 1024;
 /// `var()` in a fallback in a fallback, this deep at most.
 const MAX_DEPTH: usize = 32;
 
-/// Whether a declaration's value holds a `var()` and so parses at computed-value time.
+/// Whether a declaration's value holds a `var()` and so parses at computed-value time: a
+/// `var(` function token, not that text in a string or comment.
 pub fn has_reference(value: &str) -> bool {
-    value
+    // Cheap first: most values have no `var(` text at all.
+    if !value
         .as_bytes()
         .windows(4)
         .any(|window| window.eq_ignore_ascii_case(b"var("))
+    {
+        return false;
+    }
+    let mut work = value.len().saturating_mul(256).saturating_add(4096);
+    let mut offset = 0;
+    while offset < value.len() {
+        let Ok(Some(token)) = scan_token_budget(&value[offset..], &mut work) else {
+            // Past what it can read: as it reads to the parser, with `var(` in it.
+            return true;
+        };
+        offset += token.raw.len();
+        if token.kind == TokenKind::Function && token.raw.eq_ignore_ascii_case("var(") {
+            return true;
+        }
+    }
+    false
+}
+
+/// The custom property names a value's `var()` references name, fallbacks' included.
+fn referenced<'a>(raw: &'a str, work: &mut usize) -> Vec<&'a str> {
+    let mut names = Vec::new();
+    let mut offset = 0;
+    // After `var(`: waiting for its name, past white space.
+    let mut expecting = false;
+    let mut dash = None;
+    while offset < raw.len() {
+        let Some(Some(token)) = scan_token_budget(&raw[offset..], work).ok() else {
+            break;
+        };
+        let at = offset;
+        offset += token.raw.len();
+        if token.kind == TokenKind::Function && token.raw.eq_ignore_ascii_case("var(") {
+            expecting = true;
+            dash = None;
+            continue;
+        }
+        if !expecting || matches!(token.kind, TokenKind::Space | TokenKind::Comment) {
+            continue;
+        }
+        // `--name`: a dash, then `-name` right after it.
+        match dash {
+            None if token.kind == TokenKind::Delim && token.raw == "-" => dash = Some(at),
+            Some(from)
+                if token.kind == TokenKind::Ident
+                    && token.raw.starts_with('-')
+                    && from + 1 == at =>
+            {
+                names.push(&raw[from..offset]);
+                expecting = false;
+                dash = None;
+            }
+            _ => {
+                expecting = false;
+                dash = None;
+            }
+        }
+    }
+    names
 }
 
 /// One `var(` and everything through its closing parenthesis.
@@ -135,6 +195,11 @@ pub fn substitute(
 /// An element's computed custom properties: what it inherits, under what its own
 /// declarations give, with each `var()` in them replaced. A property that refers to
 /// itself, directly or through others, is invalid, and so is each one in the cycle.
+///
+/// The CSS-wide keywords default it: `initial` is the guaranteed-invalid value, and
+/// `inherit`, `unset` and `revert` (it inherits) take the parent's. Only a name in a
+/// `var()` is a reference; the properties are resolved without recursion, however long a
+/// chain of them is.
 pub fn compute(inherited: &CustomValues, own: &[(&str, &str)], work: &mut usize) -> CustomValues {
     #[derive(Clone, Copy, PartialEq)]
     enum State {
@@ -142,87 +207,67 @@ pub fn compute(inherited: &CustomValues, own: &[(&str, &str)], work: &mut usize)
         Visiting,
         Done,
     }
-    struct Pass<'a, 'w> {
-        own: &'a [(&'a str, &'a str)],
-        state: Vec<State>,
-        /// The properties being resolved, outermost first.
-        stack: Vec<usize>,
-        /// In a cycle of references: invalid whatever its fallbacks.
-        cyclic: Vec<bool>,
-        values: CustomValues,
-        work: &'w mut usize,
-    }
-    impl Pass<'_, '_> {
-        fn resolve(&mut self, at: usize) {
-            self.state[at] = State::Visiting;
-            self.stack.push(at);
-            let (name, raw) = self.own[at];
-            let mut out = String::new();
-            let computed = {
-                // Resolve what this value refers to first, then read it.
-                let mut offset = 0;
-                let mut names = Vec::new();
-                let mut dash = None;
-                while offset < raw.len() {
-                    let Some(Some(token)) = scan_token_budget(&raw[offset..], self.work).ok()
-                    else {
-                        break;
-                    };
-                    let at = offset;
-                    offset += token.raw.len();
-                    // `--name`: a dash, then `-name` right after it.
-                    if token.kind == TokenKind::Ident && token.raw.starts_with('-') {
-                        if let Some(from) = dash.filter(|from| from + 1 == at) {
-                            names.push(&raw[from..offset]);
-                        }
-                    }
-                    dash = (token.kind == TokenKind::Delim && token.raw == "-").then_some(at);
-                }
-                for referred in names {
-                    match self.own.iter().position(|(other, _)| *other == referred) {
-                        // Everything from that property down to this one is in the cycle.
-                        Some(other) if self.state[other] == State::Visiting => {
-                            let from = self.stack.iter().position(|on| *on == other);
-                            for member in &self.stack[from.unwrap_or(0)..] {
-                                self.cyclic[*member] = true;
-                            }
-                        }
-                        Some(other) if self.state[other] == State::Raw => self.resolve(other),
-                        _ => {}
-                    }
-                }
-                let values = &self.values;
-                let lookup = |name: &str| values.get(name).cloned().flatten();
-                (!self.cyclic[at])
-                    .then(|| substitute_at(raw, &lookup, self.work, 0, &mut out))
-                    .flatten()
-                    .map(|()| out)
-            };
-            self.values.insert(name.to_owned(), computed);
-            self.stack.pop();
-            self.state[at] = State::Done;
-        }
-    }
     // Own declarations replace inherited values before anything is read: a reference to a
     // name declared here is to this element's value, never the inherited one.
     let mut values = inherited.clone();
     for (name, _) in own {
         values.remove(*name);
     }
-    let mut pass = Pass {
-        own,
-        state: vec![State::Raw; own.len()],
-        stack: Vec::new(),
-        cyclic: vec![false; own.len()],
-        values,
-        work,
-    };
-    for at in 0..own.len() {
-        if pass.state[at] == State::Raw {
-            pass.resolve(at);
+    let mut state = vec![State::Raw; own.len()];
+    // In a cycle of references: invalid whatever its fallbacks.
+    let mut cyclic = vec![false; own.len()];
+    // The properties being resolved, outermost first, each with what it refers to and
+    // how many of those it has gone through.
+    let mut stack: Vec<(usize, Vec<&str>, usize)> = Vec::new();
+    for start in 0..own.len() {
+        if state[start] != State::Raw {
+            continue;
+        }
+        state[start] = State::Visiting;
+        stack.push((start, referenced(own[start].1, work), 0));
+        while let Some((at, names, next)) = stack.last_mut() {
+            let at = *at;
+            if let Some(referred) = names.get(*next).copied() {
+                *next += 1;
+                match own.iter().position(|(other, _)| *other == referred) {
+                    // Everything from that property down to this one is in the cycle.
+                    Some(other) if state[other] == State::Visiting => {
+                        let from = stack.iter().position(|(on, _, _)| *on == other);
+                        for (member, _, _) in &stack[from.unwrap_or(0)..] {
+                            cyclic[*member] = true;
+                        }
+                    }
+                    Some(other) if state[other] == State::Raw => {
+                        state[other] = State::Visiting;
+                        stack.push((other, referenced(own[other].1, work), 0));
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            // Everything it refers to is resolved: read it.
+            let (name, raw) = own[at];
+            let keyword = raw.trim();
+            let computed = if keyword.eq_ignore_ascii_case("initial") {
+                None
+            } else if ["inherit", "unset", "revert", "revert-layer"]
+                .iter()
+                .any(|word| keyword.eq_ignore_ascii_case(word))
+            {
+                inherited.get(name).cloned().flatten()
+            } else if cyclic[at] {
+                None
+            } else {
+                let lookup = |name: &str| values.get(name).cloned().flatten();
+                let mut out = String::new();
+                substitute_at(raw, &lookup, work, 0, &mut out).map(|()| out)
+            };
+            values.insert(name.to_owned(), computed);
+            state[at] = State::Done;
+            stack.pop();
         }
     }
-    pass.values
+    values
 }
 
 #[cfg(test)]
@@ -337,5 +382,60 @@ mod tests {
             Some(" 9px".to_owned())
         );
         assert_eq!(got["--b"].as_deref(), Some("2px"));
+    }
+
+    #[test]
+    fn only_var_names_are_references_and_keywords_default() {
+        let inherited = values(&[("--p", Some("5px"))]);
+        let mut work = 10_000_000;
+        // A bare `--name` is a value, not a reference: no cycle.
+        let got = compute(&inherited, &[("--name", "--name")], &mut work);
+        assert_eq!(got["--name"].as_deref(), Some("--name"));
+        // `initial` is the guaranteed-invalid value; `inherit` and `unset` the parent's.
+        let got = compute(
+            &inherited,
+            &[("--w", "initial"), ("--p", "inherit"), ("--q", " unset ")],
+            &mut work,
+        );
+        assert_eq!(got["--w"], None);
+        assert_eq!(got["--p"].as_deref(), Some("5px"));
+        assert_eq!(got["--q"], None, "the parent has none");
+        // A long chain resolves without recursion: each refers to the next.
+        let names: Vec<String> = (0..3000).map(|at| format!("--c{at}")).collect();
+        let raws: Vec<String> = (0..3000)
+            .map(|at| {
+                if at == 2999 {
+                    "1px".to_owned()
+                } else {
+                    format!("var(--c{})", at + 1)
+                }
+            })
+            .collect();
+        let got = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                let own: Vec<(&str, &str)> = names
+                    .iter()
+                    .zip(&raws)
+                    .map(|(name, raw)| (name.as_str(), raw.as_str()))
+                    .collect();
+                let mut work = 100_000_000;
+                compute(&CustomValues::new(), &own, &mut work)["--c0"].clone()
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(
+            got.map(|text| text.replace("/**/", "")).as_deref(),
+            Some("1px")
+        );
+    }
+
+    #[test]
+    fn var_text_in_strings_and_comments_is_no_reference() {
+        assert!(!has_reference("\"var(--x)\""));
+        assert!(!has_reference("red /* var( */"));
+        assert!(has_reference("VAR(--x)"));
+        assert!(has_reference("1px var(--x, \"a\")"));
     }
 }

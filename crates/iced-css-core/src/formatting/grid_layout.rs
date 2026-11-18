@@ -426,6 +426,15 @@ impl Cells {
         }
         Ok(true)
     }
+    /// Makes room for `minor` tracks across, the new ones empty.
+    fn widen(&mut self, minor: usize) {
+        if minor > self.minor {
+            self.minor = minor;
+            for row in &mut self.rows {
+                row.resize(minor, false);
+            }
+        }
+    }
     fn fill(&mut self, major: [usize; 2], minor: [usize; 2]) {
         while self.rows.len() < major[1] {
             self.rows.push(vec![false; self.minor]);
@@ -523,15 +532,21 @@ fn place(
                 .find(|(line, _)| *line == major_lines[0])
                 .map_or(0, |(_, cursor)| *cursor)
         };
-        let mut found = None;
-        for start in (from..=minor_count.saturating_sub(wide)).chain(0..from) {
-            if cells.fits(major_lines, [start, start + wide], work)? {
-                found = Some(start);
+        // 8.5 step 2: the first free place from there, past the grid's end if need be,
+        // where new implicit tracks are made.
+        let mut start = from;
+        loop {
+            *work = work.checked_sub(1).ok_or(FlowError::Work)?;
+            if start + wide > LIMIT {
+                start = LIMIT.saturating_sub(wide);
                 break;
             }
+            cells.widen(start + wide);
+            if cells.fits(major_lines, [start, start + wide], work)? {
+                break;
+            }
+            start += 1;
         }
-        // Nowhere free: it overlaps at the cursor.
-        let start = found.unwrap_or(from.min(minor_count.saturating_sub(wide)));
         let minor_lines = [start, start + wide];
         cells.fill(major_lines, minor_lines);
         areas[at] = Some(area(major_lines, minor_lines));
@@ -540,6 +555,8 @@ fn place(
             None => cursors.push((major_lines[0], minor_lines[1])),
         }
     }
+    // Step 3: what step 2 made is part of the minor axis.
+    let minor_count = minor_count.max(cells.minor);
     // Step 4: the rest, by the auto-placement cursor.
     let (mut cursor_major, mut cursor_minor) = (0usize, 0usize);
     for (at, span) in spans.iter().enumerate() {
@@ -648,6 +665,24 @@ impl SubgridAxis {
             Self::Edges(edges) => edges.len(),
         }
     }
+}
+
+/// The parent's track edges a subgrid spans, in its content box: its margin, border and
+/// padding at each end (`frame`) take room from its edge tracks, never letting an item
+/// into them.
+fn inset_edges(edges: &[[f32; 2]], frame: [f32; 2]) -> Vec<[f32; 2]> {
+    let (Some(first), Some(last)) = (edges.first(), edges.last()) else {
+        return Vec::new();
+    };
+    let start = first[0] + frame[0];
+    let end = (last[1] - frame[1]).max(start);
+    edges
+        .iter()
+        .map(|edge| {
+            let from = edge[0].clamp(start, end) - start;
+            [from, (edge[1].clamp(start, end) - start).max(from)]
+        })
+        .collect()
 }
 
 /// What one item asks of the tracks it spans.
@@ -1405,16 +1440,11 @@ impl Solver<'_> {
             // A subgrid takes the columns it spans as they are, and is measured for rows.
             let mut taken = [None, None];
             if self.subgridded(child, 1) {
-                let frame = self.subgrid_frame(child, 1, area_width)[0];
-                let left = column_edges.get(area[1][0]).map_or(0.0, |edge| edge[0]) + frame;
-                taken[1] = Some(SubgridAxis::Edges(
-                    column_edges
-                        .get(area[1][0]..area[1][1])
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|edge| [edge[0] - left, edge[1] - left])
-                        .collect(),
-                ));
+                let frame = self.subgrid_frame(child, 1, area_width);
+                taken[1] = Some(SubgridAxis::Edges(inset_edges(
+                    column_edges.get(area[1][0]..area[1][1]).unwrap_or_default(),
+                    frame,
+                )));
             }
             let row_subgrid = self.subgridded(child, 0);
             if row_subgrid {
@@ -1530,14 +1560,11 @@ impl Solver<'_> {
         {
             // A subgrid in rows is laid again in the rows it spans, as sized.
             if self.subgridded(child, 0) {
-                let frame = self.subgrid_frame(child, 0, area_width)[0];
-                let top = row_edges.get(area[0][0]).map_or(0.0, |edge| edge[0]) + frame;
-                let edges = row_edges
-                    .get(area[0][0]..area[0][1])
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|edge| [edge[0] - top, edge[1] - top])
-                    .collect();
+                let frame = self.subgrid_frame(child, 0, area_width);
+                let edges = inset_edges(
+                    row_edges.get(area[0][0]..area[0][1]).unwrap_or_default(),
+                    frame,
+                );
                 self.subgrids.entry(child).or_insert([None, None])[0] =
                     Some(SubgridAxis::Edges(edges));
                 self.lay_item(child, cb, width)?;

@@ -3072,9 +3072,18 @@ impl BoxTreeAnimations {
                 });
                 match found {
                     Some(at) => {
-                        let state = self.keyframed[at].state;
+                        let old = self.keyframed[at].animation.clone();
+                        // A new length, delay or count: on from the time it has run, timed anew.
+                        let retimed = old.duration != animation.duration
+                            || old.delay != animation.delay
+                            || old.iterations != animation.iterations;
+                        let local = retimed.then(|| self.local_time(at)).flatten();
                         self.keyframed[at].animation = animation.clone();
                         self.keyframed[at].projected = projected;
+                        if let Some(local) = local {
+                            self.retime(at, local + old.delay - animation.delay, now);
+                        }
+                        let state = self.keyframed[at].state;
                         match (state, animation.paused) {
                             // Paused: held where its run has it, its timing let go.
                             (KeyState::Running, true) => {
@@ -3164,6 +3173,12 @@ impl BoxTreeAnimations {
         }
         let length = animation.duration.max(0.0);
         let element = self.keyframed[at].element();
+        let millis = |value: f32| Duration::from_secs_f64(f64::from(value.max(0.0)) / 1000.0);
+        // Nothing to run, but a delay to wait out first: it starts and ends after it.
+        if (length == 0.0 || animation.iterations <= 0.0) && animation.delay > 0.0 {
+            self.start_run(at, 0.0, Duration::ZERO, millis(animation.delay), now);
+            return;
+        }
         if length == 0.0 || animation.iterations <= 0.0 {
             self.keyframed[at].state = KeyState::Done;
             self.keyframed[at].announced = true;
@@ -3179,21 +3194,37 @@ impl BoxTreeAnimations {
             });
             return;
         }
-        let millis = |value: f32| Duration::from_secs_f64(f64::from(value.max(0.0)) / 1000.0);
         if animation.delay >= 0.0 {
             self.start_run(at, 0.0, Duration::ZERO, millis(animation.delay), now);
             return;
         }
         // A negative delay has used up that much of its time already.
-        let skipped = -animation.delay / length;
+        self.seek(at, -animation.delay, now);
+    }
+
+    /// Sets keyframe animation `at` going `elapsed` milliseconds into its active time: in
+    /// the iteration that holds, or ended when that is past its last.
+    fn seek(&mut self, at: usize, elapsed: f32, now: Instant) {
+        let animation = self.keyframed[at].animation.clone();
+        let length = animation.duration.max(0.0);
+        let skipped = if length > 0.0 {
+            elapsed / length
+        } else {
+            f32::INFINITY
+        };
         let run = skipped.floor();
-        if self.keyframed[at]
-            .runs()
-            .is_some_and(|runs| run >= runs as f32)
+        if animation.iterations <= 0.0
+            || length == 0.0
+            || self.keyframed[at]
+                .runs()
+                .is_some_and(|runs| run >= runs as f32)
         {
+            let _ = self
+                .engine
+                .cancel(&self.keyframed[at].source, &clock_selection());
             self.keyframed[at].state = KeyState::Done;
             self.events.push(AnimationEvent::AnimationEnd {
-                element,
+                element: self.keyframed[at].element(),
                 pseudo: self.keyframed[at].pseudo(),
                 name: animation.name,
             });
@@ -3201,6 +3232,72 @@ impl BoxTreeAnimations {
         }
         self.keyframed[at].run = run as u32;
         self.start_run(at, skipped.fract(), Duration::ZERO, Duration::ZERO, now);
+    }
+
+    /// Milliseconds since keyframe animation `at`'s delay ended (negative while it runs),
+    /// on its timing now; `None` once it has ended.
+    fn local_time(&self, at: usize) -> Option<f32> {
+        let running = &self.keyframed[at];
+        let length = running.animation.duration.max(0.0);
+        let millis = |duration: Duration| duration.as_secs_f32() * 1000.0;
+        match running.state {
+            KeyState::Done => None,
+            KeyState::Paused(place) => Some((running.run as f32 + place) * length),
+            KeyState::Running => match self.engine.phase(&running.source, clock_property()) {
+                Ok(Some((TimingPhase::Delayed, _))) => {
+                    let (starts, _) = self.run_window(running)?;
+                    let now = self.engine_now()?;
+                    Some(-millis(starts.saturating_duration_since(now)))
+                }
+                _ => {
+                    let progress = self.keyframe_sample(running).unwrap_or(1.0);
+                    let place = running.span.0 + progress * (running.span.1 - running.span.0);
+                    Some((running.run as f32 + place) * length)
+                }
+            },
+        }
+    }
+
+    /// Puts keyframe animation `at` at `local` milliseconds after its (new) delay ended,
+    /// as a timing change does: running from there, or held there when paused.
+    fn retime(&mut self, at: usize, local: f32, now: Instant) {
+        let length = self.keyframed[at].animation.duration.max(0.0);
+        match self.keyframed[at].state {
+            KeyState::Done => {}
+            KeyState::Paused(_) => {
+                let at_time = (local.max(0.0) / length.max(f32::EPSILON)).max(0.0);
+                let run = at_time.floor();
+                let place = if length > 0.0 { at_time.fract() } else { 1.0 };
+                self.keyframed[at].run = self.keyframed[at]
+                    .runs()
+                    .map_or(run as u32, |runs| (run as u32).min(runs.saturating_sub(1)));
+                self.keyframed[at].state = KeyState::Paused(place);
+            }
+            KeyState::Running => {
+                let _ = self
+                    .engine
+                    .cancel(&self.keyframed[at].source, &clock_selection());
+                if local < 0.0 {
+                    self.keyframed[at].run = 0;
+                    let delay = Duration::from_secs_f64(f64::from(-local) / 1000.0);
+                    self.start_run(at, 0.0, Duration::ZERO, delay, now);
+                } else {
+                    self.seek(at, local, now);
+                }
+            }
+        }
+    }
+
+    /// When the run in progress of a keyframe animation starts moving and ends.
+    fn run_window(&self, running: &Keyframed) -> Option<(Instant, Instant)> {
+        self.engine
+            .window(&running.source, clock_property())
+            .ok()
+            .flatten()
+    }
+
+    fn engine_now(&self) -> Option<Instant> {
+        self.engine.now()
     }
 
     /// Times the run in progress of keyframe animation `at` from `from` to its iteration's
@@ -3273,7 +3370,9 @@ impl BoxTreeAnimations {
                 return;
             };
             let next = self.keyframed[at].run + 1;
-            if self.keyframed[at].runs().is_none_or(|runs| next < runs) {
+            let empty = self.keyframed[at].animation.duration <= 0.0
+                || self.keyframed[at].animation.iterations <= 0.0;
+            if !empty && self.keyframed[at].runs().is_none_or(|runs| next < runs) {
                 self.keyframed[at].run = next;
                 self.events.push(AnimationEvent::AnimationIteration {
                     element,
@@ -3313,23 +3412,51 @@ impl BoxTreeAnimations {
             .map(|running| tree.keyframe_rule(&running.animation.name))
             .collect();
         let frames = rules.iter().flatten().map(Vec::len).max().unwrap_or(0);
-        let mut layers: Vec<Option<BoxTree>> = Vec::with_capacity(frames);
-        for frame in 0..frames {
-            let layer: Vec<crate::box_tree::KeyframeAt> = self
-                .keyframed
-                .iter()
-                .zip(&rules)
-                .filter(|(_, rule)| rule.as_ref().is_some_and(|rule| frame < rule.len()))
-                .map(|(running, _)| {
-                    (
-                        tree.originals[running.projected],
-                        running.side,
-                        running.animation.name.clone(),
-                        frame,
-                    )
-                })
-                .collect();
-            layers.push(tree.keyframe_layer(&layer));
+        // Each layer holds one animation per target at most: two animations of one element
+        // are read in layers of their own (rounds), so neither reads the other's values.
+        let rounds: Vec<usize> = (0..self.keyframed.len())
+            .map(|at| {
+                let running = &self.keyframed[at];
+                self.keyframed[..at]
+                    .iter()
+                    .zip(&rules)
+                    .filter(|(other, rule)| {
+                        rule.is_some()
+                            && other.projected == running.projected
+                            && other.side == running.side
+                    })
+                    .count()
+            })
+            .collect();
+        let round_count = rounds.iter().max().map_or(0, |most| most + 1);
+        let mut layers: Vec<Vec<Option<BoxTree>>> = Vec::with_capacity(round_count);
+        for round in 0..round_count {
+            let mut of_round = Vec::with_capacity(frames);
+            for frame in 0..frames {
+                let layer: Vec<crate::box_tree::KeyframeAt> = self
+                    .keyframed
+                    .iter()
+                    .zip(&rules)
+                    .zip(&rounds)
+                    .filter(|((_, rule), own)| {
+                        **own == round && rule.as_ref().is_some_and(|rule| frame < rule.len())
+                    })
+                    .map(|((running, _), _)| {
+                        (
+                            tree.originals[running.projected],
+                            running.side,
+                            running.animation.name.clone(),
+                            frame,
+                        )
+                    })
+                    .collect();
+                of_round.push(if layer.is_empty() {
+                    None
+                } else {
+                    tree.keyframe_layer(&layer)
+                });
+            }
+            layers.push(of_round);
         }
         let animatable = |property: PropertyId| {
             matches!(
@@ -3341,7 +3468,8 @@ impl BoxTreeAnimations {
                 )
             )
         };
-        for (running, rule) in self.keyframed.iter_mut().zip(&rules) {
+        for ((running, rule), round) in self.keyframed.iter_mut().zip(&rules).zip(&rounds) {
+            let layers = &layers[*round];
             running.tracks.clear();
             let Some(rule) = rule else { continue };
             let projected = running.projected;
@@ -3464,6 +3592,53 @@ impl BoxTreeAnimations {
                 if !list.is_empty() {
                     targets.push((format!("{id}{suffix}"), list));
                 }
+            }
+        }
+        // 3: a running transition whose property its target no longer transitions is
+        // cancelled, and its end value shows at once.
+        let still = |id: &str, property: PropertyId| -> bool {
+            let Some((projected, generated)) = to.target_of(id) else {
+                return true;
+            };
+            let list = match generated {
+                None => &to.transitions[projected],
+                Some(key) => {
+                    let side = (usize::MAX - key) % 2;
+                    &to.generated_transitions[projected][side]
+                }
+            };
+            list.iter().any(|transition| {
+                transition
+                    .properties
+                    .as_ref()
+                    .is_none_or(|longhands| longhands.contains(&property))
+            })
+        };
+        let work = NonZeroUsize::new(100_000).expect("positive");
+        let mut dropped = Vec::new();
+        self.tracks.retain(|track| {
+            let keep = track.capture != to.source.capture || still(&track.id, track.property);
+            if !keep {
+                dropped.push((track.id.clone(), track.property));
+            }
+            keep
+        });
+        for (id, property) in dropped {
+            if let (Some(source), Ok(selection)) = (
+                self.sources.get(&id),
+                AnimationSelection::new(&[property], work),
+            ) {
+                let _ = self.engine.cancel(source, &selection);
+            }
+            self.events.push(AnimationEvent::TransitionCancel {
+                element: element_of(&id),
+                pseudo: pseudo_of(&id),
+                property: property.descriptor().name,
+            });
+            if !self.tracks.iter().any(|track| track.id == id)
+                && let Some(source) = self.sources.remove(&id)
+            {
+                let _ = self.engine.remove_source(&source);
             }
         }
         for (id, transitions) in targets {
@@ -3718,8 +3893,23 @@ impl BoxTreeAnimations {
                     })
                 }),
         );
-        if !list.is_empty() {
-            presented.presentation = Some(Arc::new(list));
+        // Of two values for one target's field, the later wins (a transition over a
+        // keyframe value, a later animation over an earlier one): keep only it.
+        let mut seen: Vec<((usize, Option<usize>), Field)> = Vec::new();
+        let mut kept: Vec<Presented> = Vec::with_capacity(list.len());
+        for entry in list.into_iter().rev() {
+            let Some(target) = tree.target_of(&entry.id) else {
+                continue;
+            };
+            if seen.contains(&(target, entry.field)) {
+                continue;
+            }
+            seen.push((target, entry.field));
+            kept.push(entry);
+        }
+        kept.reverse();
+        if !kept.is_empty() {
+            presented.presentation = Some(Arc::new(kept));
             presented.present();
         }
         presented

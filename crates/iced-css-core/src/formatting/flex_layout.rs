@@ -250,6 +250,26 @@ impl Solver<'_> {
         geometry.border.bottom += delta;
     }
 
+    /// Lays `node` out again at content height `height`, unless it has it already: what it
+    /// holds moves with the size it was given (grown, shrunk or stretched).
+    pub(super) fn relay_at_height(
+        &mut self,
+        node: usize,
+        cb: Containing,
+        height: f32,
+    ) -> Result<(), FlowError> {
+        let content = self.geometry[node].content;
+        if ((content.bottom - content.top) - height).abs() <= 0.01 {
+            return Ok(());
+        }
+        let width = content.right - content.left;
+        self.forced_heights.insert(node, height);
+        self.lay_item(node, cb, width)?;
+        // Its own limits may still have it otherwise; the container's size stands.
+        self.set_content_height(node, height);
+        Ok(())
+    }
+
     /// Lays `node` out at the origin with content width `width`, as a formatting context of
     /// its own, and returns its border box height.
     pub(super) fn lay_item(
@@ -451,7 +471,7 @@ impl Solver<'_> {
             let mut tallest = 0.0_f32;
             for item in line.iter_mut() {
                 if flex.column {
-                    self.set_content_height(item.node, item.used);
+                    self.relay_at_height(item.node, item_cb, item.used)?;
                 } else {
                     let border_height = self.lay_item(item.node, item_cb, item.used)?;
                     item.cross = border_height + item.margin[0] + item.margin[2];
@@ -532,11 +552,23 @@ impl Solver<'_> {
             for item in line {
                 let value = &self.boxes[item.node];
                 let align = value.flex_item.align.unwrap_or(flex.align_items);
-                let (before, after) = if flex.column {
-                    (value.margin[0] == Dim::Auto, value.margin[2] == Dim::Auto)
-                } else {
-                    (value.margin[3] == Dim::Auto, value.margin[1] == Dim::Auto)
+                // Margins by flow: a mirrored axis starts at the physical end side.
+                let margins = item.margin;
+                let auto = |side: usize| value.margin[side] == Dim::Auto;
+                let flow = |sides: [usize; 2], reversed: bool| {
+                    if reversed {
+                        [sides[1], sides[0]]
+                    } else {
+                        sides
+                    }
                 };
+                let (main_sides, cross_sides) = if flex.column {
+                    (flow([0, 2], main_reversed), flow([3, 1], cross_reversed))
+                } else {
+                    (flow([3, 1], main_reversed), flow([0, 2], cross_reversed))
+                };
+                let (before, after) = (auto(main_sides[0]), auto(main_sides[1]));
+                let cross_autos = (auto(cross_sides[0]), auto(cross_sides[1]));
                 let lead = if before { each_auto } else { 0.0 };
                 let trail = if after { each_auto } else { 0.0 };
                 let geometry = self.geometry[item.node];
@@ -545,15 +577,20 @@ impl Solver<'_> {
                     geometry.border.bottom - geometry.border.top,
                 );
                 // Across the line: stretch an auto size, or place within the line.
-                let [mt, mr, mb, ml] = item.margin;
-                let (cross_margin_start, cross_margin_end, cross_border) = if flex.column {
-                    (ml, mr, border_width)
+                let (cross_margin_start, cross_margin_end) =
+                    (margins[cross_sides[0]], margins[cross_sides[1]]);
+                let mut cross_border = if flex.column {
+                    border_width
                 } else {
-                    (mt, mb, border_height)
+                    border_height
                 };
                 let room = cross_size - cross_margin_start - cross_margin_end;
-                let mut cross_border = cross_border;
-                if align == FlexAlign::Stretch && !flex.column && value.height == Dim::Auto {
+                // 8.1: auto margins across take the free space, and keep it from stretching.
+                if align == FlexAlign::Stretch
+                    && !flex.column
+                    && value.height == Dim::Auto
+                    && cross_autos == (false, false)
+                {
                     let frame = border_height - (geometry.content.bottom - geometry.content.top);
                     let stretched = clamp(
                         room - frame,
@@ -561,16 +598,22 @@ impl Solver<'_> {
                         value.max_height.vertical(inner.height),
                     )
                     .max(0.0);
-                    self.set_content_height(item.node, stretched);
+                    self.relay_at_height(item.node, item_cb, stretched)?;
                     cross_border = stretched + frame;
                 }
-                let within = match align {
-                    FlexAlign::Stretch | FlexAlign::Start => 0.0,
-                    FlexAlign::End => room - cross_border,
-                    FlexAlign::Center => (room - cross_border) / 2.0,
+                let free_across = room - cross_border;
+                let within = match cross_autos {
+                    (true, true) => free_across.max(0.0) / 2.0,
+                    (true, false) => free_across.max(0.0),
+                    (false, true) => 0.0,
+                    (false, false) => match align {
+                        FlexAlign::Stretch | FlexAlign::Start => 0.0,
+                        FlexAlign::End => free_across,
+                        FlexAlign::Center => free_across / 2.0,
+                    },
                 };
                 let outer_main = item.used + item.frame + lead + trail;
-                let main_margin_start = if flex.column { mt } else { ml };
+                let main_margin_start = margins[main_sides[0]];
                 // Offsets from the content box's start edges, before any reversal.
                 let main_offset = main_at + lead + main_margin_start;
                 let cross_offset = cross_at + cross_margin_start + within;

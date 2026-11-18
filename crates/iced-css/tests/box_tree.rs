@@ -1438,6 +1438,230 @@ fn nth_child_of_counts_only_the_siblings_its_list_selects() {
 }
 
 #[test]
+fn stylesheet_review_regressions() {
+    let width = |css: &str| {
+        let tree = BoxTree::new(node("page", vec![node("a", vec![])]), css).unwrap();
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        border.right - border.left
+    };
+    // `var(` in a string or comment is no reference: the declaration stands.
+    assert_eq!(width("#a { height:1px; width:30px /* var( */; }"), 30.0);
+    // `initial` makes a custom property guaranteed-invalid: the fallback is taken.
+    assert_eq!(
+        width("#a { height:1px; --w: initial; width: var(--w, 20px); }"),
+        20.0
+    );
+    // `inherit` takes the parent's.
+    assert_eq!(
+        width("#page { --w: 40px; } #a { height:1px; --w: inherit; width: var(--w); }"),
+        40.0
+    );
+    // Declarations after a nested rule stay after it.
+    assert_eq!(
+        width("#a { height:1px; & { width:10px; } width:50px; }"),
+        50.0
+    );
+    // `&` in an attribute string is text, not the parent.
+    assert_eq!(
+        width("#a { height:1px; width:70px; } #page { [title=\"&\"] { width:10px; } }"),
+        70.0
+    );
+    // Deep nesting and long custom-property chains, on a small stack.
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let deep = format!(
+                "{}{}",
+                "#a { @media screen { ".repeat(3000),
+                "} }".repeat(3000)
+            );
+            let _ = BoxTree::new(node("page", vec![node("a", vec![])]), &deep);
+            let chain: String = (0..3000)
+                .map(|at| format!("--c{at}: var(--c{});", at + 1))
+                .collect();
+            let tree = BoxTree::new(
+                node("page", vec![node("a", vec![])]),
+                &format!("#a {{ {chain} --c3000: 5px; height:1px; width: var(--c0); }}"),
+            )
+            .unwrap();
+            let geometry = tree.layout(1000.0, None).unwrap();
+            let border = geometry[1].as_ref().unwrap().border;
+            assert_eq!(border.right - border.left, 5.0);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn animation_review_regressions() {
+    use iced_css::box_tree::{AnimationEvent, BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let root = || node("page", vec![node("a", vec![])]);
+    let width = |animations: &BoxTreeAnimations, tree: &BoxTree| {
+        let shown = animations.presented(tree);
+        let geometry = shown.layout(1000.0, None).unwrap();
+        let border = geometry[1].as_ref().unwrap().border;
+        border.right - border.left
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }
+                     @keyframes two { from { width: 300px } to { width: 400px } }";
+    // A delayed second animation, with no backwards fill, leaves the first's values alone.
+    let tree = BoxTree::new(
+        root(),
+        &format!("{keyframes} #a {{ height:1px; width:50px; animation: one 1s linear, two 1s linear 2s; }}"),
+    )
+    .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(500), &tree);
+    assert_eq!(width(&animations, &tree), 150.0);
+    // A transition lies over an animation of the same property.
+    let sheet = |w: u32| {
+        format!(
+            "{keyframes} #a {{ height:1px; width:{w}px; animation: two 1s linear; transition: width 1s linear; }}"
+        )
+    };
+    let from = BoxTree::new(root(), &sheet(100)).unwrap();
+    let to = from.restyled(&[&sheet(200)]).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&to, start);
+    animations.transition(&from, &to, start).unwrap();
+    animations.advance(at(500), &to);
+    assert_eq!(width(&animations, &to), 150.0);
+    // `transition: none` midway cancels it: the end value at once.
+    let plain =
+        |w: u32, transition: &str| format!("#a {{ height:1px; width:{w}px; {transition} }}");
+    let from = BoxTree::new(root(), &plain(100, "transition: width 1s linear;")).unwrap();
+    let to = from
+        .restyled(&[&plain(200, "transition: width 1s linear;")])
+        .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.transition(&from, &to, start).unwrap();
+    animations.advance(at(500), &to);
+    animations.take_events();
+    let none = to.restyled(&[&plain(200, "transition: none;")]).unwrap();
+    animations.transition(&to, &none, at(500)).unwrap();
+    assert_eq!(width(&animations, &none), 200.0);
+    assert!(matches!(
+        animations.take_events().as_slice(),
+        [AnimationEvent::TransitionCancel {
+            property: "width",
+            ..
+        }]
+    ));
+    // A longer duration midway: on from the time run, on the new timing.
+    let timed = |duration: &str| {
+        format!("{keyframes} #a {{ height:1px; width:50px; animation: one {duration} linear; }}")
+    };
+    let tree = BoxTree::new(root(), &timed("1s")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(500), &tree);
+    assert_eq!(width(&animations, &tree), 150.0);
+    let longer = tree.restyled(&[&timed("2s")]).unwrap();
+    animations.play(&longer, at(500));
+    animations.advance(at(500), &longer);
+    assert_eq!(width(&animations, &longer), 125.0);
+    // No length, but a delay: it starts and ends after the delay, not before.
+    let tree = BoxTree::new(
+        root(),
+        &format!(
+            "{keyframes} #a {{ height:1px; width:50px; animation: one 0s linear 2s forwards; }}"
+        ),
+    )
+    .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(1000), &tree);
+    assert_eq!(width(&animations, &tree), 50.0);
+    assert!(animations.take_events().is_empty());
+    animations.advance(at(2100), &tree);
+    assert_eq!(width(&animations, &tree), 200.0);
+    assert_eq!(animations.take_events().len(), 2, "start, then end");
+}
+
+#[test]
+fn flex_items_review_regressions() {
+    let place = |tree: Element, css: &str, at: usize| {
+        let tree = BoxTree::new(tree, css).unwrap();
+        let geometry = tree.layout(300.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    // A grown column item lays its contents out again at its size.
+    let (_, top, ..) = place(
+        one(),
+        "#page { display:flex; flex-direction:column; height:200px; }
+         #a { flex-grow:1; display:flex; flex-direction:column; justify-content:flex-end; }
+         #inner { height:20px; }",
+        2,
+    );
+    assert_eq!(top, 180.0, "inner at the end of the grown item");
+    // A stretched row item does too.
+    let (_, top, ..) = place(
+        one(),
+        "#page { display:flex; height:200px; }
+         #a { display:flex; flex-direction:column; justify-content:flex-end; }
+         #inner { height:20px; }",
+        2,
+    );
+    assert_eq!(top, 180.0, "inner at the end of the stretched item");
+    // Cross-axis auto margins take the free space.
+    let (_, top, ..) = place(
+        one(),
+        "#page { display:flex; height:200px; } #a { margin-top:auto; height:20px; width:10px; }",
+        1,
+    );
+    assert_eq!(top, 180.0);
+    let (_, top, ..) = place(
+        one(),
+        "#page { display:flex; height:200px; } #a { margin:auto 0; height:20px; width:10px; }",
+        1,
+    );
+    assert_eq!(top, 90.0);
+    // A border-box flex-basis is of the border box.
+    let (_, _, width, _) = place(
+        one(),
+        "#page { display:flex; }
+         #a { box-sizing:border-box; flex:0 0 100px; padding:10px; height:1px; }",
+        1,
+    );
+    assert_eq!(width, 100.0);
+    // Reversed, a margin stays on its own physical side.
+    let (left, ..) = place(
+        one(),
+        "#page { display:flex; flex-direction:row-reverse; width:300px; }
+         #a { width:50px; height:1px; margin-left:10px; }",
+        1,
+    );
+    assert_eq!(left, 250.0);
+}
+
+#[test]
+fn items_locked_to_a_row_make_implicit_columns_rather_than_overlap() {
+    let tree = BoxTree::new(
+        node("page", vec![node("a", vec![]), node("b", vec![])]),
+        "#page { display:grid; grid-template-columns: 100px; grid-auto-columns: 100px; }
+         #a, #b { grid-row: 1; height:1px; }",
+    )
+    .unwrap();
+    let geometry = tree.layout(400.0, None).unwrap();
+    let left = |at: usize| geometry[at].as_ref().unwrap().border.left;
+    assert_eq!(left(1), 0.0);
+    assert_eq!(left(2), 100.0, "b in a new column after a");
+}
+
+#[test]
 fn subgrids_share_their_parent_grids_tracks() {
     let boxes = |css: &str| {
         let tree = BoxTree::new(
@@ -1499,6 +1723,14 @@ fn subgrids_share_their_parent_grids_tracks() {
     );
     assert_eq!(columns[4].0, 80.0, "b in the same column");
     assert_eq!(columns[3].2, 40.0, "a2 stretched to the column b widened");
+    // Its padding keeps its items out of it: in a 100px column, 10px each side.
+    let inset = boxes(
+        "#page { display:grid; grid-template-columns: 100px; }
+         #a { display:grid; grid-template-columns: subgrid; padding:0 10px; }
+         #a1, #a2 { height:1px; } #b { height:1px; }",
+    );
+    assert_eq!(inset[2].0, 10.0, "a1 inside the padding");
+    assert_eq!(inset[2].2, 80.0, "and only as wide as the content box");
     // Not in a grid, `subgrid` is `none`: its items are laid out by themselves.
     let alone = boxes(
         "#a { display:grid; grid-template-columns: subgrid; }

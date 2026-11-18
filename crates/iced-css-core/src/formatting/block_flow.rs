@@ -622,6 +622,9 @@ struct Solver<'a> {
     subgrids: std::collections::BTreeMap<usize, [Option<grid_layout::SubgridAxis>; 2]>,
     /// By subgrid measured for its rows, what its items asked of them.
     subgrid_wanted: std::collections::BTreeMap<usize, Vec<grid_layout::Contribution>>,
+    /// A content height a flex or grid container gives an item it lays out again (grown,
+    /// shrunk or stretched), in place of its own `height`, for its next layout only.
+    forced_heights: std::collections::BTreeMap<usize, f32>,
 }
 
 /// Lays out the tree rooted at index 0 as one block formatting context root.
@@ -712,6 +715,7 @@ pub fn layout_block_flow_baselines(
         row_baselines: std::collections::BTreeMap::new(),
         subgrids: std::collections::BTreeMap::new(),
         subgrid_wanted: std::collections::BTreeMap::new(),
+        forced_heights: std::collections::BTreeMap::new(),
     };
     let containing = Containing {
         left: viewport.left,
@@ -741,6 +745,7 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
         row_baselines: std::collections::BTreeMap::new(),
         subgrids: std::collections::BTreeMap::new(),
         subgrid_wanted: std::collections::BTreeMap::new(),
+        forced_heights: std::collections::BTreeMap::new(),
     }
     .measure(node)
 }
@@ -790,6 +795,32 @@ pub fn content_boxes(boxes: &[FlowBox]) -> std::borrow::Cow<'_, [FlowBox]> {
         value.height = inner(value.height, down);
         value.min_height = inner(value.min_height, down);
         value.max_height = inner(value.max_height, down);
+    }
+    // A flex item's `flex-basis` is of the box `box-sizing` names too, along its
+    // container's main axis.
+    for parent in 0..converted.len() {
+        let Some(column) = converted[parent].flex.map(|flex| flex.column) else {
+            continue;
+        };
+        for child in converted[parent].children.clone() {
+            if !boxes.get(child).is_some_and(|value| value.border_box) {
+                continue;
+            }
+            let value = &mut converted[child];
+            let side = |at: usize| parts(value.padding[at]);
+            let frame = if column {
+                (
+                    side(0).0 + side(2).0 + value.border[0] + value.border[2],
+                    0.0,
+                )
+            } else {
+                (
+                    side(3).0 + side(1).0 + value.border[3] + value.border[1],
+                    side(3).1 + side(1).1,
+                )
+            };
+            value.flex_item.basis = inner(value.flex_item.basis, frame);
+        }
     }
     std::borrow::Cow::Owned(converted)
 }
@@ -1994,6 +2025,7 @@ impl Solver<'_> {
         top: f32,
         padding: [f32; 4],
     ) -> Result<f32, FlowError> {
+        let forced = self.forced_heights.remove(&node);
         let value = &self.boxes[node];
         let border = value.border;
         let (below, above): (Vec<usize>, Vec<usize>) =
@@ -2012,7 +2044,7 @@ impl Solver<'_> {
         }
         let content_left = border_left + border[3] + padding[3];
         let content_top = top + border[0] + padding[0];
-        let height = value.height.vertical(cb.height);
+        let height = forced.or_else(|| value.height.vertical(cb.height));
         let mut minimum = value.min_height.vertical(cb.height).unwrap_or(0.0);
         let maximum = value.max_height.vertical(cb.height);
         if height.is_none()
