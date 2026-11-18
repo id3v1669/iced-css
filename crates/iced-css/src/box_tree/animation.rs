@@ -2676,6 +2676,8 @@ struct Keyframed {
     /// While it plays (and after it ends): an instant and its local time then, in
     /// milliseconds after its delay; what a timing change reads its elapsed time from.
     origin: Option<(Instant, f32)>,
+    /// While paused: its local time, frozen.
+    paused_local: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2684,6 +2686,9 @@ enum KeyState {
     Running,
     /// Held at this place in the iteration in progress.
     Paused(f32),
+    /// Paused where its timing has it past its end, as a shortened duration can: ended,
+    /// its fill showing, its frozen time kept for a later timing change.
+    PausedEnded,
     /// Its last iteration ended.
     Done,
 }
@@ -2722,7 +2727,9 @@ impl Keyframed {
     fn position(&self, sample: Option<f32>) -> Option<(u32, f32)> {
         match self.state {
             KeyState::Paused(at) => Some((self.run, at)),
-            KeyState::Done => self.animation.fill_forwards.then(|| self.end_position()),
+            KeyState::Done | KeyState::PausedEnded => {
+                self.animation.fill_forwards.then(|| self.end_position())
+            }
             KeyState::Running => match sample {
                 Some(progress) => Some((
                     self.run,
@@ -3143,6 +3150,7 @@ impl BoxTreeAnimations {
                         match (state, animation.paused) {
                             // Paused: held where its run has it, its timing let go.
                             (KeyState::Running, true) => {
+                                let local = self.local_time(at);
                                 let place = self.keyframe_sample(&self.keyframed[at]).map_or(
                                     self.keyframed[at].span.0,
                                     |progress| {
@@ -3155,10 +3163,19 @@ impl BoxTreeAnimations {
                                     .cancel(&self.keyframed[at].source, &clock_selection());
                                 self.keyframed[at].state = KeyState::Paused(place);
                                 self.keyframed[at].origin = None;
+                                self.keyframed[at].paused_local = local;
                             }
                             // Running again: on from where it was held.
                             (KeyState::Paused(place), false) => {
+                                self.keyframed[at].paused_local = None;
                                 self.start_run(at, place, Duration::ZERO, Duration::ZERO, now);
+                            }
+                            // Running again past its end: ended, its time going on from there.
+                            (KeyState::PausedEnded, false) => {
+                                let running = &mut self.keyframed[at];
+                                running.state = KeyState::Done;
+                                running.origin =
+                                    running.paused_local.take().map(|local| (now, local));
                             }
                             _ => {}
                         }
@@ -3183,6 +3200,7 @@ impl BoxTreeAnimations {
                             announced: false,
                             overrun: Duration::ZERO,
                             origin: None,
+                            paused_local: None,
                         });
                         let at = self.keyframed.len() - 1;
                         self.begin(at, now);
@@ -3203,7 +3221,7 @@ impl BoxTreeAnimations {
                 kept.push(running);
                 continue;
             }
-            if running.state != KeyState::Done {
+            if !matches!(running.state, KeyState::Done | KeyState::PausedEnded) {
                 self.events.push(AnimationEvent::AnimationCancel {
                     element: running.element(),
                     pseudo: running.pseudo(),
@@ -3315,8 +3333,16 @@ impl BoxTreeAnimations {
     fn local_time(&self, at: usize) -> Option<f32> {
         let running = &self.keyframed[at];
         let length = running.animation.duration.max(0.0);
-        if let KeyState::Paused(place) = running.state {
-            return Some((running.run as f32 + place) * length);
+        match running.state {
+            KeyState::Paused(place) => {
+                return Some(
+                    running
+                        .paused_local
+                        .unwrap_or((running.run as f32 + place) * length),
+                );
+            }
+            KeyState::PausedEnded => return running.paused_local,
+            _ => {}
         }
         // From when it was set going: past a run's end, and after it ended, too.
         let (origin, local) = running.origin?;
@@ -3342,16 +3368,20 @@ impl BoxTreeAnimations {
         };
         match self.keyframed[at].state {
             KeyState::Done if local >= active => {}
-            // Paused past where the new timing ends: it has ended.
-            KeyState::Paused(_) if local >= active => {
-                self.keyframed[at].state = KeyState::Done;
-                self.events.push(AnimationEvent::AnimationEnd {
-                    element: self.keyframed[at].element(),
-                    pseudo: self.keyframed[at].pseudo(),
-                    name: self.keyframed[at].animation.name.clone(),
-                });
+            // Paused past where the new timing ends: it has ended, and stays paused there.
+            KeyState::Paused(_) | KeyState::PausedEnded if local >= active => {
+                if matches!(self.keyframed[at].state, KeyState::Paused(_)) {
+                    self.events.push(AnimationEvent::AnimationEnd {
+                        element: self.keyframed[at].element(),
+                        pseudo: self.keyframed[at].pseudo(),
+                        name: self.keyframed[at].animation.name.clone(),
+                    });
+                }
+                self.keyframed[at].state = KeyState::PausedEnded;
+                self.keyframed[at].paused_local = Some(local);
             }
-            KeyState::Paused(_) => {
+            KeyState::Paused(_) | KeyState::PausedEnded => {
+                self.keyframed[at].paused_local = Some(local);
                 let at_time = (local.max(0.0) / length.max(f32::EPSILON)).max(0.0);
                 let run = at_time.floor();
                 let place = if length > 0.0 { at_time.fract() } else { 1.0 };

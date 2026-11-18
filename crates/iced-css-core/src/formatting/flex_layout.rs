@@ -283,8 +283,28 @@ impl Solver<'_> {
         width: f32,
     ) -> Result<f32, FlowError> {
         let forced = self.forced_heights.get(&node).copied();
-        // Everything its layout depends on from outside. A subgrid also takes its parent's
-        // tracks, which this does not hold: it is laid out each time.
+        // Everything its layout depends on from outside, a subgrid's parent tracks too.
+        let tracks = self.subgrids.get(&node).map_or(0, |given| {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            for axis in given {
+                match axis {
+                    None => 0u8.hash(&mut hasher),
+                    Some(super::grid_layout::SubgridAxis::Measure(span)) => {
+                        1u8.hash(&mut hasher);
+                        span.hash(&mut hasher);
+                    }
+                    Some(super::grid_layout::SubgridAxis::Edges(edges)) => {
+                        2u8.hash(&mut hasher);
+                        for edge in edges {
+                            edge[0].to_bits().hash(&mut hasher);
+                            edge[1].to_bits().hash(&mut hasher);
+                        }
+                    }
+                }
+            }
+            hasher.finish() | 1
+        });
         let key = [
             u64::from(cb.width.to_bits()),
             cb.height
@@ -292,8 +312,9 @@ impl Solver<'_> {
             u64::from(width.to_bits()),
             forced.map_or(u64::MAX, |height| u64::from(height.to_bits())),
             u64::from(cb.direction == super::Direction::Rtl),
+            tracks,
         ];
-        let cacheable = !self.subgrids.contains_key(&node);
+        let cacheable = true;
         if cacheable
             && let Some(laid) = self
                 .laid
@@ -311,6 +332,9 @@ impl Solver<'_> {
                 self.row_baselines.insert(*at, *baseline);
             }
             self.last_flowed = laid.last_flowed;
+            if let Some(wanted) = &laid.wanted {
+                self.subgrid_wanted.insert(node, wanted.clone());
+            }
             return Ok(laid.height);
         }
         let padding = self.paddings(node, cb.width);
@@ -337,6 +361,7 @@ impl Solver<'_> {
             }
             let laid = super::LaidItem {
                 key,
+                wanted: self.subgrid_wanted.get(&node).cloned(),
                 height,
                 last_flowed: self.last_flowed,
                 geometry: nodes.iter().map(|at| (*at, self.geometry[*at])).collect(),

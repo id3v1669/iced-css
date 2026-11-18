@@ -635,7 +635,9 @@ struct Solver<'a> {
 /// One item's layout, kept to put back: its inputs, and its subtree's geometry, row
 /// baselines and flowed height as it left them.
 struct LaidItem {
-    key: [u64; 5],
+    key: [u64; 6],
+    /// As a subgrid measured for its rows: what its items asked of them.
+    wanted: Option<Vec<grid_layout::Contribution>>,
     height: f32,
     last_flowed: f32,
     geometry: Vec<(usize, FlowGeometry)>,
