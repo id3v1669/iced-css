@@ -267,7 +267,9 @@ changed, with or without an id: `linear`, `ease` and its kin, `cubic-bezier()`, 
 where you would call `request`, between trees restyled from one capture. The widget runs
 the transitions of its own restyles itself: hovering, pressing or focusing a box starts what
 the new styling asks for, drawn over the application's animations and moved on each frame.
-Limits: `:before` and `:after` do not transition; an easing that overshoots is cut off at the ends; `inherit` on a
+A `:before` or `:after` transitions by its own `transition-*` values, not its element's,
+with or without an id on its element.
+Limits: an easing that overshoots is cut off at the ends; `inherit` on a
 transition property reads as its initial value.
 
 CSS Animations 1: `@keyframes` (`from`, `to` and percentages, with a keyframe's own
@@ -291,10 +293,10 @@ Events (CSS Transitions 1, CSS Animations 1): `BoxTreeAnimations::take_events()`
 happened since the last call, oldest first, as `AnimationEvent`s: a transition run (created),
 started (its delay over), ended or cancelled (replaced, or its value changed otherwise), and an
 animation started, into its next iteration, ended or cancelled (its name no longer listed).
-Each names the element by its CSS id (`None` without one) and the property or `@keyframes`
+Each names the element by its CSS id (`None` without one), `pseudo` (`"::before"` or
+`"::after"` for its generated content's, `None` otherwise) and the property or `@keyframes`
 name. The widget publishes those of the animations it runs itself through
-`BoxTreeView::on_animation_event`. Limits: no elapsed time is given; `:before` and `:after`
-send none, as they do not animate; a pause during an animation's delay resumes without the
+`BoxTreeView::on_animation_event`. Limits: no elapsed time is given; a pause during an animation's delay resumes without the
 rest of it.
 
 What animates:

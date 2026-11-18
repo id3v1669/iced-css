@@ -1721,6 +1721,83 @@ pub struct GradientPaint {
 }
 
 /// An easing function as the widget runs it.
+/// A `transition-duration`, `transition-delay` (or `animation-` one) list, in
+/// milliseconds: `0s` where none is given.
+fn transition_times(value: Option<&TransitionValue>, numeric: NumericLimits) -> Vec<f32> {
+    match value {
+        Some(TransitionValue::Times(times)) => times
+            .iter()
+            .map(|time| {
+                time.value
+                    .scaled_finite_f32(1.0, numeric)
+                    .map_or(0.0, |converted| {
+                        converted.value * if time.milliseconds { 1.0 } else { 1000.0 }
+                    })
+            })
+            .collect(),
+        _ => vec![0.0],
+    }
+}
+
+/// CSS Transitions 1: the transitions a target's `transition-*` values ask for, read
+/// through `lookup` (an element's cascade, or its `:before`'s or `:after`'s). None of them
+/// inherits; `inherit` reads as the initial value. The list of properties sets how many
+/// there are, and the other lists repeat to match it.
+fn read_transitions<'v, E>(
+    lookup: &dyn Fn(&'static str) -> Result<DefaultedValueRef<'v>, E>,
+    numeric: NumericLimits,
+) -> Result<Vec<ElementTransition>, E> {
+    use crate::animation::easing::CssEasing;
+    let transition_of = |name: &'static str| {
+        Ok::<_, E>(match lookup(name)? {
+            DefaultedValueRef::Compute(SpecifiedValue::Transition(value)) => Some(value),
+            _ => None,
+        })
+    };
+    let durations = transition_times(transition_of("transition-duration")?, numeric);
+    let delays = transition_times(transition_of("transition-delay")?, numeric);
+    let mut transitions = Vec::new();
+    if durations.iter().all(|duration| *duration <= 0.0) && delays.iter().all(|delay| *delay <= 0.0)
+    {
+        return Ok(transitions);
+    }
+    let easings: Vec<CssEasing> = match transition_of("transition-timing-function")? {
+        Some(TransitionValue::Easings(easings)) => easings
+            .iter()
+            .map(|easing| css_easing(easing, numeric))
+            .collect(),
+        _ => vec![CssEasing::EASE],
+    };
+    let properties = match transition_of("transition-property")? {
+        Some(TransitionValue::Properties(properties)) => properties.clone(),
+        _ => vec![TransitionProperty::All],
+    };
+    for (at, property) in properties.iter().enumerate() {
+        let properties = match property {
+            TransitionProperty::All => None,
+            TransitionProperty::None => continue,
+            // An unknown name holds its place in the lists and moves nothing.
+            TransitionProperty::Named(name) => match PropertyId::lookup(name) {
+                Some(property) => Some(property.longhands().to_vec()),
+                None => continue,
+            },
+        };
+        let duration = durations[at % durations.len()].max(0.0);
+        let delay = delays[at % delays.len()];
+        // A transition taking no time at all is none (2.1).
+        if duration + delay.max(0.0) <= 0.0 {
+            continue;
+        }
+        transitions.push(ElementTransition {
+            properties,
+            duration,
+            delay,
+            easing: easings[at % easings.len()],
+        });
+    }
+    Ok(transitions)
+}
+
 pub fn css_easing(
     easing: &EasingValue,
     numeric: NumericLimits,
@@ -1977,6 +2054,8 @@ pub struct TreePaint {
     pub grid_items: Vec<Option<Box<GridItem>>>,
     /// The transitions each row asks for; empty when none can run.
     pub transitions: Vec<Vec<ElementTransition>>,
+    /// Those each row's `:before` and `:after` ask for, by side.
+    pub generated_transitions: Vec<[Vec<ElementTransition>; 2]>,
     /// The animations each row asks for, by name; empty when none.
     pub animations: Vec<Vec<ElementAnimation>>,
     /// Each row's background gradient, if its `background-image` is one.
@@ -2391,6 +2470,8 @@ pub fn evaluate_tree_paint<'r>(
     let mut grids: Vec<Option<Box<GridContainer>>> = vec![None; projection.len()];
     let mut grid_items: Vec<Option<Box<GridItem>>> = vec![None; projection.len()];
     let mut transitions: Vec<Vec<ElementTransition>> = vec![Vec::new(); projection.len()];
+    let mut generated_transitions: Vec<[Vec<ElementTransition>; 2]> =
+        vec![[Vec::new(), Vec::new()]; projection.len()];
     let mut animations: Vec<Vec<ElementAnimation>> = vec![Vec::new(); projection.len()];
     let mut gradients: Vec<Option<std::sync::Arc<GradientPaint>>> = vec![None; projection.len()];
     let mut transforms: Vec<Option<std::sync::Arc<ElementTransform>>> =
@@ -3493,60 +3574,8 @@ pub fn evaluate_tree_paint<'r>(
                 _ => None,
             })
         };
-        let times = |value: Option<&TransitionValue>| match value {
-            Some(TransitionValue::Times(times)) => times
-                .iter()
-                .map(|time| {
-                    time.value
-                        .scaled_finite_f32(1.0, limits.numeric)
-                        .map_or(0.0, |converted| {
-                            converted.value * if time.milliseconds { 1.0 } else { 1000.0 }
-                        })
-                })
-                .collect(),
-            _ => vec![0.0],
-        };
-        let durations: Vec<f32> = times(transition_of("transition-duration")?);
-        let delays: Vec<f32> = times(transition_of("transition-delay")?);
-        if durations.iter().any(|duration| *duration > 0.0)
-            || delays.iter().any(|delay| *delay > 0.0)
-        {
-            use crate::animation::easing::CssEasing;
-            let easings: Vec<CssEasing> = match transition_of("transition-timing-function")? {
-                Some(TransitionValue::Easings(easings)) => easings
-                    .iter()
-                    .map(|easing| css_easing(easing, limits.numeric))
-                    .collect(),
-                _ => vec![CssEasing::EASE],
-            };
-            let properties = match transition_of("transition-property")? {
-                Some(TransitionValue::Properties(properties)) => properties.clone(),
-                _ => vec![TransitionProperty::All],
-            };
-            for (at, property) in properties.iter().enumerate() {
-                let properties = match property {
-                    TransitionProperty::All => None,
-                    TransitionProperty::None => continue,
-                    // An unknown name holds its place in the lists and moves nothing.
-                    TransitionProperty::Named(name) => match PropertyId::lookup(name) {
-                        Some(property) => Some(property.longhands().to_vec()),
-                        None => continue,
-                    },
-                };
-                let duration = durations[at % durations.len()].max(0.0);
-                let delay = delays[at % delays.len()];
-                // A transition taking no time at all is none (2.1).
-                if duration + delay.max(0.0) <= 0.0 {
-                    continue;
-                }
-                transitions[index].push(ElementTransition {
-                    properties,
-                    duration,
-                    delay,
-                    easing: easings[at % easings.len()],
-                });
-            }
-        }
+        let times = |value: Option<&TransitionValue>| transition_times(value, limits.numeric);
+        transitions[index] = read_transitions(&defaulted, limits.numeric)?;
         // CSS Animations 1, likewise: the list of names sets how many there are.
         if let Some(TransitionValue::Names(names)) = transition_of("animation-name")? {
             let durations: Vec<f32> = times(transition_of("animation-duration")?);
@@ -3903,6 +3932,7 @@ pub fn evaluate_tree_paint<'r>(
                     .defaulted(property, true)
                     .map_err(|_| E::Paint { property: name })
             };
+            generated_transitions[index][side] = read_transitions(&cascaded, limits.numeric)?;
             let mut content = None;
             if let DefaultedValueRef::Compute(SpecifiedValue::Content(list)) = cascaded("content")?
             {
@@ -4354,6 +4384,7 @@ pub fn evaluate_tree_paint<'r>(
         grids,
         grid_items,
         transitions,
+        generated_transitions,
         animations,
         gradients,
         transforms,

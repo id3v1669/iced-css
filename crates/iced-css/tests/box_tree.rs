@@ -1459,6 +1459,7 @@ fn transitions_and_animations_send_their_events() {
         animations.take_events(),
         [event(|element, property| AnimationEvent::TransitionRun {
             element,
+            pseudo: None,
             property
         })]
     );
@@ -1469,6 +1470,7 @@ fn transitions_and_animations_send_their_events() {
         animations.take_events(),
         [event(|element, property| AnimationEvent::TransitionStart {
             element,
+            pseudo: None,
             property
         })]
     );
@@ -1477,6 +1479,7 @@ fn transitions_and_animations_send_their_events() {
         animations.take_events(),
         [event(|element, property| AnimationEvent::TransitionEnd {
             element,
+            pseudo: None,
             property
         })]
     );
@@ -1490,8 +1493,16 @@ fn transitions_and_animations_send_their_events() {
     assert_eq!(
         animations.take_events(),
         [
-            event(|element, property| AnimationEvent::TransitionCancel { element, property }),
-            event(|element, property| AnimationEvent::TransitionRun { element, property }),
+            event(|element, property| AnimationEvent::TransitionCancel {
+                element,
+                pseudo: None,
+                property
+            }),
+            event(|element, property| AnimationEvent::TransitionRun {
+                element,
+                pseudo: None,
+                property
+            }),
         ]
     );
     // An animation of three iterations: its start, each next iteration, its end.
@@ -1508,6 +1519,7 @@ fn transitions_and_animations_send_their_events() {
         animations.take_events(),
         [AnimationEvent::AnimationStart {
             element: element.clone(),
+            pseudo: None,
             name: name()
         }]
     );
@@ -1519,16 +1531,19 @@ fn transitions_and_animations_send_their_events() {
         [
             AnimationEvent::AnimationIteration {
                 element: element.clone(),
+                pseudo: None,
                 name: name(),
                 iteration: 1
             },
             AnimationEvent::AnimationIteration {
                 element: element.clone(),
+                pseudo: None,
                 name: name(),
                 iteration: 2
             },
             AnimationEvent::AnimationEnd {
                 element: element.clone(),
+                pseudo: None,
                 name: name()
             },
         ]
@@ -1551,6 +1566,7 @@ fn transitions_and_animations_send_their_events() {
         animations.take_events(),
         [AnimationEvent::AnimationCancel {
             element,
+            pseudo: None,
             name: name()
         }]
     );
@@ -7761,6 +7777,75 @@ mod animation {
             .collect();
         assert_eq!(beside, unmoved);
         assert_eq!(beside.len(), 1);
+    }
+
+    #[test]
+    fn a_before_or_after_transitions_by_its_own_transition_properties() {
+        use iced_css::box_tree::AnimationEvent;
+        let source = || {
+            node(
+                "page",
+                vec![node("p", vec![node("s", vec![text("t", "words")])])],
+            )
+        };
+        let start = Instant::now();
+        let run = |tree: &BoxTree, text: &str| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.contains(text))
+                .cloned()
+                .unwrap()
+        };
+        let css = |color: &str, transition: &str| {
+            format!(
+                "#s {{ display:inline; color:#000000; }}
+                 #s:before {{ content:\"GEN\"; color:{color}; {transition} }}"
+            )
+        };
+        // Its own `transition`: it moves; the element, with none, has nothing to move.
+        let timed = "transition: color 1s linear;";
+        let from = BoxTree::new(source(), &css("#ff0000", timed)).unwrap();
+        let to = from.restyled(&[&css("#0000ff", timed)]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        assert_eq!(animations.transition(&from, &to, start).unwrap(), 1);
+        animations.advance(start + Duration::from_millis(500), &to);
+        assert!(near(
+            run(&animations.presented(&to), "GEN").color.unwrap(),
+            [0.5, 0.0, 0.5]
+        ));
+        assert_eq!(
+            run(&animations.presented(&to), "words").color,
+            Some([0.0; 3])
+        );
+        let before = || (Some("s".to_owned()), Some("::before"));
+        let events = animations.take_events();
+        assert_eq!(
+            events,
+            [
+                AnimationEvent::TransitionRun {
+                    element: before().0,
+                    pseudo: before().1,
+                    property: "color"
+                },
+                AnimationEvent::TransitionStart {
+                    element: before().0,
+                    pseudo: before().1,
+                    property: "color"
+                },
+            ]
+        );
+        // The element's transition is not its: with it only there, it changes at once.
+        let element = |color: &str| {
+            format!(
+                "#s {{ display:inline; color:#000000; transition: color 1s; }}
+                 #s:before {{ content:\"GEN\"; color:{color}; }}"
+            )
+        };
+        let from = BoxTree::new(source(), &element("#ff0000")).unwrap();
+        let to = from.restyled(&[&element("#0000ff")]).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        assert_eq!(animations.transition(&from, &to, start).unwrap(), 0);
     }
 
     #[test]

@@ -2455,59 +2455,82 @@ struct Track {
 }
 
 /// What an animation or transition did, as CSS Transitions 1 and CSS Animations 1 name
-/// the events they send. `element` is the element's CSS id, `None` for one without.
+/// the events they send. `element` is the element's CSS id, `None` for one without, and
+/// `pseudo` is `Some("::before")` or `Some("::after")` for its generated content's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnimationEvent {
     /// A transition was created; its delay may still run.
     TransitionRun {
         element: Option<String>,
+        pseudo: Option<&'static str>,
         property: &'static str,
     },
     /// Its delay is over and it moves.
     TransitionStart {
         element: Option<String>,
+        pseudo: Option<&'static str>,
         property: &'static str,
     },
     /// It reached its end.
     TransitionEnd {
         element: Option<String>,
+        pseudo: Option<&'static str>,
         property: &'static str,
     },
     /// It was taken away before its end: replaced, or its value changed otherwise.
     TransitionCancel {
         element: Option<String>,
+        pseudo: Option<&'static str>,
         property: &'static str,
     },
     /// An animation's delay is over and it moves.
     AnimationStart {
         element: Option<String>,
+        pseudo: Option<&'static str>,
         name: String,
     },
     /// It began iteration `iteration` (counted from 0) after the one before.
     AnimationIteration {
         element: Option<String>,
+        pseudo: Option<&'static str>,
         name: String,
         iteration: u32,
     },
     /// It ran its last iteration to the end.
     AnimationEnd {
         element: Option<String>,
+        pseudo: Option<&'static str>,
         name: String,
     },
     /// It stopped before its end: its name is no longer listed, or its element is gone.
     AnimationCancel {
         element: Option<String>,
+        pseudo: Option<&'static str>,
         name: String,
     },
 }
 
 /// The element an internal address names, as an event gives it: its CSS id, or none.
 fn element_of(id: &str) -> Option<String> {
-    let base = ["::before", "::after"]
-        .iter()
-        .find_map(|suffix| id.strip_suffix(suffix))
-        .unwrap_or(id);
+    let (base, _) = split_pseudo(id);
     (!base.starts_with(UNNAMED)).then(|| base.to_owned())
+}
+
+/// The generated content an internal address names, as an event gives it.
+fn pseudo_of(id: &str) -> Option<&'static str> {
+    split_pseudo(id).1
+}
+
+fn split_pseudo(id: &str) -> (&str, Option<&'static str>) {
+    [
+        ("::before", "::before"),
+        (":before", "::before"),
+        ("::after", "::after"),
+        (":after", "::after"),
+    ]
+    .into_iter()
+    .find_map(|(suffix, name)| id.strip_suffix(suffix).map(|base| (base, Some(name))))
+    .unwrap_or((id, None))
 }
 
 /// The property a keyframe animation's runs are timed on, in a source of its own: one
@@ -2963,6 +2986,7 @@ impl BoxTreeAnimations {
             if !kept {
                 events.push(AnimationEvent::TransitionCancel {
                     element: element_of(&track.id),
+                    pseudo: pseudo_of(&track.id),
                     property: track.property.descriptor().name,
                 });
             }
@@ -2970,6 +2994,7 @@ impl BoxTreeAnimations {
         });
         events.extend(started.iter().map(|track| AnimationEvent::TransitionRun {
             element: element_of(&track.id),
+            pseudo: pseudo_of(&track.id),
             property: track.property.descriptor().name,
         }));
         self.events.append(&mut events);
@@ -3089,6 +3114,7 @@ impl BoxTreeAnimations {
             if running.state != KeyState::Done {
                 self.events.push(AnimationEvent::AnimationCancel {
                     element: running.element(),
+                    pseudo: None,
                     name: running.animation.name.clone(),
                 });
             }
@@ -3118,10 +3144,12 @@ impl BoxTreeAnimations {
             self.keyframed[at].announced = true;
             self.events.push(AnimationEvent::AnimationStart {
                 element: element.clone(),
+                pseudo: None,
                 name: animation.name.clone(),
             });
             self.events.push(AnimationEvent::AnimationEnd {
                 element,
+                pseudo: None,
                 name: animation.name,
             });
             return;
@@ -3141,6 +3169,7 @@ impl BoxTreeAnimations {
             self.keyframed[at].state = KeyState::Done;
             self.events.push(AnimationEvent::AnimationEnd {
                 element,
+                pseudo: None,
                 name: animation.name,
             });
             return;
@@ -3211,6 +3240,7 @@ impl BoxTreeAnimations {
                 self.keyframed[at].announced = true;
                 self.events.push(AnimationEvent::AnimationStart {
                     element: element.clone(),
+                    pseudo: None,
                     name: name.clone(),
                 });
             }
@@ -3222,6 +3252,7 @@ impl BoxTreeAnimations {
                 self.keyframed[at].run = next;
                 self.events.push(AnimationEvent::AnimationIteration {
                     element,
+                    pseudo: None,
                     name,
                     iteration: next,
                 });
@@ -3232,8 +3263,11 @@ impl BoxTreeAnimations {
                 let _ = self
                     .engine
                     .cancel(&self.keyframed[at].source, &clock_selection());
-                self.events
-                    .push(AnimationEvent::AnimationEnd { element, name });
+                self.events.push(AnimationEvent::AnimationEnd {
+                    element,
+                    pseudo: None,
+                    name,
+                });
                 return;
             }
         }
@@ -3378,8 +3412,15 @@ impl BoxTreeAnimations {
         }
         let nodes = to.source.construction.nodes();
         let mut started = 0;
+        // Each element, then its `:before` and `:after`, which have transitions of their own.
+        let mut targets: Vec<(String, &[crate::evaluation::tree_layout::ElementTransition])> =
+            Vec::new();
         for (projected, transitions) in to.transitions.iter().enumerate() {
-            if transitions.is_empty() || projected >= from.originals.len() {
+            if projected >= from.originals.len() {
+                continue;
+            }
+            let generated = &to.generated_transitions[projected];
+            if transitions.is_empty() && generated.iter().all(Vec::is_empty) {
                 continue;
             }
             // Its id, when that finds it; otherwise its place.
@@ -3388,6 +3429,17 @@ impl BoxTreeAnimations {
                 .css_id()
                 .filter(|id| to.element(id) == Some(projected))
                 .map_or_else(|| format!("{UNNAMED}{projected}"), str::to_owned);
+            for (suffix, list) in [
+                ("", transitions),
+                ("::before", &generated[0]),
+                ("::after", &generated[1]),
+            ] {
+                if !list.is_empty() {
+                    targets.push((format!("{id}{suffix}"), list));
+                }
+            }
+        }
+        for (id, transitions) in targets {
             // A later transition naming a longhand wins it.
             let mut chosen: Vec<(PropertyId, usize)> = Vec::new();
             for (at, transition) in transitions.iter().enumerate() {
@@ -3473,6 +3525,7 @@ impl BoxTreeAnimations {
                 track.announced = true;
                 events.push(AnimationEvent::TransitionStart {
                     element: element_of(&track.id),
+                    pseudo: pseudo_of(&track.id),
                     property: track.property.descriptor().name,
                 });
             }
@@ -3491,11 +3544,23 @@ impl BoxTreeAnimations {
         // One that ran to its end ends; one whose value moved on otherwise is cancelled.
         for track in &done {
             let complete = self.progress(track).is_none();
-            let (element, property) = (element_of(&track.id), track.property.descriptor().name);
+            let (element, pseudo, property) = (
+                element_of(&track.id),
+                pseudo_of(&track.id),
+                track.property.descriptor().name,
+            );
             events.push(if complete {
-                AnimationEvent::TransitionEnd { element, property }
+                AnimationEvent::TransitionEnd {
+                    element,
+                    pseudo,
+                    property,
+                }
             } else {
-                AnimationEvent::TransitionCancel { element, property }
+                AnimationEvent::TransitionCancel {
+                    element,
+                    pseudo,
+                    property,
+                }
             });
         }
         self.events.append(&mut events);

@@ -898,6 +898,7 @@ struct Style {
     weights: Vec<u16>,
     marker_images: BTreeMap<usize, image::Handle>,
     transitions: Vec<Vec<ElementTransition>>,
+    generated_transitions: Vec<[Vec<ElementTransition>; 2]>,
     animations: Vec<Vec<ElementAnimation>>,
     key: InteractionKey,
     gradients: Vec<Option<Arc<GradientPaint>>>,
@@ -933,6 +934,8 @@ pub struct BoxTree {
     presentation: Option<Arc<Vec<animation::Presented>>>,
     /// The transitions each element asks for, by projected index (CSS Transitions 1).
     transitions: Vec<Vec<ElementTransition>>,
+    /// Those each element's `:before` and `:after` ask for, by side.
+    generated_transitions: Vec<[Vec<ElementTransition>; 2]>,
     /// The animations each element asks for, by projected index (CSS Animations 1).
     animations: Vec<Vec<ElementAnimation>>,
     /// The interaction state it was styled for.
@@ -1200,6 +1203,7 @@ impl BoxTree {
             weights: self.weights.clone(),
             marker_images: self.marker_images.clone(),
             transitions: self.transitions.clone(),
+            generated_transitions: self.generated_transitions.clone(),
             animations: self.animations.clone(),
             key: self.key,
             gradients: self.gradients.clone(),
@@ -1224,6 +1228,7 @@ impl BoxTree {
             marker_images: style.marker_images,
             presentation: None,
             transitions: style.transitions,
+            generated_transitions: style.generated_transitions,
             animations: style.animations,
             key: style.key,
             gradients: style.gradients,
@@ -1523,6 +1528,7 @@ impl BoxTree {
             grids,
             grid_items,
             transitions,
+            generated_transitions,
             animations,
             gradients,
             transforms,
@@ -2852,6 +2858,7 @@ impl BoxTree {
             marker_images: marker_image_handles,
             presentation: None,
             transitions,
+            generated_transitions,
             animations,
             key,
             gradients,
@@ -3866,6 +3873,11 @@ impl Interaction {
                 .transitions
                 .iter()
                 .any(|transitions| !transitions.is_empty())
+                || after
+                    .generated_transitions
+                    .iter()
+                    .flatten()
+                    .any(|transitions| !transitions.is_empty())
             {
                 let before = base.unpresented_variant(previous);
                 let held = self
@@ -9914,6 +9926,7 @@ mod tests {
             state.take_events(),
             [AnimationEvent::AnimationStart {
                 element: Some("a".to_owned()),
+                pseudo: None,
                 name: "grow".to_owned()
             }]
         );
@@ -9922,6 +9935,7 @@ mod tests {
             state.take_events(),
             [AnimationEvent::AnimationEnd {
                 element: Some("a".to_owned()),
+                pseudo: None,
                 name: "grow".to_owned()
             }]
         );
