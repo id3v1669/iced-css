@@ -2716,6 +2716,10 @@ impl Keyframed {
         let count = self.animation.iterations;
         if count <= 0.0 {
             (0, 0.0)
+        } else if count.is_infinite() {
+            // Endless iterations end only where they take no time: at the end of one,
+            // counted as even for its direction.
+            (0, 1.0)
         } else if count.fract() == 0.0 {
             (count as u32 - 1, 1.0)
         } else {
@@ -3420,8 +3424,12 @@ impl BoxTreeAnimations {
     fn retime(&mut self, at: usize, local: f32, now: Instant) {
         let animation = &self.keyframed[at].animation;
         let length = animation.duration.max(0.0);
-        let active = if animation.iterations.is_finite() {
-            length * animation.iterations.max(0.0)
+        // Its active duration: none without length or iterations, endless iterations of
+        // a length endless.
+        let active = if length == 0.0 || animation.iterations <= 0.0 {
+            0.0
+        } else if animation.iterations.is_finite() {
+            length * animation.iterations
         } else {
             f32::INFINITY
         };
@@ -3437,6 +3445,15 @@ impl BoxTreeAnimations {
             }
             KeyState::Paused(_) | KeyState::PausedEnded => {
                 self.keyframed[at].paused_local = Some(local);
+                // Held inside its active interval: it has started.
+                if local >= 0.0 && !self.keyframed[at].announced {
+                    self.keyframed[at].announced = true;
+                    self.events.push(AnimationEvent::AnimationStart {
+                        element: self.keyframed[at].element(),
+                        pseudo: self.keyframed[at].pseudo(),
+                        name: self.keyframed[at].animation.name.clone(),
+                    });
+                }
                 let at_time = (local.max(0.0) / length.max(f32::EPSILON)).max(0.0);
                 let run = at_time.floor();
                 let place = if length > 0.0 { at_time.fract() } else { 1.0 };

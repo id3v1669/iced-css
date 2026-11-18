@@ -2010,6 +2010,8 @@ impl Timing {
         if local as f32 >= active {
             let (iteration, place) = if count <= 0.0 {
                 (0.0, 0.0)
+            } else if count.is_infinite() {
+                (0.0, 1.0)
             } else if count.fract() == 0.0 {
                 (count - 1.0, 1.0)
             } else {
@@ -2048,6 +2050,8 @@ fn animation_timelines_match_css_animations() {
         Timing(0, 400, 1.0, false, "both"),
         Timing(500, 0, 2.5, true, "forwards"),
         Timing(500, 200, 0.0, false, "both"),
+        Timing(0, 0, f32::INFINITY, true, "forwards"),
+        Timing(300, 0, f32::INFINITY, false, "both"),
     ];
     let news = [
         Timing(2000, 0, 1.0, false, "forwards"),
@@ -2057,6 +2061,7 @@ fn animation_timelines_match_css_animations() {
         Timing(400, 300, 0.0, false, "both"),
         Timing(1000, 0, 1.0, false, "none"),
         Timing(300, 0, f32::INFINITY, true, "none"),
+        Timing(0, 200, f32::INFINITY, false, "both"),
     ];
     let base = BoxTree::new(node("page", vec![node("a", vec![])]), &olds[0].sheet(false)).unwrap();
     let mut trees: HashMap<String, BoxTree> = HashMap::new();
@@ -2130,7 +2135,9 @@ fn animation_timelines_match_css_animations() {
                             if (got - want).abs() > 1.0 {
                                 failures.push(format!("{case}: width {got} not {want}"));
                             }
-                            if !ordered || (ended && ends == 0) {
+                            // Past its delay it has started; ended, it has sent its end.
+                            let entered = elapsed - new.1 >= 0;
+                            if !ordered || (ended && ends == 0) || (entered && !started) {
                                 failures.push(format!("{case}: events {events:?}"));
                             }
                         }
@@ -2212,6 +2219,36 @@ fn seventh_review_regressions() {
         ),
         "{events:?}"
     );
+}
+
+#[test]
+fn eighth_review_regressions() {
+    use iced_css::box_tree::{AnimationEvent, BoxTreeAnimations};
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let root = || node("page", vec![node("a", vec![])]);
+    let sheet = |animation: &str| {
+        format!(
+            "@keyframes one {{ from {{ width: 100px }} to {{ width: 200px }} }}
+             #a {{ height:1px; width:50px; animation: {animation}; }}"
+        )
+    };
+    // 1: no length, endless iterations: a finite end, and a layout.
+    let tree = BoxTree::new(root(), &sheet("one 0s linear infinite forwards")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(start + Duration::from_millis(10), &tree);
+    let geometry = animations.presented(&tree).layout(1000.0, None).unwrap();
+    let border = geometry[1].as_ref().unwrap().border;
+    assert_eq!(border.right - border.left, 200.0);
+    // 2: paused from the start inside its active interval: it has started.
+    let tree = BoxTree::new(root(), &sheet("one 1s linear -500ms paused forwards")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    assert!(matches!(
+        animations.take_events().as_slice(),
+        [AnimationEvent::AnimationStart { .. }]
+    ));
 }
 
 #[test]
