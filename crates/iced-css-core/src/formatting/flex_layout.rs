@@ -259,7 +259,11 @@ impl Solver<'_> {
         height: f32,
     ) -> Result<(), FlowError> {
         let content = self.geometry[node].content;
-        if ((content.bottom - content.top) - height).abs() <= 0.01 {
+        // The same size as laid is enough only where it was definite already: an auto
+        // height made definite gives percentage heights inside it a basis.
+        if ((content.bottom - content.top) - height).abs() <= 0.01
+            && self.boxes[node].height != Dim::Auto
+        {
             return Ok(());
         }
         let width = content.right - content.left;

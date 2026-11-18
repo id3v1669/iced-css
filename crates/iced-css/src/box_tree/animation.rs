@@ -1324,7 +1324,13 @@ impl BoxTree {
             if let (Field::Color, Value::Color(target), Value::Color(now)) =
                 (presented.field, presented.target, presented.now)
             {
-                self.follow(&presented.followers, target, now);
+                self.follow(
+                    &presented.followers,
+                    target,
+                    now,
+                    self.originals[projected],
+                    &animated,
+                );
             }
             if let (Field::FontSize, Value::Length(Dim::Px(target)), Value::Length(Dim::Px(now))) =
                 (presented.field, presented.target, presented.now)
@@ -2039,13 +2045,38 @@ impl BoxTree {
 
     /// Carries a presented `color` to what inherits it or uses it: 16.1 `color` inherits, and
     /// a border or outline with no color of its own takes it.
-    fn follow(&mut self, followers: &Followers, target: [f32; 3], now: [f32; 3]) {
+    /// Carries an animated color from `root` to its followers: whatever still shows the
+    /// target, and is not inside a descendant animating a color of its own (that one's
+    /// presentation moves it and what follows it).
+    fn follow(
+        &mut self,
+        followers: &Followers,
+        target: [f32; 3],
+        now: [f32; 3],
+        root: usize,
+        animated: &[(usize, Field)],
+    ) {
+        let own: Vec<usize> = animated
+            .iter()
+            .filter(|(node, field)| *field == Field::Color && *node != root)
+            .map(|(node, _)| *node)
+            .collect();
+        let apart: Vec<usize> = self
+            .originals
+            .iter()
+            .copied()
+            .filter(|node| {
+                own.iter()
+                    .any(|inner| self.within(*node, *inner) && self.within(*inner, root))
+            })
+            .collect();
+        let apart = |node: usize| apart.contains(&node);
         let swap = |value: &mut Option<[f32; 3]>| {
             if *value == Some(target) {
                 *value = Some(now);
             }
         };
-        for follower in &followers.boxes {
+        for follower in followers.boxes.iter().filter(|f| !apart(f.node)) {
             let Some(projected) = self.originals.iter().position(|n| *n == follower.node) else {
                 continue;
             };
@@ -2085,9 +2116,15 @@ impl BoxTree {
                 .into_iter()
                 .flatten()
                 {
-                    if from.1 == target && followers.boxes.iter().any(|f| f.node == from.0) {
+                    if from.1 == target
+                        && !apart(from.0)
+                        && followers.boxes.iter().any(|f| f.node == from.0)
+                    {
                         from.1 = now;
                     }
+                }
+                if apart(owner) {
+                    continue;
                 }
                 for sides in &mut run.inline_boxes {
                     if follows(sides.owner, InlineSide::Top) {
@@ -2115,7 +2152,7 @@ impl BoxTree {
                 .get_mut(arena)
                 .and_then(Option::as_mut)
                 .and_then(|leaf| leaf.runs.get_mut(at))
-                .filter(|run| run.owner == owner)
+                .filter(|run| run.owner == owner && !apart(owner))
             {
                 swap(&mut run.color);
             }
@@ -2510,6 +2547,17 @@ pub enum AnimationEvent {
     },
 }
 
+/// A time in milliseconds as a `Duration`: none below zero (or for NaN), and no more than a
+/// century, so that a time too long to represent cannot fail.
+fn millis_duration(millis: f32) -> Duration {
+    const MOST_SECONDS: f64 = 100.0 * 365.25 * 24.0 * 60.0 * 60.0;
+    let seconds = f64::from(millis) / 1000.0;
+    if seconds.is_nan() || seconds <= 0.0 {
+        return Duration::ZERO;
+    }
+    Duration::from_secs_f64(seconds.min(MOST_SECONDS))
+}
+
 /// The element an internal address names, as an event gives it: its CSS id, or none.
 fn element_of(id: &str) -> Option<String> {
     let (base, _) = split_pseudo(id);
@@ -2620,6 +2668,9 @@ struct Keyframed {
     /// Time already past the end of the run in progress when it was started: a frame
     /// that crossed several iterations carries it on to the next.
     overrun: Duration,
+    /// While it plays (and after it ends): an instant and its local time then, in
+    /// milliseconds after its delay; what a timing change reads its elapsed time from.
+    origin: Option<(Instant, f32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3098,6 +3149,7 @@ impl BoxTreeAnimations {
                                     .engine
                                     .cancel(&self.keyframed[at].source, &clock_selection());
                                 self.keyframed[at].state = KeyState::Paused(place);
+                                self.keyframed[at].origin = None;
                             }
                             // Running again: on from where it was held.
                             (KeyState::Paused(place), false) => {
@@ -3125,6 +3177,7 @@ impl BoxTreeAnimations {
                             state: KeyState::Paused(0.0),
                             announced: false,
                             overrun: Duration::ZERO,
+                            origin: None,
                         });
                         let at = self.keyframed.len() - 1;
                         self.begin(at, now);
@@ -3173,10 +3226,22 @@ impl BoxTreeAnimations {
         }
         let length = animation.duration.max(0.0);
         let element = self.keyframed[at].element();
-        let millis = |value: f32| Duration::from_secs_f64(f64::from(value.max(0.0)) / 1000.0);
-        // Nothing to run, but a delay to wait out first: it starts and ends after it.
+        let millis = millis_duration;
+        // Nothing to run, but a delay to wait out first: it starts and ends after it, with
+        // no time between.
         if (length == 0.0 || animation.iterations <= 0.0) && animation.delay > 0.0 {
-            self.start_run(at, 0.0, Duration::ZERO, millis(animation.delay), now);
+            let running = &mut self.keyframed[at];
+            running.span = (0.0, 0.0);
+            running.state = KeyState::Running;
+            running.overrun = Duration::ZERO;
+            let delay = millis(animation.delay);
+            running.origin = now.checked_add(delay).map(|at| (at, 0.0));
+            let _ = self.engine.start_progress(
+                &running.source,
+                &clock_selection(),
+                AnimationTiming::new(Duration::ZERO, delay),
+                now,
+            );
             return;
         }
         if length == 0.0 || animation.iterations <= 0.0 {
@@ -3239,31 +3304,33 @@ impl BoxTreeAnimations {
     fn local_time(&self, at: usize) -> Option<f32> {
         let running = &self.keyframed[at];
         let length = running.animation.duration.max(0.0);
-        let millis = |duration: Duration| duration.as_secs_f32() * 1000.0;
-        match running.state {
-            KeyState::Done => None,
-            KeyState::Paused(place) => Some((running.run as f32 + place) * length),
-            KeyState::Running => match self.engine.phase(&running.source, clock_property()) {
-                Ok(Some((TimingPhase::Delayed, _))) => {
-                    let (starts, _) = self.run_window(running)?;
-                    let now = self.engine_now()?;
-                    Some(-millis(starts.saturating_duration_since(now)))
-                }
-                _ => {
-                    let progress = self.keyframe_sample(running).unwrap_or(1.0);
-                    let place = running.span.0 + progress * (running.span.1 - running.span.0);
-                    Some((running.run as f32 + place) * length)
-                }
-            },
+        if let KeyState::Paused(place) = running.state {
+            return Some((running.run as f32 + place) * length);
         }
+        // From when it was set going: past a run's end, and after it ended, too.
+        let (origin, local) = running.origin?;
+        let now = self.engine_now()?;
+        let millis = |duration: Duration| duration.as_secs_f32() * 1000.0;
+        Some(if now >= origin {
+            local + millis(now.duration_since(origin))
+        } else {
+            local - millis(origin.duration_since(now))
+        })
     }
 
     /// Puts keyframe animation `at` at `local` milliseconds after its (new) delay ended,
-    /// as a timing change does: running from there, or held there when paused.
+    /// as a timing change does: running from there, or held there when paused. One that
+    /// had ended runs again if the new timing has it still running.
     fn retime(&mut self, at: usize, local: f32, now: Instant) {
-        let length = self.keyframed[at].animation.duration.max(0.0);
+        let animation = &self.keyframed[at].animation;
+        let length = animation.duration.max(0.0);
+        let active = if animation.iterations.is_finite() {
+            length * animation.iterations.max(0.0)
+        } else {
+            f32::INFINITY
+        };
         match self.keyframed[at].state {
-            KeyState::Done => {}
+            KeyState::Done if local >= active => {}
             KeyState::Paused(_) => {
                 let at_time = (local.max(0.0) / length.max(f32::EPSILON)).max(0.0);
                 let run = at_time.floor();
@@ -3273,27 +3340,19 @@ impl BoxTreeAnimations {
                     .map_or(run as u32, |runs| (run as u32).min(runs.saturating_sub(1)));
                 self.keyframed[at].state = KeyState::Paused(place);
             }
-            KeyState::Running => {
+            KeyState::Running | KeyState::Done => {
                 let _ = self
                     .engine
                     .cancel(&self.keyframed[at].source, &clock_selection());
                 if local < 0.0 {
                     self.keyframed[at].run = 0;
-                    let delay = Duration::from_secs_f64(f64::from(-local) / 1000.0);
+                    let delay = millis_duration(-local);
                     self.start_run(at, 0.0, Duration::ZERO, delay, now);
                 } else {
                     self.seek(at, local, now);
                 }
             }
         }
-    }
-
-    /// When the run in progress of a keyframe animation starts moving and ends.
-    fn run_window(&self, running: &Keyframed) -> Option<(Instant, Instant)> {
-        self.engine
-            .window(&running.source, clock_property())
-            .ok()
-            .flatten()
     }
 
     fn engine_now(&self) -> Option<Instant> {
@@ -3305,8 +3364,7 @@ impl BoxTreeAnimations {
     fn start_run(&mut self, at: usize, from: f32, skip: Duration, delay: Duration, now: Instant) {
         let running = &mut self.keyframed[at];
         let end = running.run_end(running.run);
-        let whole =
-            Duration::from_secs_f64(f64::from(running.animation.duration.max(0.0)) / 1000.0);
+        let whole = millis_duration(running.animation.duration);
         // What of `skip` lies past this run's end goes on to the next.
         let needed = whole.mul_f32((end - from).max(0.0));
         running.overrun = skip.saturating_sub(needed);
@@ -3314,6 +3372,8 @@ impl BoxTreeAnimations {
         running.span = (from, end);
         running.state = KeyState::Running;
         let length = whole.mul_f32((end - from).max(0.0));
+        let local = (running.run as f32 + from) * running.animation.duration.max(0.0);
+        running.origin = now.checked_add(delay).map(|at| (at, local));
         // A refused timing leaves it to end at the next frame.
         let _ = self.engine.start_progress(
             &running.source,
@@ -3670,8 +3730,7 @@ impl BoxTreeAnimations {
                 if longhands.is_empty() {
                     continue;
                 }
-                let millis =
-                    |value: f32| Duration::from_secs_f64(f64::from(value.max(0.0)) / 1000.0);
+                let millis = millis_duration;
                 // A negative delay has used up part of the duration already.
                 let skipped = (-transition.delay).max(0.0);
                 if skipped >= transition.duration {

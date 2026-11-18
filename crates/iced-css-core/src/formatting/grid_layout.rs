@@ -1393,9 +1393,33 @@ impl Solver<'_> {
                 )
             }
         };
+        // 10.5: the columns' share of what they leave is known before the items are laid,
+        // so an item spanning several takes the space between them too.
+        let live = |collapsed: &[bool]| collapsed.iter().filter(|collapsed| !**collapsed).count();
+        let total = |sizes: &[f32], collapsed: &[bool], gap: f32| {
+            sizes.iter().sum::<f32>() + gap * live(collapsed).saturating_sub(1) as f32
+        };
+        let columns_total = match &column_given {
+            Some(edges) => end_of(edges),
+            None => total(&columns, &column_collapsed, grid.gap[1]),
+        };
+        let (column_start, column_between) = match &column_given {
+            Some(_) => (0.0, 0.0),
+            None => distribute(
+                grid.justify_content,
+                inner.width - columns_total,
+                live(&column_collapsed),
+            ),
+        };
         let column_edges = match &column_given {
             Some(edges) => edges.clone(),
-            None => track_edges(&columns, &column_collapsed, grid.gap[1], 0.0, 0.0),
+            None => track_edges(
+                &columns,
+                &column_collapsed,
+                grid.gap[1],
+                column_start,
+                column_between,
+            ),
         };
         // Each item at its width in its area, for its height.
         let mut widths = Vec::with_capacity(children.len());
@@ -1516,40 +1540,17 @@ impl Solver<'_> {
                 grid.align_content == FlexSpace::Stretch,
             ),
         };
-        // 10.5: content alignment shares what the tracks leave.
-        let live = |collapsed: &[bool]| collapsed.iter().filter(|collapsed| !**collapsed).count();
-        let total = |sizes: &[f32], collapsed: &[bool], gap: f32| {
-            sizes.iter().sum::<f32>() + gap * live(collapsed).saturating_sub(1) as f32
-        };
+        // 10.5: content alignment shares what the rows leave.
         let rows_total = match &row_given {
             Some(edges) => end_of(edges),
             None => total(&rows, &row_collapsed, grid.gap[0]),
         };
-        let columns_total = match &column_given {
-            Some(edges) => end_of(edges),
-            None => total(&columns, &column_collapsed, grid.gap[1]),
-        };
-        let (column_start, column_between) = distribute(
-            grid.justify_content,
-            inner.width - columns_total,
-            live(&column_collapsed),
-        );
         let (row_start, row_between) = distribute(
             grid.align_content,
             inner.height.map_or(0.0, |height| height - rows_total),
             live(&row_collapsed),
         );
         // What a parent gave is placed as given.
-        let column_edges = match column_given {
-            Some(edges) => edges,
-            None => track_edges(
-                &columns,
-                &column_collapsed,
-                grid.gap[1],
-                column_start,
-                column_between,
-            ),
-        };
         let row_edges = match row_given {
             Some(edges) => edges,
             None => track_edges(&rows, &row_collapsed, grid.gap[0], row_start, row_between),
@@ -1618,7 +1619,7 @@ impl Solver<'_> {
                     value.max_height.vertical(None),
                 )
                 .max(0.0);
-                self.set_content_height(child, stretched);
+                self.relay_at_height(child, cb, stretched)?;
                 border_height = stretched + frame;
             }
             let value = &self.boxes[child];

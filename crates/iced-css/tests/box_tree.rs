@@ -1438,6 +1438,356 @@ fn nth_child_of_counts_only_the_siblings_its_list_selects() {
 }
 
 #[test]
+#[allow(unused_variables)]
+fn second_review_regression_1() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    let frame = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }";
+    let animated = |css: &str, times: &[u64]| {
+        let tree = BoxTree::new(one(), &format!("{keyframes} {css}")).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        frame(&animations.presented(&tree), 1).2
+    };
+    // 1: a time too long to represent does not panic.
+    animated(
+        "#a { height:1px; animation: one 100000000000000000000s linear; }",
+        &[500],
+    );
+}
+
+#[test]
+#[allow(unused_variables)]
+fn second_review_regression_4() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    let frame = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }";
+    let animated = |css: &str, times: &[u64]| {
+        let tree = BoxTree::new(one(), &format!("{keyframes} {css}")).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        frame(&animations.presented(&tree), 1).2
+    };
+    // 4: no iterations: after the delay it ends at once, held at its start.
+    assert_eq!(
+        animated(
+            "#a { height:1px; width:50px; animation: one 1s linear 2s 0 forwards; }",
+            &[2500]
+        ),
+        100.0
+    );
+}
+
+#[test]
+#[allow(unused_variables)]
+fn second_review_regression_5() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    let frame = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }";
+    let animated = |css: &str, times: &[u64]| {
+        let tree = BoxTree::new(one(), &format!("{keyframes} {css}")).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        frame(&animations.presented(&tree), 1).2
+    };
+    // 5: retimed past where it ended: on from the time it has run.
+    for times in [&[1500][..], &[1000, 1500][..]] {
+        let tree = BoxTree::new(
+            one(),
+            &format!(
+                "{keyframes} #a {{ height:1px; width:50px; animation: one 1s linear forwards; }}"
+            ),
+        )
+        .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        let longer = tree
+            .restyled(&[&format!(
+                "{keyframes} #a {{ height:1px; width:50px; animation: one 2s linear forwards; }}"
+            )])
+            .unwrap();
+        animations.play(&longer, at(1500));
+        animations.advance(at(1500), &longer);
+        assert_eq!(
+            frame(&animations.presented(&longer), 1).2,
+            175.0,
+            "{times:?}"
+        );
+    }
+}
+
+#[test]
+#[allow(unused_variables)]
+fn second_review_regression_3() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    let frame = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }";
+    let animated = |css: &str, times: &[u64]| {
+        let tree = BoxTree::new(one(), &format!("{keyframes} {css}")).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        frame(&animations.presented(&tree), 1).2
+    };
+    // 3: a child animating its own color keeps it while its parent animates one too.
+    let tree = BoxTree::new(
+        node(
+            "page",
+            vec![node("a", vec![node("b", vec![text("t", "words")])])],
+        ),
+        "@keyframes red { from { color: #000000 } to { color: #ff0000 } }
+         @keyframes blue { from { color: #000000 } to { color: #0000ff } }
+         #a { animation: red 1s linear; } #b { animation: blue 1s linear; }",
+    )
+    .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(500), &tree);
+    let shown = animations.presented(&tree);
+    let color = shown
+        .text_leaves()
+        .iter()
+        .flat_map(|(_, leaf)| leaf.runs.iter())
+        .find(|run| run.text.contains("words"))
+        .and_then(|run| run.color)
+        .unwrap();
+    assert!(
+        (color[0] - 0.0).abs() < 0.02 && (color[2] - 0.5).abs() < 0.02,
+        "{color:?}"
+    );
+}
+
+#[test]
+#[allow(unused_variables)]
+fn second_review_regression_6() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    let frame = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }";
+    let animated = |css: &str, times: &[u64]| {
+        let tree = BoxTree::new(one(), &format!("{keyframes} {css}")).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        frame(&animations.presented(&tree), 1).2
+    };
+    // 6: a stretched grid item lays its contents out again.
+    let tree = BoxTree::new(
+        one(),
+        "#page { display:grid; height:200px; grid-template-rows: 200px; }
+         #a { display:flex; flex-direction:column; justify-content:flex-end; }
+         #inner { height:20px; }",
+    )
+    .unwrap();
+    assert_eq!(frame(&tree, 2).1, 180.0);
+}
+
+#[test]
+#[allow(unused_variables)]
+fn second_review_regression_7() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    let frame = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }";
+    let animated = |css: &str, times: &[u64]| {
+        let tree = BoxTree::new(one(), &format!("{keyframes} {css}")).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        frame(&animations.presented(&tree), 1).2
+    };
+    // 7: a flexed size gives percentage heights inside a basis, the same as measured or not.
+    // Measured at 200px and flexed to 200px: still laid out again at its definite size.
+    let tree = BoxTree::new(
+        node(
+            "page",
+            vec![node("a", vec![node("big", vec![]), node("inner", vec![])])],
+        ),
+        "#page { display:flex; flex-direction:column; height:200px; }
+         #big { height:200px; } #inner { height:50%; }",
+    )
+    .unwrap();
+    assert_eq!(frame(&tree, 3).3, 100.0);
+}
+
+#[test]
+#[allow(unused_variables)]
+fn second_review_regression_8() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    let frame = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }";
+    let animated = |css: &str, times: &[u64]| {
+        let tree = BoxTree::new(one(), &format!("{keyframes} {css}")).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        frame(&animations.presented(&tree), 1).2
+    };
+    // 8: an item spanning columns takes the space distributed between them.
+    let tree = BoxTree::new(
+        one(),
+        "#page { display:grid; width:300px; grid-template-columns: 100px 100px;
+                 justify-content: space-between; }
+         #a { grid-column: 1 / 3; height:1px; }",
+    )
+    .unwrap();
+    assert_eq!(frame(&tree, 1).2, 300.0);
+}
+
+#[test]
+#[allow(unused_variables)]
+fn second_review_regression_9() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let one = || node("page", vec![node("a", vec![node("inner", vec![])])]);
+    let frame = |tree: &BoxTree, at: usize| {
+        let geometry = tree.layout(1000.0, None).unwrap();
+        let border = geometry[at].as_ref().unwrap().border;
+        (
+            border.left,
+            border.top,
+            border.right - border.left,
+            border.bottom - border.top,
+        )
+    };
+    let keyframes = "@keyframes one { from { width: 100px } to { width: 200px } }";
+    let animated = |css: &str, times: &[u64]| {
+        let tree = BoxTree::new(one(), &format!("{keyframes} {css}")).unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        for time in times {
+            animations.advance(at(*time), &tree);
+        }
+        frame(&animations.presented(&tree), 1).2
+    };
+    // 9: a CSS-wide keyword from a fallback is that keyword.
+    let tree = BoxTree::new(
+        node("page", vec![node("a", vec![text("t", "words")])]),
+        "#page { color:#ff0000; } #a { color: var(--missing, initial); }",
+    )
+    .unwrap();
+    let color = tree
+        .text_leaves()
+        .iter()
+        .flat_map(|(_, leaf)| leaf.runs.iter())
+        .find(|run| run.text.contains("words"))
+        .and_then(|run| run.color)
+        .unwrap();
+    assert_eq!(color, [0.0; 3]);
+}
+
+#[test]
 fn stylesheet_review_regressions() {
     let width = |css: &str| {
         let tree = BoxTree::new(node("page", vec![node("a", vec![])]), css).unwrap();

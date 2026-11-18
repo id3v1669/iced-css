@@ -1087,7 +1087,27 @@ pub fn parse_value(
 /// inherited property and `initial` otherwise, as a whole value; on a shorthand, each
 /// longhand's. `inherit` stays with each grammar, as CSS 2.2 has it.
 fn wide_keyword(property: PropertyId, value: &str, important: bool) -> Option<ParsedProperty> {
-    let word = value.trim();
+    // The value's one significant token: white space and comments (as a substitution
+    // puts around what it inserts) are not part of it.
+    let mut word = value.trim();
+    if word.contains("/*") {
+        let mut work = value.len().saturating_mul(256).saturating_add(4096);
+        let mut offset = 0;
+        let mut only = None;
+        while offset < value.len() {
+            let Ok(Some(token)) = crate::syntax::scan_token_budget(&value[offset..], &mut work)
+            else {
+                return None;
+            };
+            offset += token.raw.len();
+            match token.kind {
+                crate::syntax::TokenKind::Space | crate::syntax::TokenKind::Comment => {}
+                crate::syntax::TokenKind::Ident if only.is_none() => only = Some(token.raw),
+                _ => return None,
+            }
+        }
+        word = only?;
+    }
     let unset = word.eq_ignore_ascii_case("unset");
     let revert = word.eq_ignore_ascii_case("revert");
     if !unset && !revert && !word.eq_ignore_ascii_case("initial") {

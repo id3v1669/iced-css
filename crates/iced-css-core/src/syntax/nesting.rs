@@ -34,11 +34,15 @@ fn items(text: &str) -> Option<Vec<Item<'_>>> {
     let mut start = 0;
     let mut depth = 0usize;
     let mut open = 0;
+    // Where the prelude of the next block can begin: after the last top-level `;` token
+    // (not one in a string or comment), or the last block.
+    let mut cut = 0;
     while offset < text.len() {
         let token = scan_token_budget(&text[offset..], &mut work).ok()??;
         let at = offset;
         offset += token.raw.len();
         match token.kind {
+            TokenKind::Semicolon if depth == 0 => cut = offset,
             TokenKind::OpenBrace => {
                 if depth == 0 {
                     open = at;
@@ -49,16 +53,16 @@ fn items(text: &str) -> Option<Vec<Item<'_>>> {
                 depth -= 1;
                 if depth == 0 {
                     // What came before the prelude, up to the last `;` or block, is text.
-                    let before = &text[start..open];
-                    let cut = before.rfind([';', '}']).map_or(0, |at| at + 1);
-                    if cut > 0 {
-                        found.push(Item::Text(&before[..cut]));
+                    let from = cut.max(start);
+                    if from > start {
+                        found.push(Item::Text(&text[start..from]));
                     }
                     found.push(Item::Block {
-                        prelude: &before[cut..],
+                        prelude: &text[from..open],
                         body: &text[open + 1..at],
                     });
                     start = offset;
+                    cut = offset;
                 }
             }
             _ => {}
@@ -187,18 +191,25 @@ impl Flattener {
                         own
                     } else {
                         self.nested = true;
-                        // Lists multiply: stop before what they make outgrows the limit.
-                        let size: usize = parents
-                            .iter()
-                            .map(String::len)
-                            .sum::<usize>()
-                            .saturating_mul(own.len())
-                            .saturating_add(
-                                own.iter()
-                                    .map(String::len)
-                                    .sum::<usize>()
-                                    .saturating_mul(parents.len()),
-                            );
+                        // Lists multiply, and each `&` writes a parent again: stop before
+                        // what they make outgrows the limit, counted exactly.
+                        let mut size = 0usize;
+                        for nested in &own {
+                            let amps = tokens(nested)
+                                .unwrap_or_default()
+                                .iter()
+                                .filter(|(_, kind, raw)| *kind == TokenKind::Delim && *raw == "&")
+                                .count();
+                            for parent in parents {
+                                let one = if amps == 0 {
+                                    parent.len() + 1 + nested.len()
+                                } else {
+                                    (nested.len() - amps)
+                                        .saturating_add(amps.saturating_mul(parent.len()))
+                                };
+                                size = size.saturating_add(one + 2);
+                            }
+                        }
                         if self.out.len().saturating_add(size) > self.limit {
                             return None;
                         }
@@ -295,6 +306,18 @@ mod tests {
     }
 
     #[test]
+    fn strings_and_comments_do_not_end_a_prelude() {
+        assert_eq!(
+            flat(".a { [title=\";\"] { color: red } }"),
+            ".a{} .a [title=\";\"]{ color: red }"
+        );
+        assert_eq!(
+            flat(".a { color: blue; /* ; */ .b { color: red } }"),
+            ".a{ color: blue;} .a /* ; */ .b{ color: red }"
+        );
+    }
+
+    #[test]
     fn only_nesting_selector_tokens_stand_for_the_parent() {
         assert_eq!(
             flat(".a { [title=\"&\"] { color: red } }"),
@@ -362,6 +385,15 @@ mod tests {
             flatten_nesting(&deep),
             std::borrow::Cow::Borrowed(_)
         ));
+        // Many `&` in one selector write the parent as many times.
+        let level = format!("{} {{ ", "&".repeat(40));
+        let amps = format!(".aaaaaaaa {{ {} x: 1 {} }}", level.repeat(5), "}".repeat(5));
+        let flattened = flatten_nesting(&amps);
+        assert!(
+            flattened.len() <= (amps.len() * 16).max(1 << 16) + 4096,
+            "{}",
+            flattened.len()
+        );
         let list = ".a,.b,.c,.d,.e,.f,.g,.h,.i,.j";
         let many = format!(
             "{list} {{ {} }}",

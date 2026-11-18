@@ -214,34 +214,36 @@ pub fn compute(inherited: &CustomValues, own: &[(&str, &str)], work: &mut usize)
         values.remove(*name);
     }
     let mut state = vec![State::Raw; own.len()];
-    // In a cycle of references: invalid whatever its fallbacks.
-    let mut cyclic = vec![false; own.len()];
+    // What each refers to among its own declarations, by place.
+    let edges: Vec<Vec<usize>> = own
+        .iter()
+        .map(|(_, raw)| {
+            referenced(raw, work)
+                .into_iter()
+                .filter_map(|name| own.iter().position(|(other, _)| *other == name))
+                .collect()
+        })
+        .collect();
+    // In a cycle of references (a strongly connected component of more than one, or one
+    // that refers to itself): invalid whatever its fallbacks. Found before any is read,
+    // so the order they are visited in does not matter.
+    let cyclic = cycles(&edges);
     // The properties being resolved, outermost first, each with what it refers to and
     // how many of those it has gone through.
-    let mut stack: Vec<(usize, Vec<&str>, usize)> = Vec::new();
+    let mut stack: Vec<(usize, usize)> = Vec::new();
     for start in 0..own.len() {
         if state[start] != State::Raw {
             continue;
         }
         state[start] = State::Visiting;
-        stack.push((start, referenced(own[start].1, work), 0));
-        while let Some((at, names, next)) = stack.last_mut() {
+        stack.push((start, 0));
+        while let Some((at, next)) = stack.last_mut() {
             let at = *at;
-            if let Some(referred) = names.get(*next).copied() {
+            if let Some(&other) = edges[at].get(*next) {
                 *next += 1;
-                match own.iter().position(|(other, _)| *other == referred) {
-                    // Everything from that property down to this one is in the cycle.
-                    Some(other) if state[other] == State::Visiting => {
-                        let from = stack.iter().position(|(on, _, _)| *on == other);
-                        for (member, _, _) in &stack[from.unwrap_or(0)..] {
-                            cyclic[*member] = true;
-                        }
-                    }
-                    Some(other) if state[other] == State::Raw => {
-                        state[other] = State::Visiting;
-                        stack.push((other, referenced(own[other].1, work), 0));
-                    }
-                    _ => {}
+                if state[other] == State::Raw {
+                    state[other] = State::Visiting;
+                    stack.push((other, 0));
                 }
                 continue;
             }
@@ -268,6 +270,65 @@ pub fn compute(inherited: &CustomValues, own: &[(&str, &str)], work: &mut usize)
         }
     }
     values
+}
+
+/// Which of a graph's nodes lie on a cycle: Tarjan's strongly connected components,
+/// without recursion.
+fn cycles(edges: &[Vec<usize>]) -> Vec<bool> {
+    let count = edges.len();
+    let mut index = vec![usize::MAX; count];
+    let mut low = vec![0usize; count];
+    let mut on_stack = vec![false; count];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut cyclic = vec![false; count];
+    let mut next_index = 0;
+    for root in 0..count {
+        if index[root] != usize::MAX {
+            continue;
+        }
+        // (node, how many of its edges it has gone through)
+        let mut calls: Vec<(usize, usize)> = vec![(root, 0)];
+        index[root] = next_index;
+        low[root] = next_index;
+        next_index += 1;
+        stack.push(root);
+        on_stack[root] = true;
+        while let Some(&mut (node, ref mut at)) = calls.last_mut() {
+            if let Some(&other) = edges[node].get(*at) {
+                *at += 1;
+                if index[other] == usize::MAX {
+                    index[other] = next_index;
+                    low[other] = next_index;
+                    next_index += 1;
+                    stack.push(other);
+                    on_stack[other] = true;
+                    calls.push((other, 0));
+                } else if on_stack[other] {
+                    low[node] = low[node].min(index[other]);
+                }
+                continue;
+            }
+            calls.pop();
+            if let Some(&(parent, _)) = calls.last() {
+                low[parent] = low[parent].min(low[node]);
+            }
+            if low[node] == index[node] {
+                let mut members = Vec::new();
+                while let Some(member) = stack.pop() {
+                    on_stack[member] = false;
+                    members.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                let looped = members.len() > 1 || edges[node].contains(&node);
+                for member in members {
+                    cyclic[member] = looped;
+                }
+            }
+        }
+    }
+    cyclic
 }
 
 #[cfg(test)]
@@ -429,6 +490,23 @@ mod tests {
             got.map(|text| text.replace("/**/", "")).as_deref(),
             Some("1px")
         );
+    }
+
+    #[test]
+    fn overlapping_cycles_are_invalid_in_any_order() {
+        let declarations = [
+            ("--a", "var(--b, 1px) var(--c, 1px)"),
+            ("--b", "var(--a, 2px)"),
+            ("--c", "var(--b, 3px)"),
+        ];
+        for order in [[0, 1, 2], [2, 1, 0], [1, 2, 0]] {
+            let own: Vec<(&str, &str)> = order.iter().map(|at| declarations[*at]).collect();
+            let mut work = 100_000;
+            let got = compute(&CustomValues::new(), &own, &mut work);
+            for name in ["--a", "--b", "--c"] {
+                assert_eq!(got[name], None, "{name} in {order:?}");
+            }
+        }
     }
 
     #[test]
