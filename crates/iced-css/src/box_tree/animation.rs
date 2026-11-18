@@ -2739,8 +2739,8 @@ impl Keyframed {
                     self.run,
                     self.span.0 + progress * (self.span.1 - self.span.0),
                 )),
-                None => (self.animation.fill_backwards && self.run == 0 && !self.announced)
-                    .then_some((self.run, self.span.0)),
+                // In its delay (only the first run has one): what a backwards fill shows.
+                None => self.animation.fill_backwards.then_some((0, 0.0)),
             },
         }
     }
@@ -3181,9 +3181,7 @@ impl BoxTreeAnimations {
                                 match self.keyframed[at].paused_local.take() {
                                     // Paused in its delay: the rest of the delay, then on.
                                     Some(local) if local < 0.0 => {
-                                        self.keyframed[at].run = 0;
-                                        let delay = millis_duration(-local);
-                                        self.start_run(at, 0.0, Duration::ZERO, delay, now);
+                                        self.start_delayed(at, millis_duration(-local), now);
                                     }
                                     _ => {
                                         self.start_run(
@@ -3270,27 +3268,16 @@ impl BoxTreeAnimations {
     /// length ends at once.
     fn begin(&mut self, at: usize, now: Instant) {
         let animation = self.keyframed[at].animation.clone();
+        // Paused from the start: held where its delay puts it, a negative one included.
         if animation.paused {
+            self.retime(at, -animation.delay, now);
             return;
         }
         let length = animation.duration.max(0.0);
         let element = self.keyframed[at].element();
         let millis = millis_duration;
-        // Nothing to run, but a delay to wait out first: it starts and ends after it, with
-        // no time between.
         if (length == 0.0 || animation.iterations <= 0.0) && animation.delay > 0.0 {
-            let running = &mut self.keyframed[at];
-            running.span = (0.0, 0.0);
-            running.state = KeyState::Running;
-            running.overrun = Duration::ZERO;
-            let delay = millis(animation.delay);
-            running.origin = now.checked_add(delay).map(|at| (at, 0.0));
-            let _ = self.engine.start_progress(
-                &running.source,
-                &clock_selection(),
-                AnimationTiming::new(Duration::ZERO, delay),
-                now,
-            );
+            self.start_delayed(at, millis(animation.delay), now);
             return;
         }
         if length == 0.0 || animation.iterations <= 0.0 {
@@ -3311,11 +3298,57 @@ impl BoxTreeAnimations {
             return;
         }
         if animation.delay >= 0.0 {
-            self.start_run(at, 0.0, Duration::ZERO, millis(animation.delay), now);
+            self.start_delayed(at, millis(animation.delay), now);
             return;
         }
         // A negative delay has used up that much of its time already.
         self.seek(at, -animation.delay, now);
+    }
+
+    /// Sets keyframe animation `at` going from its start after `delay`: its first run, or,
+    /// with nothing to run (no length or no iterations), a run of no time that ends it once
+    /// the delay is over.
+    fn start_delayed(&mut self, at: usize, delay: Duration, now: Instant) {
+        self.keyframed[at].run = 0;
+        let animation = &self.keyframed[at].animation;
+        if animation.duration > 0.0 && animation.iterations > 0.0 {
+            self.start_run(at, 0.0, Duration::ZERO, delay, now);
+            return;
+        }
+        let running = &mut self.keyframed[at];
+        running.span = (0.0, 0.0);
+        running.state = KeyState::Running;
+        running.overrun = Duration::ZERO;
+        running.origin = now.checked_add(delay).map(|at| (at, 0.0));
+        let _ = self.engine.start_progress(
+            &running.source,
+            &clock_selection(),
+            AnimationTiming::new(Duration::ZERO, delay),
+            now,
+        );
+    }
+
+    /// Sends what an ending sends: its start first, when it has not yet.
+    fn send_end(&mut self, at: usize) {
+        let running = &mut self.keyframed[at];
+        let (element, pseudo, name) = (
+            running.element(),
+            running.pseudo(),
+            running.animation.name.clone(),
+        );
+        if !running.announced {
+            running.announced = true;
+            self.events.push(AnimationEvent::AnimationStart {
+                element: element.clone(),
+                pseudo,
+                name: name.clone(),
+            });
+        }
+        self.events.push(AnimationEvent::AnimationEnd {
+            element,
+            pseudo,
+            name,
+        });
     }
 
     /// Sets keyframe animation `at` going `elapsed` milliseconds into its active time: in
@@ -3341,11 +3374,7 @@ impl BoxTreeAnimations {
             self.keyframed[at].state = KeyState::Done;
             // Its time goes on from here, for a timing change to read.
             self.keyframed[at].origin = Some((now, elapsed));
-            self.events.push(AnimationEvent::AnimationEnd {
-                element: self.keyframed[at].element(),
-                pseudo: self.keyframed[at].pseudo(),
-                name: animation.name,
-            });
+            self.send_end(at);
             return;
         }
         // Past a billion iterations only the parity counts, for its direction.
@@ -3401,11 +3430,7 @@ impl BoxTreeAnimations {
             // Paused past where the new timing ends: it has ended, and stays paused there.
             KeyState::Paused(_) | KeyState::PausedEnded if local >= active => {
                 if matches!(self.keyframed[at].state, KeyState::Paused(_)) {
-                    self.events.push(AnimationEvent::AnimationEnd {
-                        element: self.keyframed[at].element(),
-                        pseudo: self.keyframed[at].pseudo(),
-                        name: self.keyframed[at].animation.name.clone(),
-                    });
+                    self.send_end(at);
                 }
                 self.keyframed[at].state = KeyState::PausedEnded;
                 self.keyframed[at].paused_local = Some(local);
@@ -3425,9 +3450,7 @@ impl BoxTreeAnimations {
                     .engine
                     .cancel(&self.keyframed[at].source, &clock_selection());
                 if local < 0.0 {
-                    self.keyframed[at].run = 0;
-                    let delay = millis_duration(-local);
-                    self.start_run(at, 0.0, Duration::ZERO, delay, now);
+                    self.start_delayed(at, millis_duration(-local), now);
                 } else {
                     self.seek(at, local, now);
                 }
@@ -3448,11 +3471,18 @@ impl BoxTreeAnimations {
         // What of `skip` lies past this run's end goes on to the next.
         let needed = whole.mul_f32((end - from).max(0.0));
         running.overrun = skip.saturating_sub(needed);
-        let from = (from + skip.as_secs_f32() / whole.as_secs_f32().max(f32::EPSILON)).min(end);
+        let reached = from + skip.as_secs_f32() / whole.as_secs_f32().max(f32::EPSILON);
+        let from = reached.min(end);
         running.span = (from, end);
         running.state = KeyState::Running;
         let length = whole.mul_f32((end - from).max(0.0));
-        let local = (running.run as f32 + from) * running.animation.duration.max(0.0);
+        // Its time where it is now, past this run's end too: a timing change reads it.
+        let local = if whole.is_zero() {
+            running.run as f32 * running.animation.duration.max(0.0)
+        } else {
+            (running.run as f32 + from) * running.animation.duration.max(0.0)
+                + running.overrun.as_secs_f32() * 1000.0
+        };
         running.origin = now.checked_add(delay).map(|at| (at, local));
         // A refused timing leaves it to end at the next frame.
         let _ = self.engine.start_progress(
