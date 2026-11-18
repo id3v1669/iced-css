@@ -371,7 +371,7 @@ impl Solver<'_> {
                     .collect(),
             };
             let kept = self.laid.entry(node).or_default();
-            if kept.len() == 2 {
+            if kept.len() == 4 {
                 kept.remove(0);
             }
             kept.push(laid);

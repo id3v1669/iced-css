@@ -3165,6 +3165,13 @@ impl BoxTreeAnimations {
                                 self.keyframed[at].origin = None;
                                 self.keyframed[at].paused_local = local;
                             }
+                            // Ended, then paused: its time stops there too.
+                            (KeyState::Done, true) => {
+                                let local = self.local_time(at);
+                                self.keyframed[at].state = KeyState::PausedEnded;
+                                self.keyframed[at].origin = None;
+                                self.keyframed[at].paused_local = local;
+                            }
                             // Running again: on from where it was held.
                             (KeyState::Paused(place), false) => {
                                 self.keyframed[at].paused_local = None;

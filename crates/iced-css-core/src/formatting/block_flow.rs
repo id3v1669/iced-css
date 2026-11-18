@@ -625,8 +625,9 @@ struct Solver<'a> {
     /// A content height a flex or grid container gives an item it lays out again (grown,
     /// shrunk or stretched), in place of its own `height`, for its next layout only.
     forced_heights: std::collections::BTreeMap<usize, f32>,
-    /// By flex or grid item, its last two layouts and what they were laid out with (a
-    /// container lays an item out at its own height, then at the one it gives it):
+    /// By flex or grid item, its last four layouts and what they were laid out with (a
+    /// container lays an item out at its own height, then at the one it gives it; a
+    /// subgrid in rows is also measured, then given its rows):
     /// laying it out again with the same puts that back, so nested containers that lay
     /// their items out twice do not multiply the work.
     laid: std::collections::BTreeMap<usize, Vec<LaidItem>>,

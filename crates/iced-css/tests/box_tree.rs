@@ -1909,6 +1909,36 @@ fn fourth_review_regression_2() {
 }
 
 #[test]
+fn fifth_review_regression_2() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    // Ended, paused, then given a longer duration while still paused: where its frozen
+    // time falls on the new timing.
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let sheet = |duration: &str, paused: bool| {
+        format!(
+            "@keyframes one {{ from {{ width: 100px }} to {{ width: 200px }} }}
+             #a {{ height:1px; width:50px; animation: one {duration} linear forwards;
+                   animation-play-state: {}; }}",
+            if paused { "paused" } else { "running" }
+        )
+    };
+    let tree = BoxTree::new(node("page", vec![node("a", vec![])]), &sheet("1s", false)).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(1500), &tree);
+    let paused = tree.restyled(&[&sheet("1s", true)]).unwrap();
+    animations.play(&paused, at(1500));
+    let longer = tree.restyled(&[&sheet("2s", true)]).unwrap();
+    animations.play(&longer, at(3000));
+    animations.advance(at(3000), &longer);
+    let geometry = animations.presented(&longer).layout(1000.0, None).unwrap();
+    let border = geometry[1].as_ref().unwrap().border;
+    assert_eq!(border.right - border.left, 175.0);
+}
+
+#[test]
 fn stylesheet_review_regressions() {
     let width = |css: &str| {
         let tree = BoxTree::new(node("page", vec![node("a", vec![])]), css).unwrap();
