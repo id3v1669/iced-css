@@ -278,12 +278,13 @@ CSS Animations 1: `@keyframes` (`from`, `to` and percentages, with a keyframe's 
 `animation-iteration-count` (with `infinite`), `animation-direction`,
 `animation-fill-mode`, `animation-play-state` and the `animation` shorthand. The widget runs
 the animations the styling it draws names, from when it first draws that styling, hovered,
-pressed and focused stylings included; `BoxTreeAnimations::play(tree, now)` runs them for a
+pressed and focused stylings included, and a `:before` or `:after` runs those its own
+`animation-*` values name (not its element's); `BoxTreeAnimations::play(tree, now)` runs them for a
 tree drawn elsewhere through `presented`. A keyframe value lies over the element's normal
 declarations and under its important ones; a keyframe that leaves a property out takes the
 element's own value at `from` and `to` and is skipped between. Limits: only the properties
 listed below move (others, as `display`, stay as styled); keyframe values holding `var()` are
-left out; `:before` and `:after` are not animated; with two animations of one property the
+left out; with two animations of one property the
 later wins whole, without adding. Their time is luminate's, as transitions' is: each
 iteration is a run of luminate progress, the next started where the last ended (a frame
 that crosses several carries the time past each end on), and a pause holds the place and

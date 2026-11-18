@@ -1798,6 +1798,78 @@ fn read_transitions<'v, E>(
     Ok(transitions)
 }
 
+/// CSS Animations 1: the animations a target's `animation-*` values name, read through
+/// `lookup` as `read_transitions` reads. The list of names sets how many there are.
+fn read_animations<'v, E>(
+    lookup: &dyn Fn(&'static str) -> Result<DefaultedValueRef<'v>, E>,
+    numeric: NumericLimits,
+) -> Result<Vec<ElementAnimation>, E> {
+    let transition_of = |name: &'static str| {
+        Ok::<_, E>(match lookup(name)? {
+            DefaultedValueRef::Compute(SpecifiedValue::Transition(value)) => Some(value),
+            _ => None,
+        })
+    };
+    let mut animations = Vec::new();
+    let Some(TransitionValue::Names(names)) = transition_of("animation-name")? else {
+        return Ok(animations);
+    };
+    {
+        let durations: Vec<f32> = transition_times(transition_of("animation-duration")?, numeric);
+        let delays: Vec<f32> = transition_times(transition_of("animation-delay")?, numeric);
+        let easings: Vec<crate::animation::easing::CssEasing> =
+            match transition_of("animation-timing-function")? {
+                Some(TransitionValue::Easings(easings)) => easings
+                    .iter()
+                    .map(|easing| css_easing(easing, numeric))
+                    .collect(),
+                _ => vec![crate::animation::easing::CssEasing::EASE],
+            };
+        let counts: Vec<f32> = match transition_of("animation-iteration-count")? {
+            Some(TransitionValue::Counts(counts)) => counts
+                .iter()
+                .map(|count| match count {
+                    None => f32::INFINITY,
+                    Some(count) => count
+                        .scaled_finite_f32(1.0, numeric)
+                        .map_or(1.0, |converted| converted.value.max(0.0)),
+                })
+                .collect(),
+            _ => vec![1.0],
+        };
+        let words = |name: &'static str, initial: &'static str| {
+            Ok::<_, E>(match transition_of(name)? {
+                Some(TransitionValue::Keywords(words)) => words.clone(),
+                _ => vec![initial],
+            })
+        };
+        let directions = words("animation-direction", "normal")?;
+        let fills = words("animation-fill-mode", "none")?;
+        let states = words("animation-play-state", "running")?;
+        for (at, name) in names.iter().enumerate() {
+            let Some(name) = name else { continue };
+            let fill = fills[at % fills.len()];
+            animations.push(ElementAnimation {
+                name: name.clone(),
+                duration: durations[at % durations.len()].max(0.0),
+                delay: delays[at % delays.len()],
+                easing: easings[at % easings.len()],
+                iterations: counts[at % counts.len()],
+                direction: match directions[at % directions.len()] {
+                    "reverse" => AnimationDirection::Reverse,
+                    "alternate" => AnimationDirection::Alternate,
+                    "alternate-reverse" => AnimationDirection::AlternateReverse,
+                    _ => AnimationDirection::Normal,
+                },
+                fill_backwards: matches!(fill, "backwards" | "both"),
+                fill_forwards: matches!(fill, "forwards" | "both"),
+                paused: states[at % states.len()] == "paused",
+            });
+        }
+    }
+    Ok(animations)
+}
+
 pub fn css_easing(
     easing: &EasingValue,
     numeric: NumericLimits,
@@ -2056,6 +2128,8 @@ pub struct TreePaint {
     pub transitions: Vec<Vec<ElementTransition>>,
     /// Those each row's `:before` and `:after` ask for, by side.
     pub generated_transitions: Vec<[Vec<ElementTransition>; 2]>,
+    /// The animations each row's `:before` and `:after` name, by side.
+    pub generated_animations: Vec<[Vec<ElementAnimation>; 2]>,
     /// The animations each row asks for, by name; empty when none.
     pub animations: Vec<Vec<ElementAnimation>>,
     /// Each row's background gradient, if its `background-image` is one.
@@ -2471,6 +2545,8 @@ pub fn evaluate_tree_paint<'r>(
     let mut grid_items: Vec<Option<Box<GridItem>>> = vec![None; projection.len()];
     let mut transitions: Vec<Vec<ElementTransition>> = vec![Vec::new(); projection.len()];
     let mut generated_transitions: Vec<[Vec<ElementTransition>; 2]> =
+        vec![[Vec::new(), Vec::new()]; projection.len()];
+    let mut generated_animations: Vec<[Vec<ElementAnimation>; 2]> =
         vec![[Vec::new(), Vec::new()]; projection.len()];
     let mut animations: Vec<Vec<ElementAnimation>> = vec![Vec::new(); projection.len()];
     let mut gradients: Vec<Option<std::sync::Arc<GradientPaint>>> = vec![None; projection.len()];
@@ -3565,71 +3641,8 @@ pub fn evaluate_tree_paint<'r>(
         if item != GridItem::default() {
             grid_items[index] = Some(Box::new(item));
         }
-        // CSS Transitions 1. None of these inherits; `inherit` on one reads as its initial
-        // value. The list of properties sets how many transitions there are, and the other
-        // lists repeat to match it.
-        let transition_of = |name: &'static str| {
-            Ok::<_, E>(match defaulted(name)? {
-                DefaultedValueRef::Compute(SpecifiedValue::Transition(value)) => Some(value),
-                _ => None,
-            })
-        };
-        let times = |value: Option<&TransitionValue>| transition_times(value, limits.numeric);
         transitions[index] = read_transitions(&defaulted, limits.numeric)?;
-        // CSS Animations 1, likewise: the list of names sets how many there are.
-        if let Some(TransitionValue::Names(names)) = transition_of("animation-name")? {
-            let durations: Vec<f32> = times(transition_of("animation-duration")?);
-            let delays: Vec<f32> = times(transition_of("animation-delay")?);
-            let easings: Vec<crate::animation::easing::CssEasing> =
-                match transition_of("animation-timing-function")? {
-                    Some(TransitionValue::Easings(easings)) => easings
-                        .iter()
-                        .map(|easing| css_easing(easing, limits.numeric))
-                        .collect(),
-                    _ => vec![crate::animation::easing::CssEasing::EASE],
-                };
-            let counts: Vec<f32> = match transition_of("animation-iteration-count")? {
-                Some(TransitionValue::Counts(counts)) => counts
-                    .iter()
-                    .map(|count| match count {
-                        None => f32::INFINITY,
-                        Some(count) => count
-                            .scaled_finite_f32(1.0, limits.numeric)
-                            .map_or(1.0, |converted| converted.value.max(0.0)),
-                    })
-                    .collect(),
-                _ => vec![1.0],
-            };
-            let words = |name: &'static str, initial: &'static str| {
-                Ok::<_, E>(match transition_of(name)? {
-                    Some(TransitionValue::Keywords(words)) => words.clone(),
-                    _ => vec![initial],
-                })
-            };
-            let directions = words("animation-direction", "normal")?;
-            let fills = words("animation-fill-mode", "none")?;
-            let states = words("animation-play-state", "running")?;
-            for (at, name) in names.iter().enumerate() {
-                let Some(name) = name else { continue };
-                let fill = fills[at % fills.len()];
-                animations[index].push(ElementAnimation {
-                    name: name.clone(),
-                    duration: durations[at % durations.len()].max(0.0),
-                    delay: delays[at % delays.len()],
-                    easing: easings[at % easings.len()],
-                    iterations: counts[at % counts.len()],
-                    direction: match directions[at % directions.len()] {
-                        "reverse" => AnimationDirection::Reverse,
-                        "alternate" => AnimationDirection::Alternate,
-                        "alternate-reverse" => AnimationDirection::AlternateReverse,
-                        _ => AnimationDirection::Normal,
-                    },
-                    fill_backwards: matches!(fill, "backwards" | "both"),
-                    fill_forwards: matches!(fill, "forwards" | "both"),
-                    paused: states[at % states.len()] == "paused",
-                });
-            }
-        }
+        animations[index] = read_animations(&defaulted, limits.numeric)?;
         // CSS Box Sizing 4: not inherited; `inherit` takes the parent's.
         paints[index].aspect = match defaulted("aspect-ratio")? {
             DefaultedValueRef::Compute(SpecifiedValue::Ratio(width, height)) => {
@@ -3933,6 +3946,7 @@ pub fn evaluate_tree_paint<'r>(
                     .map_err(|_| E::Paint { property: name })
             };
             generated_transitions[index][side] = read_transitions(&cascaded, limits.numeric)?;
+            generated_animations[index][side] = read_animations(&cascaded, limits.numeric)?;
             let mut content = None;
             if let DefaultedValueRef::Compute(SpecifiedValue::Content(list)) = cascaded("content")?
             {
@@ -4385,6 +4399,7 @@ pub fn evaluate_tree_paint<'r>(
         grid_items,
         transitions,
         generated_transitions,
+        generated_animations,
         animations,
         gradients,
         transforms,

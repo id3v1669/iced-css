@@ -220,7 +220,7 @@ pub struct DisplayRuleBundle<'a> {
     /// What each element's `var()` values parse to, once [`resolve_variables`] has run.
     variables: Option<&'a ResolvedVariables>,
     /// Keyframe declarations laid over each source node's own winners (CSS Animations 1).
-    animated: Option<&'a HashMap<usize, Vec<&'a ParsedProperty>>>,
+    animated: Option<&'a HashMap<(usize, u8), Vec<&'a ParsedProperty>>>,
 }
 
 /// What a tree's values holding `var()` parse to: per element and pseudo-element, per
@@ -237,6 +237,11 @@ const TARGETS: [Option<PseudoElement>; 5] = [
     Some(PseudoElement::FirstLine),
     Some(PseudoElement::FirstLetter),
 ];
+/// The key `with_animated` gives an element (`None`) or one of its pseudo-elements.
+#[must_use]
+pub fn animated_target(pseudo: Option<PseudoElement>) -> u8 {
+    target_key(pseudo)
+}
 fn target_key(pseudo: Option<PseudoElement>) -> u8 {
     TARGETS
         .iter()
@@ -398,9 +403,13 @@ impl<'a> DisplayRuleBundle<'a> {
         self.variables = Some(variables);
         self
     }
-    /// Lay `animated`, by source node, over each element's winners as an animation does.
+    /// Lay `animated`, by source node and target (`animated_target`), over each target's
+    /// winners as an animation does.
     #[must_use]
-    pub fn with_animated(mut self, animated: &'a HashMap<usize, Vec<&'a ParsedProperty>>) -> Self {
+    pub fn with_animated(
+        mut self,
+        animated: &'a HashMap<(usize, u8), Vec<&'a ParsedProperty>>,
+    ) -> Self {
         self.animated = Some(animated);
         self
     }
@@ -427,11 +436,11 @@ impl<'a> DisplayRuleBundle<'a> {
             });
             winners.substitute(property, value);
         }
-        // An element's own animations; its `:before` and `:after` have none here.
-        if let (None, Some(values)) = (
-            pseudo,
-            self.animated.and_then(|animated| animated.get(&node)),
-        ) {
+        // The target's own animations: an element's, or its `:before`'s or `:after`'s.
+        if let Some(values) = self
+            .animated
+            .and_then(|animated| animated.get(&(node, target_key(pseudo))))
+        {
             for value in values {
                 let leaves = match &value.value {
                     SpecifiedValue::Expanded(leaves) => leaves.as_slice(),

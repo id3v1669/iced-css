@@ -623,6 +623,8 @@ fn trim_before_newline(texts: &mut [(String, &'static str)]) {
 
 /// The hovered, active and focused source nodes a tree is styled for.
 type InteractionKey = (Option<usize>, Option<usize>, Option<usize>);
+/// A keyframe laid over a target: see `BoxTree::keyframe_layer`.
+pub(crate) type KeyframeAt = (usize, Option<usize>, String, usize);
 
 /// Which boxes a rule can select with one interaction pseudo-class, read from the text of
 /// the sheets. It may say too much, never too little: anything it cannot read means all.
@@ -899,6 +901,7 @@ struct Style {
     marker_images: BTreeMap<usize, image::Handle>,
     transitions: Vec<Vec<ElementTransition>>,
     generated_transitions: Vec<[Vec<ElementTransition>; 2]>,
+    generated_animations: Vec<[Vec<ElementAnimation>; 2]>,
     animations: Vec<Vec<ElementAnimation>>,
     key: InteractionKey,
     gradients: Vec<Option<Arc<GradientPaint>>>,
@@ -936,6 +939,8 @@ pub struct BoxTree {
     transitions: Vec<Vec<ElementTransition>>,
     /// Those each element's `:before` and `:after` ask for, by side.
     generated_transitions: Vec<[Vec<ElementTransition>; 2]>,
+    /// The animations each element's `:before` and `:after` name, by side.
+    generated_animations: Vec<[Vec<ElementAnimation>; 2]>,
     /// The animations each element asks for, by projected index (CSS Animations 1).
     animations: Vec<Vec<ElementAnimation>>,
     /// The interaction state it was styled for.
@@ -1204,6 +1209,7 @@ impl BoxTree {
             marker_images: self.marker_images.clone(),
             transitions: self.transitions.clone(),
             generated_transitions: self.generated_transitions.clone(),
+            generated_animations: self.generated_animations.clone(),
             animations: self.animations.clone(),
             key: self.key,
             gradients: self.gradients.clone(),
@@ -1229,6 +1235,7 @@ impl BoxTree {
             presentation: None,
             transitions: style.transitions,
             generated_transitions: style.generated_transitions,
+            generated_animations: style.generated_animations,
             animations: style.animations,
             key: style.key,
             gradients: style.gradients,
@@ -1311,17 +1318,20 @@ impl BoxTree {
     }
 
     /// This tree's styling with a keyframe layer over it; see [`Self::styled_with`].
-    pub(crate) fn keyframe_layer(&self, layer: &[(usize, String, usize)]) -> Option<Self> {
+    /// The keyframe a layer puts over a target: source node, side (`None` for the element,
+    /// 0 for `:before`, 1 for `:after`), `@keyframes` name and keyframe rule index.
+    pub(crate) fn keyframe_layer(&self, layer: &[KeyframeAt]) -> Option<Self> {
         Self::styled_with(&self.source, self.key, layer).ok()
     }
 
-    /// This styling with keyframes laid over it: each (source node, `@keyframes` name,
-    /// keyframe rule index) puts that rule's declarations over the node's own winners, as
-    /// an animation at that keyframe does (CSS Animations 1).
+    /// This styling with keyframes laid over it: each (source node, side, `@keyframes`
+    /// name, keyframe rule index) puts that rule's declarations over the winners of the
+    /// node, or its `:before` (side 0) or `:after` (1), as an animation at that keyframe
+    /// does (CSS Animations 1).
     fn styled_with(
         source: &Arc<Source>,
         key: InteractionKey,
-        layer: &[(usize, String, usize)],
+        layer: &[KeyframeAt],
     ) -> Result<Self, BoxTreeError> {
         let construction = source.construction.clone();
 
@@ -1465,22 +1475,26 @@ impl BoxTree {
         };
         // A keyframe layer: of two `@keyframes` with one name, the later wins.
         let mut animated: std::collections::HashMap<
-            usize,
+            (usize, u8),
             Vec<&iced_css_core::values::property::ParsedProperty>,
         > = std::collections::HashMap::new();
         if !layer.is_empty() {
             let rules = keyframe_rules(graphs);
-            for (node, name, frame) in layer {
+            for (node, side, name, frame) in layer {
+                let target = crate::evaluation::display_rules::animated_target(match side {
+                    None => None,
+                    Some(0) => Some(iced_css_core::selectors::PseudoElement::Before),
+                    Some(_) => Some(iced_css_core::selectors::PseudoElement::After),
+                });
                 if let Some(frame) = rules
                     .get(name.as_str())
                     .and_then(|rule| rule.frames.get(*frame))
                 {
-                    animated
-                        .entry(*node)
-                        .or_default()
-                        .extend(frame.declarations.iter().filter(|parsed| {
+                    animated.entry((*node, target)).or_default().extend(
+                        frame.declarations.iter().filter(|parsed| {
                             parsed.property.descriptor().name != "animation-timing-function"
-                        }));
+                        }),
+                    );
                 }
             }
         }
@@ -1529,6 +1543,7 @@ impl BoxTree {
             grid_items,
             transitions,
             generated_transitions,
+            generated_animations,
             animations,
             gradients,
             transforms,
@@ -2859,6 +2874,7 @@ impl BoxTree {
             presentation: None,
             transitions,
             generated_transitions,
+            generated_animations,
             animations,
             key,
             gradients,
@@ -3893,7 +3909,12 @@ impl Interaction {
         }
         // CSS Animations 1: the animations this styling names run by themselves.
         let shown = base.unpresented_variant(key);
-        let named = shown.animations.iter().any(|list| !list.is_empty());
+        let named = shown.animations.iter().any(|list| !list.is_empty())
+            || shown
+                .generated_animations
+                .iter()
+                .flatten()
+                .any(|list| !list.is_empty());
         if named
             || self
                 .transitions

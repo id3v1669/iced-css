@@ -7780,6 +7780,79 @@ mod animation {
     }
 
     #[test]
+    fn a_before_or_after_runs_the_keyframe_animations_it_names() {
+        use iced_css::box_tree::AnimationEvent;
+        let source = || {
+            node(
+                "page",
+                vec![node("p", vec![node("s", vec![text("t", "words")])])],
+            )
+        };
+        let start = Instant::now();
+        let at = |millis: u64| start + Duration::from_millis(millis);
+        let run = |tree: &BoxTree, text: &str| {
+            tree.text_leaves()
+                .iter()
+                .flat_map(|(_, leaf)| leaf.runs.iter())
+                .find(|run| run.text.contains(text))
+                .cloned()
+                .unwrap()
+        };
+        let tree = BoxTree::new(
+            source(),
+            "@keyframes fade { from { color: #ff0000 } to { color: #0000ff } }
+             #s { display:inline; color:#000000; }
+             #s:before { content:\"GEN\"; color:#00ff00; animation: fade 1s linear; }",
+        )
+        .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        assert_eq!(animations.play(&tree, start), 1);
+        animations.advance(at(500), &tree);
+        let shown = animations.presented(&tree);
+        assert!(near(run(&shown, "GEN").color.unwrap(), [0.5, 0.0, 0.5]));
+        // The element itself keeps its color.
+        assert_eq!(run(&shown, "words").color, Some([0.0; 3]));
+        animations.advance(at(1500), &tree);
+        // Ended, with no fill: its own color again.
+        assert_eq!(
+            run(&animations.presented(&tree), "GEN").color,
+            Some([0.0, 1.0, 0.0])
+        );
+        let named = |kind: fn(Option<String>, Option<&'static str>, String) -> AnimationEvent| {
+            kind(Some("s".to_owned()), Some("::before"), "fade".to_owned())
+        };
+        assert_eq!(
+            animations.take_events(),
+            [
+                named(|element, pseudo, name| AnimationEvent::AnimationStart {
+                    element,
+                    pseudo,
+                    name
+                }),
+                named(|element, pseudo, name| AnimationEvent::AnimationEnd {
+                    element,
+                    pseudo,
+                    name
+                }),
+            ]
+        );
+        // The element's animation does not run on its `:after`.
+        let tree = BoxTree::new(
+            source(),
+            "@keyframes fade { from { color: #ff0000 } to { color: #0000ff } }
+             #s { display:inline; color:#000000; animation: fade 1s linear; }
+             #s:after { content:\"END\"; color:#00ff00; }",
+        )
+        .unwrap();
+        let mut animations = BoxTreeAnimations::new();
+        animations.play(&tree, start);
+        animations.advance(at(500), &tree);
+        let shown = animations.presented(&tree);
+        assert_eq!(run(&shown, "END").color, Some([0.0, 1.0, 0.0]));
+        assert!(near(run(&shown, "words").color.unwrap(), [0.5, 0.0, 0.5]));
+    }
+
+    #[test]
     fn a_before_or_after_transitions_by_its_own_transition_properties() {
         use iced_css::box_tree::AnimationEvent;
         let source = || {

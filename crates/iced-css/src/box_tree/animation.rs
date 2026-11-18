@@ -2603,6 +2603,8 @@ struct Keyframed {
     capture: u64,
     id: String,
     projected: usize,
+    /// Its target: the element (`None`), or its `:before` (0) or `:after` (1).
+    side: Option<usize>,
     index: usize,
     animation: ElementAnimation,
     tracks: Vec<KeyTrack>,
@@ -2688,6 +2690,14 @@ impl Keyframed {
     }
     fn element(&self) -> Option<String> {
         element_of(&self.id)
+    }
+    fn pseudo(&self) -> Option<&'static str> {
+        pseudo_of(&self.id)
+    }
+    /// Its `:before`'s or `:after`'s key (`generated_owner`), for one of those.
+    fn generated(&self) -> Option<usize> {
+        self.side
+            .map(|side| super::generated_owner(self.projected, side))
     }
 }
 
@@ -3025,8 +3035,11 @@ impl BoxTreeAnimations {
         let nodes = tree.source.construction.nodes();
         let mut listed: Vec<(String, usize, String)> = Vec::new();
         let mut started = 0;
+        // Each element's, then its `:before`'s and `:after`'s, which name their own.
+        let mut targets: Vec<(usize, Option<usize>, String, &[ElementAnimation])> = Vec::new();
         for (projected, animations) in tree.animations.iter().enumerate() {
-            if animations.is_empty() {
+            let generated = &tree.generated_animations[projected];
+            if animations.is_empty() && generated.iter().all(Vec::is_empty) {
                 continue;
             }
             let id = nodes[tree.originals[projected]]
@@ -3034,6 +3047,17 @@ impl BoxTreeAnimations {
                 .css_id()
                 .filter(|id| tree.element(id) == Some(projected))
                 .map_or_else(|| format!("{UNNAMED}{projected}"), str::to_owned);
+            for (side, suffix, list) in [
+                (None, "", animations),
+                (Some(0), "::before", &generated[0]),
+                (Some(1), "::after", &generated[1]),
+            ] {
+                if !list.is_empty() {
+                    targets.push((projected, side, format!("{id}{suffix}"), list));
+                }
+            }
+        }
+        for (projected, side, id, animations) in targets {
             for (index, animation) in animations.iter().enumerate() {
                 // A name no `@keyframes` gives runs nothing and sends nothing.
                 if tree.keyframe_rule(&animation.name).is_none() {
@@ -3082,6 +3106,7 @@ impl BoxTreeAnimations {
                             capture,
                             id: id.clone(),
                             projected,
+                            side,
                             index,
                             animation: animation.clone(),
                             tracks: Vec::new(),
@@ -3114,7 +3139,7 @@ impl BoxTreeAnimations {
             if running.state != KeyState::Done {
                 self.events.push(AnimationEvent::AnimationCancel {
                     element: running.element(),
-                    pseudo: None,
+                    pseudo: running.pseudo(),
                     name: running.animation.name.clone(),
                 });
             }
@@ -3144,12 +3169,12 @@ impl BoxTreeAnimations {
             self.keyframed[at].announced = true;
             self.events.push(AnimationEvent::AnimationStart {
                 element: element.clone(),
-                pseudo: None,
+                pseudo: self.keyframed[at].pseudo(),
                 name: animation.name.clone(),
             });
             self.events.push(AnimationEvent::AnimationEnd {
                 element,
-                pseudo: None,
+                pseudo: self.keyframed[at].pseudo(),
                 name: animation.name,
             });
             return;
@@ -3169,7 +3194,7 @@ impl BoxTreeAnimations {
             self.keyframed[at].state = KeyState::Done;
             self.events.push(AnimationEvent::AnimationEnd {
                 element,
-                pseudo: None,
+                pseudo: self.keyframed[at].pseudo(),
                 name: animation.name,
             });
             return;
@@ -3240,7 +3265,7 @@ impl BoxTreeAnimations {
                 self.keyframed[at].announced = true;
                 self.events.push(AnimationEvent::AnimationStart {
                     element: element.clone(),
-                    pseudo: None,
+                    pseudo: self.keyframed[at].pseudo(),
                     name: name.clone(),
                 });
             }
@@ -3252,7 +3277,7 @@ impl BoxTreeAnimations {
                 self.keyframed[at].run = next;
                 self.events.push(AnimationEvent::AnimationIteration {
                     element,
-                    pseudo: None,
+                    pseudo: self.keyframed[at].pseudo(),
                     name,
                     iteration: next,
                 });
@@ -3265,7 +3290,7 @@ impl BoxTreeAnimations {
                     .cancel(&self.keyframed[at].source, &clock_selection());
                 self.events.push(AnimationEvent::AnimationEnd {
                     element,
-                    pseudo: None,
+                    pseudo: self.keyframed[at].pseudo(),
                     name,
                 });
                 return;
@@ -3290,7 +3315,7 @@ impl BoxTreeAnimations {
         let frames = rules.iter().flatten().map(Vec::len).max().unwrap_or(0);
         let mut layers: Vec<Option<BoxTree>> = Vec::with_capacity(frames);
         for frame in 0..frames {
-            let layer: Vec<(usize, String, usize)> = self
+            let layer: Vec<crate::box_tree::KeyframeAt> = self
                 .keyframed
                 .iter()
                 .zip(&rules)
@@ -3298,6 +3323,7 @@ impl BoxTreeAnimations {
                 .map(|(running, _)| {
                     (
                         tree.originals[running.projected],
+                        running.side,
                         running.animation.name.clone(),
                         frame,
                     )
@@ -3319,6 +3345,7 @@ impl BoxTreeAnimations {
             running.tracks.clear();
             let Some(rule) = rule else { continue };
             let projected = running.projected;
+            let generated = running.generated();
             let mut properties: Vec<PropertyId> = Vec::new();
             for frame in rule {
                 for longhand in &frame.longhands {
@@ -3331,7 +3358,7 @@ impl BoxTreeAnimations {
                 let Some(field) = field(property.descriptor().name) else {
                     continue;
                 };
-                let Some(base) = tree.read(projected, field) else {
+                let Some(base) = tree.read_any(projected, generated, field) else {
                     continue;
                 };
                 let mut stops: Vec<Stop> = Vec::new();
@@ -3341,7 +3368,7 @@ impl BoxTreeAnimations {
                     }
                     let Some(value) = layers[frame]
                         .as_ref()
-                        .and_then(|layer| layer.read(projected, field))
+                        .and_then(|layer| layer.read_any(projected, generated, field))
                     else {
                         continue;
                     };
@@ -3640,11 +3667,12 @@ impl BoxTreeAnimations {
                 for track in &running.tracks {
                     let (Some(value), Some(target)) = (
                         track.value(progress, running.animation.easing),
-                        tree.read(running.projected, track.field),
+                        tree.read_any(running.projected, running.generated(), track.field),
                     ) else {
                         continue;
                     };
                     let projected = running.projected;
+                    let generated = running.generated().is_some();
                     list.push(Presented {
                         id: running.id.clone(),
                         property: track.property,
@@ -3652,6 +3680,8 @@ impl BoxTreeAnimations {
                         target,
                         now: value,
                         followers: match track.field {
+                            // A `:before`'s or `:after`'s value moves only itself.
+                            _ if generated => Followers::default(),
                             Field::Color => tree.followers(tree, projected, target, target),
                             Field::FontWeight => tree.weight_followers(tree, projected, target),
                             Field::FontSize => match target {
