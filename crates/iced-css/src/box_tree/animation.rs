@@ -2726,6 +2726,10 @@ impl Keyframed {
     /// while the run's delay runs); `None` where it shows nothing.
     fn position(&self, sample: Option<f32>) -> Option<(u32, f32)> {
         match self.state {
+            // Paused before its delay ends: as in its delay.
+            KeyState::Paused(_) if self.paused_local.is_some_and(|local| local < 0.0) => {
+                self.animation.fill_backwards.then_some((0, 0.0))
+            }
             KeyState::Paused(at) => Some((self.run, at)),
             KeyState::Done | KeyState::PausedEnded => {
                 self.animation.fill_forwards.then(|| self.end_position())
@@ -3174,8 +3178,23 @@ impl BoxTreeAnimations {
                             }
                             // Running again: on from where it was held.
                             (KeyState::Paused(place), false) => {
-                                self.keyframed[at].paused_local = None;
-                                self.start_run(at, place, Duration::ZERO, Duration::ZERO, now);
+                                match self.keyframed[at].paused_local.take() {
+                                    // Paused in its delay: the rest of the delay, then on.
+                                    Some(local) if local < 0.0 => {
+                                        self.keyframed[at].run = 0;
+                                        let delay = millis_duration(-local);
+                                        self.start_run(at, 0.0, Duration::ZERO, delay, now);
+                                    }
+                                    _ => {
+                                        self.start_run(
+                                            at,
+                                            place,
+                                            Duration::ZERO,
+                                            Duration::ZERO,
+                                            now,
+                                        );
+                                    }
+                                }
                             }
                             // Running again past its end: ended, its time going on from there.
                             (KeyState::PausedEnded, false) => {
@@ -3277,6 +3296,8 @@ impl BoxTreeAnimations {
         if length == 0.0 || animation.iterations <= 0.0 {
             self.keyframed[at].state = KeyState::Done;
             self.keyframed[at].announced = true;
+            // Its time goes on from here, for a timing change to read.
+            self.keyframed[at].origin = Some((now, -animation.delay.min(0.0)));
             self.events.push(AnimationEvent::AnimationStart {
                 element: element.clone(),
                 pseudo: self.keyframed[at].pseudo(),
@@ -3318,6 +3339,8 @@ impl BoxTreeAnimations {
                 .engine
                 .cancel(&self.keyframed[at].source, &clock_selection());
             self.keyframed[at].state = KeyState::Done;
+            // Its time goes on from here, for a timing change to read.
+            self.keyframed[at].origin = Some((now, elapsed));
             self.events.push(AnimationEvent::AnimationEnd {
                 element: self.keyframed[at].element(),
                 pseudo: self.keyframed[at].pseudo(),

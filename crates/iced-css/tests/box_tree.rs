@@ -1939,6 +1939,134 @@ fn fifth_review_regression_2() {
 }
 
 #[test]
+fn sixth_review_regression() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    // Done at once (no length), then given one: where the time run falls on it.
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let sheet = |duration: &str| {
+        format!(
+            "@keyframes one {{ from {{ width: 100px }} to {{ width: 200px }} }}
+             #a {{ height:1px; width:50px; animation: one {duration} linear forwards; }}"
+        )
+    };
+    let tree = BoxTree::new(node("page", vec![node("a", vec![])]), &sheet("0s")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    let longer = tree.restyled(&[&sheet("1s")]).unwrap();
+    animations.play(&longer, at(500));
+    animations.advance(at(500), &longer);
+    let geometry = animations.presented(&longer).layout(1000.0, None).unwrap();
+    let border = geometry[1].as_ref().unwrap().border;
+    assert_eq!(border.right - border.left, 150.0);
+}
+
+/// Every combination of a timing and a later change of it, against what CSS Animations 1
+/// gives: a width 100px to 200px, linear, once, filling forwards, over a 50px element.
+#[test]
+fn retimed_animations_match_their_timeline() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let at = |millis: i64| start + Duration::from_millis(millis as u64);
+    let sheet = |duration: i64, delay: i64, paused: bool| {
+        format!(
+            "@keyframes one {{ from {{ width: 100px }} to {{ width: 200px }} }}
+             #a {{ height:1px; width:50px; animation: one {duration}ms linear {delay}ms forwards;
+                   animation-play-state: {}; }}",
+            if paused { "paused" } else { "running" }
+        )
+    };
+    // The width at local time `local` (milliseconds after the delay) on `duration`.
+    let expected = |duration: i64, local: i64| -> f32 {
+        if local < 0 {
+            50.0
+        } else if local >= duration {
+            200.0
+        } else {
+            100.0 + 100.0 * local as f32 / duration as f32
+        }
+    };
+    let mut failures = Vec::new();
+    for old in [
+        (0, 0),
+        (1000, 0),
+        (1000, 500),
+        (1000, -1500),
+        (0, -300),
+        (0, 400),
+    ] {
+        for new in [(0, 0), (1000, 0), (2000, 0), (2000, 300), (1000, -500)] {
+            for change in [250, 1200, 2600] {
+                for pause in [None, Some(100), Some(1800)] {
+                    // A pause before the change freezes time there; none if it comes later.
+                    let pause = pause.filter(|pause| *pause < change);
+                    for resume in [None, Some(change + 200)]
+                        .into_iter()
+                        .filter(|resume| pause.is_some() || resume.is_none())
+                    {
+                        for query in [change, change + 400, change + 2500] {
+                            let resume = resume.filter(|resume| *resume <= query);
+                            let tree = BoxTree::new(
+                                node("page", vec![node("a", vec![])]),
+                                &sheet(old.0, old.1, false),
+                            )
+                            .unwrap();
+                            let mut animations = BoxTreeAnimations::new();
+                            animations.play(&tree, start);
+                            if let Some(pause) = pause {
+                                animations.advance(at(pause), &tree);
+                                let held = tree.restyled(&[&sheet(old.0, old.1, true)]).unwrap();
+                                animations.play(&held, at(pause));
+                            }
+                            animations.advance(at(change), &tree);
+                            let changed = tree
+                                .restyled(&[&sheet(new.0, new.1, pause.is_some())])
+                                .unwrap();
+                            animations.play(&changed, at(change));
+                            let changed = match resume {
+                                Some(resume) => {
+                                    animations.advance(at(resume), &changed);
+                                    let going =
+                                        tree.restyled(&[&sheet(new.0, new.1, false)]).unwrap();
+                                    animations.play(&going, at(resume));
+                                    going
+                                }
+                                None => changed,
+                            };
+                            animations.advance(at(query), &changed);
+                            let geometry =
+                                animations.presented(&changed).layout(1000.0, None).unwrap();
+                            let border = geometry[1].as_ref().unwrap().border;
+                            let got = border.right - border.left;
+                            // Time since the start, frozen at a pause, less the new delay.
+                            let elapsed = match (pause, resume) {
+                                (Some(pause), Some(resume)) => pause + (query - resume),
+                                (Some(pause), None) => pause,
+                                (None, _) => query,
+                            };
+                            let want = expected(new.0, elapsed - new.1);
+                            if (got - want).abs() > 1.0 {
+                                failures.push(format!(
+                                "old {old:?} new {new:?} change {change} pause {pause:?} resume {resume:?} query {query}: {got} not {want}"
+                            ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
 fn stylesheet_review_regressions() {
     let width = |css: &str| {
         let tree = BoxTree::new(node("page", vec![node("a", vec![])]), css).unwrap();
