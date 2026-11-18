@@ -371,18 +371,26 @@ fn level4_is_where_and_not_take_lists_of_complex_selectors() {
     ] {
         assert!(parse_selector_list(good, limits()).is_ok(), "{good}");
     }
-    for bad in [
-        ":is()",
-        ":is(a >)",
-        ":is(> a)",
-        ":is(a ::before)",
-        ":is(::before)",
-        ":where(a,)",
-        ":is(a",
-        "::is(a)",
-    ] {
+    for bad in [":is(a", ":is(a, (b)", "::is(a)", ":not(a, b >)", ":not()"] {
         assert!(parse_selector_list(bad, limits()).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn level4_is_and_where_forgive_invalid_arguments() {
+    let list = |input: &str| match &one(input).compounds[0].tests[0] {
+        SimpleSelector::Matches { list, .. } => list.len(),
+        other => panic!("{other:?}"),
+    };
+    // The invalid ones are dropped; the list may be left empty.
+    assert_eq!(list(":is(a >, b, ::before, c d)"), 2);
+    assert_eq!(list(":where(1x, :bogus(a, b), [c=])"), 0);
+    assert_eq!(list(":is()"), 0);
+    assert_eq!(list(":is(a,,b,)"), 2);
+    // Brackets inside one are passed whole, a `,` in them included.
+    assert_eq!(list(":is(:nth-child(2, 3) a, b)"), 1);
+    // What is dropped weighs nothing.
+    assert_eq!(one(":is(#a >, .b)").specificity.components(), [0, 0, 1, 0]);
 }
 
 #[test]

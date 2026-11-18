@@ -297,7 +297,7 @@ impl<'a> Parser<'a> {
     /// `:not(`'s argument: one simple selector, as Selectors Level 3 has it, or a list of
     /// compound selectors, as Level 4 does.
     fn negation(&mut self) -> Result<SimpleSelector, SyntaxError> {
-        match self.any_of(true, false)? {
+        match self.any_of(true, false, false)? {
             SimpleSelector::Matches { list, .. }
                 if list.len() == 1
                     && list[0].compounds.len() == 1
@@ -373,6 +373,27 @@ impl<'a> Parser<'a> {
             specificity: highest,
         })
     }
+    /// Passes an argument that does not parse: its tokens, with any nested brackets,
+    /// through the `,` after it (`false`) or the list's `)` (`true`). An unclosed list
+    /// stays invalid.
+    fn skip_argument(&mut self) -> Result<bool, SyntaxError> {
+        let mut depth = 0usize;
+        loop {
+            let look = self.take()?;
+            match look.token.kind {
+                TokenKind::Function
+                | TokenKind::OpenParen
+                | TokenKind::OpenBracket
+                | TokenKind::OpenBrace => depth += 1,
+                TokenKind::CloseParen if depth == 0 => return Ok(true),
+                TokenKind::CloseParen | TokenKind::CloseBracket | TokenKind::CloseBrace => {
+                    depth = depth.checked_sub(1).ok_or_else(|| self.invalid())?;
+                }
+                TokenKind::Delim if depth == 0 && look.token.raw == "," => return Ok(false),
+                _ => {}
+            }
+        }
+    }
     /// After one argument of a selector-list pseudo-class: whether its `)` came, after a
     /// `,` that leads to the next argument.
     fn list_ends(&mut self) -> Result<bool, SyntaxError> {
@@ -385,16 +406,51 @@ impl<'a> Parser<'a> {
     }
     /// The complex selectors of `:is(`, `:where(` or `:not(`, comma-separated, through
     /// its closing parenthesis. None may hold a pseudo-element.
-    fn any_of(&mut self, negated: bool, weightless: bool) -> Result<SimpleSelector, SyntaxError> {
+    ///
+    /// `forgiving` (`:is()` and `:where()`, Selectors Level 4 section 3.5): an invalid
+    /// argument is dropped, not the whole selector, and the list may be left empty, so
+    /// that it matches nothing. A limit reached still fails it.
+    fn any_of(
+        &mut self,
+        negated: bool,
+        weightless: bool,
+        forgiving: bool,
+    ) -> Result<SimpleSelector, SyntaxError> {
         let mut list = Vec::new();
         let mut highest = Specificity::ZERO;
         loop {
-            let selector = self.complex(true)?;
-            if selector.pseudo.is_some() {
-                return Err(self.invalid());
+            let (offset, look) = (self.offset, self.look);
+            if forgiving
+                && self.peek()?.is_some_and(|look| {
+                    look.token.kind == TokenKind::CloseParen
+                        || (look.token.kind == TokenKind::Delim && look.token.raw == ",")
+                })
+            {
+                // An empty argument: nothing to keep.
+                if self.list_ends()? {
+                    break;
+                }
+                continue;
             }
-            highest = highest.max(selector.specificity);
-            self.push(&mut list, selector)?;
+            let selector = match self.complex(true) {
+                Ok(selector) if selector.pseudo.is_none() => Some(selector),
+                Ok(_) if !forgiving => return Err(self.invalid()),
+                Ok(_) => None,
+                Err(error) if forgiving && error.fault == SyntaxFault::InvalidSelector => {
+                    // From where it began, past its balanced tokens to the next `,` or the `)`.
+                    self.offset = offset;
+                    self.look = look;
+                    if self.skip_argument()? {
+                        break;
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(selector) = selector {
+                highest = highest.max(selector.specificity);
+                self.push(&mut list, selector)?;
+            }
             if self.list_ends()? {
                 break;
             }
@@ -453,9 +509,9 @@ impl<'a> Parser<'a> {
                     SimpleSelector::Lang(argument)
                 }
                 "not" => self.negation()?,
-                "is" | "matches" => self.any_of(false, false)?,
+                "is" | "matches" => self.any_of(false, false, true)?,
                 "has" => self.relatives()?,
-                "where" => self.any_of(false, true)?,
+                "where" => self.any_of(false, true, true)?,
                 "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" => {
                     let of_type = function.ends_with("of-type");
                     let last = function.contains("last");
@@ -470,7 +526,7 @@ impl<'a> Parser<'a> {
                         (a, b, true) => {
                             let SimpleSelector::Matches {
                                 list, specificity, ..
-                            } = self.any_of(false, false)?
+                            } = self.any_of(false, false, false)?
                             else {
                                 unreachable!("any_of gives a list")
                             };

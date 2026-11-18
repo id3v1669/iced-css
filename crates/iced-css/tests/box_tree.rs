@@ -1380,6 +1380,15 @@ fn selector_lists_take_combinators_inside_them() {
         widths("#inner:has(> #deep), #page > :has(~ * + #c) { width:70px; }"),
         [70.0, 70.0, 100.0, 100.0]
     );
+    // A forgiving list: the argument that does not parse is dropped, not the rule.
+    assert_eq!(
+        widths("#page > :is(#a, ::before, #b >) { width:75px; }"),
+        [75.0, 100.0, 100.0, 100.0]
+    );
+    assert_eq!(
+        widths("#page > :not(#a, #b >) { width:75px; }"),
+        [100.0, 100.0, 100.0, 100.0]
+    );
     // `:has()` inside `:is()` and `:not()`.
     assert_eq!(
         widths("#page > :not(:has(#deep)) { width:80px; }"),

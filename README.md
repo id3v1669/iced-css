@@ -73,8 +73,11 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   was built with: they show as the attributes `checked` and `disabled` too, and a restyle
   needs a new tree, as for any change of the widgets; `:is()` (also `:matches()`), `:where()`
   (weighing nothing) and `:not()` over a list of complex selectors (combinators allowed,
-  the element as their subject); their arguments may not hold pseudo-elements, and an
-  invalid argument makes the whole selector invalid (the lists are not forgiving).
+  the element as their subject); their arguments may not hold pseudo-elements. The lists
+  of `:is()` and `:where()` are forgiving: an argument that does not parse (a
+  pseudo-element among them) is dropped and weighs nothing, and one left empty matches
+  nothing; `:not()`, `:has()` and `of S` are not, and an invalid argument there makes the
+  whole selector invalid.
   `:has()` takes relative complex selectors, each after an optional `>`, `+` or `~` (a
   descendant where none is written), and weighs as its most specific argument; it may sit
   inside `:is()` and `:not()` but not inside another `:has()`, and each test of it walks
