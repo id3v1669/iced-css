@@ -2941,6 +2941,36 @@ mod grid {
     }
 
     #[test]
+    fn nested_grids_lay_out_in_linear_work() {
+        // Twenty grids, each the only item of the one above, and a leaf: each lays its item
+        // out and stretches it, laying it out again. That again is the same as before.
+        let depth = 20;
+        let mut boxes: Vec<FlowBox> = (0..depth)
+            .map(|at| FlowBox {
+                children: vec![at + 1],
+                establishes_bfc: true,
+                grid: Some(Box::new(GridContainer::default())),
+                ..FlowBox::default()
+            })
+            .collect();
+        boxes.push(item(10.0));
+        let viewport = FlowViewport {
+            left: 0.0,
+            top: 0.0,
+            width: 300.0,
+            height: Some(200.0),
+        };
+        let bounded = FlowLimits {
+            boxes: NonZeroUsize::new(100).unwrap(),
+            depth: NonZeroUsize::new(64).unwrap(),
+            work: NonZeroUsize::new(1_000_000).unwrap(),
+        };
+        let geometry = layout_block_flow(&boxes, viewport, bounded).unwrap();
+        let leaf = geometry[depth].border;
+        assert_eq!(leaf.bottom - leaf.top, 10.0);
+    }
+
+    #[test]
     fn fixed_and_flexible_columns_share_the_width_and_items_flow_into_rows() {
         let grid = GridContainer {
             columns: list(&[px(100.0), fr(1.0), fr(3.0)]),

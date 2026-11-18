@@ -2080,14 +2080,17 @@ impl BoxTree {
             let Some(projected) = self.originals.iter().position(|n| *n == follower.node) else {
                 continue;
             };
+            // A border or outline color animating of its own is its own animation's.
+            let own = |field: Field| animated.contains(&(follower.node, field));
             let paint = &mut self.paints[projected];
             swap(&mut paint.color);
             for (side, follows) in follower.borders.iter().enumerate() {
-                if *follows {
+                if *follows && !own(Field::BorderColor(side)) {
                     swap(&mut paint.border[side]);
                 }
             }
             if follower.outline
+                && !own(Field::OutlineColor)
                 && let Some(outline) = &mut paint.outline
                 && outline.1 == target
             {
@@ -2127,10 +2130,12 @@ impl BoxTree {
                     continue;
                 }
                 for sides in &mut run.inline_boxes {
-                    if follows(sides.owner, InlineSide::Top) {
+                    let own =
+                        |side: usize| animated.contains(&(sides.owner, Field::BorderColor(side)));
+                    if follows(sides.owner, InlineSide::Top) && !own(0) {
                         swap(&mut sides.border[0].1);
                     }
-                    if follows(sides.owner, InlineSide::Bottom) {
+                    if follows(sides.owner, InlineSide::Bottom) && !own(2) {
                         swap(&mut sides.border[1].1);
                     }
                 }
@@ -3295,7 +3300,13 @@ impl BoxTreeAnimations {
             });
             return;
         }
-        self.keyframed[at].run = run as u32;
+        // Past a billion iterations only the parity counts, for its direction.
+        let run = if run > f32::from(u16::MAX) * 16_384.0 {
+            (1u32 << 30) + u32::from(run % 2.0 == 1.0)
+        } else {
+            run as u32
+        };
+        self.keyframed[at].run = run;
         self.start_run(at, skipped.fract(), Duration::ZERO, Duration::ZERO, now);
     }
 
@@ -3331,6 +3342,15 @@ impl BoxTreeAnimations {
         };
         match self.keyframed[at].state {
             KeyState::Done if local >= active => {}
+            // Paused past where the new timing ends: it has ended.
+            KeyState::Paused(_) if local >= active => {
+                self.keyframed[at].state = KeyState::Done;
+                self.events.push(AnimationEvent::AnimationEnd {
+                    element: self.keyframed[at].element(),
+                    pseudo: self.keyframed[at].pseudo(),
+                    name: self.keyframed[at].animation.name.clone(),
+                });
+            }
             KeyState::Paused(_) => {
                 let at_time = (local.max(0.0) / length.max(f32::EPSILON)).max(0.0);
                 let run = at_time.floor();
@@ -3429,7 +3449,7 @@ impl BoxTreeAnimations {
             let Some(end) = ended else {
                 return;
             };
-            let next = self.keyframed[at].run + 1;
+            let next = self.keyframed[at].run.saturating_add(1);
             let empty = self.keyframed[at].animation.duration <= 0.0
                 || self.keyframed[at].animation.iterations <= 0.0;
             if !empty && self.keyframed[at].runs().is_none_or(|runs| next < runs) {

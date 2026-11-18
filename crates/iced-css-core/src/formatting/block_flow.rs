@@ -625,6 +625,21 @@ struct Solver<'a> {
     /// A content height a flex or grid container gives an item it lays out again (grown,
     /// shrunk or stretched), in place of its own `height`, for its next layout only.
     forced_heights: std::collections::BTreeMap<usize, f32>,
+    /// By flex or grid item, its last two layouts and what they were laid out with (a
+    /// container lays an item out at its own height, then at the one it gives it):
+    /// laying it out again with the same puts that back, so nested containers that lay
+    /// their items out twice do not multiply the work.
+    laid: std::collections::BTreeMap<usize, Vec<LaidItem>>,
+}
+
+/// One item's layout, kept to put back: its inputs, and its subtree's geometry, row
+/// baselines and flowed height as it left them.
+struct LaidItem {
+    key: [u64; 5],
+    height: f32,
+    last_flowed: f32,
+    geometry: Vec<(usize, FlowGeometry)>,
+    baselines: Vec<(usize, f32)>,
 }
 
 /// Lays out the tree rooted at index 0 as one block formatting context root.
@@ -716,6 +731,7 @@ pub fn layout_block_flow_baselines(
         subgrids: std::collections::BTreeMap::new(),
         subgrid_wanted: std::collections::BTreeMap::new(),
         forced_heights: std::collections::BTreeMap::new(),
+        laid: std::collections::BTreeMap::new(),
     };
     let containing = Containing {
         left: viewport.left,
@@ -746,6 +762,7 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
         subgrids: std::collections::BTreeMap::new(),
         subgrid_wanted: std::collections::BTreeMap::new(),
         forced_heights: std::collections::BTreeMap::new(),
+        laid: std::collections::BTreeMap::new(),
     }
     .measure(node)
 }

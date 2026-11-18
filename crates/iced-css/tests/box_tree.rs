@@ -1788,6 +1788,83 @@ fn second_review_regression_9() {
 }
 
 #[test]
+fn third_review_regression_2() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    // A negative delay of more iterations than a counter holds does not overflow it.
+    let start = Instant::now();
+    let tree = BoxTree::new(
+        node("page", vec![node("a", vec![])]),
+        "@keyframes one { from { width: 100px } to { width: 200px } }
+         #a { height:1px; animation: one 1ms linear -5000000s infinite; }",
+    )
+    .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    for millis in [1, 2, 50] {
+        animations.advance(start + Duration::from_millis(millis), &tree);
+    }
+    let _ = animations.presented(&tree);
+}
+
+#[test]
+fn third_review_regression_3() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    // An animated color leaves a border color animating of its own alone.
+    let start = Instant::now();
+    let tree = BoxTree::new(
+        node("page", vec![node("a", vec![])]),
+        "@keyframes paint {
+            from { color: #000000; border-color: #000000 }
+            to { color: #ff0000; border-color: #0000ff }
+         }
+         #a { width:10px; height:10px; border:2px solid; animation: paint 1s linear; }",
+    )
+    .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(start + Duration::from_millis(500), &tree);
+    let shown = animations.presented(&tree);
+    let border = shown.paints()[1].border[0].unwrap();
+    assert!(
+        (border[0]).abs() < 0.02 && (border[2] - 0.5).abs() < 0.02,
+        "{border:?}"
+    );
+}
+
+#[test]
+fn third_review_regression_4() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    // Paused, then shortened past where it is: it ends, and its forwards fill shows.
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let sheet = |duration: &str| {
+        format!(
+            "@keyframes one {{ from {{ width: 100px }} to {{ width: 200px }} }}
+             #a {{ height:1px; width:50px; animation: one {duration} linear forwards; }}"
+        )
+    };
+    let running = BoxTree::new(node("page", vec![node("a", vec![])]), &sheet("1s")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&running, start);
+    animations.advance(at(500), &running);
+    let paused = running
+        .restyled(&[&sheet("1s"), "#a { animation-play-state: paused; }"])
+        .unwrap();
+    animations.play(&paused, at(500));
+    let shorter = running
+        .restyled(&[&sheet("200ms"), "#a { animation-play-state: paused; }"])
+        .unwrap();
+    animations.play(&shorter, at(600));
+    animations.advance(at(600), &shorter);
+    let geometry = animations.presented(&shorter).layout(1000.0, None).unwrap();
+    let border = geometry[1].as_ref().unwrap().border;
+    assert_eq!(border.right - border.left, 200.0);
+}
+
+#[test]
 fn stylesheet_review_regressions() {
     let width = |css: &str| {
         let tree = BoxTree::new(node("page", vec![node("a", vec![])]), css).unwrap();

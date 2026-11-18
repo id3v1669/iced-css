@@ -135,9 +135,19 @@ fn join(parent: &str, nested: &str) -> String {
     out
 }
 
+/// The prelude from its first significant token: past white space and comments.
+fn significant(prelude: &str) -> &str {
+    for (at, kind, _) in tokens(prelude).unwrap_or_default() {
+        if !matches!(kind, TokenKind::Space | TokenKind::Comment) {
+            return &prelude[at..];
+        }
+    }
+    ""
+}
+
 /// Whether the prelude opens a conditional group, whose block holds rules.
 fn is_group(prelude: &str) -> bool {
-    let name = prelude.trim_start().to_ascii_lowercase();
+    let name = significant(prelude).to_ascii_lowercase();
     name.starts_with("@media") || name.starts_with("@supports")
 }
 
@@ -167,7 +177,7 @@ impl Flattener {
         for item in items(text)? {
             match item {
                 Item::Text(text) => self.out.push_str(text),
-                Item::Block { prelude, body } if prelude.trim_start().starts_with('@') => {
+                Item::Block { prelude, body } if significant(prelude).starts_with('@') => {
                     if is_group(prelude) {
                         self.out.push_str(prelude);
                         self.out.push_str("{\n");
@@ -302,6 +312,14 @@ mod tests {
         assert_eq!(
             flat(".a { & { color: red } color: blue; }"),
             ".a{} .a{ color: red } .a{ color: blue; }"
+        );
+    }
+
+    #[test]
+    fn a_comment_before_a_nested_group_leaves_it_a_group() {
+        assert_eq!(
+            flat(".a { /* condition */ @media screen { color: red; } }"),
+            ".a{} /* condition */ @media screen { .a{ color: red; } }"
         );
     }
 

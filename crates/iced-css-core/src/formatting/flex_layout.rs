@@ -282,8 +282,39 @@ impl Solver<'_> {
         cb: Containing,
         width: f32,
     ) -> Result<f32, FlowError> {
+        let forced = self.forced_heights.get(&node).copied();
+        // Everything its layout depends on from outside. A subgrid also takes its parent's
+        // tracks, which this does not hold: it is laid out each time.
+        let key = [
+            u64::from(cb.width.to_bits()),
+            cb.height
+                .map_or(u64::MAX, |height| u64::from(height.to_bits())),
+            u64::from(width.to_bits()),
+            forced.map_or(u64::MAX, |height| u64::from(height.to_bits())),
+            u64::from(cb.direction == super::Direction::Rtl),
+        ];
+        let cacheable = !self.subgrids.contains_key(&node);
+        if cacheable
+            && let Some(laid) = self
+                .laid
+                .get(&node)
+                .and_then(|kept| kept.iter().find(|laid| laid.key == key))
+        {
+            self.forced_heights.remove(&node);
+            for (at, geometry) in &laid.geometry {
+                self.geometry[*at] = *geometry;
+            }
+            for (at, _) in &laid.geometry {
+                self.row_baselines.remove(at);
+            }
+            for (at, baseline) in &laid.baselines {
+                self.row_baselines.insert(*at, *baseline);
+            }
+            self.last_flowed = laid.last_flowed;
+            return Ok(laid.height);
+        }
         let padding = self.paddings(node, cb.width);
-        self.finish_bfc_box(
+        let height = self.finish_bfc_box(
             node,
             Containing {
                 left: 0.0,
@@ -294,7 +325,33 @@ impl Solver<'_> {
             0.0,
             0.0,
             padding,
-        )
+        )?;
+        if cacheable {
+            // Its subtree, at the origin it was laid out at.
+            let mut nodes = vec![node];
+            let mut next = 0;
+            while let Some(&at) = nodes.get(next) {
+                next += 1;
+                self.work = self.work.checked_sub(1).ok_or(FlowError::Work)?;
+                nodes.extend(self.boxes[at].children.iter().copied());
+            }
+            let laid = super::LaidItem {
+                key,
+                height,
+                last_flowed: self.last_flowed,
+                geometry: nodes.iter().map(|at| (*at, self.geometry[*at])).collect(),
+                baselines: nodes
+                    .iter()
+                    .filter_map(|at| self.row_baselines.get(at).map(|baseline| (*at, *baseline)))
+                    .collect(),
+            };
+            let kept = self.laid.entry(node).or_default();
+            if kept.len() == 2 {
+                kept.remove(0);
+            }
+            kept.push(laid);
+        }
+        Ok(height)
     }
 
     /// Lays out a flex container's items in its content box `inner`, whose top is
