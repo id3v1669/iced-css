@@ -179,7 +179,12 @@ cargo test --workspace --features iced-css/image,iced-css/svg
   span through `grid-row-start`, `grid-row-end`, `grid-column-start`, `grid-column-end`,
   `grid-row`, `grid-column` and `grid-area`, the `grid-template` and `grid` shorthands,
   `justify-items`, `justify-self`, and the alignment and gap properties Flexbox uses.
-  Children are blockified into items, ordered by `order`. Left out: subgrids, baseline
+  Children are blockified into items, ordered by `order`. Subgrids (CSS Grid 2): a grid
+  item with `grid-template-columns` or `-rows` of `subgrid` (with `[ ]` line names after
+  it) takes the tracks it spans in its parent; its items size them with the parent's
+  items, its margin, border and padding added at its edges, and are clamped to its span.
+  Not in a grid, it is `none`. Its own gap in a subgridded axis is not used, and its line
+  names take no `repeat()`. Left out: baseline
   alignment (it aligns at the start), and placing absolutely positioned children by grid
   lines (they take the content box's start corner). Space an item spanning several
   tracks needs is shared equally among them; an item's percentage height computes to

@@ -1438,6 +1438,76 @@ fn nth_child_of_counts_only_the_siblings_its_list_selects() {
 }
 
 #[test]
+fn subgrids_share_their_parent_grids_tracks() {
+    let boxes = |css: &str| {
+        let tree = BoxTree::new(
+            node(
+                "page",
+                vec![
+                    node("a", vec![node("a1", vec![]), node("a2", vec![])]),
+                    node("b", vec![node("b1", vec![]), node("b2", vec![])]),
+                ],
+            ),
+            css,
+        )
+        .unwrap();
+        let geometry = tree.layout(400.0, None).unwrap();
+        // page, a, a1, a2, b, b1, b2 by preorder place: (left, top, width, height).
+        (0..7)
+            .map(|at| {
+                let border = geometry[at].as_ref().unwrap().border;
+                (
+                    border.left,
+                    border.top,
+                    border.right - border.left,
+                    border.bottom - border.top,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // Cards in a row: each spans two rows and takes them as its own, so their second
+    // items line up below the taller first one.
+    let cards = boxes(
+        "#page { display:grid; grid-template-columns: 100px 100px; }
+         #a, #b { display:grid; grid-row: span 2; grid-template-rows: subgrid; }
+         #a1 { height:10px; } #a2 { height:30px; } #b1 { height:20px; } #b2 { height:5px; }",
+    );
+    assert_eq!(cards[3].1, 20.0, "a2 below the taller first row");
+    assert_eq!(cards[6].1, 20.0, "b2 likewise");
+    assert_eq!(cards[1].3, 50.0, "a spans both rows");
+    assert_eq!(cards[4].3, 50.0);
+    // Its own padding is added at its edges: the first row grows to hold it.
+    let padded = boxes(
+        "#page { display:grid; grid-template-columns: 100px 100px; }
+         #a, #b { display:grid; grid-row: span 2; grid-template-rows: subgrid; }
+         #a { padding-top:15px; }
+         #a1 { height:10px; } #a2 { height:30px; } #b1 { height:20px; } #b2 { height:5px; }",
+    );
+    assert_eq!(padded[3].1, 25.0, "row one is a1 and the padding above it");
+    assert_eq!(padded[6].1, 25.0);
+    // Columns: a spans both and takes them; its items sit where the parent's columns are.
+    let columns = boxes(
+        "#page { display:grid; grid-template-columns: min-content min-content; }
+         #a { display:grid; grid-column: span 2; grid-template-columns: subgrid; }
+         #a1 { width:80px; height:1px; } #a2 { height:1px; }
+         #b { grid-column: 2; width:40px; height:1px; }",
+    );
+    assert_eq!(columns[2].0, 0.0);
+    assert_eq!(
+        columns[3].0, 80.0,
+        "a2 in the second column, after a1's 80px"
+    );
+    assert_eq!(columns[4].0, 80.0, "b in the same column");
+    assert_eq!(columns[3].2, 40.0, "a2 stretched to the column b widened");
+    // Not in a grid, `subgrid` is `none`: its items are laid out by themselves.
+    let alone = boxes(
+        "#a { display:grid; grid-template-columns: subgrid; }
+         #a1 { height:10px; } #a2 { height:30px; }",
+    );
+    assert_eq!(alone[3].1, 10.0);
+}
+
+#[test]
 fn transitions_and_animations_send_their_events() {
     use iced_css::box_tree::{AnimationEvent, BoxTreeAnimations};
     use std::time::{Duration, Instant};

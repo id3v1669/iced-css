@@ -618,6 +618,10 @@ struct Solver<'a> {
     /// A row of inline-blocks' last line's baseline, from the row's bottom, which moves with
     /// it (its parent sets its top afterwards).
     row_baselines: std::collections::BTreeMap<usize, f32>,
+    /// By subgrid, how its rows and its columns take their parent's tracks.
+    subgrids: std::collections::BTreeMap<usize, [Option<grid_layout::SubgridAxis>; 2]>,
+    /// By subgrid measured for its rows, what its items asked of them.
+    subgrid_wanted: std::collections::BTreeMap<usize, Vec<grid_layout::Contribution>>,
 }
 
 /// Lays out the tree rooted at index 0 as one block formatting context root.
@@ -706,6 +710,8 @@ pub fn layout_block_flow_baselines(
         text_split,
         text_baseline,
         row_baselines: std::collections::BTreeMap::new(),
+        subgrids: std::collections::BTreeMap::new(),
+        subgrid_wanted: std::collections::BTreeMap::new(),
     };
     let containing = Containing {
         left: viewport.left,
@@ -733,6 +739,8 @@ pub fn preferred_content_widths(boxes: &[FlowBox], node: usize) -> (f32, f32) {
         text_split: &mut |_, _, _, _| None,
         text_baseline: &mut |_, _, _| None,
         row_baselines: std::collections::BTreeMap::new(),
+        subgrids: std::collections::BTreeMap::new(),
+        subgrid_wanted: std::collections::BTreeMap::new(),
     }
     .measure(node)
 }

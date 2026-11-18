@@ -1,7 +1,7 @@
 //! The grid properties (CSS Grid Layout 1, section 7 and 8): track lists, named areas,
 //! the auto-placement flow and line placements, and their shorthands.
 //!
-//! Left out: `subgrid`, `masonry`, and `[ ]` line names on the `grid-template` areas form
+//! `subgrid` takes `[ ]` line names after it, not `repeat()` of them. Left out: `masonry`, and `[ ]` line names on the `grid-template` areas form
 //! after the last row's size are read as the next row's.
 use super::{
     ColorLimits, LengthTarget, ParsedProperty, PropertyError, PropertyId, PropertyResult,
@@ -73,6 +73,9 @@ pub enum GridValue {
     None,
     /// A track list, or for `grid-auto-*` a list of sizes only.
     Tracks(Vec<GridTrackEntry>),
+    /// CSS Grid 2 `subgrid`, for `grid-template-*`: the parent grid's tracks, with the
+    /// names given for its lines from the first.
+    Subgrid(Vec<Vec<String>>),
     /// `grid-template-areas`: per row, per column, the cell's area name; `None` is a `.`.
     /// The rows are as long as each other, and each name fills a rectangle.
     Areas(Vec<Vec<Option<String>>>),
@@ -531,6 +534,24 @@ fn longhand(
     let none = matches!(list, [(_, only)] if is_keyword(only, "none"));
     Ok(match name {
         "grid-template-columns" | "grid-template-rows" if none => Some(GridValue::None),
+        "grid-template-columns" | "grid-template-rows"
+            if list
+                .first()
+                .is_some_and(|(_, first)| is_keyword(first, "subgrid")) =>
+        {
+            // Only `[ ]` name groups may follow.
+            let Some(found) = entries(&list[1..], false, limits, work)? else {
+                return Ok(None);
+            };
+            let mut names = Vec::new();
+            for entry in found {
+                match entry {
+                    GridTrackEntry::Names(group) => names.push(group),
+                    _ => return Ok(None),
+                }
+            }
+            Some(GridValue::Subgrid(names))
+        }
         "grid-template-columns" | "grid-template-rows" => {
             track_list(list, limits, work)?.map(GridValue::Tracks)
         }

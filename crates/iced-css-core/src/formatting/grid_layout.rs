@@ -1,7 +1,13 @@
 //! Grid layout (CSS Grid Layout Level 1, sections 7, 8, 10 and 11), as one more way a box
 //! that establishes a formatting context lays out its children.
 //!
-//! Left out: subgrids, baseline alignment (it aligns at the start), absolutely positioned
+//! CSS Grid 2 subgrids: a grid item whose `grid-template-columns` or `-rows` is `subgrid`
+//! takes the tracks it spans in that axis from its parent. Its items size those tracks
+//! with the parent's, its margin, border and padding added at its edges, and are placed in
+//! them; they are clamped to its span, with no implicit tracks there, and its own gap in
+//! that axis is not used.
+//!
+//! Left out: baseline alignment (it aligns at the start), absolutely positioned
 //! items placed by grid lines (they take the content box's start as their static
 //! position), and fragmentation. Space beyond the items spanning several tracks is shared
 //! equally among the tracks it may grow, and an item's percentage height has no basis.
@@ -70,6 +76,9 @@ pub struct TrackList {
     /// The names of each line, one more than there are sizes; empty is no names.
     pub names: Vec<Vec<String>>,
     pub repeat: Option<AutoRepeat>,
+    /// CSS Grid 2 `subgrid`: in a grid item, the axis takes the tracks it spans in its
+    /// parent grid; `names` name its lines from the first. Elsewhere it is `none`.
+    pub subgrid: bool,
 }
 
 /// A named area of `grid-template-areas`: its start and end lines, from 0.
@@ -623,8 +632,27 @@ fn all_tracks(
     (sizes, collapsed)
 }
 
+/// How a subgrid's axis takes its parent's tracks.
+#[derive(Debug, Clone)]
+pub(super) enum SubgridAxis {
+    /// Laid out to learn what its items ask: so many tracks, sized by itself.
+    Measure(usize),
+    /// The parent's tracks it spans, as their edges in its content box.
+    Edges(Vec<[f32; 2]>),
+}
+
+impl SubgridAxis {
+    fn span(&self) -> usize {
+        match self {
+            Self::Measure(span) => *span,
+            Self::Edges(edges) => edges.len(),
+        }
+    }
+}
+
 /// What one item asks of the tracks it spans.
-struct Contribution {
+#[derive(Debug, Clone)]
+pub(super) struct Contribution {
     start: usize,
     span: usize,
     /// Its minimum contribution: how small its automatic minimum lets it be.
@@ -1060,34 +1088,146 @@ impl Solver<'_> {
         ]
     }
 
-    /// What each item asks of the columns it spans.
+    /// Whether `child` is a subgrid in `axis` (0 rows, 1 columns).
+    fn subgridded(&self, child: usize, axis: usize) -> bool {
+        self.boxes[child].grid.as_deref().is_some_and(|grid| {
+            if axis == 0 {
+                grid.rows.subgrid
+            } else {
+                grid.columns.subgrid
+            }
+        })
+    }
+
+    /// A subgrid's margin, border and padding at the start and the end of `axis`.
+    fn subgrid_frame(&self, child: usize, axis: usize, basis: f32) -> [f32; 2] {
+        let value = &self.boxes[child];
+        let padding = self.paddings(child, basis);
+        let margin = value.margin.map(|dim| dim.zero_auto(basis));
+        let [start, end] = if axis == 0 { [0, 2] } else { [3, 1] };
+        [
+            margin[start] + value.border[start] + padding[start],
+            margin[end] + value.border[end] + padding[end],
+        ]
+    }
+
+    /// The explicit grid of a subgrid's own axes: `spans` (by axis) are those its parent
+    /// gives it, so many tracks named by its own line names.
+    fn subgrid_axes(axes: &mut [Axis; 2], grid: &GridContainer, spans: [Option<usize>; 2]) {
+        for axis in 0..2 {
+            let Some(span) = spans[axis] else { continue };
+            let list = if axis == 0 { &grid.rows } else { &grid.columns };
+            let mut names = list.names.clone();
+            names.resize(span + 1, Vec::new());
+            axes[axis] = Axis {
+                sizes: vec![TrackSize::AUTO; span],
+                names,
+                fit: None,
+            };
+        }
+    }
+
+    /// A subgrid's items stay inside its span, which has no implicit tracks.
+    fn clamp_to_spans(placement: &mut Placement, spans: [Option<usize>; 2]) {
+        for axis in 0..2 {
+            let Some(span) = spans[axis] else { continue };
+            let span = span.max(1);
+            let shift = placement.shift[axis];
+            for area in &mut placement.areas {
+                let start = area[axis][0].saturating_sub(shift).min(span - 1);
+                let end = area[axis][1].saturating_sub(shift).clamp(start + 1, span);
+                area[axis] = [start, end];
+            }
+            placement.shift[axis] = 0;
+            placement.count[axis] = span;
+        }
+    }
+
+    /// A subgrid's items and where they go in it, for spans given by its parent.
+    fn subgrid_placement(
+        &self,
+        child: usize,
+        spans: [Option<usize>; 2],
+    ) -> Option<(Vec<usize>, Placement)> {
+        let grid = self.boxes[child].grid.as_deref()?;
+        let children = self.grid_children(child);
+        let mut axes = Self::grid_axes(grid, None, None);
+        Self::subgrid_axes(&mut axes, grid, spans);
+        // Measuring spends nothing; layout pays for placement.
+        let mut work = self.work;
+        let mut placement =
+            place(self.boxes, &children, grid, [&axes[0], &axes[1]], &mut work).ok()?;
+        Self::clamp_to_spans(&mut placement, spans);
+        Some((children, placement))
+    }
+
+    /// What each item asks of the columns it spans. A subgrid in columns asks for its
+    /// items, at their places in it, its frame added at its edges.
     fn column_contributions(
         &self,
         children: &[usize],
         placement: &Placement,
         basis: f32,
     ) -> Vec<Contribution> {
-        children
-            .iter()
-            .zip(&placement.areas)
-            .map(|(&child, area)| {
-                let value = &self.boxes[child];
-                let (min_content, max_content) = self.outer_measure(child);
-                // 6.6: no narrower than its content, unless it clips.
-                let minimum = if value.clips {
-                    self.grid_frame(child, basis)[1] + value.min_width.zero_auto(basis)
-                } else {
-                    min_content
-                };
-                Contribution {
-                    start: area[1][0],
-                    span: area[1][1] - area[1][0],
-                    minimum,
-                    min_content,
-                    max_content,
+        let mut found = Vec::new();
+        for (&child, area) in children.iter().zip(&placement.areas) {
+            if !self.subgridded(child, 1) {
+                continue;
+            }
+            let span = area[1][1] - area[1][0];
+            let rows = self.subgridded(child, 0).then_some(area[0][1] - area[0][0]);
+            let frame = self.subgrid_frame(child, 1, basis);
+            if let Some((inner, inner_placement)) =
+                self.subgrid_placement(child, [rows, Some(span)])
+            {
+                for mut wanted in self.column_contributions(&inner, &inner_placement, basis) {
+                    let mut extra = 0.0;
+                    if wanted.start == 0 {
+                        extra += frame[0];
+                    }
+                    if wanted.start + wanted.span == span {
+                        extra += frame[1];
+                    }
+                    wanted.start += area[1][0];
+                    wanted.minimum += extra;
+                    wanted.min_content += extra;
+                    wanted.max_content += extra;
+                    found.push(wanted);
                 }
-            })
-            .collect()
+            }
+            let frame = frame[0] + frame[1];
+            found.push(Contribution {
+                start: area[1][0],
+                span,
+                minimum: frame,
+                min_content: frame,
+                max_content: frame,
+            });
+        }
+        found.extend(
+            children
+                .iter()
+                .zip(&placement.areas)
+                .filter(|(child, _)| !self.subgridded(**child, 1))
+                .map(|(&child, area)| {
+                    let value = &self.boxes[child];
+                    let (min_content, max_content) = self.outer_measure(child);
+                    // 6.6: no narrower than its content, unless it clips.
+                    let minimum = if value.clips {
+                        self.grid_frame(child, basis)[1] + value.min_width.zero_auto(basis)
+                    } else {
+                        min_content
+                    };
+                    Contribution {
+                        start: area[1][0],
+                        span: area[1][1] - area[1][0],
+                        minimum,
+                        min_content,
+                        max_content,
+                    }
+                }),
+        );
+        found
     }
 
     /// Narrowest and widest content widths of a grid container.
@@ -1143,14 +1283,42 @@ impl Solver<'_> {
             }
         }
         let children = self.grid_children(node);
-        let axes = Self::grid_axes(grid, Some(inner.width), inner.height);
-        let placement = place(
+        // As a subgrid, what its parent gives each axis.
+        let own = self.subgrids.get(&node).cloned().unwrap_or([None, None]);
+        let spans = [0, 1].map(|axis| {
+            let subgrid = if axis == 0 {
+                grid.rows.subgrid
+            } else {
+                grid.columns.subgrid
+            };
+            own[axis]
+                .as_ref()
+                .filter(|_| subgrid)
+                .map(SubgridAxis::span)
+        });
+        let given = |axis: usize| match &own[axis] {
+            Some(SubgridAxis::Edges(edges)) if spans[axis].is_some() => Some(edges.clone()),
+            _ => None,
+        };
+        let (row_given, column_given) = (given(0), given(1));
+        let measuring_rows = spans[0].is_some() && matches!(own[0], Some(SubgridAxis::Measure(_)));
+        let mut axes = Self::grid_axes(grid, Some(inner.width), inner.height);
+        Self::subgrid_axes(&mut axes, grid, spans);
+        let mut placement = place(
             self.boxes,
             &children,
             grid,
             [&axes[0], &axes[1]],
             &mut self.work,
         )?;
+        Self::clamp_to_spans(&mut placement, spans);
+        let sizes_of = |edges: &[[f32; 2]]| -> Vec<f32> {
+            edges
+                .iter()
+                .map(|edge| (edge[1] - edge[0]).max(0.0))
+                .collect()
+        };
+        let end_of = |edges: &[[f32; 2]]| edges.last().map_or(0.0, |edge| edge[1]);
         let mut tracks = Vec::with_capacity(2);
         for axis in 0..2 {
             let mut used = vec![false; placement.count[axis]];
@@ -1175,19 +1343,28 @@ impl Solver<'_> {
         let [(row_sizes, row_collapsed), (column_sizes, column_collapsed)] =
             [tracks[0].clone(), tracks[1].clone()];
         // 11.1: columns first, against the content box's width.
-        let items = self.column_contributions(&children, &placement, inner.width);
-        let columns = size_tracks(
-            &column_sizes,
-            &column_collapsed,
-            &items,
-            grid.gap[1],
-            Mode::Definite(inner.width),
-            Some(inner.width),
-            grid.justify_content == FlexSpace::Stretch,
-        );
-        let column_edges = track_edges(&columns, &column_collapsed, grid.gap[1], 0.0, 0.0);
+        let columns = match &column_given {
+            Some(edges) => sizes_of(edges),
+            None => {
+                let items = self.column_contributions(&children, &placement, inner.width);
+                size_tracks(
+                    &column_sizes,
+                    &column_collapsed,
+                    &items,
+                    grid.gap[1],
+                    Mode::Definite(inner.width),
+                    Some(inner.width),
+                    grid.justify_content == FlexSpace::Stretch,
+                )
+            }
+        };
+        let column_edges = match &column_given {
+            Some(edges) => edges.clone(),
+            None => track_edges(&columns, &column_collapsed, grid.gap[1], 0.0, 0.0),
+        };
         // Each item at its width in its area, for its height.
         let mut widths = Vec::with_capacity(children.len());
+        let mut laid = Vec::with_capacity(children.len());
         let mut rows_wanted = Vec::with_capacity(children.len());
         for (&child, area) in children.iter().zip(&placement.areas) {
             let area_width = area_extent(&column_edges, area[1]);
@@ -1225,34 +1402,103 @@ impl Solver<'_> {
                 top: None,
                 ..inner
             };
+            // A subgrid takes the columns it spans as they are, and is measured for rows.
+            let mut taken = [None, None];
+            if self.subgridded(child, 1) {
+                let frame = self.subgrid_frame(child, 1, area_width)[0];
+                let left = column_edges.get(area[1][0]).map_or(0.0, |edge| edge[0]) + frame;
+                taken[1] = Some(SubgridAxis::Edges(
+                    column_edges
+                        .get(area[1][0]..area[1][1])
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|edge| [edge[0] - left, edge[1] - left])
+                        .collect(),
+                ));
+            }
+            let row_subgrid = self.subgridded(child, 0);
+            if row_subgrid {
+                taken[0] = Some(SubgridAxis::Measure(area[0][1] - area[0][0]));
+            }
+            if taken.iter().any(Option::is_some) {
+                self.subgrids.insert(child, taken);
+            }
             let border_height = self.lay_item(child, cb, width)?;
             let outer = border_height + margin[0] + margin[2];
             widths.push(area_width);
-            rows_wanted.push(Contribution {
-                start: area[0][0],
-                span: area[0][1] - area[0][0],
-                minimum: outer,
-                min_content: outer,
-                max_content: outer,
-            });
+            laid.push((cb, width));
+            let wanted = if row_subgrid {
+                self.subgrid_wanted.remove(&child)
+            } else {
+                None
+            };
+            match wanted {
+                // Its items ask for its rows, its frame added at its edges.
+                Some(wanted) => {
+                    let span = area[0][1] - area[0][0];
+                    let frame = self.subgrid_frame(child, 0, area_width);
+                    for mut one in wanted {
+                        let mut extra = 0.0;
+                        if one.start == 0 {
+                            extra += frame[0];
+                        }
+                        if one.start + one.span == span {
+                            extra += frame[1];
+                        }
+                        one.start += area[0][0];
+                        one.minimum += extra;
+                        one.min_content += extra;
+                        one.max_content += extra;
+                        rows_wanted.push(one);
+                    }
+                    let frame = frame[0] + frame[1];
+                    rows_wanted.push(Contribution {
+                        start: area[0][0],
+                        span,
+                        minimum: frame,
+                        min_content: frame,
+                        max_content: frame,
+                    });
+                }
+                None => rows_wanted.push(Contribution {
+                    start: area[0][0],
+                    span: area[0][1] - area[0][0],
+                    minimum: outer,
+                    min_content: outer,
+                    max_content: outer,
+                }),
+            }
+        }
+        // Measured as a subgrid: its parent sizes its rows with what its items ask.
+        if measuring_rows {
+            self.subgrid_wanted.insert(node, rows_wanted.clone());
         }
         let row_mode = inner.height.map_or(Mode::MaxContent, Mode::Definite);
-        let rows = size_tracks(
-            &row_sizes,
-            &row_collapsed,
-            &rows_wanted,
-            grid.gap[0],
-            row_mode,
-            inner.height,
-            grid.align_content == FlexSpace::Stretch,
-        );
+        let rows = match &row_given {
+            Some(edges) => sizes_of(edges),
+            None => size_tracks(
+                &row_sizes,
+                &row_collapsed,
+                &rows_wanted,
+                grid.gap[0],
+                row_mode,
+                inner.height,
+                grid.align_content == FlexSpace::Stretch,
+            ),
+        };
         // 10.5: content alignment shares what the tracks leave.
         let live = |collapsed: &[bool]| collapsed.iter().filter(|collapsed| !**collapsed).count();
         let total = |sizes: &[f32], collapsed: &[bool], gap: f32| {
             sizes.iter().sum::<f32>() + gap * live(collapsed).saturating_sub(1) as f32
         };
-        let rows_total = total(&rows, &row_collapsed, grid.gap[0]);
-        let columns_total = total(&columns, &column_collapsed, grid.gap[1]);
+        let rows_total = match &row_given {
+            Some(edges) => end_of(edges),
+            None => total(&rows, &row_collapsed, grid.gap[0]),
+        };
+        let columns_total = match &column_given {
+            Some(edges) => end_of(edges),
+            None => total(&columns, &column_collapsed, grid.gap[1]),
+        };
         let (column_start, column_between) = distribute(
             grid.justify_content,
             inner.width - columns_total,
@@ -1263,16 +1509,39 @@ impl Solver<'_> {
             inner.height.map_or(0.0, |height| height - rows_total),
             live(&row_collapsed),
         );
-        let column_edges = track_edges(
-            &columns,
-            &column_collapsed,
-            grid.gap[1],
-            column_start,
-            column_between,
-        );
-        let row_edges = track_edges(&rows, &row_collapsed, grid.gap[0], row_start, row_between);
+        // What a parent gave is placed as given.
+        let column_edges = match column_given {
+            Some(edges) => edges,
+            None => track_edges(
+                &columns,
+                &column_collapsed,
+                grid.gap[1],
+                column_start,
+                column_between,
+            ),
+        };
+        let row_edges = match row_given {
+            Some(edges) => edges,
+            None => track_edges(&rows, &row_collapsed, grid.gap[0], row_start, row_between),
+        };
         let rtl = inner.direction == Direction::Rtl;
-        for ((&child, area), area_width) in children.iter().zip(&placement.areas).zip(widths) {
+        for (((&child, area), area_width), (cb, width)) in
+            children.iter().zip(&placement.areas).zip(widths).zip(laid)
+        {
+            // A subgrid in rows is laid again in the rows it spans, as sized.
+            if self.subgridded(child, 0) {
+                let frame = self.subgrid_frame(child, 0, area_width)[0];
+                let top = row_edges.get(area[0][0]).map_or(0.0, |edge| edge[0]) + frame;
+                let edges = row_edges
+                    .get(area[0][0]..area[0][1])
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|edge| [edge[0] - top, edge[1] - top])
+                    .collect();
+                self.subgrids.entry(child).or_insert([None, None])[0] =
+                    Some(SubgridAxis::Edges(edges));
+                self.lay_item(child, cb, width)?;
+            }
             let value = &self.boxes[child];
             let left = column_edges.get(area[1][0]).map_or(0.0, |edge| edge[0]);
             let top = row_edges.get(area[0][0]).map_or(0.0, |edge| edge[0]);

@@ -2886,6 +2886,7 @@ mod grid {
             sizes: sizes.to_vec(),
             names: vec![Vec::new(); sizes.len() + 1],
             repeat: None,
+            subgrid: false,
         }
     }
     fn container(grid: GridContainer, children: usize) -> FlowBox {
@@ -3015,6 +3016,7 @@ mod grid {
             columns: TrackList {
                 sizes: Vec::new(),
                 names: vec![Vec::new()],
+                subgrid: false,
                 repeat: Some(AutoRepeat {
                     at: 0,
                     fit: false,

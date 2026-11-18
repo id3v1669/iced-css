@@ -3504,6 +3504,7 @@ pub fn evaluate_tree_paint<'r>(
                 sizes: Vec::new(),
                 names: vec![Vec::new()],
                 repeat: None,
+                subgrid: false,
             };
             let limit = GRID_LIMIT as usize;
             for entry in entries {
@@ -3593,6 +3594,11 @@ pub fn evaluate_tree_paint<'r>(
             let template = |name: &'static str| {
                 Ok::<_, E>(match grid_of(name)? {
                     Some(GridValue::Tracks(entries)) => track_list(entries),
+                    Some(GridValue::Subgrid(names)) => TrackList {
+                        names: names.clone(),
+                        subgrid: true,
+                        ..TrackList::default()
+                    },
                     _ => TrackList::default(),
                 })
             };

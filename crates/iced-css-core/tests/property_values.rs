@@ -1584,6 +1584,9 @@ fn grid_properties_parse_css_grid_track_lists_lines_and_shorthands() {
         "grid-template-columns:repeat(2, [x] 10px auto)",
         "grid-template-columns:repeat(auto-fill, minmax(100px, 1fr))",
         "grid-template-columns:20px repeat(auto-fit, 50px) 20px",
+        "grid-template-columns:subgrid",
+        "grid-template-rows:subgrid [a] [b c]",
+        "grid-template:subgrid / subgrid",
         "grid-template-rows:fit-content(40px) min-content max-content",
         "grid-template-rows:calc(10px + 5%) 1fr",
         "grid-auto-rows:10px auto",
@@ -1603,6 +1606,8 @@ fn grid_properties_parse_css_grid_track_lists_lines_and_shorthands() {
         assert!(valid(good), "{good}");
     }
     for bad in [
+        "grid-template-columns:subgrid 10px",
+        "grid-template-columns:10px subgrid",
         "grid-template-columns:-10px",
         "grid-template-columns:minmax(1fr, 10px)",
         "grid-template-columns:repeat(0, 1fr)",
