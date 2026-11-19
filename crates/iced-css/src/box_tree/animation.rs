@@ -3434,7 +3434,10 @@ impl BoxTreeAnimations {
             f32::INFINITY
         };
         match self.keyframed[at].state {
-            KeyState::Done if local >= active => {}
+            // Still ended on the new timing: its time now counts from the new delay.
+            KeyState::Done if local >= active => {
+                self.keyframed[at].origin = Some((now, local));
+            }
             // Paused past where the new timing ends: it has ended, and stays paused there.
             KeyState::Paused(_) | KeyState::PausedEnded if local >= active => {
                 if matches!(self.keyframed[at].state, KeyState::Paused(_)) {

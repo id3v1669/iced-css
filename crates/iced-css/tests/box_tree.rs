@@ -2031,121 +2031,122 @@ impl Timing {
     }
 }
 
-/// Every combination of a timing, a pause (from the start or later), a change of timing,
-/// a resume and a query time, against the CSS Animations 1 timeline: the width shown,
-/// and that an animation that has ended sent its end, each end after a start.
-#[test]
-fn animation_timelines_match_css_animations() {
+/// Runs one animation case and checks it against the CSS Animations 1 timeline: `old` from
+/// the start, each of `changes` (time, timing) in turn, an optional pause (0 is from the
+/// start) and resume, then the width and the events at `query`. A failure is described.
+#[allow(clippy::too_many_arguments)]
+fn timeline_case(
+    tree: &mut dyn FnMut(String) -> BoxTree,
+    start: std::time::Instant,
+    old: Timing,
+    changes: &[(i64, Timing)],
+    pause: Option<i64>,
+    resume: Option<i64>,
+    query: i64,
+) -> Option<String> {
     use iced_css::box_tree::{AnimationEvent, BoxTreeAnimations};
-    use std::collections::HashMap;
-    use std::time::{Duration, Instant};
-    let start = Instant::now();
+    use std::time::Duration;
     let at = |millis: i64| start + Duration::from_millis(millis as u64);
-    let olds = [
-        Timing(1000, 0, 1.0, false, "forwards"),
-        Timing(1000, 500, 1.0, false, "both"),
-        Timing(1000, -500, 1.0, false, "none"),
-        Timing(1000, -2000, 1.0, false, "forwards"),
-        Timing(0, 0, 1.0, false, "forwards"),
-        Timing(0, 400, 1.0, false, "both"),
-        Timing(500, 0, 2.5, true, "forwards"),
-        Timing(500, 200, 0.0, false, "both"),
-        Timing(0, 0, f32::INFINITY, true, "forwards"),
-        Timing(300, 0, f32::INFINITY, false, "both"),
-    ];
-    let news = [
-        Timing(2000, 0, 1.0, false, "forwards"),
-        Timing(1000, 1000, 1.0, false, "both"),
-        Timing(0, 0, 1.0, false, "forwards"),
-        Timing(500, -300, 3.0, true, "both"),
-        Timing(400, 300, 0.0, false, "both"),
-        Timing(1000, 0, 1.0, false, "none"),
-        Timing(300, 0, f32::INFINITY, true, "none"),
-        Timing(0, 200, f32::INFINITY, false, "both"),
-    ];
-    let base = BoxTree::new(node("page", vec![node("a", vec![])]), &olds[0].sheet(false)).unwrap();
-    let mut trees: HashMap<String, BoxTree> = HashMap::new();
-    let mut tree = |sheet: String| -> BoxTree {
+    // The timing in force at a time, and whether it is paused then.
+    let timing_at = |time: i64| {
+        changes
+            .iter()
+            .filter(|(when, _)| *when <= time)
+            .last()
+            .map_or(old, |(_, timing)| *timing)
+    };
+    let paused_at = |time: i64| {
+        pause.is_some_and(|pause| pause <= time) && resume.is_none_or(|resume| time < resume)
+    };
+    let mut animations = BoxTreeAnimations::new();
+    let mut shown = tree(old.sheet(paused_at(0)));
+    animations.play(&shown, start);
+    // Every moment something changes, in order.
+    let mut moments: Vec<i64> = changes.iter().map(|(when, _)| *when).collect();
+    moments.extend(pause.filter(|pause| *pause > 0));
+    moments.extend(resume);
+    moments.sort_unstable();
+    moments.dedup();
+    for moment in moments.into_iter().filter(|moment| *moment <= query) {
+        animations.advance(at(moment), &shown);
+        shown = tree(timing_at(moment).sheet(paused_at(moment)));
+        animations.play(&shown, at(moment));
+    }
+    animations.advance(at(query), &shown);
+    let geometry = animations.presented(&shown).layout(1000.0, None).unwrap();
+    let border = geometry[1].as_ref().unwrap().border;
+    let got = border.right - border.left;
+    let elapsed = match (pause, resume) {
+        (Some(pause), Some(resume)) if resume <= query => pause + (query - resume),
+        (Some(pause), _) if pause <= query => pause,
+        _ => query,
+    };
+    let last = timing_at(query);
+    let (want, ended) = last.width(elapsed - last.1);
+    let events = animations.take_events();
+    let (mut started, mut ordered, mut ends) = (false, true, 0);
+    for event in &events {
+        match event {
+            AnimationEvent::AnimationStart { .. } => started = true,
+            AnimationEvent::AnimationEnd { .. } => {
+                ends += 1;
+                ordered &= started;
+            }
+            _ => {}
+        }
+    }
+    let case =
+        format!("old {old:?} changes {changes:?} pause {pause:?} resume {resume:?} query {query}");
+    // Past its delay it has started; ended, it has sent its end.
+    let entered = elapsed - last.1 >= 0;
+    if (got - want).abs() > 1.0 {
+        Some(format!("{case}: width {got} not {want}"))
+    } else if !ordered || (ended && ends == 0) || (entered && !started) {
+        Some(format!("{case}: events {events:?}"))
+    } else {
+        None
+    }
+}
+
+const OLD_TIMINGS: [Timing; 10] = [
+    Timing(1000, 0, 1.0, false, "forwards"),
+    Timing(1000, 500, 1.0, false, "both"),
+    Timing(1000, -500, 1.0, false, "none"),
+    Timing(1000, -2000, 1.0, false, "forwards"),
+    Timing(0, 0, 1.0, false, "forwards"),
+    Timing(0, 400, 1.0, false, "both"),
+    Timing(500, 0, 2.5, true, "forwards"),
+    Timing(500, 200, 0.0, false, "both"),
+    Timing(0, 0, f32::INFINITY, true, "forwards"),
+    Timing(300, 0, f32::INFINITY, false, "both"),
+];
+const NEW_TIMINGS: [Timing; 8] = [
+    Timing(2000, 0, 1.0, false, "forwards"),
+    Timing(1000, 1000, 1.0, false, "both"),
+    Timing(0, 0, 1.0, false, "forwards"),
+    Timing(500, -300, 3.0, true, "both"),
+    Timing(400, 300, 0.0, false, "both"),
+    Timing(1000, 0, 1.0, false, "none"),
+    Timing(300, 0, f32::INFINITY, true, "none"),
+    Timing(0, 200, f32::INFINITY, false, "both"),
+];
+
+fn timeline_trees() -> impl FnMut(String) -> BoxTree {
+    let base = BoxTree::new(
+        node("page", vec![node("a", vec![])]),
+        &OLD_TIMINGS[0].sheet(false),
+    )
+    .unwrap();
+    let mut trees: std::collections::HashMap<String, BoxTree> = std::collections::HashMap::new();
+    move |sheet: String| {
         trees
             .entry(sheet.clone())
             .or_insert_with(|| base.restyled(&[&sheet]).unwrap())
             .clone()
-    };
-    let mut failures = Vec::new();
-    let mut cases = 0;
-    for old in olds {
-        for new in news {
-            for change in [103, 1211, 2617] {
-                for pause in [None, Some(0), Some(97), Some(1789)] {
-                    let Some(pause) =
-                        pause.map_or(Some(None), |pause| (pause < change).then_some(Some(pause)))
-                    else {
-                        continue;
-                    };
-                    for resume in [None, Some(change + 193)] {
-                        if resume.is_some() && pause.is_none() {
-                            continue;
-                        }
-                        for query in [change + 7, change + 411, change + 2503] {
-                            let resume = resume.filter(|resume| *resume <= query);
-                            cases += 1;
-                            let mut animations = BoxTreeAnimations::new();
-                            let first = tree(old.sheet(pause == Some(0)));
-                            animations.play(&first, start);
-                            if let Some(pause) = pause.filter(|pause| *pause > 0) {
-                                animations.advance(at(pause), &first);
-                                animations.play(&tree(old.sheet(true)), at(pause));
-                            }
-                            animations.advance(at(change), &tree(old.sheet(pause.is_some())));
-                            let mut shown = tree(new.sheet(pause.is_some()));
-                            animations.play(&shown, at(change));
-                            if let Some(resume) = resume {
-                                animations.advance(at(resume), &shown);
-                                shown = tree(new.sheet(false));
-                                animations.play(&shown, at(resume));
-                            }
-                            animations.advance(at(query), &shown);
-                            let geometry =
-                                animations.presented(&shown).layout(1000.0, None).unwrap();
-                            let border = geometry[1].as_ref().unwrap().border;
-                            let got = border.right - border.left;
-                            let elapsed = match (pause, resume) {
-                                (Some(pause), Some(resume)) => pause + (query - resume),
-                                (Some(pause), None) => pause,
-                                (None, _) => query,
-                            };
-                            let (want, ended) = new.width(elapsed - new.1);
-                            let events = animations.take_events();
-                            let mut started = false;
-                            let mut ordered = true;
-                            let mut ends = 0;
-                            for event in &events {
-                                match event {
-                                    AnimationEvent::AnimationStart { .. } => started = true,
-                                    AnimationEvent::AnimationEnd { .. } => {
-                                        ends += 1;
-                                        ordered &= started;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            let case = format!(
-                                "old {old:?} new {new:?} change {change} pause {pause:?} resume {resume:?} query {query}"
-                            );
-                            if (got - want).abs() > 1.0 {
-                                failures.push(format!("{case}: width {got} not {want}"));
-                            }
-                            // Past its delay it has started; ended, it has sent its end.
-                            let entered = elapsed - new.1 >= 0;
-                            if !ordered || (ended && ends == 0) || (entered && !started) {
-                                failures.push(format!("{case}: events {events:?}"));
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
+}
+
+fn report(failures: Vec<String>, cases: usize) {
     assert!(
         failures.is_empty(),
         "{} of {cases} cases failed:\n{}",
@@ -2157,6 +2158,80 @@ fn animation_timelines_match_css_animations() {
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+/// Every combination of a timing, a pause (from the start or later), a change of timing,
+/// a resume and a query time, against the CSS Animations 1 timeline: the width shown,
+/// and that an animation that has ended sent its end, each end after a start.
+#[test]
+fn animation_timelines_match_css_animations() {
+    let start = std::time::Instant::now();
+    let mut tree = timeline_trees();
+    let (mut failures, mut cases) = (Vec::new(), 0);
+    for old in OLD_TIMINGS {
+        for new in NEW_TIMINGS {
+            for change in [103, 1211, 2617] {
+                for pause in [None, Some(0), Some(97), Some(1789)] {
+                    if pause.is_some_and(|pause| pause >= change) {
+                        continue;
+                    }
+                    for resume in [None, Some(change + 193)] {
+                        if resume.is_some() && pause.is_none() {
+                            continue;
+                        }
+                        for query in [change + 7, change + 411, change + 2503] {
+                            cases += 1;
+                            failures.extend(timeline_case(
+                                &mut tree,
+                                start,
+                                old,
+                                &[(change, new)],
+                                pause,
+                                resume,
+                                query,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    report(failures, cases);
+}
+
+/// Two timing changes in turn, the second reading the time the first left: against the
+/// CSS Animations 1 timeline as above.
+#[test]
+fn animation_timelines_hold_through_successive_changes() {
+    let start = std::time::Instant::now();
+    let mut tree = timeline_trees();
+    let (mut failures, mut cases) = (Vec::new(), 0);
+    let lasts = [
+        Timing(4000, 500, 1.0, false, "forwards"),
+        Timing(1000, 0, 2.0, true, "both"),
+        Timing(0, 1500, 1.0, false, "both"),
+    ];
+    for old in OLD_TIMINGS {
+        for middle in NEW_TIMINGS {
+            for last in lasts {
+                for (pause, resume) in [(None, None), (Some(97), None), (Some(97), Some(2210))] {
+                    for query in [2024, 2428, 4520] {
+                        cases += 1;
+                        failures.extend(timeline_case(
+                            &mut tree,
+                            start,
+                            old,
+                            &[(1500, middle), (2017, last)],
+                            pause,
+                            resume,
+                            query,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    report(failures, cases);
 }
 
 #[test]
@@ -2249,6 +2324,43 @@ fn eighth_review_regressions() {
         animations.take_events().as_slice(),
         [AnimationEvent::AnimationStart { .. }]
     ));
+}
+
+#[test]
+fn ninth_review_regression() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    // Ended, given a delay (still ended), then a longer duration: the time from the new
+    // delay (137.5px, as Chromium shows).
+    let start = Instant::now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    let sheet = |animation: &str| {
+        format!(
+            "@keyframes one {{ from {{ width: 100px }} to {{ width: 200px }} }}
+             #a {{ height:1px; width:50px; animation: {animation}; }}"
+        )
+    };
+    let tree = BoxTree::new(
+        node("page", vec![node("a", vec![])]),
+        &sheet("one 1s linear forwards"),
+    )
+    .unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    animations.advance(at(1500), &tree);
+    let delayed = tree
+        .restyled(&[&sheet("one 1s linear 500ms forwards")])
+        .unwrap();
+    animations.play(&delayed, at(1500));
+    animations.advance(at(2000), &delayed);
+    let longer = tree
+        .restyled(&[&sheet("one 4s linear 500ms forwards")])
+        .unwrap();
+    animations.play(&longer, at(2000));
+    animations.advance(at(2000), &longer);
+    let geometry = animations.presented(&longer).layout(1000.0, None).unwrap();
+    let border = geometry[1].as_ref().unwrap().border;
+    assert_eq!(border.right - border.left, 137.5);
 }
 
 #[test]
