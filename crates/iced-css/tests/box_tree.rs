@@ -2034,6 +2034,8 @@ impl Timing {
 /// Runs one animation case and checks it against the CSS Animations 1 timeline: `old` from
 /// the start, each of `changes` (time, timing) in turn, an optional pause (0 is from the
 /// start) and resume, then the width and the events at `query`. A failure is described.
+/// With `cold`, each change is given to `play` alone, without an `advance` to its time
+/// first, as a widget restyling between frames does.
 #[allow(clippy::too_many_arguments)]
 fn timeline_case(
     tree: &mut dyn FnMut(String) -> BoxTree,
@@ -2043,6 +2045,7 @@ fn timeline_case(
     pause: Option<i64>,
     resume: Option<i64>,
     query: i64,
+    cold: bool,
 ) -> Option<String> {
     use iced_css::box_tree::{AnimationEvent, BoxTreeAnimations};
     use std::time::Duration;
@@ -2068,7 +2071,9 @@ fn timeline_case(
     moments.sort_unstable();
     moments.dedup();
     for moment in moments.into_iter().filter(|moment| *moment <= query) {
-        animations.advance(at(moment), &shown);
+        if !cold {
+            animations.advance(at(moment), &shown);
+        }
         shown = tree(timing_at(moment).sheet(paused_at(moment)));
         animations.play(&shown, at(moment));
     }
@@ -2095,8 +2100,9 @@ fn timeline_case(
             _ => {}
         }
     }
-    let case =
-        format!("old {old:?} changes {changes:?} pause {pause:?} resume {resume:?} query {query}");
+    let case = format!(
+        "old {old:?} changes {changes:?} pause {pause:?} resume {resume:?} query {query} cold {cold}"
+    );
     // Past its delay it has started; ended, it has sent its end.
     let entered = elapsed - last.1 >= 0;
     if (got - want).abs() > 1.0 {
@@ -2180,16 +2186,19 @@ fn animation_timelines_match_css_animations() {
                             continue;
                         }
                         for query in [change + 7, change + 411, change + 2503] {
-                            cases += 1;
-                            failures.extend(timeline_case(
-                                &mut tree,
-                                start,
-                                old,
-                                &[(change, new)],
-                                pause,
-                                resume,
-                                query,
-                            ));
+                            for cold in [false, true] {
+                                cases += 1;
+                                failures.extend(timeline_case(
+                                    &mut tree,
+                                    start,
+                                    old,
+                                    &[(change, new)],
+                                    pause,
+                                    resume,
+                                    query,
+                                    cold,
+                                ));
+                            }
                         }
                     }
                 }
@@ -2216,16 +2225,19 @@ fn animation_timelines_hold_through_successive_changes() {
             for last in lasts {
                 for (pause, resume) in [(None, None), (Some(97), None), (Some(97), Some(2210))] {
                     for query in [2024, 2428, 4520] {
-                        cases += 1;
-                        failures.extend(timeline_case(
-                            &mut tree,
-                            start,
-                            old,
-                            &[(1500, middle), (2017, last)],
-                            pause,
-                            resume,
-                            query,
-                        ));
+                        for cold in [false, true] {
+                            cases += 1;
+                            failures.extend(timeline_case(
+                                &mut tree,
+                                start,
+                                old,
+                                &[(1500, middle), (2017, last)],
+                                pause,
+                                resume,
+                                query,
+                                cold,
+                            ));
+                        }
                     }
                 }
             }
@@ -2361,6 +2373,30 @@ fn ninth_review_regression() {
     let geometry = animations.presented(&longer).layout(1000.0, None).unwrap();
     let border = geometry[1].as_ref().unwrap().border;
     assert_eq!(border.right - border.left, 137.5);
+}
+
+#[test]
+fn tenth_review_regression() {
+    use iced_css::box_tree::BoxTreeAnimations;
+    use std::time::{Duration, Instant};
+    // Paused by a restyle half into the second iteration, with no frame between: there.
+    let start = Instant::now();
+    let sheet = |paused: &str| {
+        format!(
+            "@keyframes one {{ from {{ width: 100px }} to {{ width: 200px }} }}
+             #a {{ height:1px; width:50px; animation: one 1s linear infinite;
+                   animation-play-state: {paused}; }}"
+        )
+    };
+    let tree = BoxTree::new(node("page", vec![node("a", vec![])]), &sheet("running")).unwrap();
+    let mut animations = BoxTreeAnimations::new();
+    animations.play(&tree, start);
+    let paused = tree.restyled(&[&sheet("paused")]).unwrap();
+    animations.play(&paused, start + Duration::from_millis(1500));
+    animations.advance(start + Duration::from_millis(1600), &paused);
+    let geometry = animations.presented(&paused).layout(1000.0, None).unwrap();
+    let border = geometry[1].as_ref().unwrap().border;
+    assert_eq!(border.right - border.left, 150.0);
 }
 
 #[test]

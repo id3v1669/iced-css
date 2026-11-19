@@ -3102,6 +3102,11 @@ impl BoxTreeAnimations {
     /// `:after` are not animated.
     pub fn play(&mut self, tree: &BoxTree, now: Instant) -> usize {
         self.engine.advance(now);
+        // Runs that ended by now move on first, so a pause or a timing change here reads
+        // where each one is now, not where its last run stopped.
+        for at in 0..self.keyframed.len() {
+            self.step_keyframed(at, now);
+        }
         let capture = tree.source.capture;
         let nodes = tree.source.construction.nodes();
         let mut listed: Vec<(String, usize, String)> = Vec::new();
